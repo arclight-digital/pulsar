@@ -178,6 +178,23 @@ jobs:
             aws s3 cp "$f" "s3://${R2_BUCKET}/pulsar/iso/${f}" \
               --endpoint-url "${R2_ENDPOINT}"
           done
+          # ...then the stable keys the site links to, written after the
+          # immutable copies (same order as the SBOM flow) so a failed upload
+          # cannot leave "latest" pointing at nothing. The checksum manifest
+          # is REGENERATED with the latest filename, not copied: sha256sum -c
+          # matches on the name in the file, and a manifest naming the dated
+          # ISO fails against the bytes saved as -latest. The sig and pem
+          # sign the bytes alone, so plain copies stay valid.
+          latest="${{ matrix.variant }}-latest-x86_64.iso"
+          sed "s|  ${ISO_NAME}\$|  ${latest}|" "${ISO_NAME}.sha256" > "${latest}.sha256"
+          aws s3 cp "${ISO_NAME}" "s3://${R2_BUCKET}/pulsar/iso/${latest}" \
+            --endpoint-url "${R2_ENDPOINT}"
+          aws s3 cp "${latest}.sha256" "s3://${R2_BUCKET}/pulsar/iso/${latest}.sha256" \
+            --endpoint-url "${R2_ENDPOINT}"
+          aws s3 cp "${ISO_NAME}.sig" "s3://${R2_BUCKET}/pulsar/iso/${latest}.sig" \
+            --endpoint-url "${R2_ENDPOINT}"
+          aws s3 cp "${ISO_NAME}.pem" "s3://${R2_BUCKET}/pulsar/iso/${latest}.pem" \
+            --endpoint-url "${R2_ENDPOINT}"
           echo "### ${ISO_NAME}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat "${ISO_NAME}.sha256" >> "$GITHUB_STEP_SUMMARY"

@@ -605,6 +605,34 @@ h2 {
   .hero-inner { padding-bottom: 2.5rem; }
 }
 
+/* ---- iso downloads ------------------------------------------------------- */
+/* Reuses the install card's chrome: same terminal family, same labeled rows,
+   but the filename is a link rather than a command to copy. */
+.iso { margin-top: 5.5rem; }
+.iso > .lede { color: var(--muted); max-width: 40rem; }
+.iso-card { margin: 1.8rem 0 0; max-width: 46rem; }
+.iso-card code a {
+  color: var(--cyan);
+  text-decoration-color: rgba(62, 203, 255, 0.4);
+}
+.sums {
+  display: flex;
+  gap: 0.7rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+}
+.sums a {
+  color: rgba(233, 237, 247, 0.66); /* on the dark chip in both themes */
+  text-decoration: none;
+}
+.sums a:hover, .sums a:focus-visible { color: var(--cyan); text-decoration: underline; }
+@media (max-width: 34rem) {
+  /* the grid row is label | filename | sums; at phone width the sums drop
+     under the filename instead of crushing it */
+  .iso-card .row { grid-template-columns: auto 1fr; }
+  .iso-card .sums { grid-column: 2; }
+}
+
 /* ---- changelog ----------------------------------------------------------- */
 /* Deliberately a plain list, not a card grid: this is a diff, and a diff that
    reads like a diff is more convincing than one dressed up as a feature. */

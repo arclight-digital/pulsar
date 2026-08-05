@@ -82,9 +82,9 @@ try { const t = localStorage.getItem('pulsar-theme');
           </svg>
         </button>
       </div>
-      <p class="hint">Fresh machine? Install
-         <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>,
-         then run one of these. The nvidia module comes signed &mdash;
+      <p class="hint">Fresh machine? <a href="#iso">Take the ISO</a>, or install
+         <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>
+         and run one of these. The nvidia module comes signed &mdash;
          <a href="https://github.com/arclight-digital/pulsar#install">enroll the cert once</a>
          and keep Secure Boot on.</p>
     </figure>
@@ -288,6 +288,66 @@ try { const t = localStorage.getItem('pulsar-theme');
        Running someone else's signed images is a trust decision —
        <a href="https://github.com/arclight-digital/pulsar#two-variants-one-key">fork
        it and use your own key</a> if that's not a relationship you want.</p>
+  </section>
+
+  <!-- Downloads point at lighthouse.arclight.digital -- the R2 bucket the
+       iso workflow uploads to, behind its public custom domain. The -latest
+       names are stable keys the workflow rewrites weekly; the dated
+       originals stay in the bucket untouched. -->
+  <section class="iso" id="iso">
+    <h2>Starting from bare metal</h2>
+    <p class="lede">A weekly installer ISO for each variant, built from the
+       published image itself — the same Anaconda installer stock Silverblue
+       uses, landing directly in Pulsar. Checksummed, and signed in the open
+       with keyless cosign.</p>
+    <figure class="term install iso-card" role="group" aria-label="ISO downloads">
+      <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> weekly &middot; x86_64 &middot; 5&ndash;6&nbsp;GB</figcaption>
+      <div class="row">
+        <span class="which">standard</span>
+        <code><a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso">pulsar-latest-x86_64.iso</a></code>
+        <span class="sums">
+          <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso.sha256">sha256</a>
+          <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso.sig">sig</a>
+          <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso.pem">cert</a>
+        </span>
+      </div>
+      <div class="row">
+        <span class="which">nvidia</span>
+        <code><a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso">pulsar-nvidia-latest-x86_64.iso</a></code>
+        <span class="sums">
+          <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso.sha256">sha256</a>
+          <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso.sig">sig</a>
+          <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso.pem">cert</a>
+        </span>
+      </div>
+      <p class="hint">Write it to a USB stick with GNOME Disks or
+         <code>dd</code>, boot, install. <code>sha256sum -c</code> against the
+         manifest checks the download; the signature proves CI built it:</p>
+    </figure>
+    <figure class="term" role="group" aria-label="Verify the ISO signature">
+      <figcaption>
+        <span class="prompt" aria-hidden="true">&#10095;</span> the signature is bound to this repo's CI, not a key that can leak
+        <button class="copy" data-copy
+                data-copy-text="cosign verify-blob pulsar-latest-x86_64.iso --signature pulsar-latest-x86_64.iso.sig --certificate pulsar-latest-x86_64.iso.pem --certificate-identity-regexp 'github.com/arclight-digital/pulsar' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+                aria-label="Copy the ISO verify command">
+          <svg class="clip" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/>
+            <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5"/>
+          </svg>
+          <svg class="check" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M2.5 8.5l3.5 3.5 7-8"/>
+          </svg>
+        </button>
+      </figcaption>
+      <pre><code><span class="cmd">cosign verify-blob pulsar-latest-x86_64.iso \
+  --signature pulsar-latest-x86_64.iso.sig \
+  --certificate pulsar-latest-x86_64.iso.pem \
+  --certificate-identity-regexp 'github.com/arclight-digital/pulsar' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com</span>
+<span class="ok">Verified OK</span></code></pre>
+    </figure>
   </section>
 
   <!-- The claim the rest of the page makes, shown rather than asserted: the
