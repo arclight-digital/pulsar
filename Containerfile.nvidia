@@ -1,0 +1,202 @@
+ARG FEDORA_VERSION=44
+# Default base is the CI-built, attested image from ghcr. Override with
+# BASE_IMAGE=localhost/pulsar to test against a local vanilla build.
+ARG BASE_IMAGE=ghcr.io/arclight-digital/pulsar
+FROM ${BASE_IMAGE}:${FEDORA_VERSION}
+
+# ===========================================================================
+# Pulsar + NVIDIA.
+#
+# The only artifact that USES the Secure Boot signing key -- and it is safe
+# to publish: the key arrives as a build secret, is written to akmods-owned
+# paths and deleted inside the same RUN, and never reaches a layer. What
+# ships is the signed module plus the PUBLIC cert.
+#
+# NEVER install akmods-keys here. That RPM contains the private key itself,
+# and installing it would put the key in a published layer. This is the one
+# rule that actually matters in this file.
+#
+# RTX 5080 is Blackwell (GB203); the closed kmod does not support it, so
+# nvidia-open is not a preference, it is the only option. It is also MIT/
+# GPLv2 dual-licensed, which is why the interesting half of this image is
+# open source and only the userspace is proprietary.
+# ===========================================================================
+
+# Phase 1: build toolchain, and neutralize the on-install build hook.
+#
+# akmod-nvidia-open's %post runs:
+#     [ -x /usr/sbin/akmods-ostree-post ] && /usr/sbin/akmods-ostree-post ...
+# and akmods-ostree-post calls akmodsbuild DIRECTLY as root -- no runuser,
+# unlike /usr/bin/akmods which does drop privileges. akmodsbuild refuses to
+# run anywhere `[[ -w /var ]]` is true, which is always the case for root in
+# a container build. The scriptlet fails and dnf5 fails the whole transaction.
+#
+# Making the hook non-executable turns that `[ -x ] &&` into a clean no-op.
+# We drive the build ourselves in phase 3. Restored at the end of this file.
+# gcc-c++, elfutils-libelf-devel and the download command are here because
+# phase 2 installs the akmod WITHOUT depsolving (see below) -- its build
+# deps have to arrive explicitly.
+RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
+    echo "building against kernel ${KV}" && \
+    dnf5 install -y --enablerepo=updates-archive kernel-devel-${KV} akmods \
+      gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' && \
+    chmod -x /usr/sbin/akmods-ostree-post
+
+# Phase 2: the akmod source package. Its %post is now inert.
+#
+# NOT `dnf5 install`. akmod-nvidia-open grew a hard Requires on
+# nvidia-open-kmod-common, which only xorg-x11-drv-nvidia provides, which
+# itself hard-requires nvidia-kmod -- and pre-build, the only providers of
+# THAT are the closed prebuilt kmod or akmod-nvidia. Depsolving here is
+# circular by construction, and when updates carry a newer closed akmod than
+# -open (true right now: closed 610 vs -open 595), dnf "resolves" it by
+# installing closed akmod-nvidia 610 plus a downgraded -open -- the exact
+# poison phase 4 documents. So: fetch the bare RPM, install it dep-free.
+# Its real build-time needs came in phase 1; the userspace dep heals in
+# phase 4.
+# --noscripts: the akmod's %post only invokes the hook phase 1 neutralized,
+# so under dnf5 it "failed" as a tolerated non-critical error -- but plain
+# rpm turns a failing scriptlet into a failing install. Skip it; phase 3 is
+# the build.
+# updates-testing, reluctantly: this image's kernel (7.1.x) dropped headers
+# that nvidia-open <= 595 still includes (of_gpio.h), so stable's -open akmod
+# cannot compile at all. The matching >= 610 -open build currently sits in
+# updates-testing only. dnf picks the newest candidate across both repos, so
+# this line keeps working -- and can lose the --enablerepo -- once it lands
+# in stable.
+RUN dnf5 download --enablerepo=rpmfusion-nonfree-updates-testing \
+      --destdir /tmp/akmod-rpm akmod-nvidia-open && \
+    rpm -Uvh --nodeps --noscripts /tmp/akmod-rpm/akmod-nvidia-open-*.rpm && \
+    rm -rf /tmp/akmod-rpm
+
+# Phase 3: build and sign, as the akmods user.
+#
+# The secrets are mounted at neutral paths and copied to akmods-owned files,
+# because akmodsbuild runs unprivileged and cannot read a root-only mount.
+# The copies are removed inside this same RUN, so they never reach the layer.
+#
+# The built kmod installs with --nodeps for the same reason phase 2 does:
+# it now Requires nvidia-open-kmod-common (userspace), and userspace requires
+# nvidia-kmod (this kmod) -- the two only close as a pair. Phase 4 installs
+# the userspace half and heals this immediately; scriptlets stay ON here
+# because the kmod's %post runs depmod, which we want.
+RUN --mount=type=secret,id=akmods_priv,target=/run/secrets/akmods_priv \
+    --mount=type=secret,id=akmods_cert,target=/run/secrets/akmods_cert \
+    set -eu; \
+    KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core); \
+    chmod 755 /var; \
+    install -d -o akmods -g akmods /tmp/akmod-out; \
+    install -o akmods -g akmods -m 0400 /run/secrets/akmods_priv \
+        /etc/pki/akmods/private/private_key.priv; \
+    install -o akmods -g akmods -m 0444 /run/secrets/akmods_cert \
+        /etc/pki/akmods/certs/public_key.der; \
+    runuser -s /bin/bash -c \
+      "akmodsbuild --kernels ${KV} --outputdir /tmp/akmod-out \
+       /usr/src/akmods/nvidia-open-kmod-*.src.rpm" akmods; \
+    rm -f /etc/pki/akmods/private/private_key.priv \
+          /etc/pki/akmods/certs/public_key.der; \
+    rpm -Uvh --nodeps $(find /tmp/akmod-out -name 'kmod-nvidia-open-*.rpm' ! -name '*debug*'); \
+    rm -rf /tmp/akmod-out
+
+# Phase 4: userspace.
+#
+# ORDER MATTERS, and so does the shim. xorg-x11-drv-nvidia hard-requires
+# `nvidia-kmod`, and as of 610.57.04 NOTHING in the -open family provides it
+# any more -- not the akmod, and not even the built kmod, which now provides
+# only nvidia-open-kmod. The only repo providers are the closed akmod-nvidia
+# / kmod-nvidia, which is exactly what must never land here: the closed kmod
+# does not support Blackwell, and the akmod collision is how earlier builds
+# silently downgraded -open (see phase 2). So the requirement is satisfied
+# by assertion: an empty shim RPM, built on the spot, Provides nvidia-kmod
+# at the pinned version on behalf of the real, signed nvidia-open module
+# phase 3 already installed.
+#
+# --exclude makes a closed-akmod regression fail loudly instead of silently.
+# Userspace is pinned to the akmod's exact epoch:version, because anything
+# newer would require a newer nvidia-kmod than the shim asserts. Unpinned,
+# this breaks the moment rpmfusion updates userspace ahead of -open.
+# updates-testing here matches phase 2: the pin follows whatever version the
+# akmod came from, and while that is a testing-only version its userspace is
+# too.
+RUN NVVER=$(rpm -q --qf '%{EPOCH}:%{VERSION}' akmod-nvidia-open) && \
+    echo "pinning userspace to ${NVVER}" && \
+    mkdir -p /tmp/shim && \
+    printf '%s\n' \
+      "Name: pulsar-nvidia-kmod-shim" \
+      "Epoch: ${NVVER%%:*}" \
+      "Version: ${NVVER#*:}" \
+      "Release: 0" \
+      "Summary: Provides nvidia-kmod on behalf of the signed nvidia-open kmod" \
+      "License: MIT" \
+      "BuildArch: noarch" \
+      "Provides: nvidia-kmod = ${NVVER}" \
+      "%description" \
+      "Stand-in provide for the kmod-nvidia-open built and signed in this image." \
+      "%files" > /tmp/shim/shim.spec && \
+    rpmbuild -bb --define '_topdir /tmp/shim/rpmbuild' /tmp/shim/shim.spec && \
+    dnf5 install -y --exclude=akmod-nvidia \
+      --enablerepo=rpmfusion-nonfree-updates-testing \
+      /tmp/shim/rpmbuild/RPMS/noarch/pulsar-nvidia-kmod-shim-*.rpm \
+      "xorg-x11-drv-nvidia-${NVVER}*" \
+      "xorg-x11-drv-nvidia-cuda-${NVVER}*" \
+      "xorg-x11-drv-nvidia-power-${NVVER}*" \
+      "nvidia-settings-${NVVER}*" \
+      libva-nvidia-driver && \
+    rm -rf /tmp/shim
+
+# Phase 5: verify. Its own step so the message cannot lie about which failure
+# occurred -- an earlier version chained this onto the build with && and
+# reported "unsigned" for what was actually a failed dnf transaction.
+#
+# "Signed by something" is not the check that matters. What matters is that
+# it was signed by the key whose PUBLIC cert this image tells the user to
+# enroll (/etc/pki/pulsar/MOK.der). If those drift apart -- someone
+# regenerates the akmods key and forgets to update the committed cert -- the
+# user enrolls a cert that did not sign the module and Secure Boot rejects
+# it at boot, which is exactly the black screen this phase exists to prevent.
+# Comparing the module's sig_key against the cert catches that at build time.
+#
+# sig_key is whichever signer identifier sign-file embedded, and that is NOT
+# always the Subject Key Identifier -- with the issuerAndSerialNumber form it
+# is the cert's SERIAL. Accept either, or this rejects perfectly good builds.
+# All values normalized to bare uppercase hex before comparing.
+RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
+    KO="/lib/modules/${KV}/extra/nvidia-open/nvidia.ko.xz" && \
+    { [ -f "$KO" ] || { echo "FATAL: ${KO} was never built"; exit 1; }; } && \
+    SIGNER=$(modinfo -F signer "$KO") && \
+    { [ -n "$SIGNER" ] || { echo "FATAL: nvidia.ko is unsigned; would black-screen under Secure Boot"; exit 1; }; } && \
+    echo "nvidia.ko signed by: ${SIGNER}" && \
+    SIGKEY=$(modinfo -F sig_key "$KO" | tr -d ': ' | tr 'a-f' 'A-F') && \
+    CERT=/etc/pki/pulsar/MOK.der && \
+    SERIAL=$(openssl x509 -inform der -in "$CERT" -noout -serial \
+             | cut -d= -f2 | tr -d ': ' | tr 'a-f' 'A-F') && \
+    SKI=$(openssl x509 -inform der -in "$CERT" -noout -ext subjectKeyIdentifier \
+          | tail -n1 | tr -d ': ' | tr 'a-f' 'A-F') && \
+    { [ -n "$SIGKEY" ] && [ -n "${SERIAL}${SKI}" ] || { echo "FATAL: could not read module sig_key or read ${CERT}"; exit 1; }; } && \
+    { [ "$SIGKEY" = "$SERIAL" ] || [ "$SIGKEY" = "$SKI" ] || { \
+        echo "FATAL: nvidia.ko was signed by key id ${SIGKEY}, which is neither the"; \
+        echo "       serial (${SERIAL}) nor the SKI (${SKI}) of the cert this image"; \
+        echo "       ships at ${CERT}. Enrolling that cert would NOT authorize this"; \
+        echo "       module -- Secure Boot would refuse it. Update the committed cert."; exit 1; }; } && \
+    echo "signing key matches the shipped MOK.der (${SIGKEY})" && \
+    { rpm -q akmod-nvidia >/dev/null 2>&1 && { echo "FATAL: closed akmod-nvidia got pulled in"; exit 1; } || true; }
+
+# Restore the hook so the shipped image matches stock Fedora behaviour.
+RUN chmod +x /usr/sbin/akmods-ostree-post
+
+# ---------------------------------------------------------------------------
+# NVIDIA-specific overlay, then a second initramfs regen -- nvidia-pulsar.conf
+# sets modprobe options that live in the initramfs, and the vanilla image's
+# dracut run happened before this file existed.
+# ---------------------------------------------------------------------------
+COPY system_files.nvidia/ /
+
+RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
+    dracut --force --kver ${KV} /usr/lib/modules/${KV}/initramfs.img
+
+# Same rule as the base image: /var is machine-local, ship it empty (plus
+# the same sticky /var/tmp the base restores -- see Containerfile).
+RUN dnf5 clean all && \
+    rm -rf /tmp/* /var/* && \
+    install -d -m 1777 /var/tmp && \
+    bootc container lint

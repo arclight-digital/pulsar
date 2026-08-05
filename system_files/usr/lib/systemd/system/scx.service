@@ -1,0 +1,23 @@
+[Unit]
+Description=sched_ext scheduler (scx_lavd)
+After=multi-user.target
+ConditionPathExists=/sys/kernel/sched_ext
+# If the scheduler dies repeatedly, give up rather than thrash. The kernel
+# falls back to EEVDF automatically, so this degrades gracefully.
+#
+# These live in [Unit], not [Service]. systemd accepts StartLimitBurst in
+# [Service] as a legacy alias but silently IGNORES StartLimitIntervalSec
+# there ("Unknown key"), which left the interval at its 10s default -- and
+# with RestartSec=5 only three starts fit in 10s, so the limit could never
+# trip and a crash-looping scheduler restarted forever.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/scx_lavd --autopilot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+[org.gnome.desktop.interface]
+font-name='Host Grotesk 11'
+document-font-name='Host Grotesk 11'
+monospace-font-name='JetBrains Mono 11'
+color-scheme='prefer-dark'
+font-antialiasing='rgba'
+font-hinting='slight'
+
+[org.gnome.desktop.wm.preferences]
+titlebar-font='Host Grotesk Bold 11'
+button-layout='appmenu:minimize,maximize,close'
+
+[org.gnome.mutter]
+experimental-features=['scale-monitor-framebuffer']
+
+[org.gnome.desktop.peripherals.touchpad]
+tap-to-click=true
+two-finger-scrolling-enabled=true
+
+[org.gnome.desktop.background]
+picture-uri='file:///usr/share/backgrounds/pulsar/default.png'
+picture-uri-dark='file:///usr/share/backgrounds/pulsar/default.png'
+
+[org.gnome.desktop.screensaver]
+picture-uri='file:///usr/share/backgrounds/pulsar/default.png'

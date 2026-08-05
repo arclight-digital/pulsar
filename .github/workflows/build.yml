@@ -1,0 +1,123 @@
+# Everything is built here. The machine running Pulsar builds nothing and is
+# configured with nothing: it pulls a signed image and bootc's own timer
+# stages it. Both variants are pushed to ghcr with provenance attestations.
+#
+# This workflow holds the Secure Boot signing key (secrets AKMODS_PRIV /
+# AKMODS_CERT, base64 of the DER key and cert that are ALREADY enrolled in
+# this machine's MOK). That is a deliberate trade: the base image already
+# comes from here, so a compromise of this repo owns the target machine with
+# or without the signing key. The key is written to a tmpfs-backed path,
+# passed to podman as a build secret, and shredded in an always() step.
+#
+# The committed public cert at system_files/etc/pki/pulsar/MOK.der must match
+# AKMODS_CERT. Phase 5 of Containerfile.nvidia fails the build if it does not,
+# which is what stops a stale cert from black-screening the machine.
+name: build
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly, ahead of the machine's 04:00 local staging window.
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+
+env:
+  FEDORA_VERSION: "44"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Both images together are ~17 GB plus intermediate layers, well past
+      # what a stock runner has free on /. The temp disk has room to spare.
+      - name: Put container storage on the temp disk
+        run: |
+          sudo mkdir -p /mnt/podman && sudo chown "$(id -u):$(id -g)" /mnt/podman
+          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/podman"\nrunroot = "/tmp/podman-run"\n' \
+            > /tmp/storage.conf
+          echo "CONTAINERS_STORAGE_CONF=/tmp/storage.conf" >> "$GITHUB_ENV"
+          df -h / /mnt
+
+      # ghcr namespaces must be lowercase; repository_owner may not be.
+      - name: Resolve image names
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "IMAGE=ghcr.io/${OWNER,,}/pulsar" >> "$GITHUB_ENV"
+          echo "IMAGE_NVIDIA=ghcr.io/${OWNER,,}/pulsar-nvidia" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build vanilla
+        run: |
+          podman build --pull=newer \
+            --file Containerfile \
+            --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
+            -t "${IMAGE}:${FEDORA_VERSION}" -t "${IMAGE}:latest" .
+
+      - name: Push vanilla
+        id: push_vanilla
+        run: |
+          podman push --digestfile /tmp/digest-vanilla "${IMAGE}:${FEDORA_VERSION}"
+          podman push "${IMAGE}:latest"
+          echo "digest=$(cat /tmp/digest-vanilla)" >> "$GITHUB_OUTPUT"
+
+      # /dev/shm is tmpfs: the key never touches the runner's disk. The
+      # nvidia base resolves from local storage, so this layers on the exact
+      # image just pushed rather than racing the registry for it.
+      - name: Build nvidia
+        env:
+          AKMODS_PRIV: ${{ secrets.AKMODS_PRIV }}
+          AKMODS_CERT: ${{ secrets.AKMODS_CERT }}
+        run: |
+          if [ -z "$AKMODS_PRIV" ] || [ -z "$AKMODS_CERT" ]; then
+            echo "::error::AKMODS_PRIV/AKMODS_CERT secrets are not set; cannot sign the nvidia kmod."
+            exit 1
+          fi
+          install -d -m 0700 /dev/shm/keys
+          umask 077
+          printf '%s' "$AKMODS_PRIV" | base64 -d > /dev/shm/keys/priv
+          printf '%s' "$AKMODS_CERT" | base64 -d > /dev/shm/keys/cert
+          podman build \
+            --file Containerfile.nvidia \
+            --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
+            --build-arg BASE_IMAGE="${IMAGE}" \
+            --secret id=akmods_priv,src=/dev/shm/keys/priv \
+            --secret id=akmods_cert,src=/dev/shm/keys/cert \
+            -t "${IMAGE_NVIDIA}:${FEDORA_VERSION}" -t "${IMAGE_NVIDIA}:latest" .
+
+      - name: Destroy the key material
+        if: always()
+        run: |
+          shred -u /dev/shm/keys/* 2>/dev/null || true
+          rm -rf /dev/shm/keys
+
+      - name: Push nvidia
+        id: push_nvidia
+        run: |
+          podman push --digestfile /tmp/digest-nvidia "${IMAGE_NVIDIA}:${FEDORA_VERSION}"
+          podman push "${IMAGE_NVIDIA}:latest"
+          echo "digest=$(cat /tmp/digest-nvidia)" >> "$GITHUB_OUTPUT"
+
+      - name: Attest vanilla
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push_vanilla.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest nvidia
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_NVIDIA }}
+          subject-digest: ${{ steps.push_nvidia.outputs.digest }}
+          push-to-registry: true

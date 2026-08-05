@@ -1,0 +1,5 @@
+# Only honoured by a fresh `bootc install`; a rebase onto this image never
+# re-runs presets. The multi-user.target.wants symlink shipped alongside
+# scx.service is what actually enables it on a rebased system.
+enable scx.service
+disable NetworkManager-wait-online.service

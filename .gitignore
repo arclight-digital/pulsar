@@ -1,0 +1,6 @@
+# Never commit signing material. The key is passed to podman as a build
+# secret from /etc/pki/akmods-keys and must never enter this repo.
+*.priv
+*.key
+*.pem
+cosign.key

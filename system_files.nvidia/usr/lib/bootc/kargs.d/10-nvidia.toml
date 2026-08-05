@@ -1,0 +1,11 @@
+# Keep nouveau from ever binding the GPU, and turn on DRM KMS for Wayland.
+# rd.driver.blacklist covers the initramfs, modprobe.blacklist the real root.
+#
+# CAVEAT: kargs.d handling on rpm-ostree-managed Silverblue has been
+# inconsistent across releases, so this file is not the only line of defence:
+# the modprobe.d nouveau blacklist (baked into the initramfs by the dracut
+# regen) holds even if these kargs are ignored. If they do not show up in
+# /proc/cmdline after a rebase, apply them once client-side:
+#   rpm-ostree kargs --append=rd.driver.blacklist=nouveau \
+#     --append=modprobe.blacklist=nouveau --append=nvidia-drm.modeset=1
+kargs = ["rd.driver.blacklist=nouveau", "modprobe.blacklist=nouveau", "nvidia-drm.modeset=1"]
