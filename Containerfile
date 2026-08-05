@@ -176,30 +176,54 @@ RUN rpm --import https://mise.jdx.dev/gpg-key.pub && \
 # releases deliberately ship only the script (upstream's reasoning: shipping
 # more unverifiable pieces is not worth an icon). Fetching by pinned hash is
 # what makes that safe to do anyway.
+#
+# Everything is ALSO staged at /usr/share/pulsar/gamescale/ in the exact
+# layout upstream's installer recognises as a checkout -- install.sh beside
+# gamescale.sh, with extension/metadata.json under it. That is not a spare
+# copy for its own sake:
+#
+# A Flatpak launcher can never reach /usr/bin/gamescale. Flatpak reserves
+# /usr for the runtime and refuses to bind the host's over it ("Path /usr is
+# reserved by Flatpak"), so a sandbox-visible copy under $HOME is not a
+# preference, it is the only arrangement that works. Granting a launcher
+# therefore always means running the installer.
+#
+# Staged here, that install runs OFFLINE against these pinned, hash-verified
+# files instead of curling main. So the ~/.local copy is a projection of the
+# image's copy rather than an independently downloaded second version, and
+# `pulsar setup gamescale` can be a thin wrapper over upstream's own logic
+# rather than a reimplementation of its flatpak grants that drifts.
 # ---------------------------------------------------------------------------
 ARG GAMESCALE_VERSION=v2.0.0
 ARG GAMESCALE_UUID=gamescale@arclight.digital
 RUN set -eux; \
     REL="https://github.com/arclight-digital/gamescale/releases/download/${GAMESCALE_VERSION}"; \
     RAW="https://raw.githubusercontent.com/arclight-digital/gamescale/${GAMESCALE_VERSION}/extension"; \
+    SRC="/usr/share/pulsar/gamescale"; \
     EXT="/usr/share/gnome-shell/extensions/${GAMESCALE_UUID}"; \
-    curl -fsSL "${REL}/gamescale.sh" -o /usr/bin/gamescale; \
-    echo "5f0ef1f338ea915fb6f5f141e625b813ac57fdbc4a7333b7b7d0094518dc5f91  /usr/bin/gamescale" \
-      | sha256sum -c -; \
-    chmod 0755 /usr/bin/gamescale; \
-    mkdir -p "${EXT}/icons"; \
-    curl -fsSL "${RAW}/extension.js"                 -o "${EXT}/extension.js"; \
-    curl -fsSL "${RAW}/metadata.json"                -o "${EXT}/metadata.json"; \
-    curl -fsSL "${RAW}/stylesheet.css"               -o "${EXT}/stylesheet.css"; \
-    curl -fsSL "${RAW}/icons/gamescale-symbolic.svg" -o "${EXT}/icons/gamescale-symbolic.svg"; \
-    curl -fsSL "${RAW}/icons/gamescale.svg"          -o "${EXT}/icons/gamescale.svg"; \
-    ( cd "${EXT}" && printf '%s\n' \
-      "99d4e239a212c3ad90118eaf3a609c2ca582c9df2cf490c7580358c03f242890  extension.js" \
-      "e49e9bf6fc9956bfc0c9f31b0457fa9bd1bc6c42e11a1b6804abea0c28ee430f  metadata.json" \
-      "7c41ae899869994c5056c2ed6e0ce939c46333e90fe355f26cf7e3e580f79e27  stylesheet.css" \
-      "57e345929be538ed1542c5c7b1d7a25b9c8551d3c5de193f4883416ec00ba708  icons/gamescale-symbolic.svg" \
-      "ddea876638fca8e25dfd4508385a881e529de9b1c0f4db65585e26aaacdca206  icons/gamescale.svg" \
+    mkdir -p "${SRC}/extension/icons" "${EXT}/icons"; \
+    curl -fsSL "${REL}/gamescale.sh" -o "${SRC}/gamescale.sh"; \
+    curl -fsSL "${REL}/install.sh"   -o "${SRC}/install.sh"; \
+    curl -fsSL "${RAW}/extension.js"                 -o "${SRC}/extension/extension.js"; \
+    curl -fsSL "${RAW}/metadata.json"                -o "${SRC}/extension/metadata.json"; \
+    curl -fsSL "${RAW}/stylesheet.css"               -o "${SRC}/extension/stylesheet.css"; \
+    curl -fsSL "${RAW}/icons/gamescale-symbolic.svg" -o "${SRC}/extension/icons/gamescale-symbolic.svg"; \
+    curl -fsSL "${RAW}/icons/gamescale.svg"          -o "${SRC}/extension/icons/gamescale.svg"; \
+    ( cd "${SRC}" && printf '%s\n' \
+      "5f0ef1f338ea915fb6f5f141e625b813ac57fdbc4a7333b7b7d0094518dc5f91  gamescale.sh" \
+      "6a2bafdde0e3589c8e0d3a8ffcde41181fdfef18ce5f487d36ec0ef62410775f  install.sh" \
+      "99d4e239a212c3ad90118eaf3a609c2ca582c9df2cf490c7580358c03f242890  extension/extension.js" \
+      "e49e9bf6fc9956bfc0c9f31b0457fa9bd1bc6c42e11a1b6804abea0c28ee430f  extension/metadata.json" \
+      "7c41ae899869994c5056c2ed6e0ce939c46333e90fe355f26cf7e3e580f79e27  extension/stylesheet.css" \
+      "57e345929be538ed1542c5c7b1d7a25b9c8551d3c5de193f4883416ec00ba708  extension/icons/gamescale-symbolic.svg" \
+      "ddea876638fca8e25dfd4508385a881e529de9b1c0f4db65585e26aaacdca206  extension/icons/gamescale.svg" \
       | sha256sum -c - ); \
+    install -m 0755 "${SRC}/gamescale.sh" /usr/bin/gamescale; \
+    chmod 0755 "${SRC}/install.sh"; \
+    install -m 0644 "${SRC}/extension/extension.js" "${SRC}/extension/metadata.json" \
+                    "${SRC}/extension/stylesheet.css" "${EXT}/"; \
+    install -m 0644 "${SRC}/extension/icons/gamescale-symbolic.svg" \
+                    "${SRC}/extension/icons/gamescale.svg" "${EXT}/icons/"; \
     test "$(jq -r .uuid "${EXT}/metadata.json")" = "${GAMESCALE_UUID}"; \
     SHELL_MAJOR="$(gnome-shell --version | sed 's/[^0-9.]//g' | cut -d. -f1)"; \
     if ! jq -e --arg v "${SHELL_MAJOR}" '."shell-version" | index($v)' "${EXT}/metadata.json" >/dev/null; then \
