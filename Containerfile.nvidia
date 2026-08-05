@@ -36,10 +36,23 @@ FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 # gcc-c++, elfutils-libelf-devel and the download command are here because
 # phase 2 installs the akmod WITHOUT depsolving (see below) -- its build
 # deps have to arrive explicitly.
+# The koji fallback exists because the Fedora container compose can be AHEAD
+# of the mirrors: the base image ships a kernel whose kernel-devel hasn't hit
+# updates (or even updates-archive) metadata yet. Koji serves every RPM the
+# moment it is built, no mirror sync involved, so a nightly landing in that
+# window still builds.
 RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
+    VER=$(rpm -q --qf '%{VERSION}' kernel-core) && \
+    REL=$(rpm -q --qf '%{RELEASE}' kernel-core) && \
     echo "building against kernel ${KV}" && \
-    dnf5 install -y --enablerepo=updates-archive kernel-devel-${KV} akmods \
-      gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' && \
+    { dnf5 install -y --enablerepo=updates-archive kernel-devel-${KV} akmods \
+        gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' || \
+      { echo "kernel-devel ${KV} not on mirrors yet; fetching from koji directly" && \
+        curl -fL -o /tmp/kernel-devel.rpm \
+          "https://kojipkgs.fedoraproject.org/packages/kernel/${VER}/${REL}/x86_64/kernel-devel-${KV}.rpm" && \
+        dnf5 install -y /tmp/kernel-devel.rpm akmods \
+          gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' && \
+        rm -f /tmp/kernel-devel.rpm; }; } && \
     chmod -x /usr/sbin/akmods-ostree-post
 
 # Phase 2: the akmod source package. Its %post is now inert.
