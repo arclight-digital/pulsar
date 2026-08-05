@@ -17,9 +17,13 @@ experimental-features=['scale-monitor-framebuffer']
 tap-to-click=true
 two-finger-scrolling-enabled=true
 
+# silk is the default pair; GNOME flips between them with the style toggle.
+# The other three pairs ship alongside and are registered for the Appearance
+# panel via /usr/share/gnome-background-properties/pulsar.xml.
 [org.gnome.desktop.background]
-picture-uri='file:///usr/share/backgrounds/pulsar/default.png'
-picture-uri-dark='file:///usr/share/backgrounds/pulsar/default.png'
+picture-uri='file:///usr/share/backgrounds/pulsar/pulsar-silk-light.png'
+picture-uri-dark='file:///usr/share/backgrounds/pulsar/pulsar-silk-dark.png'
 
+# lock screen has no dark-variant key; silk-dark is the brand default
 [org.gnome.desktop.screensaver]
-picture-uri='file:///usr/share/backgrounds/pulsar/default.png'
+picture-uri='file:///usr/share/backgrounds/pulsar/pulsar-silk-dark.png'

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+<!-- Registers the four Pulsar wallpaper pairs with the Appearance panel.
+     filename = light-style cut, filename-dark = dark-style cut; GNOME flips
+     between them with the style toggle. The PNGs are rendered in CI from
+     assets/shaders/pulsar.frag (see scripts/render-wallpapers.py) -- these
+     paths must stay in sync with the VARIANTS table there. -->
+<wallpapers>
+  <wallpaper deleted="false">
+    <name>Pulsar Silk</name>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-silk-light.png</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-silk-dark.png</filename-dark>
+    <options>zoom</options>
+    <shade_type>solid</shade_type>
+    <pcolor>#0B0E1A</pcolor>
+    <scolor>#0B0E1A</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Pulsar Leak</name>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-leak-light.png</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-leak-dark.png</filename-dark>
+    <options>zoom</options>
+    <shade_type>solid</shade_type>
+    <pcolor>#0B0E1A</pcolor>
+    <scolor>#0B0E1A</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Pulsar Satin</name>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-satin-light.png</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-satin-dark.png</filename-dark>
+    <options>zoom</options>
+    <shade_type>solid</shade_type>
+    <pcolor>#0B0E1A</pcolor>
+    <scolor>#0B0E1A</scolor>
+  </wallpaper>
+  <wallpaper deleted="false">
+    <name>Pulsar Holo</name>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-holo-light.png</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-holo-dark.png</filename-dark>
+    <options>zoom</options>
+    <shade_type>solid</shade_type>
+    <pcolor>#0B0E1A</pcolor>
+    <scolor>#0B0E1A</scolor>
+  </wallpaper>
+</wallpapers>
