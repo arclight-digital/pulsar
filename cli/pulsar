@@ -269,15 +269,12 @@ cmd_status() {
 cmd_manifest() {
     [ -r "$MANIFEST" ] || die "no manifest at ${MANIFEST} (image predates it, or was built without one)"
     if [ "${JSON:-0}" = 1 ]; then cat "$MANIFEST"; return 0; fi
-    # Colours are passed IN rather than baked into the jq program: jq cannot
-    # know whether stdout is a terminal, and hardcoded escapes meant
-    # `pulsar manifest | cat` emitted raw control codes.
-    # The column is measured, never guessed. A fixed width of 11 already ran
-    # "attestation" into its value once; components come from the manifest, so
-    # the longest key is whatever the image happened to ship -- scheduler_btf
-    # is 13, nvidia_driver is 13, and the next one is not knowable from here.
-    local rows
-    rows=$(jq -r --arg c "$C_KEY" --arg r "$C_RESET" '
+    # Rows leave jq as key<TAB>value, unpadded and uncolored: widths, color,
+    # and wrapping are terminal concerns, and bash is the only side that
+    # knows the terminal. (Escapes hardcoded in the jq program once meant
+    # `pulsar manifest | cat` emitted raw control codes.)
+    local tsv
+    tsv=$(jq -r '
       [ ["image",   (.image // "?") + (if .variant then " (" + .variant + ")" else "" end)],
         ["version", (.version // "?")],
         ["base",    (.base // "?")],
@@ -287,12 +284,71 @@ cmd_manifest() {
       + (.components // {} | to_entries | map([.key, (.value | tostring)]))
       + [["sbom", "pulsar sbom"]]
       + (if .attestation then [["attestation", .attestation]] else [] end)
-      | (map(.[0] | length) | max) as $w
-      | .[] | $c + .[0] + (" " * ($w - (.[0] | length) + 2)) + $r + .[1]
+      | .[] | .[0] + "\t" + .[1]
     ' "$MANIFEST") || die "manifest at ${MANIFEST} is not valid JSON"
 
-    if want_logo; then paste_logo "$rows"; else printf '%s\n' "$rows"; fi
+    # The key column is measured, never guessed. A fixed width of 11 already
+    # ran "attestation" into its value once; components come from the
+    # manifest, so the longest key is whatever the image happened to ship.
+    local keyw=0 k v
+    while IFS=$'\t' read -r k v; do
+        [ "${#k}" -gt "$keyw" ] && keyw=${#k}
+    done <<<"$tsv"
+
+    # Fit against the REAL terminal, not a magic minimum. The art is drawn
+    # only when it leaves the values a usable column, and values wrap inside
+    # their column -- the terminal's own wrap restarts at column zero, which
+    # shears the art and the table both (seen in the field at 72 columns:
+    # every long value snapped its row in half). An explicit --logo skips the
+    # fit check; asking twice means wanting it regardless. cols=0 (no tty,
+    # tput failure) disables wrapping entirely -- pipes do not wrap.
+    local cols=0 artw=0 avail=0
+    [ -n "$C_RESET" ] && cols=$(tput cols 2>/dev/null || echo 0)
+    if want_logo; then
+        artw=$(logo_width)
+        if [ "$cols" -gt 0 ] && [ "${LOGO:-auto}" != always ] && \
+           [ $((cols - artw - 2 - keyw - 2)) -lt 24 ]; then
+            artw=0    # art at the price of the information is the wrong trade
+        fi
+    fi
+    if [ "$cols" -gt 0 ]; then
+        avail=$((cols - keyw - 2))
+        [ "$artw" -gt 0 ] && avail=$((avail - artw - 2))
+        [ "$avail" -lt 16 ] && avail=0   # too narrow to wrap sensibly
+    fi
+
+    local rows
+    rows=$(format_rows "$keyw" "$avail" <<<"$tsv")
+    if [ "$artw" -gt 0 ]; then paste_logo "$rows"; else printf '%s\n' "$rows"; fi
     swatches
+}
+
+# key<TAB>value rows in, colored lines out: the key padded into its column,
+# the value word-wrapped to $2 columns with continuations indented under the
+# value column. avail=0 wraps nothing. A single word longer than the column
+# (an oci:// reference) is left whole -- a word broken to fit is worse than
+# one the terminal wraps.
+format_rows() {
+    local keyw=$1 avail=$2 k v line word i
+    while IFS=$'\t' read -r k v; do
+        local -a words=() parts=()
+        if [ "$avail" -gt 0 ]; then
+            read -ra words <<<"$v"
+            line=""
+            for word in "${words[@]}"; do
+                if [ -z "$line" ]; then line=$word
+                elif [ $(( ${#line} + 1 + ${#word} )) -le "$avail" ]; then line="$line $word"
+                else parts+=("$line"); line=$word; fi
+            done
+            parts+=("$line")
+        else
+            parts=("$v")
+        fi
+        printf '%s%-*s%s%s\n' "$C_KEY" $((keyw + 2)) "$k" "$C_RESET" "${parts[0]}"
+        for ((i = 1; i < ${#parts[@]}; i++)); do
+            printf '%*s%s\n' $((keyw + 2)) '' "${parts[i]}"
+        done
+    done
 }
 
 # The mark as ASCII, rendered from assets/brand/pulsar-mark.svg by
@@ -307,14 +363,21 @@ LOGO_FILE=${PULSAR_LOGO:-/usr/share/pulsar/logo.ansi}
 
 # fastfetch's shape: art on the left, readout on the right, and whichever
 # column is shorter simply runs out. Suppressed when there is no terminal to
-# draw on, no art to draw, or too few columns to hold both.
+# draw on or no art to draw; whether the terminal is WIDE enough is decided
+# in cmd_manifest, where the measured key column is known.
 want_logo() {
     [ "${LOGO:-auto}" != "never" ] || return 1
     [ -r "$LOGO_FILE" ] || return 1
-    [ "${LOGO:-auto}" != "always" ] || return 0
-    [ -n "$C_RESET" ] || return 1
-    local cols; cols=$(tput cols 2>/dev/null || echo 0)
-    [ "$cols" -ge 92 ]
+    [ "${LOGO:-auto}" = "always" ] || [ -n "$C_RESET" ]
+}
+
+# Measured from the art itself, with the escapes stripped: the file is
+# generated, so hardcoding its width here would be a second source of truth
+# that nothing keeps honest.
+logo_width() {
+    local first
+    IFS= read -r first < "$LOGO_FILE" || true
+    printf '%s' "$first" | sed $'s/\033\[[0-9;]*m//g' | wc -c
 }
 
 paste_logo() {
