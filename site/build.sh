@@ -23,6 +23,12 @@ cp "${REPO}/assets/icons/pulsar-mark.svg" \
    "${REPO}/assets/fonts/Host_Grotesk/static/HostGrotesk-Bold.ttf" \
    "${REPO}/assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf" \
    "${OUT}/assets/"
+# committed silk stills: the no-WebGL/while-loading hero fallback. The one
+# exception to "nothing rendered lives in git" -- silk is locked, the pair is
+# ~180KB total, and regenerating is documented in the file's sibling renders.
+cp "${REPO}/site/assets-static/silk-still-dark.jpg" \
+   "${REPO}/site/assets-static/silk-still-light.jpg" \
+   "${OUT}/assets/"
 # both font licenses travel with their fonts; distinct names, one dir
 cp "${REPO}/assets/fonts/Host_Grotesk/OFL.txt"   "${OUT}/assets/OFL-host-grotesk.txt"
 cp "${REPO}/assets/fonts/JetBrains_Mono/OFL.txt" "${OUT}/assets/OFL-jetbrains-mono.txt"

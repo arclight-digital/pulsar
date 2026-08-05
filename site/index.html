@@ -32,12 +32,16 @@ try { const t = localStorage.getItem('pulsar-theme');
        built, signed, and attested in the cloud. Your machine never compiles a thing.</p>
     <p class="srclink"><a href="https://github.com/arclight-digital/pulsar">Browse the source on GitHub →</a></p>
 
-    <div class="install" role="group" aria-label="Install commands">
-      <p class="req">already running <strong>Fedora Silverblue or Kinoite 44+</strong>:</p>
+    <figure class="term install" role="group" aria-label="Install commands">
+      <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> already on
+        <strong>Fedora Silverblue / Kinoite 44+</strong> &mdash; pick a lane</figcaption>
       <div class="row">
         <span class="which">standard</span>
-        <code>sudo bootc switch ghcr.io/arclight-digital/pulsar:latest</code>
-        <button class="copy" data-copy aria-label="Copy the standard install command">
+        <code>sudo bootc switch \
+  ghcr.io/arclight-digital/pulsar:latest</code>
+        <button class="copy" data-copy
+                data-copy-text="sudo bootc switch ghcr.io/arclight-digital/pulsar:latest"
+                aria-label="Copy the standard install command">
           <svg class="clip" viewBox="0 0 16 16" width="15" height="15" fill="none"
                stroke="currentColor" stroke-width="1.5" aria-hidden="true">
             <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/>
@@ -51,8 +55,11 @@ try { const t = localStorage.getItem('pulsar-theme');
       </div>
       <div class="row">
         <span class="which">nvidia</span>
-        <code>sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest</code>
-        <button class="copy" data-copy aria-label="Copy the NVIDIA install command">
+        <code>sudo bootc switch \
+  ghcr.io/arclight-digital/pulsar-nvidia:latest</code>
+        <button class="copy" data-copy
+                data-copy-text="sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest"
+                aria-label="Copy the NVIDIA install command">
           <svg class="clip" viewBox="0 0 16 16" width="15" height="15" fill="none"
                stroke="currentColor" stroke-width="1.5" aria-hidden="true">
             <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/>
@@ -68,12 +75,13 @@ try { const t = localStorage.getItem('pulsar-theme');
          <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>
          first, then run one of these and reboot. The nvidia cut ships its kernel
          module pre-built and pre-signed for Secure Boot.</p>
-    </div>
+    </figure>
   </div>
 
   <!-- The backdrop deck drives the SAME uniforms the OS wallpapers are
        rendered with: four looks x two themes = the shipped set. -->
   <div class="deck">
+    <span class="deck-note">the shipped wallpapers &mdash; live</span>
     <!-- hidden until a GL context actually exists: no-WebGL visitors must
          never see buttons that silently do nothing -->
     <div class="seg" role="group" aria-label="Backdrop" id="lookSeg" hidden>

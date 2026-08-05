@@ -32,8 +32,7 @@ over-engineered on purpose, MIT-licensed to fork.
 
 ## Operating Context
 
-Site source lives in `site/` of the arclight-digital/pulsar monorepo (dev
-branch until merged); `site/build.sh` stages brand assets and the wallpaper
+Site source lives in `site/` of the arclight-digital/pulsar monorepo; `site/build.sh` stages brand assets and the wallpaper
 shader from `assets/` into `site/_site`, deployed by the site.yml Pages
 workflow (main only). Local preview: `./site/build.sh && python3 -m
 http.server -d site/_site`. The OS image build is a separate workflow and
