@@ -1,0 +1,51 @@
+# Quadlet template -- a container described as a systemd unit.
+#
+# This file is INERT where it sits. Quadlet only reads its own directories,
+# and /usr/share/pulsar/templates is not one of them, so nothing here starts
+# until you copy it:
+#
+#   mkdir -p ~/.config/containers/systemd
+#   cp /usr/share/pulsar/templates/example.container ~/.config/containers/systemd/myapp.container
+#   $EDITOR ~/.config/containers/systemd/myapp.container
+#   systemctl --user daemon-reload
+#   systemctl --user start myapp
+#
+# The unit name comes from the FILENAME: myapp.container becomes myapp.service.
+#
+# Why this rather than `podman run`: a quadlet is declarative, restarts with
+# the session, is logged by journald like everything else, and is a file you
+# can put in version control. It is the same reason the rest of this image is
+# a Containerfile instead of a list of commands someone ran once.
+
+[Unit]
+Description=Example container
+# Containers that need the network should wait for it. Delete if yours does not.
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/caddy:latest
+# Rootless by default: this runs as YOUR user, in your session, with no root
+# daemon anywhere. Ports below 1024 are unavailable as a direct consequence --
+# publish 8080 and reverse-proxy if you need 80.
+PublishPort=8080:80
+# Named volumes live under ~/.local/share/containers. A host path works too:
+#   Volume=%h/srv/site:/srv:Z
+# The :Z is not optional on Fedora -- without it SELinux denies the mount and
+# the container fails in a way that looks like a permissions bug in the app.
+Volume=example-data:/data:Z
+Environment=TZ=UTC
+# Labelled for auto-update; the timer enabled by this image checks it. Use
+# registry with a moving tag (:latest), or local for images you build.
+AutoUpdate=registry
+
+[Service]
+Restart=on-failure
+# Quadlet units are generated at daemon-reload, so a syntax error here shows
+# up as a MISSING unit rather than a failing one. `systemctl --user
+# daemon-reload` then `journalctl --user -b -u podman-user-generator` is how
+# you find out why.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

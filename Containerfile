@@ -94,6 +94,62 @@ RUN dnf5 install -y \
       libvirt \
       qemu-kvm
 
+# ---------------------------------------------------------------------------
+# Dev layer. Two kinds of thing that genuinely cannot live in a container.
+#
+#   bpftrace     kernel tracing. A distrobox cannot attach BPF programs to
+#   bcc-tools    the host kernel, so these are worthless anywhere but here.
+#   sysstat      sar/iostat/pidstat -- the boring numbers you want when the
+#                machine is ALREADY misbehaving and you are not going to get
+#                a second reproduction.
+#   perf         same story, plus a version constraint (below).
+#   direnv       per-directory environments; pairs with mise.
+#
+# perf is version-coupled to the kernel, so it gets a guard -- but the guard
+# is on the SERIES, not the exact build, and that distinction was measured
+# rather than assumed. The base currently ships kernel-core 7.1.5-201.fc44
+# and NO perf-7.1.5-201 exists in any enabled repo, archive included; the
+# repos carry 7.1.6-201 and 6.19.10-300. An exact pin therefore fails every
+# build, immediately.
+#
+# What actually breaks a profile is a perf from a different kernel SERIES,
+# and that is a live possibility here: 6.19.10 sits in the same repo, and it
+# only loses the version comparison to 7.1.6 by luck of ordering. Z-stream
+# drift within a series is harmless -- the perf_event ABI is stable across
+# it -- so the check permits 7.1.5 vs 7.1.6 and rejects 7.1 vs 6.19.
+# ---------------------------------------------------------------------------
+RUN dnf5 install -y \
+      bpftrace \
+      bcc-tools \
+      sysstat \
+      direnv \
+      perf && \
+    KV=$(rpm -q --qf '%{VERSION}' kernel-core) && \
+    PV=$(rpm -q --qf '%{VERSION}' perf) && \
+    echo "kernel-core ${KV} / perf ${PV}" && \
+    if [ "${KV%.*}" != "${PV%.*}" ]; then \
+      echo "FATAL: perf ${PV} is from a different kernel series than ${KV}; profiles would be wrong"; exit 1; \
+    fi
+
+# ---------------------------------------------------------------------------
+# mise: one tool to pin node/python/go/rust per project, so toolchains never
+# get layered into this image and Homebrew never has to exist.
+#
+# It is NOT in Fedora's repos, so this adds mise.jdx.dev as a trust root. That
+# is a real supply-chain decision, so it is made explicitly rather than by a
+# curl|sh: the signing key's FULL fingerprint is asserted before the repo is
+# written, and a swapped or rotated key fails the build instead of quietly
+# installing whatever the new key signed. Precedent already set by rpmfusion
+# and the cachyos COPR above -- this is the same trade, stated out loud.
+# ---------------------------------------------------------------------------
+RUN rpm --import https://mise.jdx.dev/gpg-key.pub && \
+    if ! rpm -qa 'gpg-pubkey*' | grep -qi '^gpg-pubkey-24853ec9f655ce80b48e6c3a8b81c9d17413a06d-'; then \
+      echo "FATAL: mise signing key is not 24853EC9F655CE80B48E6C3A8B81C9D17413A06D"; exit 1; \
+    fi && \
+    printf '[mise]\nname=mise\nbaseurl=https://mise.jdx.dev/rpm/\nenabled=1\ngpgcheck=1\ngpgkey=https://mise.jdx.dev/gpg-key.pub\n' \
+      > /etc/yum.repos.d/mise.repo && \
+    dnf5 install -y mise
+
 # No GUI apps are layered here. Apps are Flatpaks; this image is the OS.
 #
 # Flathub, unfiltered -- Fedora ships a filtered remote. Shipped as a
@@ -141,6 +197,12 @@ RUN [ -f /usr/share/plymouth/themes/spinner/throbber-0001.png ] || \
 # Enabling greenboot-healthcheck.service also pulls in greenboot-success.target
 # and greenboot-set-rollback-trigger.service via its [Install] Also=.
 #
+# podman-auto-update.timer is enabled --global, i.e. for every USER session,
+# not the system. Quadlets in this image's workflow are rootless by design, so
+# the system timer would find nothing to update. It only touches containers
+# explicitly labelled AutoUpdate= (see the shipped template), so enabling it
+# by default cannot surprise a container that did not opt in.
+#
 # Deliberately the ONLY enablement. A second symlink under /usr/lib would
 # survive `systemctl disable`, leaving a unit that reports disabled and keeps
 # running.
@@ -155,6 +217,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     glib-compile-schemas /usr/share/glib-2.0/schemas && \
     systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \
+    systemctl --global enable podman-auto-update.timer && \
     systemctl disable NetworkManager-wait-online.service && \
     plymouth-set-default-theme pulsar && \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \

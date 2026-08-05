@@ -34,6 +34,20 @@ boots with no network is not a broken deployment.
 System-level capability only: `gamescope`, `gamemode`, `mangohud`,
 `steam-devices`, `distrobox`, `libvirt`, `android-tools`, `gnome-tweaks`,
 `greenboot`.
+
+For development: `bpftrace`, `bcc-tools`, `sysstat` and `perf`, which have to
+be on the host because a container cannot attach probes to the host kernel.
+`mise` and `direnv` handle toolchains, so compilers and SDKs are pinned per
+project instead of layered into the image. A default dev box is described in
+`/usr/share/pulsar/distrobox.ini`:
+
+```
+distrobox assemble create --file /usr/share/pulsar/distrobox.ini
+```
+
+`podman-auto-update.timer` is enabled for user sessions, and a commented
+quadlet template lives at `/usr/share/pulsar/templates/example.container` —
+containers as systemd units, rootless, in a file you can version.
 Anything you merely *run* is a Flatpak. This image is the OS.
 
 The nvidia variant builds `nvidia-open` against the image's exact kernel and
