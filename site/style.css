@@ -678,14 +678,57 @@ footer { padding: 0 0 3rem; }
 footer nav { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 footer a { text-decoration: none; font-size: 0.9rem; }
 footer a:hover, footer a:focus-visible { text-decoration: underline; }
-.colophon {
+/* base row: colophon on the left, the by-arclight badge on the right;
+   wraps to two rows when the colophon needs the width */
+.foot-base {
   max-width: 62rem;
   margin: 2rem auto 0;
   padding: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  flex-wrap: wrap;
+}
+.colophon {
+  flex: 1 1 30rem;
   color: var(--muted);
   font-size: 0.8rem;
 }
 .colophon code { font-size: 0.78rem; }
+
+/* the arclight-by badge (@arclux/brand), restated in page CSS: label in the
+   site's mono standing in for the kit's Azeret subset, lockup colored by the
+   theme via currentColor, and the kit's own hover -- a 1px lift with the
+   Arclight accent glow, not Pulsar's */
+.by-arclight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--text);
+  text-decoration: none;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+              filter 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.by-arclight:hover, .by-arclight:focus-visible {
+  transform: translateY(-1px);
+  filter: drop-shadow(0 0 6px rgba(77, 126, 247, 0.25))
+          drop-shadow(0 0 16px rgba(168, 85, 247, 0.1));
+}
+.by-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin-top: 0.15em;
+}
+.by-lockup { height: 22px; width: auto; display: block; }
+@media (prefers-reduced-motion: reduce) {
+  .by-arclight { transition: none; }
+}
 
 /* ---- small screens -------------------------------------------------------- */
 @media (max-width: 26rem) {
