@@ -31,6 +31,17 @@ button-layout='appmenu:minimize,maximize,close'
 [org.gnome.mutter]
 experimental-features=['scale-monitor-framebuffer']
 
+# The gamescale indicator, on by default. It ships system-wide in
+# /usr/share/gnome-shell/extensions, so this only has to switch it on.
+#
+# This sets the DEFAULT value of the list. GNOME replaces the whole list when
+# a user enables anything through the Extensions app, so a user who turns on
+# a second extension keeps gamescale (the app writes the current value back,
+# which already contains it) -- but a user who has explicitly disabled it
+# stays disabled, because their dconf value wins over this default.
+[org.gnome.shell]
+enabled-extensions=['gamescale@arclight.digital']
+
 [org.gnome.desktop.peripherals.touchpad]
 tap-to-click=true
 two-finger-scrolling-enabled=true

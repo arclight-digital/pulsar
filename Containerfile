@@ -67,10 +67,17 @@ RUN dnf5 install -y 'dnf5-command(copr)' && \
 #                   a sandboxed IDE cannot grant itself raw USB access
 #   libvirt+qemu    virtualization is a host daemon stack; the GUI (Boxes,
 #                   virt-manager) stays a Flatpak
-#   gh              needed ON THE HOST, as root: build.sh verifies the ghcr
-#                   base's provenance attestation with it, and .gitconfig
-#                   uses it as the github credential helper. A toolbox copy
-#                   cannot serve either.
+#   gh              a deliberate exception to the Flatpak rule above, stated
+#                   as one. gh extends nothing about what the OS can DO, needs
+#                   no host privilege, and would work fine in a distrobox --
+#                   by the letter of the rule it does not belong here.
+#                   It stays because this image is developed ON a machine
+#                   running it: the repo is on GitHub, the images are on ghcr,
+#                   and `gh attestation verify` is the command the README and
+#                   the site tell strangers to run against those images. On a
+#                   fresh install there is no box yet to run it in, and the
+#                   one command this project asks you to trust it by should
+#                   not require building a container first.
 #   greenboot       boot-time health checks with automatic rollback. This is
 #                   what turns "lighthouses don't drift" from a manual
 #                   `bootc rollback` into something the machine does itself --
@@ -150,6 +157,59 @@ RUN rpm --import https://mise.jdx.dev/gpg-key.pub && \
       > /etc/yum.repos.d/mise.repo && \
     dnf5 install -y mise
 
+# ---------------------------------------------------------------------------
+# gamescale -- run a game at 1x monitor scale so XWayland is handed the panel's
+# real mode, then put the desktop back when it exits.
+#
+# Display configuration is OS territory, and this needs a systemd user unit to
+# reconcile a scale left behind by a crash, so it earns a place in the image
+# rather than a Flatpak.
+#
+# Pinned to a TAG, never main: this is a script that rewrites your display
+# configuration, and "whatever upstream pushed today" is not a thing to boot
+# into. gamescale.sh is checksum-verified against the hash recorded HERE, not
+# merely against the SHA256SUMS shipped beside it -- a re-cut release would
+# update both, and the point of pinning is that WE decide when the image
+# changes.
+#
+# The extension is fetched from the tag rather than the release, because
+# releases deliberately ship only the script (upstream's reasoning: shipping
+# more unverifiable pieces is not worth an icon). Fetching by pinned hash is
+# what makes that safe to do anyway.
+# ---------------------------------------------------------------------------
+ARG GAMESCALE_VERSION=v2.0.0
+ARG GAMESCALE_UUID=gamescale@arclight.digital
+RUN set -eux; \
+    REL="https://github.com/arclight-digital/gamescale/releases/download/${GAMESCALE_VERSION}"; \
+    RAW="https://raw.githubusercontent.com/arclight-digital/gamescale/${GAMESCALE_VERSION}/extension"; \
+    EXT="/usr/share/gnome-shell/extensions/${GAMESCALE_UUID}"; \
+    curl -fsSL "${REL}/gamescale.sh" -o /usr/bin/gamescale; \
+    echo "5f0ef1f338ea915fb6f5f141e625b813ac57fdbc4a7333b7b7d0094518dc5f91  /usr/bin/gamescale" \
+      | sha256sum -c -; \
+    chmod 0755 /usr/bin/gamescale; \
+    mkdir -p "${EXT}/icons"; \
+    curl -fsSL "${RAW}/extension.js"                 -o "${EXT}/extension.js"; \
+    curl -fsSL "${RAW}/metadata.json"                -o "${EXT}/metadata.json"; \
+    curl -fsSL "${RAW}/stylesheet.css"               -o "${EXT}/stylesheet.css"; \
+    curl -fsSL "${RAW}/icons/gamescale-symbolic.svg" -o "${EXT}/icons/gamescale-symbolic.svg"; \
+    curl -fsSL "${RAW}/icons/gamescale.svg"          -o "${EXT}/icons/gamescale.svg"; \
+    ( cd "${EXT}" && printf '%s\n' \
+      "99d4e239a212c3ad90118eaf3a609c2ca582c9df2cf490c7580358c03f242890  extension.js" \
+      "e49e9bf6fc9956bfc0c9f31b0457fa9bd1bc6c42e11a1b6804abea0c28ee430f  metadata.json" \
+      "7c41ae899869994c5056c2ed6e0ce939c46333e90fe355f26cf7e3e580f79e27  stylesheet.css" \
+      "57e345929be538ed1542c5c7b1d7a25b9c8551d3c5de193f4883416ec00ba708  icons/gamescale-symbolic.svg" \
+      "ddea876638fca8e25dfd4508385a881e529de9b1c0f4db65585e26aaacdca206  icons/gamescale.svg" \
+      | sha256sum -c - ); \
+    test "$(jq -r .uuid "${EXT}/metadata.json")" = "${GAMESCALE_UUID}"; \
+    SHELL_MAJOR="$(gnome-shell --version | sed 's/[^0-9.]//g' | cut -d. -f1)"; \
+    if ! jq -e --arg v "${SHELL_MAJOR}" '."shell-version" | index($v)' "${EXT}/metadata.json" >/dev/null; then \
+      echo "FATAL: gamescale ${GAMESCALE_VERSION} does not support GNOME Shell ${SHELL_MAJOR}"; \
+      echo "       it declares: $(jq -c '."shell-version"' "${EXT}/metadata.json")"; \
+      echo "       a shipped-but-incompatible extension is silently dead in the top bar"; \
+      exit 1; \
+    fi; \
+    gamescale --version >/dev/null 2>&1 || true
+
 # No GUI apps are layered here. Apps are Flatpaks; this image is the OS.
 #
 # Flathub, unfiltered -- Fedora ships a filtered remote. Shipped as a
@@ -218,6 +278,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \
     systemctl --global enable podman-auto-update.timer && \
+    systemctl --global enable gamescale-reconcile.service && \
     systemctl disable NetworkManager-wait-online.service && \
     plymouth-set-default-theme pulsar && \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \

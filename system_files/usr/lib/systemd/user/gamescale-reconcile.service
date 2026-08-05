@@ -1,0 +1,25 @@
+[Unit]
+# gamescale drops the desktop to 1x scale for the lifetime of one game and
+# restores it on exit. This unit is what covers the case where "on exit"
+# never happened -- a crash, an OOM kill, a hard power-off -- and the session
+# would otherwise come back at game scale with no obvious way to know why.
+#
+# Shipped in /usr/lib, not written into ~/.config by `gamescale --install-unit`
+# as the upstream installer does: an image-native unit is enabled for every
+# user, survives a rebase, and cannot rot out of sync with the /usr/bin script
+# it calls. Running the installer's version too is harmless -- it writes the
+# same unit name into a higher-priority directory, so one of them wins rather
+# than both running.
+Description=Restore display scale left over by gamescale
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gamescale --restore
+# 1 means "nothing to restore", which is the normal case on a clean boot and
+# is not a failure worth painting the session red over.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=graphical-session.target

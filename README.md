@@ -48,6 +48,24 @@ distrobox assemble create --file /usr/share/pulsar/distrobox.ini
 `podman-auto-update.timer` is enabled for user sessions, and a commented
 quadlet template lives at `/usr/share/pulsar/templates/example.container` —
 containers as systemd units, rootless, in a file you can version.
+
+[`gamescale`](https://github.com/arclight-digital/gamescale) ships at a pinned
+tag: the script at `/usr/bin/gamescale`, its top-bar indicator installed
+system-wide and enabled by default, and a reconcile unit that restores your
+scale if a game dies without cleaning up.
+
+For **native** launchers that is everything. For **Flatpak** launchers it is
+not, and the reason is worth stating plainly: a Flatpak sandbox has its own
+`/usr`, so the host copy at `/usr/bin/gamescale` is not on any path the sandbox
+can see. Upstream's installer defaults to `~/.local/bin` precisely because a
+home path maps into the sandbox. Run it to grant a launcher:
+
+```
+curl -fsSL https://raw.githubusercontent.com/arclight-digital/gamescale/main/install.sh | sh -s -- --platform steam
+```
+
+That leaves a second copy in `~/.local/bin`, which is the one Steam will use.
+The image copy still backs the reconcile unit and any native or terminal use.
 Anything you merely *run* is a Flatpak. This image is the OS.
 
 The nvidia variant builds `nvidia-open` against the image's exact kernel and
