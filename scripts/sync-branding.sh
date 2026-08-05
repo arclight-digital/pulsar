@@ -68,6 +68,12 @@ magick -background none "${A}/brand/pulsar-lockup-horizontal.png" \
        -trim -resize "${GDM_LOGO_W}x" -strip "${S}/pulsar/pulsar-gdm-logo.png"
 echo "  ${S}/pulsar/pulsar-gdm-logo.png (${GDM_LOGO_W}px wide)"
 
+# The terminal mark for `pulsar manifest`, from the same SVG as everything
+# else. Generated here so it cannot drift from the artwork: a hand-drawn copy
+# was wrong about the shape within a day of being written.
+python3 "${REPO}/scripts/render-ascii-logo.py" "${A}/brand/pulsar-mark.svg" \
+        --cols 38 -o "${S}/pulsar/logo.ansi"
+
 # Plymouth watermark is generated in the lockup section below -- it needs the
 # wordmark font variables, which are defined there.
 

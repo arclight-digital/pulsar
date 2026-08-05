@@ -167,18 +167,42 @@ JSON
     [ "$status" -ne 0 ]
 }
 
-@test "LOGO_W matches the art's real visible width" {
-    # A mismatch shears the info column only when the manifest has more rows
-    # than the art has lines, which no fixture would notice by accident.
-    command -v python3 >/dev/null || skip "python3 needed to count characters"
-    # python3, not awk: `length` counts BYTES under the C locale and every
-    # glyph in this art is three of them, so awk measured 72 for 24 columns.
-    run python3 "${BATS_TEST_DIRNAME}/logo_width.py" "$PULSAR"
+@test "every line of the shipped logo has the same visible width" {
+    # The info column is pasted at a fixed offset, so one short line shears
+    # the whole readout. The art is generated, so this guards the generator.
+    art="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/logo.ansi"
+    [ -r "$art" ]
+    widths=$(sed $'s/\033\\[[0-9;]*m//g' "$art" | awk '{ print length($0) }' | sort -u | wc -l)
+    [ "$widths" -eq 1 ]
+}
+
+@test "the logo is 7-bit ASCII, as a logo called ASCII should be" {
+    art="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/logo.ansi"
+    # strip the colour escapes, then assert nothing outside printable ASCII
+    run bash -c "sed \$'s/\033\\[[0-9;]*m//g' '$art' | LC_ALL=C grep -qP '[^\\x20-\\x7e]'"
+    [ "$status" -ne 0 ]
+}
+
+@test "manifest draws the logo when asked and omits it when told not to" {
+    PULSAR_LOGO="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/logo.ansi"
+    export PULSAR_LOGO
+    run env LOGO=always "$PULSAR" manifest
     [ "$status" -eq 0 ]
+    with=$(printf '%s\n' "$output" | wc -l)
+    run env LOGO=never "$PULSAR" manifest
+    [ "$status" -eq 0 ]
+    without=$(printf '%s\n' "$output" | wc -l)
+    [ "$with" -gt "$without" ]
 }
 
 @test "the logo never appears in piped output" {
+    # bats captures through a pipe, so this is the not-a-terminal path
+    PULSAR_LOGO="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/logo.ansi"
+    export PULSAR_LOGO
     run "$PULSAR" manifest
-    [[ "$output" != *"▄"* ]]
-    [[ "$output" != *"█"* ]]
+    [[ "$output" != *$'\033'* ]]
+    # every line must start with a manifest key, not with art
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[a-z_]+[[:space:]] ]] || fail "not a key row: $line"
+    done <<< "$output"
 }
