@@ -1,21 +1,26 @@
 {
-  "generated": "2026-08-05T20:32:39Z",
+  "generated": "2026-08-05T22:07:09Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:91b97a970fc2dded923e19851b7550f1422914b8d23c49edab5616cf6c77a646",
-    "digest": "sha256:91b97a970fc2dded923e19851b7550f1422914b8d23c49edab5616cf6c77a646"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:2e0911874a41110b3204465505b5f37700059bcd3eeff930e42182d5150afb19",
+    "digest": "sha256:2e0911874a41110b3204465505b5f37700059bcd3eeff930e42182d5150afb19"
   },
   "to": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:0d1b542fb15b0969376c2375f48aba87fb18a3e57812e4deb357f2c7dc640d72",
-    "digest": "sha256:0d1b542fb15b0969376c2375f48aba87fb18a3e57812e4deb357f2c7dc640d72"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:22aab843b4d5a57eff56710821632c8caf38482e5c7650fa360a29a8cb44460e",
+    "digest": "sha256:22aab843b4d5a57eff56710821632c8caf38482e5c7650fa360a29a8cb44460e"
   },
   "summary": {
-    "added": 0,
+    "added": 1,
     "removed": 0,
     "upgraded": 0,
     "downgraded": 0,
     "changed": 0
   },
-  "added": [],
+  "added": [
+    {
+      "name": "bpftool",
+      "version": "7.6.0-3.fc44"
+    }
+  ],
   "removed": [],
   "changed": []
 }
