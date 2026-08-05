@@ -54,18 +54,38 @@ tag: the script at `/usr/bin/gamescale`, its top-bar indicator installed
 system-wide and enabled by default, and a reconcile unit that restores your
 scale if a game dies without cleaning up.
 
-For **native** launchers that is everything. For **Flatpak** launchers it is
-not, and the reason is worth stating plainly: a Flatpak sandbox has its own
-`/usr`, so the host copy at `/usr/bin/gamescale` is not on any path the sandbox
-can see. Upstream's installer defaults to `~/.local/bin` precisely because a
-home path maps into the sandbox. Run it to grant a launcher:
+For **native** launchers and terminal use that is everything, and a machine
+that never installs anything still recovers its scale after a crash.
+
+For **Flatpak** launchers it is not enough, and the reason is categorical
+rather than a papercut. Flatpak reserves `/usr` for the runtime and refuses to
+share the host's:
+
+```
+$ flatpak run --command=sh --filesystem=/usr/bin/gamescale:ro com.valvesoftware.Steam
+F: Not sharing "/usr/bin/gamescale" with sandbox: Path "/usr" is reserved by Flatpak
+```
+
+The `/usr` a Flatpak sees is the runtime's, so no grant can ever expose
+`/usr/bin/gamescale` to Steam. Upstream defaults to `~/.local/bin` because a
+home path is the only kind that maps in. To grant a launcher, run the
+installer:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/arclight-digital/gamescale/main/install.sh | sh -s -- --platform steam
 ```
 
-That leaves a second copy in `~/.local/bin`, which is the one Steam will use.
-The image copy still backs the reconcile unit and any native or terminal use.
+**Doing that shadows the image copy, and that is the intended outcome.** User
+paths win every collision: your shell finds `~/.local/bin` before `/usr/bin`,
+GNOME prefers a user extension over a system one with the same uuid, and
+systemd prefers a user unit over `/usr/lib/systemd/user`. So after running the
+installer you are using its copy of all three, and the image's copies sit
+inert underneath — one of each runs, never both.
+
+The image pins a tag; your `~/.local` copy is whatever you last installed. They
+can therefore differ. Both being releases of the same tool this is normally
+harmless, but if you are chasing odd behaviour, `gamescale --version` tells you
+which one you are actually running.
 Anything you merely *run* is a Flatpak. This image is the OS.
 
 The nvidia variant builds `nvidia-open` against the image's exact kernel and
