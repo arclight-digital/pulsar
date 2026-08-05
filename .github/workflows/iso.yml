@@ -1,0 +1,138 @@
+# Installable ISOs for both variants, checksummed and signed.
+#
+# Deliberately NOT part of build.yml. Two reasons, both practical:
+#
+#   Disk. bootc-image-builder has to pull a ~10GB image and write a multi-GB
+#   ISO out of it. build.yml already carries ~17GB of images and moves podman
+#   storage onto the temp disk to fit. Adding ISOs to that job runs it out of
+#   space; a matrix here gives each variant a FRESH runner and a fresh disk.
+#
+#   Cadence. Images are worth rebuilding nightly because rebasing is cheap.
+#   ISOs are for installs, which are rare -- publishing 8GB of installer every
+#   night would burn bandwidth and R2 storage to no one's benefit.
+#
+# ISOs go to R2 rather than GitHub Releases: release assets cap at 2GB per
+# file and a Silverblue-derived installer clears that comfortably.
+name: iso
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to build ISOs from"
+        required: false
+        default: "latest"
+  schedule:
+    # Weekly, Sunday, well clear of the nightly image build at 08:30.
+    - cron: '0 11 * * 0'
+
+concurrency:
+  group: iso
+  cancel-in-progress: false
+
+env:
+  FEDORA_VERSION: "44"
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      # cosign keyless signing exchanges this for a Fulcio cert. No private
+      # key exists to leak: the signature is bound to this workflow's identity
+      # and logged in Rekor, which is the property we actually want.
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [pulsar, pulsar-nvidia]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Resolve names and free the temp disk
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "IMAGE=ghcr.io/${OWNER,,}/${{ matrix.variant }}" >> "$GITHUB_ENV"
+          echo "TAG=${{ github.event.inputs.tag || 'latest' }}" >> "$GITHUB_ENV"
+          sudo mkdir -p /mnt/podman /mnt/iso
+          sudo chown "$(id -u):$(id -g)" /mnt/podman /mnt/iso
+          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/podman"\nrunroot = "/tmp/podman-run"\n' \
+            > /tmp/storage.conf
+          echo "CONTAINERS_STORAGE_CONF=/tmp/storage.conf" >> "$GITHUB_ENV"
+          df -h / /mnt
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # bootc-image-builder reads the image out of LOCAL container storage, so
+      # the pull has to happen first and the storage has to be bind-mounted in.
+      - name: Pull the image
+        run: |
+          podman pull "${IMAGE}:${TAG}"
+          podman image inspect "${IMAGE}:${TAG}" --format 'pulled {{.Id}} ({{.Size}} bytes)'
+
+      # --privileged and the unconfined label are what upstream documents:
+      # the builder makes loopback devices and mounts filesystems to lay the
+      # ISO out, none of which works from a confined container.
+      #
+      # Storage is bind-mounted read-only so the builder cannot mutate the
+      # image it is packaging.
+      - name: Build the installer ISO
+        run: |
+          sudo podman run --rm --privileged \
+            --security-opt label=type:unconfined_t \
+            -v /mnt/iso:/output \
+            -v /mnt/podman:/var/lib/containers/storage:ro \
+            --env STORAGE_CONF=/tmp/storage.conf \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+              --type anaconda-iso \
+              --target-arch x86_64 \
+              --local \
+              "${IMAGE}:${TAG}"
+          sudo chown -R "$(id -u):$(id -g)" /mnt/iso
+          find /mnt/iso -name '*.iso' -printf '%p  %s bytes\n'
+
+      - name: Name, checksum and sign
+        run: |
+          set -euo pipefail
+          src=$(find /mnt/iso -name '*.iso' | head -1)
+          [ -n "$src" ] || { echo "::error::no ISO was produced"; exit 1; }
+
+          stamp=$(date -u +%Y%m%d)
+          name="${{ matrix.variant }}-${FEDORA_VERSION}.${stamp}-x86_64.iso"
+          mv "$src" "/mnt/iso/${name}"
+          cd /mnt/iso
+
+          # The checksum manifest is what a human verifies by hand; the
+          # signature is what proves the manifest itself was not swapped.
+          sha256sum "${name}" > "${name}.sha256"
+          cosign sign-blob --yes \
+            --output-signature "${name}.sig" \
+            --output-certificate "${name}.pem" \
+            "${name}"
+
+          echo "ISO_NAME=${name}" >> "$GITHUB_ENV"
+          cat "${name}.sha256"
+
+      - name: Upload to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          cd /mnt/iso
+          for f in "${ISO_NAME}" "${ISO_NAME}.sha256" "${ISO_NAME}.sig" "${ISO_NAME}.pem"; do
+            aws s3 cp "$f" "s3://${R2_BUCKET}/pulsar/iso/${f}" \
+              --endpoint-url "${R2_ENDPOINT}"
+          done
+          echo "### ${ISO_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat "${ISO_NAME}.sha256" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

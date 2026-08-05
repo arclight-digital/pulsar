@@ -41,7 +41,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # contents: write, not read -- the nightly commits site/changelog.json
+      # and its rendered fragment back to the repo. build.yml's paths-ignore
+      # covers site/**, so that commit cannot retrigger an image build; it
+      # only wakes Cloudflare's git integration, which redeploys the page.
+      contents: write
       packages: write
       id-token: write
       attestations: write
@@ -79,6 +83,24 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Tooling for the SBOM/signing steps at the end. Pinned to major tags
+      # so a compromised point release cannot silently change what signs.
+      - uses: anchore/sbom-action/download-syft@v0
+      - uses: oras-project/setup-oras@v1
+      - uses: sigstore/cosign-installer@v3
+
+      # MUST run before the push below overwrites :latest. This is the image
+      # the changelog diffs against; once :latest moves, the previous build is
+      # only reachable by a digest nobody recorded.
+      #
+      # Empty on the very first run, when :latest does not exist yet. That is
+      # not an error -- it is the baseline case, handled downstream.
+      - name: Record the outgoing :latest digest
+        run: |
+          prev="$(oras resolve "${IMAGE}:latest" 2>/dev/null || true)"
+          echo "PREV_DIGEST=${prev}" >> "$GITHUB_ENV"
+          echo "previous :latest digest: ${prev:-<none, first build>}"
 
       # The wallpapers are rendered from assets/shaders/pulsar.frag, not
       # committed -- they are 4K PNGs and fully reproducible from the shader.
@@ -160,3 +182,132 @@ jobs:
           subject-name: ${{ env.IMAGE_NVIDIA }}
           subject-digest: ${{ steps.push_nvidia.outputs.digest }}
           push-to-registry: true
+
+      # =====================================================================
+      # Supply chain: what is IN the image, and what changed since last night.
+      #
+      # The attestation above proves WHERE an image came from. An SBOM proves
+      # WHAT IS IN IT. Both are needed before "nightly image you can inspect"
+      # means anything -- provenance without contents just tells you who built
+      # the blob you still cannot see into.
+      #
+      # SBOMs are scanned from the REGISTRY by digest, not from local storage:
+      # that scans the exact bytes that were pushed, so the SBOM cannot
+      # describe an image that differs from the one users pull.
+      # =====================================================================
+      - name: Generate SBOMs
+        run: |
+          syft "registry:${IMAGE}@${{ steps.push_vanilla.outputs.digest }}" \
+            -o spdx-json=sbom-vanilla.spdx.json
+          syft "registry:${IMAGE_NVIDIA}@${{ steps.push_nvidia.outputs.digest }}" \
+            -o spdx-json=sbom-nvidia.spdx.json
+          for f in sbom-vanilla sbom-nvidia; do
+            n=$(jq '[.packages[] | select(.versionInfo)] | length' "${f}.spdx.json")
+            echo "${f}: ${n} packages"
+            [ "$n" -gt 100 ] || { echo "::error::${f} has only ${n} packages; the scan did not work"; exit 1; }
+          done
+
+      # Attached to the image itself, so the SBOM travels with the thing it
+      # describes and is fetchable by anyone with `oras discover`. R2 gets a
+      # copy below, but the registry copy is the authoritative one.
+      - name: Attach SBOMs as OCI referrers
+        run: |
+          oras attach --artifact-type application/spdx+json \
+            "${IMAGE}@${{ steps.push_vanilla.outputs.digest }}" \
+            sbom-vanilla.spdx.json:application/spdx+json
+          oras attach --artifact-type application/spdx+json \
+            "${IMAGE_NVIDIA}@${{ steps.push_nvidia.outputs.digest }}" \
+            sbom-nvidia.spdx.json:application/spdx+json
+
+      # The diff baseline comes from R2's stable key, NOT from discovering the
+      # previous image's referrer. `oras discover` has changed its JSON shape
+      # between releases (manifests[] vs referrers[], --output vs --format),
+      # and a changelog that silently empties itself when a tool updates is
+      # worse than no changelog. A fixed R2 key cannot drift like that.
+      - name: Build the changelog against last night's SBOM
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          # AWS CLI v2 sends checksum headers R2 has historically rejected.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          FROM_REF: ${{ env.IMAGE }}@${{ env.PREV_DIGEST }}
+          TO_REF: ${{ env.IMAGE }}@${{ steps.push_vanilla.outputs.digest }}
+          TO_DIGEST: ${{ steps.push_vanilla.outputs.digest }}
+          FROM_DIGEST: ${{ env.PREV_DIGEST }}
+        run: |
+          set -euo pipefail
+          baseline=false
+          aws s3 cp "s3://${R2_BUCKET}/pulsar/sbom/vanilla-latest.spdx.json" prev.spdx.json \
+            --endpoint-url "${R2_ENDPOINT}" 2>/dev/null || baseline=true
+
+          if [ "$baseline" = true ]; then
+            echo "no previous SBOM in R2 -- emitting a baseline changelog"
+            jq -n --arg g "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                  --arg to "${IMAGE}@${{ steps.push_vanilla.outputs.digest }}" '{
+              generated: $g, baseline: true,
+              from: {ref: "", digest: ""}, to: {ref: $to, digest: ""},
+              summary: {added:0, removed:0, upgraded:0, downgraded:0, changed:0},
+              added: [], removed: [], changed: []
+            }' > changelog.json
+          else
+            # Runs inside Fedora on purpose: the direction of a version change
+            # is decided by rpmdev-vercmp, which implements real RPM ordering
+            # (epochs, tildes, carets). GNU sort -V gets those wrong, and an
+            # "upgraded" label that is actually a downgrade is a lie.
+            podman run --rm -v "${PWD}":/w:z -w /w \
+              -e FROM_REF -e TO_REF -e FROM_DIGEST -e TO_DIGEST \
+              "registry.fedoraproject.org/fedora:${FEDORA_VERSION}" \
+              bash -c 'dnf5 -y install jq rpmdevtools >/dev/null 2>&1 &&
+                       ./scripts/sbom-changelog.sh prev.spdx.json sbom-vanilla.spdx.json' \
+              > changelog.json
+          fi
+          jq '.summary' changelog.json
+
+      - name: Publish SBOMs and changelog to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          up() { aws s3 cp "$1" "s3://${R2_BUCKET}/$2" --endpoint-url "${R2_ENDPOINT}"; }
+          # Immutable, per-build copies first...
+          up sbom-vanilla.spdx.json "pulsar/sbom/${DATETAG}-vanilla.spdx.json"
+          up sbom-nvidia.spdx.json  "pulsar/sbom/${DATETAG}-nvidia.spdx.json"
+          up changelog.json         "pulsar/changelog/${DATETAG}.json"
+          # ...then the moving pointers. vanilla-latest.spdx.json is the key
+          # the NEXT nightly diffs against, so it is written last: if anything
+          # above failed, the baseline still describes a real published image.
+          up changelog.json         "pulsar/changelog/latest.json"
+          up sbom-nvidia.spdx.json  "pulsar/sbom/nvidia-latest.spdx.json"
+          up sbom-vanilla.spdx.json "pulsar/sbom/vanilla-latest.spdx.json"
+
+      # Renders here, in Actions, where jq exists -- NOT in site/build.sh,
+      # which Cloudflare runs and which stays dependency-free on purpose.
+      #
+      # This commit touches only site/, which build.yml's paths-ignore
+      # excludes, so it cannot retrigger an image build. It does wake
+      # Cloudflare's git integration, which is exactly the point.
+      - name: Render and commit the site changelog
+        run: |
+          set -euo pipefail
+          cp changelog.json site/changelog.json
+          ./scripts/render-changelog.sh changelog.json > site/changelog.html
+          if git diff --quiet -- site/changelog.json site/changelog.html; then
+            echo "changelog unchanged since last build; nothing to commit"
+            exit 0
+          fi
+          git config user.name  "pulsar-ci"
+          git config user.email "ci@arclight.build"
+          git add site/changelog.json site/changelog.html
+          git commit -m "site: package changelog for ${DATETAG}"
+          # Rebase rather than force: a human push that landed while the image
+          # was building must not be discarded by the nightly.
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
