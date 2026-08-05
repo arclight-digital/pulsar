@@ -342,12 +342,25 @@ jobs:
           set -euo pipefail
           cp changelog.json site/changelog.json
           ./scripts/render-changelog.sh changelog.json > site/changelog.html
-          if git diff --quiet -- site/changelog.json site/changelog.html; then
-            echo "changelog unchanged since last build; nothing to commit"
+
+          # Compare PACKAGE CONTENT, not the file. Every build stamps a fresh
+          # timestamp and fresh image digests, so a byte comparison always
+          # differs and would commit every single night even when nothing in
+          # the image moved -- daily bot noise in a hand-written history.
+          norm='del(.generated, .from, .to)'
+          new=$(jq -S "$norm" changelog.json)
+          old=$(git show "HEAD:site/changelog.json" 2>/dev/null | jq -S "$norm" 2>/dev/null || echo "__none__")
+          if [ "$new" = "$old" ]; then
+            echo "no package changes since the last committed changelog; nothing to commit"
             exit 0
           fi
+
           git config user.name  "pulsar-ci"
           git config user.email "ci@arclight.build"
+          # Stage BEFORE testing. `git diff` ignores untracked files, so on the
+          # first run -- when these files are not in the repo yet -- it reported
+          # "unchanged" and skipped the commit, which is precisely the run that
+          # had to make it. That is why site/changelog.json was never committed.
           git add site/changelog.json site/changelog.html
           git commit -m "site: package changelog for ${DATETAG}"
           # Rebase rather than force: a human push that landed while the image
