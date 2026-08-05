@@ -1,23 +1,55 @@
 [Unit]
-Description=sched_ext scheduler (scx_lavd)
+Description=sched_ext scheduler (scx_bpfland)
 After=multi-user.target
+# This proves the KERNEL supports sched_ext. It does NOT prove that a
+# scheduler attached -- when this unit fails, the kernel silently keeps
+# running stock EEVDF and nothing announces it. The only honest check is
+# `cat /sys/kernel/sched_ext/state`, which must read "enabled".
 ConditionPathExists=/sys/kernel/sched_ext
-# If the scheduler dies repeatedly, give up rather than thrash. The kernel
-# falls back to EEVDF automatically, so this degrades gracefully.
+
+# If the scheduler dies repeatedly, give up rather than thrash. Nothing
+# attached means stock EEVDF, so stopping for good is a safe end state.
 #
 # These live in [Unit], not [Service]. systemd accepts StartLimitBurst in
 # [Service] as a legacy alias but silently IGNORES StartLimitIntervalSec
 # there ("Unknown key"), which left the interval at its 10s default -- and
 # with RestartSec=5 only three starts fit in 10s, so the limit could never
 # trip and a crash-looping scheduler restarted forever.
-StartLimitBurst=5
-StartLimitIntervalSec=60
+#
+# The window is 900s, not 60s, for a second reason found the hard way: a
+# LEAKING scheduler stays up for minutes rather than crashing fast. The
+# uncontained scx_lavd runs that motivated this survived ~145s each, so a
+# 60s window never accumulated even two starts, let alone five. Burst 3
+# inside 900s is a limit a slow failure can actually reach.
+StartLimitBurst=3
+StartLimitIntervalSec=900
 
 [Service]
 Type=exec
-ExecStart=/usr/bin/scx_lavd --autopilot
-Restart=always
-RestartSec=5
+# scx_bpfland, not scx_lavd --autopilot: lavd hits sched-ext/scx#3340 on
+# Arrow Lake-HX. bpfland is unaffected there and takes no --autopilot flag.
+ExecStart=/usr/bin/scx_bpfland
+Restart=on-failure
+RestartSec=30
+
+# The containment that makes a scheduler bug survivable, and the reason this
+# file changed at all.
+#
+# scx_lavd --autopilot leaked ~300MB/s under sched-ext/scx#3340. Uncontained
+# it reached a 55.6GB peak, filled zram, and was killed by the GLOBAL OOM
+# killer -- which picks by badness score, so the browser and games died while
+# the scheduler simply restarted 5s later. Eight global OOM kills in 16
+# minutes, desktop-wide microfreezes, and sched_ext never actually attached:
+# the machine paid the full cost of the leak while running stock EEVDF.
+#
+# MemoryMax caps the blast radius at this cgroup, so a leak now dies in
+# ~7s and kills nothing but the scheduler. MemorySwapMax=0 keeps it out of
+# zram entirely, so it cannot evict the desktop's pages on the way down.
+#
+# Designed failure mode: leak -> cgroup OOM in ~7s -> 3 failures inside the
+# 900s window -> unit stops permanently -> clean EEVDF. Bounded, invisible.
+MemoryMax=2G
+MemorySwapMax=0
 
 [Install]
 WantedBy=multi-user.target

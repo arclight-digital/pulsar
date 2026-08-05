@@ -1,13 +1,31 @@
+# 12, not GNOME's stock 11: Host Grotesk runs optically smaller than Inter
+# (and than Cantarell, which the 11 default was set for), so it reads a size
+# down at the same nominal pt. Mono matches at 12 rather than trailing at 11 --
+# one size across the desktop, so terminal text and UI text agree.
 [org.gnome.desktop.interface]
-font-name='Host Grotesk 11'
-document-font-name='Host Grotesk 11'
-monospace-font-name='JetBrains Mono 11'
+font-name='Host Grotesk 12'
+document-font-name='Host Grotesk 12'
+monospace-font-name='JetBrains Mono 12'
 color-scheme='prefer-dark'
-font-antialiasing='rgba'
+# Both keys are HiDPI decisions, not taste. The target panel is 2560x1600 at
+# 16" (~189 DPI), where there are enough pixels that fitting glyphs TO the
+# pixel grid costs more than it buys:
+#
+#   hinting=slight   vertical hinting only, outlines otherwise untouched.
+#                    'full' snaps stems to the grid, which distorts shapes --
+#                    and Host Grotesk is a VARIABLE font, so aggressive
+#                    hinting fights the interpolated outlines it is given.
+#   antialiasing=grayscale
+#                    'rgba' assumes a known RGB stripe geometry AND a 1:1
+#                    glyph-to-physical-pixel mapping. Neither holds once the
+#                    compositor renders scaled and downsamples, so subpixel
+#                    AA turns into colour fringing on glyph edges. Grayscale
+#                    is what GNOME and Fedora default to for this reason.
+font-antialiasing='grayscale'
 font-hinting='slight'
 
 [org.gnome.desktop.wm.preferences]
-titlebar-font='Host Grotesk Bold 11'
+titlebar-font='Host Grotesk Bold 12'
 button-layout='appmenu:minimize,maximize,close'
 
 [org.gnome.mutter]

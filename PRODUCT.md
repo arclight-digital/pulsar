@@ -23,7 +23,7 @@ present it well.
 
 ## Positioning
 
-Lead claim (user-confirmed): a gaming + development Fedora spin — scx_lavd
+Lead claim (user-confirmed): a gaming + development Fedora spin — scx_bpfland
 scheduling, gamescope/gamemode/mangohud, distrobox, libvirt/KVM, signed
 nvidia-open for Blackwell. Supporting claim: the supply chain — the machine
 that runs it never compiles anything; CI builds, signs, and attests every

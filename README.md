@@ -19,13 +19,21 @@ sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest   # + nvidia-ope
 ## What's in it
 
 Branding, Host Grotesk + JetBrains Mono, a plymouth theme, and the papercuts
-already fixed. `scx_lavd` takes over scheduling, because that core layout is
+already fixed. `scx_bpfland` takes over scheduling, because that core layout is
 exactly where stock EEVDF places threads badly. Unfiltered Flathub, shipped as
 an image-native remote so it survives a rebase. Split-lock mitigation off and
-`vm.max_map_count` raised, because several games need both.
+`vm.max_map_count` raised, because several games need both. `ntsync` is loaded
+and given to the seat user, so Proton can use it where the build supports it.
+
+`greenboot` checks each boot and rolls back automatically after three failures.
+The required check is that the desktop actually came up — the one failure you
+cannot type your way out of. Scheduler and network are warn-only, because a
+scheduler that fails to attach still leaves a usable machine, and a laptop that
+boots with no network is not a broken deployment.
 
 System-level capability only: `gamescope`, `gamemode`, `mangohud`,
-`steam-devices`, `distrobox`, `libvirt`, `android-tools`, `gnome-tweaks`.
+`steam-devices`, `distrobox`, `libvirt`, `android-tools`, `gnome-tweaks`,
+`greenboot`.
 Anything you merely *run* is a Flatpak. This image is the OS.
 
 The nvidia variant builds `nvidia-open` against the image's exact kernel and

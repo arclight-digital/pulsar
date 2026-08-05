@@ -27,9 +27,21 @@ RUN dnf5 install -y \
 
 # ---------------------------------------------------------------------------
 # sched_ext. Arrow Lake-HX is 8 P-cores + 16 E-cores with no SMT, which is
-# exactly where stock EEVDF placement underperforms. scx_lavd targets this.
-# scx.service carries ConditionPathExists=/sys/kernel/sched_ext, so this
-# degrades to stock scheduling on hardware or kernels without it.
+# exactly where stock EEVDF placement underperforms.
+#
+# scx_bpfland, NOT scx_lavd: lavd --autopilot hits sched-ext/scx#3340 on this
+# CPU and leaks ~300MB/s until it is OOM-killed. bpfland is reported
+# unaffected, and ships on ALL hardware -- one scheduler everywhere beats a
+# per-CPU conditional nobody can test the other branch of.
+#
+# scx.service carries ConditionPathExists=/sys/kernel/sched_ext. That proves
+# the KERNEL supports sched_ext; it does NOT prove a scheduler attached, and
+# an earlier version of this comment claimed it "degrades to stock scheduling"
+# as though the two were the same thing. They are not: when the unit fails,
+# the kernel keeps running stock EEVDF and NOTHING says so. The service can
+# sit there reporting active while sched_ext reads disabled. The only honest
+# check is `cat /sys/kernel/sched_ext/state`, which must read "enabled" --
+# which is why greenboot check 20-scx-scheduler.sh reads exactly that file.
 # ---------------------------------------------------------------------------
 RUN dnf5 install -y 'dnf5-command(copr)' && \
     dnf5 copr enable -y bieszczaders/kernel-cachyos-addons && \
@@ -59,9 +71,19 @@ RUN dnf5 install -y 'dnf5-command(copr)' && \
 #                   base's provenance attestation with it, and .gitconfig
 #                   uses it as the github credential helper. A toolbox copy
 #                   cannot serve either.
+#   greenboot       boot-time health checks with automatic rollback. This is
+#                   what turns "lighthouses don't drift" from a manual
+#                   `bootc rollback` into something the machine does itself --
+#                   and a manual rollback is precisely what you CANNOT run
+#                   when the deployment you need to escape has no session to
+#                   type it in. Checks ship in system_files under
+#                   /usr/lib/greenboot/check/; rollback is armed by GRUB's
+#                   boot_counter, installed via bootupd (asserted below).
 # ---------------------------------------------------------------------------
 RUN dnf5 install -y \
       gh \
+      greenboot \
+      greenboot-default-health-checks \
       gnome-tweaks \
       steam-devices \
       gamemode \
@@ -109,10 +131,15 @@ RUN [ -f /usr/share/plymouth/themes/spinner/throbber-0001.png ] || \
 # to come after the overlay lands. The nvidia variant regenerates it a second
 # time because it adds modprobe.d options that also live in the initramfs.
 # ---------------------------------------------------------------------------
-# scx.service is enabled HERE, not by the preset file: presets only run on a
-# fresh `bootc install`, never on a rebase, so on a rebased system the unit
-# would silently never start. This writes the /etc wants symlink, which the
-# ostree /etc merge carries onto rebased systems.
+# scx.service and greenboot-healthcheck.service are enabled HERE, not by the
+# preset file: presets only run on a fresh `bootc install`, never on a rebase,
+# so on a rebased system the units would silently never start. This writes the
+# /etc wants symlink, which the ostree /etc merge carries onto rebased systems.
+# greenboot in particular ships NO preset entry of its own (checked against
+# the F44 package), so without this line it installs and never runs.
+#
+# Enabling greenboot-healthcheck.service also pulls in greenboot-success.target
+# and greenboot-set-rollback-trigger.service via its [Install] Also=.
 #
 # Deliberately the ONLY enablement. A second symlink under /usr/lib would
 # survive `systemctl disable`, leaving a unit that reports disabled and keeps
@@ -122,9 +149,12 @@ RUN [ -f /usr/share/plymouth/themes/spinner/throbber-0001.png ] || \
 # notifies, and the update installs when you choose. bootc's
 # fetch-apply-updates.timer is deliberately left DISABLED: it runs
 # `bootc upgrade --apply`, which reboots on its own.
-RUN fc-cache -f && \
+RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
+      { echo "FATAL: greenboot no longer ships its bootupd grub fragment; without it GRUB never decrements boot_counter and automatic rollback silently never arms"; exit 1; }; \
+    fc-cache -f && \
     glib-compile-schemas /usr/share/glib-2.0/schemas && \
     systemctl enable scx.service && \
+    systemctl enable greenboot-healthcheck.service && \
     systemctl disable NetworkManager-wait-online.service && \
     plymouth-set-default-theme pulsar && \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \

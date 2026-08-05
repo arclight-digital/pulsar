@@ -1,0 +1,12 @@
+# /dev/ntsync for the logged-in user.
+#
+# The kernel's misc device already registers world-writable, so this rule is
+# a TIGHTENING, not a grant: 0644 plus uaccess drops blanket write access for
+# every account on the box and hands it, via ACL, only to whoever is actually
+# sitting at the seat. Proton reaches it the same way either path.
+#
+# Pulsar's job here ends at making /dev/ntsync exist with the right owner.
+# Whether a given Proton build USES it varies by build -- older ones need
+# PROTON_USE_NTSYNC=1, newer ones default to it -- and that is Proton's
+# business, not the image's.
+KERNEL=="ntsync", MODE="0644", TAG+="uaccess"
