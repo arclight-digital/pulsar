@@ -12,10 +12,6 @@ HOME_URL="https://github.com/arclight-digital/pulsar"
 DOCUMENTATION_URL="https://github.com/arclight-digital/pulsar"
 SUPPORT_URL="https://github.com/arclight-digital/pulsar/issues"
 BUG_REPORT_URL="https://github.com/arclight-digital/pulsar/issues"
-
-# Deliberately left as fedora. DNF $releasever, some flatpak remote filtering,
-# and a pile of third-party scripts key off ID. Bazzite and Bluefin both keep
-# it too. Change NAME/PRETTY_NAME/VARIANT above, not this.
 ID=fedora
 ID_LIKE=fedora
 CPE_NAME="cpe:/o:fedoraproject:fedora:44"

@@ -294,6 +294,27 @@ RUN if [ -n "${PULSAR_VERSION}" ]; then \
         exit 1; \
       fi; \
     fi
+
+# ID stays `fedora`, deliberately: dnf's $releasever, some flatpak remote
+# filtering, and a pile of third-party scripts key off it. Bazzite and Bluefin
+# keep it too. Change NAME/PRETTY_NAME/VARIANT in system_files, not ID.
+#
+# That explanation used to be a comment inside os-release itself, which cost an
+# ISO build to discover: bootc-image-builder's parser skips blank lines but has
+# no comment handling at all, so any line without an `=` is fatal --
+# `readOSRelease: invalid input`, with no hint which line. The os-release spec
+# does allow comments; bib does not. So the file stays strictly KEY=VALUE and
+# this asserts it, unconditionally, rather than trusting the next editor to
+# remember.
+RUN bad=$(grep -vE '^[[:space:]]*$' /usr/lib/os-release | grep -vE '^[A-Z0-9_]+=' || true); \
+    if [ -n "${bad}" ]; then \
+      echo "FATAL: /usr/lib/os-release has lines that are not KEY=VALUE:"; \
+      echo "${bad}"; \
+      echo "       bootc-image-builder rejects these and the ISO build dies with"; \
+      echo "       'readOSRelease: invalid input'. Comments belong in the Containerfile."; \
+      exit 1; \
+    fi; \
+    echo "os-release: $(grep -cE '^[A-Z0-9_]+=' /usr/lib/os-release) keys, no stray lines"
 LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
 
 # ---------------------------------------------------------------------------
