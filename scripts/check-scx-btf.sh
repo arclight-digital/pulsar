@@ -45,6 +45,10 @@ done
 
 die() { echo "check-scx-btf: $*" >&2; exit 2; }
 
+# Named explicitly so a missing interpreter is "cannot determine" with a
+# reason, not a bare 127 from set -e that the caller has to decode.
+command -v python3 >/dev/null || die "python3 is required to read BTF"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

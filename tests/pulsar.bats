@@ -134,3 +134,51 @@ JSON
         [[ "$summary" != *"not installed"* ]]
     fi
 }
+
+# --- manifest layout --------------------------------------------------------
+# The key column was a hardcoded 11, which "attestation" (11) ran into and
+# which "scheduler_btf" (13) overflowed entirely. It is measured now, so these
+# pin the measuring rather than the number.
+
+@test "manifest key column is measured from the longest key" {
+    cat > "$PULSAR_MANIFEST" <<'JSON'
+{"image":"pulsar","version":"1","components":{"a":"x","scheduler_btf":"malformed"}}
+JSON
+    run "$PULSAR" manifest
+    [ "$status" -eq 0 ]
+    # every value must start at the same column
+    cols=$(printf '%s\n' "$output" | awk '{ i=index($0,$2); print i }' | sort -u | wc -l)
+    [ "$cols" -eq 1 ]
+}
+
+@test "manifest survives a key longer than any built-in one" {
+    cat > "$PULSAR_MANIFEST" <<'JSON'
+{"image":"pulsar","components":{"an_absurdly_long_component_key":"v"}}
+JSON
+    run "$PULSAR" manifest
+    [ "$status" -eq 0 ]
+    # padded to the longest key + 2, so exactly two spaces here
+    [[ "$output" == *"an_absurdly_long_component_key  v"* ]]
+}
+
+@test "a corrupt manifest fails loudly instead of printing nothing" {
+    echo 'not json at all' > "$PULSAR_MANIFEST"
+    run "$PULSAR" manifest
+    [ "$status" -ne 0 ]
+}
+
+@test "LOGO_W matches the art's real visible width" {
+    # A mismatch shears the info column only when the manifest has more rows
+    # than the art has lines, which no fixture would notice by accident.
+    command -v python3 >/dev/null || skip "python3 needed to count characters"
+    # python3, not awk: `length` counts BYTES under the C locale and every
+    # glyph in this art is three of them, so awk measured 72 for 24 columns.
+    run python3 "${BATS_TEST_DIRNAME}/logo_width.py" "$PULSAR"
+    [ "$status" -eq 0 ]
+}
+
+@test "the logo never appears in piped output" {
+    run "$PULSAR" manifest
+    [[ "$output" != *"▄"* ]]
+    [[ "$output" != *"█"* ]]
+}

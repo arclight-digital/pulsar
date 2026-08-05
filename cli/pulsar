@@ -272,22 +272,79 @@ cmd_manifest() {
     # Colours are passed IN rather than baked into the jq program: jq cannot
     # know whether stdout is a terminal, and hardcoded escapes meant
     # `pulsar manifest | cat` emitted raw control codes.
-    jq -r --arg c "$C_KEY" --arg r "$C_RESET" '
-      # Pad to a fixed column, but never to zero: "attestation" is exactly
-      # 11 characters and ran straight into its value. jq also returns null
-      # for a non-positive string repeat, which would blank the whole row.
-      def pad($k): ($k | length) as $l | $k + (" " * (if $l < 11 then 11 - $l else 1 end));
-      def row($k; $v): $c + pad($k) + $r + " " + $v;
-      row("image";     (.image // "?") + (if .variant then " (" + .variant + ")" else "" end)),
-      row("version";   .version // "?"),
-      row("base";      .base // "?"),
-      row("built";     .built // "?"),
-      row("kernel";    .kernel // "?"),
-      (.components // {} | to_entries[] | row(.key; .value)),
-      row("sbom";      "pulsar sbom"),
-      (if .attestation then row("attestation"; .attestation) else empty end)
-    ' "$MANIFEST"
+    # The column is measured, never guessed. A fixed width of 11 already ran
+    # "attestation" into its value once; components come from the manifest, so
+    # the longest key is whatever the image happened to ship -- scheduler_btf
+    # is 13, nvidia_driver is 13, and the next one is not knowable from here.
+    local rows
+    rows=$(jq -r --arg c "$C_KEY" --arg r "$C_RESET" '
+      [ ["image",   (.image // "?") + (if .variant then " (" + .variant + ")" else "" end)],
+        ["version", (.version // "?")],
+        ["base",    (.base // "?")],
+        ["built",   (.built // "?")],
+        ["kernel",  (.kernel // "?")]
+      ]
+      + (.components // {} | to_entries | map([.key, (.value | tostring)]))
+      + [["sbom", "pulsar sbom"]]
+      + (if .attestation then [["attestation", .attestation]] else [] end)
+      | (map(.[0] | length) | max) as $w
+      | .[] | $c + .[0] + (" " * ($w - (.[0] | length) + 2)) + $r + .[1]
+    ' "$MANIFEST") || die "manifest at ${MANIFEST} is not valid JSON"
+
+    if want_logo; then paste_logo "$rows"; else printf '%s\n' "$rows"; fi
     swatches
+}
+
+# The mark, drawn in half-blocks: the sweep ring, its leading dot, and the
+# core. Every line is padded to exactly LOGO_W visible columns IN THE SOURCE
+# rather than at runtime -- `printf %-Ns` pads by bytes, and these glyphs are
+# three bytes each, so runtime padding would shear the whole column.
+# Keep LOGO_W equal to the visible width of the art below; tests/pulsar.bats
+# asserts they agree, because a mismatch only shows up as a sheared column on
+# an image whose manifest happens to carry more rows than the art has lines.
+LOGO_W=24
+logo_art() {
+    local a b c
+    a=$'\033[38;2;62;203;255m'    # cyan: the bright leading edge
+    b=$'\033[38;2;143;168;255m'   # periwinkle: the body of the sweep
+    c=$'\033[38;2;233;237;247m'   # star: the core
+    [ -n "$C_RESET" ] || { a=""; b=""; c=""; }
+    printf '%s\n' \
+"${a}         ▄▄████▄▄       ${C_RESET}" \
+"${a}      ▄██▀▀    ▀▀██▄  ▄ ${C_RESET}" \
+"${a}    ▄█▀            ▀█▄  ${C_RESET}" \
+"${b}   ██                ██ ${C_RESET}" \
+"${b}  ██                  ██${C_RESET}" \
+"${b}  █▌       ${c}▄██▄${b}       ▐█${C_RESET}" \
+"${b}  █▌      ${c}▐████▌${b}      ▐█${C_RESET}" \
+"${b}  ██       ${c}▀██▀${b}       ██${C_RESET}" \
+"${b}   ██                ██ ${C_RESET}" \
+"${b}    ▀█▄            ▄█▀  ${C_RESET}" \
+"${b}      ▀██▄▄    ▄▄██▀    ${C_RESET}" \
+"${b}         ▀▀████▀▀       ${C_RESET}"
+}
+
+# fastfetch's shape: art on the left, readout on the right, and whichever
+# column is shorter simply runs out. Suppressed when there is no terminal to
+# draw on or it is too narrow to hold both without wrapping.
+want_logo() {
+    [ "${LOGO:-auto}" != "never" ] || return 1
+    [ "${LOGO:-auto}" != "always" ] || return 0
+    [ -n "$C_RESET" ] || return 1
+    local cols; cols=$(tput cols 2>/dev/null || echo 0)
+    [ "$cols" -ge 78 ]
+}
+
+paste_logo() {
+    local -a art=() info=()
+    mapfile -t art < <(logo_art)
+    mapfile -t info <<< "$1"
+    local pad; printf -v pad '%*s' "$LOGO_W" ''
+    local i n=${#art[@]} m=${#info[@]}
+    [ "$m" -gt "$n" ] && n=$m
+    for ((i = 0; i < n; i++)); do
+        printf '%s  %s\n' "${art[i]-$pad}" "${info[i]-}"
+    done
 }
 
 # The brand palette as terminal blocks, the way fastfetch closes its readout.
@@ -415,6 +472,7 @@ pulsar -- manage a Pulsar system
   pulsar setup <recipe>    devbox | quadlet | gamescale
 
 Options
+  --logo, --no-logo        force or suppress the mark in `manifest`
   --json                   machine-readable output (doctor, status, manifest,
                            changelog); everything else ignores it
   --version, --help
@@ -428,6 +486,8 @@ main() {
     for a in "$@"; do
         case "$a" in
             --json) JSON=1 ;;
+            --logo) LOGO=always ;;
+            --no-logo) LOGO=never ;;
             # Once a subcommand has been seen, --help belongs to IT: otherwise
             # `pulsar setup --help` printed the top-level usage and never told
             # you what the recipes were.
