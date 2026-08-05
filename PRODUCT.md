@@ -33,8 +33,9 @@ over-engineered on purpose, MIT-licensed to fork.
 ## Operating Context
 
 Site source lives in `site/` of the arclight-digital/pulsar monorepo; `site/build.sh` stages brand assets and the wallpaper
-shader from `assets/` into `site/_site`, deployed by the site.yml Pages
-workflow (main only). Local preview: `./site/build.sh && python3 -m
+shader from `assets/` into `site/_site`, built and deployed by Cloudflare
+Workers git integration on push to main (root dir `site`, build `./build.sh`,
+deploy `npx wrangler deploy`) to the pulsar-site Worker. Local preview: `./site/build.sh && python3 -m
 http.server -d site/_site`. The OS image build is a separate workflow and
 must never be triggered by site edits.
 
