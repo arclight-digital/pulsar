@@ -54,8 +54,9 @@ must never be triggered by site edits.
 
 ## Brand Commitments
 
-- Mark: `assets/icons/pulsar-mark.svg` (dark surfaces) and
-  `pulsar-mark-ink.svg` (light surfaces — colored arc, inked orbs).
+- Mark: `assets/brand/pulsar-mark.svg` (dark surfaces) and
+  `pulsar-mark-color-dark.svg` (light surfaces — colored arc, dark cores).
+  All brand art is authored, in `assets/brand/`.
 - Wordmark: PULSAR, Host Grotesk Bold, uppercase, 0.3em tracking.
 - Tagline: "Fedora with a pulse." (replaced "Steady light. Atomic core.",
   which is retired). Footer line: "AN IMMUTABLE FEDORA

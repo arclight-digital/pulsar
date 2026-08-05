@@ -44,20 +44,17 @@ void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }
 #
 # The mark is pasted after the render -- it is alpha art with a gaussian glow,
 # and reimplementing that in GLSL to avoid one PIL call would be absurd. Dark
-# cuts carry the full-color mark; light cuts derive an INK mark from the
-# authored mono art (flat #241F3D over its alpha) -- the standalone ink
-# rasters were retired with the generated lockups, and this matches
-# sync-branding.sh's ink() treatment exactly.
-ICONS = REPO / "assets" / "icons"
-INK = (36, 31, 61, 255)  # #241F3D
+# cuts carry the full-color mark; light cuts carry the authored color-dark
+# mark (colored arc, near-black cores -- the light-ground family).
+BRAND = REPO / "assets" / "brand"
 LOOKS = {"silk": 0.0, "leak": 1.0, "satin": 2.0, "holo": 3.0}
 VARIANTS = [
     (f"pulsar-{name}-{theme}.png",
      dict(u_time=0.0, u_theme=t, u_look=look),
-     ICONS / mark, inked)
+     BRAND / mark)
     for name, look in LOOKS.items()
-    for theme, t, mark, inked in [("dark", 0.0, "pulsar-mark-1024.png", False),
-                                  ("light", 1.0, "pulsar-mark-mono-1024.png", True)]
+    for theme, t, mark in [("dark", 0.0, "pulsar-mark-1024.png"),
+                           ("light", 1.0, "pulsar-mark-color-dark-1024.png")]
 ]
 
 LOGO_FRAC = 0.30   # mark height as a fraction of screen height
@@ -93,16 +90,11 @@ def render(width, height, uniforms):
     return img.transpose(Image.FLIP_TOP_BOTTOM)
 
 
-def composite_logo(img, logo, inked=False):
+def composite_logo(img, logo):
     from PIL import Image
 
     size = round(img.height * LOGO_FRAC)
-    mark = Image.open(logo).convert("RGBA")
-    if inked:
-        solid = Image.new("RGBA", mark.size, INK)
-        solid.putalpha(mark.getchannel("A"))
-        mark = solid
-    mark = mark.resize((size, size), Image.LANCZOS)
+    mark = Image.open(logo).convert("RGBA").resize((size, size), Image.LANCZOS)
     x = (img.width - size) // 2
     y = (img.height - size) // 2 - round(img.height * LOGO_LIFT)
     img.paste(mark, (x, y), mark)
@@ -119,8 +111,8 @@ def main():
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    for name, uniforms, logo, inked in VARIANTS:
-        img = composite_logo(render(args.width, args.height, uniforms), logo, inked)
+    for name, uniforms, logo in VARIANTS:
+        img = composite_logo(render(args.width, args.height, uniforms), logo)
         img.save(out / name, optimize=True)
         print(f"  {out / name} ({args.width}x{args.height})")
 

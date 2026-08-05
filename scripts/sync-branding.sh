@@ -25,8 +25,8 @@ GDM_PX=${GDM_PX:-192}             # login screen logo
 command -v magick >/dev/null || { echo "needs ImageMagick 7 (magick)" >&2; exit 1; }
 for f in pulsar-mark.svg pulsar-mark-1024.png pulsar-mark-mono-1024.png \
          pulsar-mark-mono.svg pulsar-lockup-horizontal.png \
-         pulsar-lockup-horizontal-mono.png; do
-    [[ -r "${A}/icons/${f}" ]] || { echo "missing asset: ${A}/icons/${f}" >&2; exit 1; }
+         pulsar-lockup-horizontal-color-dark.png pulsar-mark-color-dark.svg; do
+    [[ -r "${A}/brand/${f}" ]] || { echo "missing asset: ${A}/brand/${f}" >&2; exit 1; }
 done
 
 png() { magick "$1" -filter Lanczos -resize "$2x$2" -strip "$3"; echo "  $3 (${2}px)"; }
@@ -35,19 +35,19 @@ png() { magick "$1" -filter Lanczos -resize "$2x$2" -strip "$3"; echo "  $3 (${2
 # Icons
 # ---------------------------------------------------------------------------
 echo "GNOME About / icon theme  <- pulsar-mark (color)"
-install -Dm644 "${A}/icons/pulsar-mark.svg" \
+install -Dm644 "${A}/brand/pulsar-mark.svg" \
                "${S}/icons/hicolor/scalable/apps/pulsar-logo-icon.svg"
 echo "  ${S}/icons/hicolor/scalable/apps/pulsar-logo-icon.svg"
 for sz in 512 256 128 64 48; do
     mkdir -p "${S}/icons/hicolor/${sz}x${sz}/apps"
-    png "${A}/icons/pulsar-mark-1024.png" "$sz" \
+    png "${A}/brand/pulsar-mark-1024.png" "$sz" \
         "${S}/icons/hicolor/${sz}x${sz}/apps/pulsar-logo-icon.png"
 done
 
 # Mono cuts. Both land on dark backgrounds with no theme awareness and no
 # contrast guarantee, so they use the white-on-transparent art.
 echo "GDM login                 <- pulsar-mark-mono"
-png "${A}/icons/pulsar-mark-mono-1024.png" "${GDM_PX}" "${S}/pixmaps/fedora-gdm-logo.png"
+png "${A}/brand/pulsar-mark-mono-1024.png" "${GDM_PX}" "${S}/pixmaps/fedora-gdm-logo.png"
 
 # Plymouth watermark is generated in the lockup section below -- it needs the
 # wordmark font variables, which are defined there.
@@ -67,30 +67,26 @@ png "${A}/icons/pulsar-mark-mono-1024.png" "${GDM_PX}" "${S}/pixmaps/fedora-gdm-
 # gnome-control-center. 279x80 is the size Fedora ships; the panel does not
 # scale it.
 #
-# The lockup art is AUTHORED, not generated: assets/icons/pulsar-lockup-*.png
-# are the design source (color and mono cuts, white wordmark -- dark-ground
-# art). Light surfaces get an INK derivation: the mono cut with its RGB
-# flattened to #241F3D, keeping the authored geometry and alpha. Do not
-# rebuild lockups from mark + font here; that generated look was retired.
+# The lockup art is AUTHORED, not generated: assets/brand/pulsar-lockup-*.png
+# are the design source. The plain cuts carry a white wordmark (dark-ground
+# art); the *-color-dark cuts are the authored light-ground family (colored
+# arc, near-black cores and wordmark). Do not rebuild lockups from mark +
+# font, and do not derive light art by recoloring -- both looks were retired
+# in favor of the authored set.
 # ---------------------------------------------------------------------------
-TMP="$(mktemp -d)"; trap 'rm -rf "${TMP}"' EXIT
-LOCKUP="${A}/icons/pulsar-lockup-horizontal.png"
-LOCKUP_MONO="${A}/icons/pulsar-lockup-horizontal-mono.png"
+LOCKUP="${A}/brand/pulsar-lockup-horizontal.png"
+LOCKUP_DARK="${A}/brand/pulsar-lockup-horizontal-color-dark.png"
 
 fit279() { # $1=source $2=destination -- contain into the panel's fixed box
     magick -background none "$1" -trim -resize 279x80 \
            -gravity center -extent 279x80 -strip "$2"
     echo "  $2 (279x80)"
 }
-ink() { # $1=source $2=destination -- authored geometry, ink-colored for light
-    magick "$1" -channel RGB -fill '#241F3D' -colorize 100 +channel -strip "$2"
-}
 
 echo "GNOME About lockup        <- pulsar-lockup-horizontal (color)"
 fit279 "${LOCKUP}" "${S}/pixmaps/fedora_whitelogo_med.png"
-echo "GNOME About lockup (light) <- pulsar-lockup-horizontal-mono, inked"
-ink "${LOCKUP_MONO}" "${TMP}/lockup-ink.png"
-fit279 "${TMP}/lockup-ink.png" "${S}/pixmaps/fedora_logo_med.png"
+echo "GNOME About lockup (light) <- pulsar-lockup-horizontal-color-dark"
+fit279 "${LOCKUP_DARK}" "${S}/pixmaps/fedora_logo_med.png"
 
 # ---------------------------------------------------------------------------
 # Plymouth watermark: the authored color lockup, bottom-center via the theme's
@@ -102,16 +98,8 @@ magick -background none "${LOCKUP}" -trim -resize x96 -strip \
        "${S}/plymouth/themes/pulsar/watermark.png"
 echo "  ${S}/plymouth/themes/pulsar/watermark.png ($(magick identify -format '%wx%h' "${S}/plymouth/themes/pulsar/watermark.png"))"
 
-# ---------------------------------------------------------------------------
-# Site light-theme mark: the ink derivation of the authored mono mark. The
-# ink SVGs were retired with the generated lockups; this raster is what
-# site/main.js swaps in on the light theme (site/build.sh stages it).
-# ---------------------------------------------------------------------------
-echo "Site ink mark             <- pulsar-mark-mono-1024, inked"
-ink "${A}/icons/pulsar-mark-mono-1024.png" "${TMP}/mark-ink-full.png"
-magick "${TMP}/mark-ink-full.png" -filter Lanczos -resize 512x512 -strip \
-       "${REPO}/site/assets-static/pulsar-mark-ink.png"
-echo "  ${REPO}/site/assets-static/pulsar-mark-ink.png (512px)"
+# (The site's light-theme mark is authored art too -- site/build.sh stages
+# assets/brand/pulsar-mark-color-dark.svg directly; nothing to generate.)
 
 # ---------------------------------------------------------------------------
 # Fonts
@@ -141,6 +129,6 @@ echo
 echo "family names in use (must match zz0-pulsar.gschema.override):"
 fc-scan --format '  %{family[0]}\n' "${S}/fonts/pulsar" 2>/dev/null | sort -u
 echo
-echo "assets/icons/pulsar-tile* are unused by the image -- that is the"
+echo "assets/brand/pulsar-tile* are unused by the image -- that is the"
 echo "rounded-square cut, an app-icon form. Keep them for an ISO or"
 echo "launcher icon later."

@@ -1,4 +1,4 @@
-<img src="assets/icons/pulsar-mark.svg" width="140" alt="Pulsar">
+<img src="assets/brand/pulsar-mark.svg" width="140" alt="Pulsar">
 
 # Pulsar
 
@@ -120,11 +120,11 @@ watermark — `sync-branding.sh` overwrites all of it from `assets/`.
 
 | Slot | Source | Generated |
 |---|---|---|
-| Icon theme | `pulsar-mark{,-1024}` | `hicolor/*/apps/pulsar-logo-icon.*` |
+| Icon theme | `brand/pulsar-mark{,-1024}` | `hicolor/*/apps/pulsar-logo-icon.*` |
 | GDM login | `pulsar-mark-mono-1024.png` | `pixmaps/fedora-gdm-logo.png` @192px |
 | Boot splash | `pulsar-lockup-horizontal.png` | `plymouth/themes/pulsar/watermark.png` |
 | About panel (dark) | `pulsar-lockup-horizontal.png` | `pixmaps/fedora_whitelogo_med.png` @279×80 |
-| About panel (light) | `pulsar-lockup-horizontal-mono.png`, inked | `pixmaps/fedora_logo_med.png` @279×80 |
+| About panel (light) | `pulsar-lockup-horizontal-color-dark.png` | `pixmaps/fedora_logo_med.png` @279×80 |
 
 GDM gets the **mono** cut (grey ground, no contrast guarantee); plymouth
 gets the color mark -- its ground is the same near-black as the wallpapers.
@@ -134,8 +134,8 @@ gnome-control-center both point at those literal paths, so overwriting one
 file beats shipping a config override or patching a binary. In particular the
 About panel does **not** use `LOGO=` from os-release — that's a square icon,
 and the panel wants a horizontal lockup, chosen by theme. The lockups are
-authored art in assets/icons; light surfaces use the mono cut recolored to
-ink, because the white-wordmark originals vanish on a pale background.
+authored art in assets/brand; light surfaces use the authored *-color-dark
+cuts, because the white-wordmark originals vanish on a pale background.
 
 The plymouth watermark is a fixed 320px because plymouth won't scale it; sized
 for 2560×1600.

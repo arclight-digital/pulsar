@@ -15,9 +15,9 @@ rm -rf "${OUT}"
 mkdir -p "${OUT}/assets"
 
 cp "${REPO}/site/index.html" "${REPO}/site/style.css" "${REPO}/site/main.js" "${OUT}/"
-cp "${REPO}/assets/icons/pulsar-mark.svg" \
-   "${REPO}/site/assets-static/pulsar-mark-ink.png" \
-   "${REPO}/assets/icons/favicon.svg" \
+cp "${REPO}/assets/brand/pulsar-mark.svg" \
+   "${REPO}/assets/brand/pulsar-mark-color-dark.svg" \
+   "${REPO}/assets/brand/favicon.svg" \
    "${REPO}/assets/shaders/pulsar.frag" \
    "${REPO}/assets/fonts/Host_Grotesk/static/HostGrotesk-Regular.ttf" \
    "${REPO}/assets/fonts/Host_Grotesk/static/HostGrotesk-Bold.ttf" \
