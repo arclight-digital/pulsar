@@ -65,6 +65,10 @@ jobs:
         run: |
           echo "IMAGE=ghcr.io/${OWNER,,}/pulsar" >> "$GITHUB_ENV"
           echo "IMAGE_NVIDIA=ghcr.io/${OWNER,,}/pulsar-nvidia" >> "$GITHUB_ENV"
+          # immutable per-build tag alongside the moving :44/:latest, matching
+          # Fedora's own version style (44.20260805). This is what makes
+          # "pin to last Tuesday's build" and clean rollbacks possible.
+          echo "DATETAG=${FEDORA_VERSION}.$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
 
       # Both logins are needed: podman writes auth to
       # $XDG_RUNTIME_DIR/containers/auth.json for the build/push steps, but
@@ -94,13 +98,14 @@ jobs:
           podman build --pull=newer \
             --file Containerfile \
             --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
-            -t "${IMAGE}:${FEDORA_VERSION}" -t "${IMAGE}:latest" .
+            -t "${IMAGE}:${FEDORA_VERSION}" -t "${IMAGE}:latest" -t "${IMAGE}:${DATETAG}" .
 
       - name: Push vanilla
         id: push_vanilla
         run: |
           podman push --digestfile /tmp/digest-vanilla "${IMAGE}:${FEDORA_VERSION}"
           podman push "${IMAGE}:latest"
+          podman push "${IMAGE}:${DATETAG}"
           echo "digest=$(cat /tmp/digest-vanilla)" >> "$GITHUB_OUTPUT"
 
       # /dev/shm is tmpfs: the key never touches the runner's disk. The
@@ -125,7 +130,8 @@ jobs:
             --build-arg BASE_IMAGE="${IMAGE}" \
             --secret id=akmods_priv,src=/dev/shm/keys/priv \
             --secret id=akmods_cert,src=/dev/shm/keys/cert \
-            -t "${IMAGE_NVIDIA}:${FEDORA_VERSION}" -t "${IMAGE_NVIDIA}:latest" .
+            -t "${IMAGE_NVIDIA}:${FEDORA_VERSION}" -t "${IMAGE_NVIDIA}:latest" \
+            -t "${IMAGE_NVIDIA}:${DATETAG}" .
 
       - name: Destroy the key material
         if: always()
@@ -138,6 +144,7 @@ jobs:
         run: |
           podman push --digestfile /tmp/digest-nvidia "${IMAGE_NVIDIA}:${FEDORA_VERSION}"
           podman push "${IMAGE_NVIDIA}:latest"
+          podman push "${IMAGE_NVIDIA}:${DATETAG}"
           echo "digest=$(cat /tmp/digest-nvidia)" >> "$GITHUB_OUTPUT"
 
       - name: Attest vanilla

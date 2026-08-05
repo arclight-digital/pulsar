@@ -122,12 +122,12 @@ watermark — `sync-branding.sh` overwrites all of it from `assets/`.
 |---|---|---|
 | Icon theme | `pulsar-mark{,-1024}` | `hicolor/*/apps/pulsar-logo-icon.*` |
 | GDM login | `pulsar-mark-mono-1024.png` | `pixmaps/fedora-gdm-logo.png` @192px |
-| Boot splash | `pulsar-mark-mono-1024.png` | `plymouth/themes/pulsar/watermark.png` @320px |
+| Boot splash | `pulsar-mark-1024.png` (color) | `plymouth/themes/pulsar/watermark.png` @320px |
 | About panel (dark) | `pulsar-mark-mono.svg` + Host Grotesk | `pixmaps/fedora_whitelogo_med.png` @279×80 |
 | About panel (light) | `pulsar-mark-ink.svg` + Host Grotesk | `pixmaps/fedora_logo_med.png` @279×80 |
 
-GDM and plymouth get the **mono** cut: both land on dark surfaces with no
-theme awareness and no contrast guarantee.
+GDM gets the **mono** cut (grey ground, no contrast guarantee); plymouth
+gets the color mark -- its ground is the same near-black as the wallpapers.
 
 Three of these keep Fedora's filenames on purpose. GDM's config and
 gnome-control-center both point at those literal paths, so overwriting one

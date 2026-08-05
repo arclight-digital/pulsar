@@ -48,8 +48,12 @@ done
 echo "GDM login                 <- pulsar-mark-mono"
 png "${A}/icons/pulsar-mark-mono-1024.png" "${GDM_PX}" "${S}/pixmaps/fedora-gdm-logo.png"
 
-echo "Plymouth watermark        <- pulsar-mark-mono"
-png "${A}/icons/pulsar-mark-mono-1024.png" "${PLYMOUTH_PX}" "${S}/plymouth/themes/pulsar/watermark.png"
+# Full color, not mono: plymouth composites the watermark PNG as-is on the
+# splash background, and the color mark reads correctly there -- same dark
+# ground as the wallpapers. (The mono cut was an overcorrection; only GDM
+# keeps it, whose grey ground genuinely fights the color art.)
+echo "Plymouth watermark        <- pulsar-mark (color)"
+png "${A}/icons/pulsar-mark-1024.png" "${PLYMOUTH_PX}" "${S}/plymouth/themes/pulsar/watermark.png"
 
 # ---------------------------------------------------------------------------
 # GNOME Settings -> About lockup.
