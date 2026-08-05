@@ -57,7 +57,8 @@ must never be triggered by site edits.
 - Mark: `assets/icons/pulsar-mark.svg` (dark surfaces) and
   `pulsar-mark-ink.svg` (light surfaces — colored arc, inked orbs).
 - Wordmark: PULSAR, Host Grotesk Bold, uppercase, 0.3em tracking.
-- Tagline: "Steady light. Atomic core." Footer line: "AN IMMUTABLE FEDORA
+- Tagline: "Fedora with a pulse." (replaced "Steady light. Atomic core.",
+  which is retired). Footer line: "AN IMMUTABLE FEDORA
   SPIN · ARCLIGHT.BUILD".
 - Palette: ink #0B0E1A, deep #241F3D, cyan #3ECBFF, periwinkle #8FA8FF,
   violet #4B3FD4, star #E9EDF7. Fonts: Host Grotesk (UI), JetBrains Mono

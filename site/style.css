@@ -86,9 +86,20 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
 #skyfade { pointer-events: none; opacity: 0; }
 .hero-inner {
   position: relative;
+  z-index: 0; /* stacking context so the scrim's -1 stays above the canvases */
   text-align: center;
   padding: 4rem 1.5rem 7rem;
   max-width: 46rem;
+}
+/* contrast insurance: the shader is unpredictable across 4 looks x 2 themes,
+   so the text sits on a soft pool of its own ground color */
+.hero-inner::before {
+  content: "";
+  position: absolute;
+  inset: -1rem -3rem;
+  z-index: -1;
+  background: radial-gradient(closest-side,
+              color-mix(in srgb, var(--ground) 42%, transparent), transparent);
 }
 .mark { height: 140px; width: 140px; }
 .wordmark {
@@ -107,6 +118,16 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
   margin-top: 0.9rem;
 }
 .sub { color: var(--muted); margin: 1rem auto 0; max-width: 34rem; text-wrap: balance; }
+.srclink { margin-top: 0.7rem; font-size: 0.92rem; }
+.srclink a { text-decoration: none; }
+.srclink a:hover, .srclink a:focus-visible { text-decoration: underline; }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
 
 /* ---- install card -------------------------------------------------------- */
 /* Deliberately dark in both themes -- it is a terminal, not a card. */
@@ -127,6 +148,13 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
   padding: 0.55rem 0;
 }
 .install .row + .row { border-top: 1px solid rgba(143, 168, 255, 0.12); }
+.install .req {
+  padding: 0.6rem 0 0.45rem;
+  border-bottom: 1px solid rgba(143, 168, 255, 0.12);
+  color: rgba(233, 237, 247, 0.66);
+  font-size: 0.9rem;
+}
+.install .req strong { color: var(--star); }
 .install .which {
   font-size: 0.64rem;
   font-weight: 700;
@@ -149,8 +177,8 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
   border-radius: 7px;
   background: transparent;
   color: var(--star);
-  width: 30px;
-  height: 30px;
+  width: 36px;  /* thumb-viable: this is the page's primary action */
+  height: 36px;
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -221,7 +249,7 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
   border: 0;
   background: transparent;
   color: var(--muted);
-  font: 500 0.8rem/1 "Host Grotesk", system-ui, sans-serif;
+  font: 400 0.8rem/1 "Host Grotesk", system-ui, sans-serif; /* shipped weights only */
   padding: 0.62rem 0.85rem;
   cursor: pointer;
   transition: color 0.15s ease-out;
@@ -252,36 +280,58 @@ h2 {
 .inside-copy p + p { margin-top: 0.9rem; }
 .inside-copy strong { color: var(--text); }
 
-.manifest {
+/* terminal chrome shared by the manifest and the verify session -- dark in
+   both themes, like the install card: these are terminals, not cards */
+.manifest, .term {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--card);
+  background: rgba(11, 14, 26, 0.78);
   overflow: hidden;
 }
-.manifest figcaption {
+.manifest figcaption, .term figcaption {
   display: flex;
   align-items: center;
   gap: 0.55rem;
-  padding: 0.7rem 1.1rem;
-  border-bottom: 1px solid var(--line);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--muted);
+  padding: 0.65rem 1.1rem;
+  border-bottom: 1px solid rgba(143, 168, 255, 0.12);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.82rem;
+  color: var(--star);
 }
-.manifest .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.manifest pre { padding: 1rem 1.1rem 1.2rem; overflow-x: auto; }
-.manifest code {
+.prompt { color: var(--cyan); font-weight: 700; }
+.manifest pre, .term pre { padding: 0.9rem 1.1rem 1rem; overflow-x: auto; }
+.manifest code, .term code {
   font-size: 0.84rem;
   line-height: 1.9;
-  color: var(--text);
+  color: var(--star);
 }
+.manifest .k { color: var(--peri); }
+/* the fastfetch signature: the palette, wearing itself */
+.swatches {
+  display: flex;
+  gap: 6px;
+  padding: 0 1.1rem 1rem;
+}
+.swatches i {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(143, 168, 255, 0.25);
+}
+.swatches .s1 { background: var(--ink); }
+.swatches .s2 { background: var(--deep); }
+.swatches .s3 { background: var(--violet); }
+.swatches .s4 { background: var(--peri); }
+.swatches .s5 { background: var(--cyan); }
+.swatches .s6 { background: var(--star); }
+
+.term { margin-top: 2rem; max-width: 40rem; }
+.term figcaption { justify-content: flex-start; }
+.term figcaption .copy { margin-left: auto; }
+.term pre { white-space: pre-wrap; word-break: break-word; }
+.term .cmd { color: var(--cyan); }
+.term .out { color: rgba(233, 237, 247, 0.62); }
+.term .ok { color: var(--cyan); font-weight: 700; }
 
 /* ---- pipeline rail ------------------------------------------------------- */
 .pipeline { margin-top: 5.5rem; }
@@ -325,7 +375,6 @@ h2 {
   .rail li:last-child::before { display: none; }
   .rail li::after { top: 2px; }
 }
-.verify-lead { color: var(--muted); margin-top: 2rem; }
 .pipeline > .hint { max-width: 40rem; }
 .pipeline > .hint a { color: var(--accent); }
 

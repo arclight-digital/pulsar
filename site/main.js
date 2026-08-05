@@ -11,9 +11,18 @@
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const sysLight = matchMedia('(prefers-color-scheme: light)');
 
+  // storage can throw wholesale in strict privacy modes; one throw must not
+  // take down theming, copy buttons, and the shader together
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  };
+
   // ---- state: stored choice beats system, system is the default ----------
-  let theme = localStorage.getItem('pulsar-theme');       // 'dark' | 'light' | null
-  let look = Number(localStorage.getItem('pulsar-look') || 0);
+  let theme = store.get('pulsar-theme');                  // 'dark' | 'light' | null
+  if (theme !== 'dark' && theme !== 'light') theme = null;
+  let look = Number(store.get('pulsar-look'));
+  if (!Number.isInteger(look) || look < 0 || look > 3) look = 0;
 
   const effectiveTheme = () => theme || (sysLight.matches ? 'light' : 'dark');
 
@@ -37,7 +46,7 @@
   document.querySelectorAll('[data-theme-pick]').forEach(b =>
     b.addEventListener('click', () => {
       theme = b.dataset.themePick;
-      localStorage.setItem('pulsar-theme', theme);
+      store.set('pulsar-theme', theme);
       reflect();
     }));
   document.querySelectorAll('[data-look]').forEach(b =>
@@ -46,18 +55,34 @@
       if (next === look) return;
       if (onLookSwitch) onLookSwitch(next);
       look = next;
-      localStorage.setItem('pulsar-look', String(look));
+      store.set('pulsar-look', String(look));
       reflect();
     }));
   sysLight.addEventListener('change', reflect);
 
   // ---- copy buttons -------------------------------------------------------
+  // data-copy-text wins (the verify session copies its one-line form);
+  // otherwise the nearest row/figure's code. Denied clipboard falls back to
+  // selecting the text so a manual Ctrl+C still works, and the live region
+  // narrates both outcomes.
+  const live = document.getElementById('live');
   document.querySelectorAll('[data-copy]').forEach(btn =>
     btn.addEventListener('click', async () => {
-      const code = btn.parentElement.querySelector('code');
-      try { await navigator.clipboard.writeText(code.textContent.trim()); }
-      catch { return; } // clipboard denied: no false "copied" state
+      const code = btn.closest('.row, figure').querySelector('code');
+      const text = btn.dataset.copyText || code.textContent.trim();
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const range = document.createRange();
+        range.selectNodeContents(code);
+        const sel = getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        if (live) live.textContent = 'Copy was blocked — the command is selected, press Ctrl+C';
+        return;
+      }
       btn.classList.add('did');
+      if (live) live.textContent = 'Copied to clipboard';
       setTimeout(() => btn.classList.remove('did'), 1400);
     }));
 
@@ -110,6 +135,10 @@
       };
       addEventListener('resize', resize);
       resize();
+
+      // the shader is provably running: NOW the backdrop controls may exist
+      const lookSeg = document.getElementById('lookSeg');
+      if (lookSeg) lookSeg.hidden = false;
 
       // shown values ease toward targets so deck switches crossfade
       let themeShown = effectiveTheme() === 'light' ? 1 : 0;
