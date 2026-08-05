@@ -1,26 +1,21 @@
 {
-  "generated": "2026-08-05T22:39:04Z",
+  "generated": "2026-08-05T23:07:36Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:8481cce28bf104ec4cab1c1b48ffeee7fd7822786d61c0d494c1a94ea4a3373b",
-    "digest": "sha256:8481cce28bf104ec4cab1c1b48ffeee7fd7822786d61c0d494c1a94ea4a3373b"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:f77ce3505d388bb4807912d133db85f2cb1c2238f7befd6be6b6abef150ef5b0",
+    "digest": "sha256:f77ce3505d388bb4807912d133db85f2cb1c2238f7befd6be6b6abef150ef5b0"
   },
   "to": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:2b827f5a4f584ab581aa455893f97fd25a90322deb0eae957e4a46afc9c06fee",
-    "digest": "sha256:2b827f5a4f584ab581aa455893f97fd25a90322deb0eae957e4a46afc9c06fee"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:ea5dfba4d66492247112265c6771ef3678bb2758d9aa138449582e60c4421f00",
+    "digest": "sha256:ea5dfba4d66492247112265c6771ef3678bb2758d9aa138449582e60c4421f00"
   },
   "summary": {
     "added": 0,
-    "removed": 1,
+    "removed": 0,
     "upgraded": 0,
     "downgraded": 0,
     "changed": 0
   },
   "added": [],
-  "removed": [
-    {
-      "name": "gnome-shell-extension-background-logo",
-      "version": "50.1-1.fc44"
-    }
-  ],
+  "removed": [],
   "changed": []
 }
