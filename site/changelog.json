@@ -1,0 +1,21 @@
+{
+  "generated": "2026-08-05T20:32:39Z",
+  "from": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:91b97a970fc2dded923e19851b7550f1422914b8d23c49edab5616cf6c77a646",
+    "digest": "sha256:91b97a970fc2dded923e19851b7550f1422914b8d23c49edab5616cf6c77a646"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:0d1b542fb15b0969376c2375f48aba87fb18a3e57812e4deb357f2c7dc640d72",
+    "digest": "sha256:0d1b542fb15b0969376c2375f48aba87fb18a3e57812e4deb357f2c7dc640d72"
+  },
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "upgraded": 0,
+    "downgraded": 0,
+    "changed": 0
+  },
+  "added": [],
+  "removed": [],
+  "changed": []
+}
