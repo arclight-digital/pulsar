@@ -22,6 +22,12 @@ on:
         description: "Image tag to build ISOs from"
         required: false
         default: "latest"
+      variant:
+        description: "Which variant to build"
+        required: false
+        type: choice
+        default: both
+        options: [both, pulsar, pulsar-nvidia]
   schedule:
     # Weekly, Sunday, well clear of the nightly image build at 08:30.
     - cron: '0 11 * * 0'
@@ -32,6 +38,17 @@ concurrency:
 
 env:
   FEDORA_VERSION: "44"
+  # Pinned by digest, not :latest. The flag surface here is not stable -- the
+  # `--local` flag this workflow was first written against no longer exists,
+  # because bib stopped pulling images itself and reads local storage only.
+  # A digest makes that kind of change a deliberate bump instead of a
+  # workflow that breaks on a morning nobody touched it.
+  BIB: quay.io/centos-bootc/bootc-image-builder@sha256:2b52843ea2bfda73b0a08d97e76b734393b1d3a804681b9fabb26723bd3a2f0b
+  # The image lineage declares no default root filesystem: /usr/lib/bootc/install
+  # is empty in fedora-silverblue, so bib exits with "no default root filesystem
+  # type specified in container". btrfs matches what Silverblue's own installer
+  # picks, so an ISO install lands on the same layout as a stock one.
+  ROOTFS: btrfs
 
 jobs:
   iso:
@@ -44,56 +61,79 @@ jobs:
       # and logged in Rekor, which is the property we actually want.
       id-token: write
     strategy:
+      # Independent runners, independent disks: one variant failing says
+      # nothing about the other, so it must not cancel it.
       fail-fast: false
       matrix:
-        variant: [pulsar, pulsar-nvidia]
+        # Empty on a schedule run, which correctly falls through to both.
+        variant: ${{ fromJSON(
+          github.event.inputs.variant == 'pulsar' && '["pulsar"]'
+          || github.event.inputs.variant == 'pulsar-nvidia' && '["pulsar-nvidia"]'
+          || '["pulsar","pulsar-nvidia"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: sigstore/cosign-installer@v3
 
-      - name: Resolve names and free the temp disk
+      # Everything that touches multiple GB lives on /mnt: the runner's root
+      # filesystem has ~20GB free, and one ISO build moves more than that
+      # between the image, the osbuild store and the output.
+      - name: Resolve names and put the big directories on /mnt
         env:
           OWNER: ${{ github.repository_owner }}
         run: |
           echo "IMAGE=ghcr.io/${OWNER,,}/${{ matrix.variant }}" >> "$GITHUB_ENV"
           echo "TAG=${{ github.event.inputs.tag || 'latest' }}" >> "$GITHUB_ENV"
-          sudo mkdir -p /mnt/podman /mnt/iso
-          sudo chown "$(id -u):$(id -g)" /mnt/podman /mnt/iso
-          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/podman"\nrunroot = "/tmp/podman-run"\n' \
+          sudo mkdir -p /mnt/podman /mnt/iso /mnt/store /mnt/rpmmd
+          sudo chown "$(id -u):$(id -g)" /mnt/iso
+          # Podman here is ROOTFUL, because bib runs under sudo and reads this
+          # same graphroot from inside its own container. A rootless pull would
+          # write UID-shifted layers that the rootful builder cannot use.
+          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/podman"\nrunroot = "/run/containers/storage"\n' \
             > /tmp/storage.conf
-          echo "CONTAINERS_STORAGE_CONF=/tmp/storage.conf" >> "$GITHUB_ENV"
           df -h / /mnt
 
       - name: Log in to ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin \
+                --authfile /tmp/auth.json
 
-      # bootc-image-builder reads the image out of LOCAL container storage, so
-      # the pull has to happen first and the storage has to be bind-mounted in.
+      # bib no longer pulls images -- it reads local container storage and says
+      # so explicitly if the image is absent. So the pull happens here, into the
+      # graphroot that gets bind-mounted into the builder below.
       - name: Pull the image
         run: |
-          podman pull "${IMAGE}:${TAG}"
-          podman image inspect "${IMAGE}:${TAG}" --format 'pulled {{.Id}} ({{.Size}} bytes)'
+          sudo env CONTAINERS_STORAGE_CONF=/tmp/storage.conf \
+            podman pull --authfile /tmp/auth.json "${IMAGE}:${TAG}"
+          sudo env CONTAINERS_STORAGE_CONF=/tmp/storage.conf \
+            podman image inspect "${IMAGE}:${TAG}" --format 'pulled {{.Id}} ({{.Size}} bytes)'
 
-      # --privileged and the unconfined label are what upstream documents:
-      # the builder makes loopback devices and mounts filesystems to lay the
-      # ISO out, none of which works from a confined container.
+      # --privileged and the unconfined label are what upstream documents: the
+      # builder makes loopback devices and mounts filesystems to lay the ISO
+      # out, none of which works from a confined container.
       #
-      # Storage is bind-mounted read-only so the builder cannot mutate the
-      # image it is packaging.
+      # The storage mount is read-WRITE and has to be. bib runs a nested podman
+      # against this graphroot; mounted :ro it dies on `mkdir
+      # /var/lib/containers/storage/l: read-only file system` before it does
+      # any work. /store and /rpmmd are mounted for space, not correctness --
+      # left unmounted they land in the container's overlay on the root disk.
       - name: Build the installer ISO
         run: |
           sudo podman run --rm --privileged \
             --security-opt label=type:unconfined_t \
             -v /mnt/iso:/output \
-            -v /mnt/podman:/var/lib/containers/storage:ro \
-            --env STORAGE_CONF=/tmp/storage.conf \
-            quay.io/centos-bootc/bootc-image-builder:latest \
+            -v /mnt/podman:/var/lib/containers/storage \
+            -v /mnt/store:/store \
+            -v /mnt/rpmmd:/rpmmd \
+            "${BIB}" \
+              build \
               --type anaconda-iso \
-              --target-arch x86_64 \
-              --local \
+              --rootfs "${ROOTFS}" \
+              --progress verbose \
               "${IMAGE}:${TAG}"
           sudo chown -R "$(id -u):$(id -g)" /mnt/iso
           find /mnt/iso -name '*.iso' -printf '%p  %s bytes\n'
+          df -h / /mnt
 
       - name: Name, checksum and sign
         run: |

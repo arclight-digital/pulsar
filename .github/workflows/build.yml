@@ -22,6 +22,9 @@ on:
     paths-ignore:
       - 'site/**'
       - '.github/workflows/site.yml'
+      # ISOs are built FROM a published image, never into one, so iso.yml
+      # cannot change what this workflow produces.
+      - '.github/workflows/iso.yml'
       - '**.md'
       - 'LICENSE'
   schedule:
