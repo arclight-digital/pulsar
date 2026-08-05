@@ -156,6 +156,15 @@ check_nvidia() {
     running=$(cat /sys/module/nvidia/version 2>/dev/null) || true
     [ -n "$running" ] || running=unknown
     expected=$(mf nvidia_driver)
+    # Only compare against something version-shaped. A manifest once carried
+    # nvidia_driver="package kmod-nvidia-open is not installed" -- rpm prints
+    # that on stdout and exits 1, so a `$(rpm -q ... || fallback)` captured it
+    # as the value. Comparing against it warns on every run, forever, about a
+    # driver that is perfectly fine. Garbage in the manifest is the manifest's
+    # bug to report, not a reason to cry wolf about the driver.
+    case "$expected" in
+        *[!0-9.]*|'') expected="" ;;
+    esac
     if [ -n "$expected" ] && [ "$running" != "$expected" ]; then
         record nvidia warn "driver ${running}, image expects ${expected}" \
                "a reboot into the staged deployment usually reconciles this"
