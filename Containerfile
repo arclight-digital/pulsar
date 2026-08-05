@@ -128,6 +128,7 @@ RUN dnf5 install -y \
 RUN dnf5 install -y \
       bpftrace \
       bcc-tools \
+      bpftool \
       sysstat \
       direnv \
       perf && \
@@ -136,6 +137,36 @@ RUN dnf5 install -y \
     echo "kernel-core ${KV} / perf ${PV}" && \
     if [ "${KV%.*}" != "${PV%.*}" ]; then \
       echo "FATAL: perf ${PV} is from a different kernel series than ${KV}; profiles would be wrong"; exit 1; \
+    fi
+
+# ---------------------------------------------------------------------------
+# Can the kernel this image ships actually load a sched_ext scheduler?
+#
+# `ConditionPathExists=/sys/kernel/sched_ext` proves sched_ext EXISTS. It says
+# nothing about whether a BPF scheduler can load, and on Fedora 7.1.5/7.1.6 it
+# cannot: 38 scx kfuncs publish the implicit 'struct bpf_prog_aux *' in their
+# BTF prototypes, so every scheduler dies with 'func_proto incompatible with
+# vmlinux'. Asking at build time turns a boot-time mystery into a build log
+# line, and drops the marker scx.service conditions on.
+#
+# Deliberately not fatal when the answer is "no" -- a kernel that cannot run
+# sched_ext is a fine machine, just a machine on EEVDF. It IS fatal when the
+# answer cannot be determined, because shipping an image whose scheduler
+# behaviour nobody can explain is the failure this whole gate exists to stop.
+# ---------------------------------------------------------------------------
+COPY scripts/check-scx-btf.sh /usr/libexec/pulsar/check-scx-btf.sh
+RUN chmod 0755 /usr/libexec/pulsar/check-scx-btf.sh && \
+    mkdir -p /usr/lib/pulsar && \
+    if /usr/libexec/pulsar/check-scx-btf.sh --image; then \
+      touch /usr/lib/pulsar/scx-supported; \
+      echo "scx: kernel BTF is clean, scx.service will start at boot"; \
+    else \
+      rc=$?; \
+      if [ "${rc}" != "1" ]; then \
+        echo "FATAL: could not determine whether this kernel can load sched_ext (exit ${rc})"; \
+        exit 1; \
+      fi; \
+      echo "scx: this kernel cannot load a BPF scheduler; scx.service will be skipped"; \
     fi
 
 # ---------------------------------------------------------------------------
@@ -342,13 +373,15 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh && \
       --arg built     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg kernel    "$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)" \
       --arg scheduler "scx_bpfland" \
+      --arg scxbtf    "$([ -e /usr/lib/pulsar/scx-supported ] && echo ok || echo malformed)" \
       --arg gamescope "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamescope)" \
       --arg mesa      "$(rpm -q --qf '%{VERSION}-%{RELEASE}' mesa-dri-drivers)" \
       --arg gamescale "${GAMESCALE_VERSION}" \
       --arg changelog "${PULSAR_CHANGELOG_URL}" \
       '{image:$image, variant:$variant, version:$version, base:$base, built:$built, \
         kernel:$kernel, \
-        components:{scheduler:$scheduler, gamescope:$gamescope, mesa:$mesa, \
+        components:{scheduler:$scheduler, scheduler_btf:$scxbtf, \
+                    gamescope:$gamescope, mesa:$mesa, \
                     gamescale:$gamescale}, \
         changelog_url:$changelog, \
         attestation:"gh attestation verify oci://ghcr.io/arclight-digital/pulsar --owner arclight-digital"}' \

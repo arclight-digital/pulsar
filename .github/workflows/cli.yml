@@ -55,6 +55,7 @@ jobs:
             scripts/sbom-changelog.sh \
             scripts/render-changelog.sh \
             scripts/lint-containerfile.sh \
+            scripts/check-scx-btf.sh \
             site/build.sh
           echo "shellcheck: clean"
 

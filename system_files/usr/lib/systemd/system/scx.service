@@ -7,6 +7,20 @@ After=multi-user.target
 # `cat /sys/kernel/sched_ext/state`, which must read "enabled".
 ConditionPathExists=/sys/kernel/sched_ext
 
+# ...and this proves the kernel's BTF can actually LOAD a scheduler, which is
+# a separate question with a separate answer. Fedora 7.1.5 and 7.1.6 publish
+# scx kfuncs with the implicit 'struct bpf_prog_aux *' still in their public
+# prototypes, so every BPF scheduler fails to load with 'func_proto
+# incompatible with vmlinux' -- bpfland and lavd alike. sched_ext is present,
+# usable it is not.
+#
+# The build answers that question (scripts/check-scx-btf.sh, run against the
+# kernel this image ships) and drops this marker only when the answer is yes.
+# A skipped unit is honest and quiet; three failed starts per boot on a
+# kernel that cannot possibly work is noise that teaches you to ignore unit
+# failures. When Fedora ships a fixed kernel the marker reappears by itself.
+ConditionPathExists=/usr/lib/pulsar/scx-supported
+
 # If the scheduler dies repeatedly, give up rather than thrash. Nothing
 # attached means stock EEVDF, so stopping for good is a safe end state.
 #

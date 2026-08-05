@@ -27,9 +27,23 @@ and given to the seat user, so Proton can use it where the build supports it.
 
 `greenboot` checks each boot and rolls back automatically after three failures.
 The required check is that the desktop actually came up — the one failure you
-cannot type your way out of. Scheduler and network are warn-only, because a
-scheduler that fails to attach still leaves a usable machine, and a laptop that
-boots with no network is not a broken deployment.
+cannot type your way out of. It waits for a graphical session on a seat, never
+for `graphical.target`: the health check runs *inside* the transaction that
+target is waiting on, so waiting for it can only ever time out. Scheduler and
+network are warn-only, because a scheduler that fails to attach still leaves a
+usable machine, and a laptop that boots with no network is not a broken
+deployment.
+
+The scheduler is gated on the kernel that ships with the image. Fedora's 7.1.5
+and 7.1.6 publish 38 scx kfuncs with the implicit `struct bpf_prog_aux *` still
+in their BTF prototypes, so every BPF scheduler fails to load — `bpfland` and
+`lavd` alike. `ConditionPathExists=/sys/kernel/sched_ext` cannot see this: the
+feature is present, it just cannot be used. So the build asks
+(`scripts/check-scx-btf.sh`) and drops `/usr/lib/pulsar/scx-supported` only
+when the answer is yes; `scx.service` conditions on that marker and is skipped
+rather than failed three times per boot. When Fedora ships a fixed kernel the
+marker reappears and the scheduler comes back with no change here. `pulsar
+doctor` reports it as `ok` with the reason, not as a warning you cannot act on.
 
 System-level capability only: `gamescope`, `gamemode`, `mangohud`,
 `steam-devices`, `distrobox`, `libvirt`, `android-tools`, `gnome-tweaks`,

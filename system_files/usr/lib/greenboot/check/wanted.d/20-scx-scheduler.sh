@@ -25,6 +25,18 @@ fi
 
 state=$(cat "$STATE_FILE")
 if [ "$state" != "enabled" ]; then
+    # Distinguish "the scheduler broke" from "this kernel was never able to
+    # run one". The build tests the shipped kernel's BTF and leaves this
+    # marker only when a BPF scheduler can load; without it, scx.service is
+    # skipped by design and the machine is on EEVDF on purpose. Reporting
+    # that as a failure would be crying wolf every boot until Fedora ships a
+    # fixed kernel, and a warning nobody can act on is one they stop reading.
+    if [ ! -e /usr/lib/pulsar/scx-supported ]; then
+        echo "sched_ext present but this kernel's BTF cannot load a BPF scheduler"
+        echo "(known Fedora issue: scx kfuncs carry the implicit prog-aux argument)"
+        echo "scx.service is skipped by design; the machine is running stock EEVDF"
+        exit 0
+    fi
     echo "sched_ext state is '${state}', expected 'enabled' -- running stock EEVDF"
     systemctl status scx.service --no-pager --lines=10 || true
     exit 1

@@ -89,6 +89,13 @@ check_scheduler() {
     if [ "$state" = "enabled" ]; then
         local ops; ops=$(cat /sys/kernel/sched_ext/root/ops 2>/dev/null || echo unknown)
         record scheduler ok "sched_ext enabled" "root scheduler: ${ops}"
+    elif [ ! -e /usr/lib/pulsar/scx-supported ]; then
+        # Not a fault: this kernel's BTF cannot load ANY BPF scheduler, the
+        # build detected that, and scx.service is skipped rather than failed.
+        # Reporting it as a warning forever would be indistinguishable from
+        # something the user could fix, and there is nothing to fix here.
+        record scheduler ok "stock EEVDF: this kernel cannot load a BPF scheduler" \
+               "scx kfuncs carry the implicit prog-aux argument (Fedora kernel BTF)"
     else
         # Warn, not fail. The machine runs fine on EEVDF -- but this is the
         # check that catches the failure `systemctl is-active scx.service`

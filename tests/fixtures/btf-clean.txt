@@ -1,0 +1,15 @@
+[63979] FUNC_PROTO '(anon)' ret_type_id=40 vlen=1
+	'cpu' type_id=138424
+[63984] FUNC_PROTO '(anon)' ret_type_id=138424 vlen=2
+	'dsq_id' type_id=152601
+	'node' type_id=138424
+[64002] FUNC_PROTO '(anon)' ret_type_id=141 vlen=0
+[69453] FUNC_PROTO '(anon)' ret_type_id=0 vlen=3
+	'p' type_id=40
+	'dsq_id' type_id=152601
+	'slice' type_id=152601
+	'enq_flags' type_id=152601
+[139438] FUNC 'scx_bpf_cpu_curr' type_id=63979 linkage=static
+[139447] FUNC 'scx_bpf_create_dsq' type_id=63984 linkage=static
+[139454] FUNC 'scx_bpf_dsq_insert' type_id=69453 linkage=static
+[139482] FUNC 'scx_bpf_get_idle_smtmask' type_id=64002 linkage=static

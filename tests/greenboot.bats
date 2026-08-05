@@ -96,3 +96,36 @@ EOF
         head -1 "$f" | grep -q '^#!' || fail "no shebang: $f"
     done
 }
+
+# --- the sched_ext BTF gate -------------------------------------------------
+# scripts/check-scx-btf.sh decides at build time whether the kernel being
+# shipped can load a BPF scheduler at all. Both verdicts are tested against
+# fixtures captured from a real `bpftool btf dump`, because a gate that has
+# only ever been shown to fail proves nothing about the case that matters.
+
+@test "BTF gate: a clean kernel passes" {
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" \
+        --dump "${BATS_TEST_DIRNAME}/fixtures/btf-clean.txt"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"0 carrying"* ]]
+}
+
+@test "BTF gate: kfuncs carrying the implicit aux argument fail" {
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" \
+        --dump "${BATS_TEST_DIRNAME}/fixtures/btf-malformed.txt"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"MALFORMED"* ]]
+    [[ "$output" == *"scx_bpf_cpu_curr(cpu, aux)"* ]]
+}
+
+@test "BTF gate: an unreadable dump is 'cannot determine', never 'clean'" {
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" --dump /nonexistent
+    [ "$status" -eq 2 ]
+}
+
+@test "BTF gate: a kernel with no scx kfuncs at all is not reported clean" {
+    echo "[1] FUNC 'printk' type_id=2 linkage=static" > "${BATS_TEST_TMPDIR}/none.txt"
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" \
+        --dump "${BATS_TEST_TMPDIR}/none.txt"
+    [ "$status" -ne 0 ]
+}
