@@ -21,8 +21,11 @@ cp "${REPO}/assets/icons/pulsar-mark.svg" \
    "${REPO}/assets/shaders/pulsar.frag" \
    "${REPO}/assets/fonts/Host_Grotesk/static/HostGrotesk-Regular.ttf" \
    "${REPO}/assets/fonts/Host_Grotesk/static/HostGrotesk-Bold.ttf" \
-   "${REPO}/assets/fonts/Host_Grotesk/OFL.txt" \
+   "${REPO}/assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf" \
    "${OUT}/assets/"
+# both font licenses travel with their fonts; distinct names, one dir
+cp "${REPO}/assets/fonts/Host_Grotesk/OFL.txt"   "${OUT}/assets/OFL-host-grotesk.txt"
+cp "${REPO}/assets/fonts/JetBrains_Mono/OFL.txt" "${OUT}/assets/OFL-jetbrains-mono.txt"
 
 echo "site assembled at ${OUT}:"
 du -sh "${OUT}" | cut -f1

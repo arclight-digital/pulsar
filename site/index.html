@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pulsar — an immutable Fedora spin</title>
-<meta name="description" content="Pulsar: an immutable Fedora Silverblue spin for gaming and development. Built in the cloud, signed end to end, updates itself quietly.">
+<title>Pulsar — Fedora with a pulse</title>
+<meta name="description" content="Pulsar: an immutable Fedora Silverblue spin tuned for gaming and development. Built, signed, and attested in the cloud.">
 <link rel="icon" href="assets/favicon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -12,18 +12,53 @@
 
 <!-- The hero background is assets/pulsar.frag -- the SAME shader that renders
      the OS wallpapers, running live in WebGL. main.js falls back to a static
-     gradient when WebGL is unavailable or motion is reduced. -->
+     gradient when WebGL is unavailable or motion is reduced. #skyfade holds a
+     snapshot of the outgoing look so backdrop switches crossfade directly
+     instead of sweeping u_look through the intermediate looks. -->
 <header class="hero">
   <canvas id="sky" aria-hidden="true"></canvas>
+  <canvas id="skyfade" aria-hidden="true"></canvas>
   <div class="hero-inner">
-    <img class="mark" id="mark" src="assets/pulsar-mark.svg" alt="" width="140" height="140">
+    <img class="mark" data-mark src="assets/pulsar-mark.svg" alt="" width="140" height="140">
     <h1 class="wordmark">PULSAR</h1>
-    <p class="tagline">Steady light. Atomic core.</p>
-    <p class="sub">An immutable Fedora spin for gaming and development.
-       Built in the cloud, signed end to end, updates itself quietly.</p>
-    <pre class="switch"><code>sudo bootc switch ghcr.io/arclight-digital/pulsar:latest</code></pre>
-    <p class="hint">NVIDIA laptop? Use <code>pulsar-nvidia</code> — the kernel module
-       arrives pre-built and pre-signed for Secure Boot.</p>
+    <p class="tagline">Fedora with a pulse.</p>
+    <p class="sub">An immutable Silverblue spin tuned for gaming and development —
+       built, signed, and attested in the cloud. Your machine never compiles a thing.</p>
+
+    <div class="install" aria-label="Install commands">
+      <div class="row">
+        <span class="which">standard</span>
+        <code>sudo bootc switch ghcr.io/arclight-digital/pulsar:latest</code>
+        <button class="copy" data-copy aria-label="Copy the standard install command">
+          <svg class="clip" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/>
+            <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5"/>
+          </svg>
+          <svg class="check" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M2.5 8.5l3.5 3.5 7-8"/>
+          </svg>
+        </button>
+      </div>
+      <div class="row">
+        <span class="which">nvidia</span>
+        <code>sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest</code>
+        <button class="copy" data-copy aria-label="Copy the NVIDIA install command">
+          <svg class="clip" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/>
+            <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5"/>
+          </svg>
+          <svg class="check" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M2.5 8.5l3.5 3.5 7-8"/>
+          </svg>
+        </button>
+      </div>
+      <p class="hint">On Fedora Silverblue or Kinoite 44+: run one, reboot, done.
+         The nvidia cut ships its kernel module pre-built and pre-signed for Secure Boot.</p>
+    </div>
   </div>
 
   <!-- The backdrop deck drives the SAME uniforms the OS wallpapers are
@@ -44,39 +79,86 @@
 </header>
 
 <main>
-  <section class="grid" aria-label="What's in it">
-    <article>
-      <h2>Play</h2>
-      <p>Gamescope, MangoHud, and the scx_lavd scheduler picked for frame
-         pacing. Flathub is preconfigured for Steam and everything else.</p>
-    </article>
-    <article>
-      <h2>Build</h2>
-      <p>Distrobox for any userland, libvirt/KVM for real machines,
-         GitHub CLI and JetBrains Mono out of the box.</p>
-    </article>
-    <article>
-      <h2>Trust</h2>
-      <p>Every image is built and signed on public CI with provenance
-         attestations. The NVIDIA kernel module is signed against the
-         MOK cert the image itself carries.</p>
-    </article>
+  <section class="inside">
+    <div class="inside-copy">
+      <h2>What's inside</h2>
+      <p>The scheduler is <strong>scx_lavd</strong>, picked because stock EEVDF
+         places threads badly on a big hybrid die. Gamescope, gamemode, and
+         MangoHud are system-level; split-lock mitigation is off and the map
+         count is raised because real games want both. Flathub arrives
+         unfiltered and image-native.</p>
+      <p>For work: distrobox for any userland, libvirt/KVM for real machines,
+         GitHub CLI in the base. Anything you merely <em>run</em> is a Flatpak —
+         the image is the OS, not an app store.</p>
+      <p>And the part most spins won't do: the NVIDIA open kernel module is
+         compiled against the image's exact kernel and signed in CI, so Secure
+         Boot stays on.</p>
+    </div>
+    <figure class="manifest">
+      <figcaption><span class="dot" aria-hidden="true"></span>pulsar · image manifest</figcaption>
+      <pre><code>scheduler    scx_lavd
+display      gamescope · gamemode · mangohud
+containers   distrobox · toolbox
+virt         libvirt · qemu-kvm
+tooling      gh · android-tools · gnome-tweaks
+driver       nvidia-open, built + signed in CI
+apps         unfiltered Flathub, image-native
+base         Fedora Silverblue 44</code></pre>
+    </figure>
   </section>
 
-  <section class="updates">
-    <h2>Updates, the boring way</h2>
-    <p>Images build nightly. Your machine notices, stages the update, and
-       GNOME Software tells you a reboot away — exactly how stock Silverblue
-       behaves. Nothing builds, compiles, or signs on your hardware. Ever.</p>
+  <section class="pipeline">
+    <h2>Every image has a paper trail</h2>
+    <ol class="rail">
+      <li><strong>commit</strong><small>push to main</small></li>
+      <li><strong>build</strong><small>both images, nightly</small></li>
+      <li><strong>sign</strong><small>kmod keyed to the shipped MOK cert</small></li>
+      <li><strong>attest</strong><small>SLSA provenance on ghcr</small></li>
+      <li><strong>boot</strong><small>bootc switches to the signed image</small></li>
+    </ol>
+    <p class="verify-lead">Don't take the page's word for it:</p>
+    <div class="install solo">
+      <div class="row">
+        <span class="which">verify</span>
+        <code>gh attestation verify oci://ghcr.io/arclight-digital/pulsar-nvidia:latest --owner arclight-digital</code>
+        <button class="copy" data-copy aria-label="Copy the attestation verify command">
+          <svg class="clip" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/>
+            <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5"/>
+          </svg>
+          <svg class="check" viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M2.5 8.5l3.5 3.5 7-8"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <p class="hint">One person's laptop OS, over-engineered on purpose, MIT-licensed.
+       Running someone else's signed images is a trust decision —
+       <a href="https://github.com/arclight-digital/pulsar#two-variants-one-key">fork
+       it and use your own key</a> if that's not a relationship you want.</p>
   </section>
 </main>
 
 <footer>
-  <p class="brandline">AN IMMUTABLE FEDORA SPIN &middot; ARCLIGHT.BUILD</p>
-  <nav>
-    <a href="https://github.com/arclight-digital/pulsar">GitHub</a>
-    <a href="https://github.com/arclight-digital/pulsar/blob/main/LICENSE">MIT License</a>
-  </nav>
+  <div class="spectrum" aria-hidden="true"></div>
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <img data-mark class="foot-mark" src="assets/pulsar-mark.svg" alt="" width="44" height="44">
+      <div>
+        <p class="foot-word">PULSAR</p>
+        <p class="brandline">AN IMMUTABLE FEDORA SPIN &middot; ARCLIGHT.BUILD</p>
+      </div>
+    </div>
+    <nav aria-label="Project links">
+      <a href="https://github.com/arclight-digital/pulsar">GitHub</a>
+      <a href="https://github.com/arclight-digital/pulsar/blob/main/assets/shaders/pulsar.frag">The shader</a>
+      <a href="https://github.com/arclight-digital/pulsar/blob/main/LICENSE">MIT License</a>
+    </nav>
+  </div>
+  <p class="colophon">Set in Host Grotesk and JetBrains Mono. This background — and the
+     OS wallpapers — render from one fragment shader in CI. No analytics, no cookies.</p>
 </footer>
 
 <script src="main.js"></script>

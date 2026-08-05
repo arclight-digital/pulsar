@@ -7,7 +7,7 @@
 // prefers-reduced-motion gets still frames that redraw only on control use.
 (() => {
   const root = document.documentElement;
-  const mark = document.getElementById('mark');
+  const marks = document.querySelectorAll('[data-mark]');
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const sysLight = matchMedia('(prefers-color-scheme: light)');
 
@@ -17,11 +17,16 @@
 
   const effectiveTheme = () => theme || (sysLight.matches ? 'light' : 'dark');
 
+  // set by the gl section; lets a look switch snapshot the outgoing frame
+  let onLookSwitch = null;
+
   const reflect = () => {
     const t = effectiveTheme();
     if (theme) root.dataset.theme = theme;
     else delete root.dataset.theme;                        // back to system
-    mark.src = t === 'light' ? 'assets/pulsar-mark-ink.svg' : 'assets/pulsar-mark.svg';
+    marks.forEach(m => {
+      m.src = t === 'light' ? 'assets/pulsar-mark-ink.svg' : 'assets/pulsar-mark.svg';
+    });
     document.querySelectorAll('[data-theme-pick]').forEach(b =>
       b.setAttribute('aria-pressed', String(b.dataset.themePick === t)));
     document.querySelectorAll('[data-look]').forEach(b =>
@@ -37,16 +42,32 @@
     }));
   document.querySelectorAll('[data-look]').forEach(b =>
     b.addEventListener('click', () => {
-      look = Number(b.dataset.look);
+      const next = Number(b.dataset.look);
+      if (next === look) return;
+      if (onLookSwitch) onLookSwitch(next);
+      look = next;
       localStorage.setItem('pulsar-look', String(look));
       reflect();
     }));
   sysLight.addEventListener('change', reflect);
 
+  // ---- copy buttons -------------------------------------------------------
+  document.querySelectorAll('[data-copy]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const code = btn.parentElement.querySelector('code');
+      try { await navigator.clipboard.writeText(code.textContent.trim()); }
+      catch { return; } // clipboard denied: no false "copied" state
+      btn.classList.add('did');
+      setTimeout(() => btn.classList.remove('did'), 1400);
+    }));
+
   // ---- the shader ---------------------------------------------------------
   const canvas = document.getElementById('sky');
-  const gl = canvas.getContext('webgl', { antialias: false });
+  // preserveDrawingBuffer so a look switch can snapshot the outgoing frame
+  const gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: true });
   if (!gl) return; // CSS ground is the fallback; controls still theme the page
+  const fade = document.getElementById('skyfade');
+  const fctx = fade.getContext('2d');
 
   fetch('assets/pulsar.frag')
     .then(r => r.text())
@@ -117,12 +138,27 @@
         return;
       }
 
+      // Look switches must NOT ease u_look: the shader chain-mixes the looks,
+      // so a scalar sweep from holo to silk marches through satin and leak on
+      // the way. Instead: freeze the outgoing frame on the overlay canvas,
+      // snap u_look underneath it, and let the snapshot dissolve.
+      onLookSwitch = (next) => {
+        fade.width = canvas.width;
+        fade.height = canvas.height;
+        fctx.drawImage(canvas, 0, 0);
+        fade.style.transition = 'none';
+        fade.style.opacity = '1';
+        requestAnimationFrame(() => {
+          fade.style.transition = 'opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1)';
+          fade.style.opacity = '0';
+        });
+        lookShown = next;
+      };
+
       const loop = (ms) => {
         const tTarget = effectiveTheme() === 'light' ? 1 : 0;
         themeShown += (tTarget - themeShown) * 0.08;
         if (Math.abs(tTarget - themeShown) < 0.002) themeShown = tTarget;
-        lookShown += (look - lookShown) * 0.08;
-        if (Math.abs(look - lookShown) < 0.002) lookShown = look;
         draw(ms / 1000);
         requestAnimationFrame(loop);
       };
