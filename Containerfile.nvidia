@@ -48,11 +48,12 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     { dnf5 install -y --enablerepo=updates-archive kernel-devel-${KV} akmods \
         gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' || \
       { echo "kernel-devel ${KV} not on mirrors yet; fetching from koji directly" && \
-        curl -fL -o /tmp/kernel-devel.rpm \
-          "https://kojipkgs.fedoraproject.org/packages/kernel/${VER}/${REL}/x86_64/kernel-devel-${KV}.rpm" && \
-        dnf5 install -y /tmp/kernel-devel.rpm akmods \
+        KOJI="https://kojipkgs.fedoraproject.org/packages/kernel/${VER}/${REL}/x86_64" && \
+        curl -fL -o /tmp/kernel-devel.rpm "${KOJI}/kernel-devel-${KV}.rpm" && \
+        curl -fL -o /tmp/kernel-devel-matched.rpm "${KOJI}/kernel-devel-matched-${KV}.rpm" && \
+        dnf5 install -y /tmp/kernel-devel.rpm /tmp/kernel-devel-matched.rpm akmods \
           gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' && \
-        rm -f /tmp/kernel-devel.rpm; }; } && \
+        rm -f /tmp/kernel-devel*.rpm; }; } && \
     chmod -x /usr/sbin/akmods-ostree-post
 
 # Phase 2: the akmod source package. Its %post is now inert.
