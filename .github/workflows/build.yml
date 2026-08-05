@@ -54,8 +54,28 @@ jobs:
           echo "IMAGE=ghcr.io/${OWNER,,}/pulsar" >> "$GITHUB_ENV"
           echo "IMAGE_NVIDIA=ghcr.io/${OWNER,,}/pulsar-nvidia" >> "$GITHUB_ENV"
 
+      # Both logins are needed: podman writes auth to
+      # $XDG_RUNTIME_DIR/containers/auth.json for the build/push steps, but
+      # attest-build-provenance's push-to-registry reads ~/.docker/config.json
+      # and fails with "No credentials found for registry ghcr.io" without
+      # the docker login.
       - name: Log in to ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # The wallpapers are rendered from assets/shaders/pulsar.frag, not
+      # committed -- they are 4K PNGs and fully reproducible from the shader.
+      # This has to happen BEFORE the build, because the Containerfile just
+      # COPYs system_files/ and the build container has no GL stack.
+      # llvmpipe does the rasterising; no GPU on a runner.
+      - name: Render wallpapers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libegl1 libgl1 libgl-dev libgl1-mesa-dri libglvnd0
+          pip install --quiet moderngl numpy pillow
+          python3 scripts/render-wallpapers.py
 
       - name: Build vanilla
         run: |
