@@ -39,13 +39,12 @@ try { const t = localStorage.getItem('pulsar-theme');
     <img class="mark" data-mark src="assets/pulsar-mark.svg" alt="" width="140" height="140">
     <h1 class="wordmark">PULSAR</h1>
     <p class="tagline">Lighthouses don&rsquo;t drift.</p>
-    <p class="sub">An immutable Fedora spin tuned for gaming and development —
-       rebuilt nightly, and the last good version is always one reboot away.</p>
+    <p class="sub">An immutable Fedora for gaming and development. A fresh image every
+       night, the same system every boot, and rollback is just a reboot.</p>
     <p class="srclink"><a href="https://github.com/arclight-digital/pulsar">Browse the source on GitHub →</a></p>
 
     <figure class="term install" role="group" aria-label="Install commands">
-      <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> already on
-        <strong>Fedora Silverblue / Kinoite 44+</strong> &mdash; pick a lane</figcaption>
+      <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> already on <strong>Fedora Silverblue / Kinoite 44+</strong></figcaption>
       <div class="row">
         <span class="which">standard</span>
         <code>sudo bootc switch \
@@ -83,9 +82,8 @@ try { const t = localStorage.getItem('pulsar-theme');
         </button>
       </div>
       <p class="hint">Fresh machine? Install
-         <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>
-         first, then run one of these and reboot. The nvidia cut ships its kernel
-         module pre-built and pre-signed for Secure Boot.</p>
+         <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>,
+         then run one of these. Secure Boot stays on &mdash; the nvidia module comes signed.</p>
     </figure>
   </div>
 
@@ -113,17 +111,14 @@ try { const t = localStorage.getItem('pulsar-theme');
   <section class="inside">
     <div class="inside-copy">
       <h2>What's inside</h2>
-      <p>The scheduler is <strong>scx_lavd</strong>, picked because stock EEVDF
-         places threads badly on a big hybrid die. Gamescope, gamemode, and
-         MangoHud are system-level; split-lock mitigation is off and the map
-         count is raised because real games want both. Flathub arrives
-         unfiltered and image-native.</p>
+      <p>The scheduler is <strong>scx_lavd</strong>, because stock EEVDF places
+         threads badly on a big hybrid die. Gamescope, gamemode, and MangoHud
+         are in the image; split-lock mitigation is off and the map count is
+         raised because games want both. Flathub comes unfiltered.</p>
       <p>For work: distrobox for any userland, libvirt/KVM for real machines,
-         GitHub CLI in the base. Anything you merely <em>run</em> is a Flatpak —
-         the image is the OS, not an app store.</p>
-      <p>And the part most spins won't do: the NVIDIA open kernel module is
-         compiled against the image's exact kernel and signed in CI, so Secure
-         Boot stays on.</p>
+         GitHub CLI in the base. Apps are Flatpaks; the image is the OS.</p>
+      <p>The NVIDIA open module is compiled against the image's exact kernel
+         and signed, so Secure Boot stays on.</p>
     </div>
     <!-- styled after fastfetch on purpose: colored keys, palette swatches --
          a readout this audience recognizes from their own terminal -->
