@@ -28,6 +28,7 @@ cp "${REPO}/assets/icons/pulsar-mark.svg" \
 # ~180KB total, and regenerating is documented in the file's sibling renders.
 cp "${REPO}/site/assets-static/silk-still-dark.jpg" \
    "${REPO}/site/assets-static/silk-still-light.jpg" \
+   "${REPO}/site/assets-static/og.jpg" \
    "${OUT}/assets/"
 # both font licenses travel with their fonts; distinct names, one dir
 cp "${REPO}/assets/fonts/Host_Grotesk/OFL.txt"   "${OUT}/assets/OFL-host-grotesk.txt"
