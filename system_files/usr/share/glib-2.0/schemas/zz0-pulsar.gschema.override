@@ -46,6 +46,19 @@ enabled-extensions=['gamescale@arclight.digital']
 tap-to-click=true
 two-finger-scrolling-enabled=true
 
+# GDM greeter logo. Fedora sets this same key in
+# org.gnome.login-screen.gschema.override, pointing at
+# /usr/share/pixmaps/fedora-gdm-logo.png; this file sorts after it ("zz0-"),
+# so the later default wins and no file gdm owns has to be overwritten.
+#
+# The earlier approach replaced fedora-gdm-logo.png in place, on the theory
+# that the path was baked into a binary. It is not -- that is true of the
+# About-panel lockups, which really are compiled into gnome-control-center,
+# but the greeter reads a settable key. Using the key is also what puts the
+# logo low on the greeter the way stock Fedora looks, with no theme patch.
+[org.gnome.login-screen]
+logo='/usr/share/pulsar/pulsar-gdm-logo.png'
+
 # silk is the default pair; GNOME flips between them with the style toggle.
 # The other three pairs ship alongside and are registered for the Appearance
 # panel via /usr/share/gnome-background-properties/pulsar.xml.

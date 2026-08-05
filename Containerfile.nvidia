@@ -221,3 +221,10 @@ RUN dnf5 clean all && \
     rm -rf /tmp/* /var/* && \
     install -d -m 1777 /var/tmp && \
     bootc container lint
+
+# The version stamp itself lives in the base image's /usr/lib/os-release, which
+# this image inherits, so PRETTY_NAME and the boot entry are already correct
+# here. Only the OCI label has to be restated -- labels do not inherit through
+# FROM -- so that `bootc status` reports the same version for either variant.
+ARG PULSAR_VERSION=""
+LABEL org.opencontainers.image.version="${PULSAR_VERSION}"

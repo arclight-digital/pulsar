@@ -69,10 +69,6 @@ jobs:
         run: |
           echo "IMAGE=ghcr.io/${OWNER,,}/pulsar" >> "$GITHUB_ENV"
           echo "IMAGE_NVIDIA=ghcr.io/${OWNER,,}/pulsar-nvidia" >> "$GITHUB_ENV"
-          # immutable per-build tag alongside the moving :44/:latest, matching
-          # Fedora's own version style (44.20260805). This is what makes
-          # "pin to last Tuesday's build" and clean rollbacks possible.
-          echo "DATETAG=${FEDORA_VERSION}.$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
 
       # Both logins are needed: podman writes auth to
       # $XDG_RUNTIME_DIR/containers/auth.json for the build/push steps, but
@@ -89,6 +85,33 @@ jobs:
       # No syft: see the SBOM step for why it was removed.
       - uses: oras-project/setup-oras@v1
       - uses: sigstore/cosign-installer@v3
+
+      # Per-build version, Fedora's own shape: <release>.<YYYYMMDD>.<n>.
+      #
+      # The n is not decoration. This tag was previously just 44.<date> and was
+      # documented as "immutable per-build", which it was not: two pushes on
+      # one day both computed the same tag and the second silently replaced the
+      # first. That happened -- twice on 2026-08-05 alone -- so "pin to last
+      # Tuesday's build" was pinning to whatever landed last that Tuesday.
+      #
+      # n is derived from what the registry already holds rather than from a
+      # run counter, so it stays correct across re-runs and manual dispatches.
+      # An unreachable registry falls back to .0 rather than failing the build,
+      # which is the same tag the old scheme produced.
+      - name: Compute the build version
+        run: |
+          set -euo pipefail
+          day=$(date -u +%Y%m%d)
+          prefix="${FEDORA_VERSION}.${day}"
+          n=0
+          existing=$(oras repo tags "${IMAGE}" 2>/dev/null \
+                       | grep -E "^${prefix}\.[0-9]+$" || true)
+          if [ -n "$existing" ]; then
+            n=$(printf '%s\n' "$existing" | sed "s/^${prefix}\.//" | sort -n | tail -1)
+            n=$((n + 1))
+          fi
+          echo "DATETAG=${prefix}.${n}" >> "$GITHUB_ENV"
+          echo "this build is ${prefix}.${n}"
 
       # MUST run before the push below overwrites :latest. This is the image
       # the changelog diffs against; once :latest moves, the previous build is
@@ -120,6 +143,7 @@ jobs:
           podman build --pull=newer \
             --file Containerfile \
             --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
+            --build-arg PULSAR_VERSION="${DATETAG}" \
             -t "${IMAGE}:${FEDORA_VERSION}" -t "${IMAGE}:latest" -t "${IMAGE}:${DATETAG}" .
 
       - name: Push vanilla
@@ -150,6 +174,7 @@ jobs:
             --file Containerfile.nvidia \
             --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
             --build-arg BASE_IMAGE="${IMAGE}" \
+            --build-arg PULSAR_VERSION="${DATETAG}" \
             --secret id=akmods_priv,src=/dev/shm/keys/priv \
             --secret id=akmods_cert,src=/dev/shm/keys/cert \
             -t "${IMAGE_NVIDIA}:${FEDORA_VERSION}" -t "${IMAGE_NVIDIA}:latest" \

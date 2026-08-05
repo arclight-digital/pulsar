@@ -267,6 +267,36 @@ RUN [ -f /usr/share/plymouth/themes/spinner/throbber-0001.png ] || \
           /usr/share/plymouth/themes/pulsar/ 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# Version stamp. CI passes the build version; a local build leaves it empty and
+# keeps the plain "Pulsar 44", so ./scripts/build.sh needs no arguments.
+#
+# PRETTY_NAME is the whole mechanism: ostree composes each BLS entry title as
+# PRETTY_NAME + " (ostree:N)". That is why a stock entry reads "Fedora Linux
+# 44.20260804.0 (Silverblue)" while ours read "Pulsar 44" -- the version was
+# never in the string. Setting it here is what puts it in the boot menu, and
+# the same value goes on the image label so `bootc status` agrees with GRUB.
+#
+# VERSION_ID is deliberately left alone, which is also what stock Fedora does:
+# it keeps VERSION_ID=44 and puts the datestamp only in VERSION and
+# PRETTY_NAME. VERSION_ID is the field third-party scripts compare
+# numerically, for the same reason ID stays "fedora" in os-release itself.
+# ---------------------------------------------------------------------------
+ARG PULSAR_VERSION=""
+RUN if [ -n "${PULSAR_VERSION}" ]; then \
+      sed -i \
+        -e "s|^VERSION=.*|VERSION=\"${PULSAR_VERSION}\"|" \
+        -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${PULSAR_VERSION}\"|" \
+        /usr/lib/os-release; \
+      grep -E '^(VERSION|VERSION_ID|PRETTY_NAME)=' /usr/lib/os-release; \
+      vid=$(. /usr/lib/os-release; echo "${VERSION_ID}"); \
+      if [ "${vid}" != "${FEDORA_VERSION}" ]; then \
+        echo "FATAL: VERSION_ID became '${vid}'; it must stay ${FEDORA_VERSION} or numeric comparisons break"; \
+        exit 1; \
+      fi; \
+    fi
+LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
+
+# ---------------------------------------------------------------------------
 # Finalize. The initramfs carries the plymouth theme, so the dracut regen has
 # to come after the overlay lands. The nvidia variant regenerates it a second
 # time because it adds modprobe.d options that also live in the initramfs.
