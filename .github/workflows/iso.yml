@@ -84,12 +84,17 @@ jobs:
           echo "IMAGE=ghcr.io/${OWNER,,}/${{ matrix.variant }}" >> "$GITHUB_ENV"
           echo "TAG=${{ github.event.inputs.tag || 'latest' }}" >> "$GITHUB_ENV"
           sudo mkdir -p /mnt/podman /mnt/iso /mnt/store /mnt/rpmmd
+          sudo mkdir -p /var/lib/containers/storage
           sudo chown "$(id -u):$(id -g)" /mnt/iso
-          # Podman here is ROOTFUL, because bib runs under sudo and reads this
-          # same graphroot from inside its own container. A rootless pull would
-          # write UID-shifted layers that the rootful builder cannot use.
-          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/podman"\nrunroot = "/run/containers/storage"\n' \
-            > /tmp/storage.conf
+          # Bind-mount, NOT a graphroot setting in storage.conf. Podman records
+          # its static dir inside the database, so a relocated graphroot makes
+          # the nested podman inside bib refuse the store it was handed:
+          #   database static dir "/mnt/podman/libpod" does not match our
+          #   static dir "/var/lib/containers/storage/libpod"
+          # Bind-mounting keeps the path identical on both sides while the
+          # bytes still land on the big disk.
+          sudo mount --bind /mnt/podman /var/lib/containers/storage
+          findmnt -no SOURCE,TARGET,FSTYPE /var/lib/containers/storage
           df -h / /mnt
 
       - name: Log in to ghcr.io
@@ -101,12 +106,13 @@ jobs:
       # bib no longer pulls images -- it reads local container storage and says
       # so explicitly if the image is absent. So the pull happens here, into the
       # graphroot that gets bind-mounted into the builder below.
+      # ROOTFUL, because bib runs under sudo and reads this same store from
+      # inside its own container: a rootless pull writes UID-shifted layers
+      # the rootful builder cannot use.
       - name: Pull the image
         run: |
-          sudo env CONTAINERS_STORAGE_CONF=/tmp/storage.conf \
-            podman pull --authfile /tmp/auth.json "${IMAGE}:${TAG}"
-          sudo env CONTAINERS_STORAGE_CONF=/tmp/storage.conf \
-            podman image inspect "${IMAGE}:${TAG}" --format 'pulled {{.Id}} ({{.Size}} bytes)'
+          sudo podman pull --authfile /tmp/auth.json "${IMAGE}:${TAG}"
+          sudo podman image inspect "${IMAGE}:${TAG}" --format 'pulled {{.Id}} ({{.Size}} bytes)'
 
       # --privileged and the unconfined label are what upstream documents: the
       # builder makes loopback devices and mounts filesystems to lay the ISO
@@ -122,7 +128,7 @@ jobs:
           sudo podman run --rm --privileged \
             --security-opt label=type:unconfined_t \
             -v /mnt/iso:/output \
-            -v /mnt/podman:/var/lib/containers/storage \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
             -v /mnt/store:/store \
             -v /mnt/rpmmd:/rpmmd \
             "${BIB}" \
