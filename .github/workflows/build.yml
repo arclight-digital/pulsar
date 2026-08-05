@@ -86,7 +86,7 @@ jobs:
 
       # Tooling for the SBOM/signing steps at the end. Pinned to major tags
       # so a compromised point release cannot silently change what signs.
-      - uses: anchore/sbom-action/download-syft@v0
+      # No syft: see the SBOM step for why it was removed.
       - uses: oras-project/setup-oras@v1
       - uses: sigstore/cosign-installer@v3
 
@@ -195,17 +195,35 @@ jobs:
       # that scans the exact bytes that were pushed, so the SBOM cannot
       # describe an image that differs from the one users pull.
       # =====================================================================
+      # This used syft and could not work. syft scans an IMAGE by squashing
+      # and indexing every layer, which on this image needs more than the
+      # 16GB a standard runner has. That is measured, not inferred: the first
+      # run here died on signal 15 after 6m41s, and reproducing it locally
+      # under a 16GB cgroup cap got the OOM killer to log 16.67GB with stock
+      # settings, 16.74GB with file analysis off, and 16.74GB with only the
+      # RPM cataloger selected. The figure barely moves because the cost is
+      # the layer indexing, before any cataloger runs -- no syft flag avoids
+      # it, and disk was never the problem (145GB, 60% free).
+      #
+      # scripts/rpm-sbom.sh reads the RPM database the image already carries
+      # and produces the SAME 1790 packages in 0.49s and 52MB. That equality
+      # was checked against syft's own rpm-db cataloger on this image, which
+      # is what makes dropping syft a simplification rather than a downgrade.
       - name: Generate SBOMs
         run: |
-          syft "registry:${IMAGE}@${{ steps.push_vanilla.outputs.digest }}" \
-            -o spdx-json=sbom-vanilla.spdx.json
-          syft "registry:${IMAGE_NVIDIA}@${{ steps.push_nvidia.outputs.digest }}" \
-            -o spdx-json=sbom-nvidia.spdx.json
+          set -euo pipefail
+          ./scripts/rpm-sbom.sh "${IMAGE}:${FEDORA_VERSION}"        > sbom-vanilla.spdx.json
+          ./scripts/rpm-sbom.sh "${IMAGE_NVIDIA}:${FEDORA_VERSION}" > sbom-nvidia.spdx.json
           for f in sbom-vanilla sbom-nvidia; do
             n=$(jq '[.packages[] | select(.versionInfo)] | length' "${f}.spdx.json")
             echo "${f}: ${n} packages"
-            [ "$n" -gt 100 ] || { echo "::error::${f} has only ${n} packages; the scan did not work"; exit 1; }
+            [ "$n" -gt 100 ] || { echo "::error::${f} has only ${n} packages; the SBOM is not usable"; exit 1; }
           done
+          # The nvidia image derives from vanilla, so it can never legitimately
+          # carry fewer packages. If it does, the wrong image was inspected.
+          v=$(jq '.packages | length' sbom-vanilla.spdx.json)
+          n=$(jq '.packages | length' sbom-nvidia.spdx.json)
+          [ "$n" -ge "$v" ] || { echo "::error::nvidia (${n}) has fewer packages than vanilla (${v})"; exit 1; }
 
       # Attached to the image itself, so the SBOM travels with the thing it
       # describes and is fetchable by anyone with `oras discover`. R2 gets a
