@@ -2,11 +2,14 @@
 
 # Pulsar
 
-A personal Fedora Silverblue 44 spin, built as a bootc image. Pure Fedora —
-no Universal Blue inheritance. Built and signed in CI; the laptop only pulls.
+Fedora Silverblue with the sharp edges filed off, shipped as a bootc image.
+Straight Fedora underneath — no Universal Blue in the lineage. GitHub builds
+and signs it; the machine that runs it never compiles anything.
 
-Tuned for an Arrow Lake-HX / RTX 5080 Max-Q laptop, but nothing in the vanilla
-image is hardware-bound.
+**Built for:** Intel Core Ultra 9 275HX (Arrow Lake-HX, 8 P-cores + 16 E-cores,
+no SMT), NVIDIA RTX 5080 Max-Q (Blackwell GB203) alongside the Arrow Lake iGPU,
+2560×1600 eDP, 62 GB RAM. The nvidia variant assumes that GPU. The vanilla
+image assumes nothing and runs anywhere.
 
 ```bash
 sudo bootc switch ghcr.io/arclight-digital/pulsar:latest          # no GPU driver
@@ -16,11 +19,10 @@ sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest   # + nvidia-ope
 ## What's in it
 
 Branding, Host Grotesk + JetBrains Mono, a plymouth theme, and the papercuts
-already fixed. `scx_lavd` runs the scheduler — Arrow Lake-HX is 8 P-cores and
-16 E-cores with no SMT, which is exactly where stock EEVDF places threads
-badly. Unfiltered Flathub, shipped as an image-native remote so it survives a
-rebase. Split-lock mitigation off and `vm.max_map_count` raised, because
-several games need both.
+already fixed. `scx_lavd` takes over scheduling, because that core layout is
+exactly where stock EEVDF places threads badly. Unfiltered Flathub, shipped as
+an image-native remote so it survives a rebase. Split-lock mitigation off and
+`vm.max_map_count` raised, because several games need both.
 
 System-level capability only: `gamescope`, `gamemode`, `mangohud`,
 `steam-devices`, `distrobox`, `libvirt`, `android-tools`, `gnome-tweaks`.
@@ -118,15 +120,22 @@ watermark — `sync-branding.sh` overwrites all of it from `assets/`.
 
 | Slot | Source | Generated |
 |---|---|---|
-| GNOME About | `pulsar-mark.svg` | `hicolor/scalable/apps/pulsar-logo-icon.svg` |
-| Icon theme | `pulsar-mark-1024.png` | `hicolor/{512,256,128,64,48}/apps/*.png` |
+| Icon theme | `pulsar-mark{,-1024}` | `hicolor/*/apps/pulsar-logo-icon.*` |
 | GDM login | `pulsar-mark-mono-1024.png` | `pixmaps/fedora-gdm-logo.png` @192px |
 | Boot splash | `pulsar-mark-mono-1024.png` | `plymouth/themes/pulsar/watermark.png` @320px |
+| About panel (dark) | `pulsar-mark-mono.svg` + Host Grotesk | `pixmaps/fedora_whitelogo_med.png` @279×80 |
+| About panel (light) | `pulsar-mark-ink.svg` + Host Grotesk | `pixmaps/fedora_logo_med.png` @279×80 |
 
 GDM and plymouth get the **mono** cut: both land on dark surfaces with no
-theme awareness and no contrast guarantee. `fedora-gdm-logo.png` keeps the
-Fedora filename on purpose — GDM's config points at that literal path, so
-overwriting one file beats shipping a config override.
+theme awareness and no contrast guarantee.
+
+Three of these keep Fedora's filenames on purpose. GDM's config and
+gnome-control-center both point at those literal paths, so overwriting one
+file beats shipping a config override or patching a binary. In particular the
+About panel does **not** use `LOGO=` from os-release — that's a square icon,
+and the panel wants a horizontal lockup, chosen by theme. It's the only place
+the wordmark appears, and the light cut needs `pulsar-mark-ink.svg` because
+both the mono art and the colour art's white core vanish on a pale background.
 
 The plymouth watermark is a fixed 320px because plymouth won't scale it; sized
 for 2560×1600.

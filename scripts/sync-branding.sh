@@ -23,7 +23,8 @@ GDM_PX=${GDM_PX:-192}             # login screen logo
 # -----------------------------------------------------------------------------
 
 command -v magick >/dev/null || { echo "needs ImageMagick 7 (magick)" >&2; exit 1; }
-for f in pulsar-mark.svg pulsar-mark-1024.png pulsar-mark-mono-1024.png; do
+for f in pulsar-mark.svg pulsar-mark-1024.png pulsar-mark-mono-1024.png \
+         pulsar-mark-mono.svg pulsar-mark-ink.svg; do
     [[ -r "${A}/icons/${f}" ]] || { echo "missing asset: ${A}/icons/${f}" >&2; exit 1; }
 done
 
@@ -49,6 +50,56 @@ png "${A}/icons/pulsar-mark-mono-1024.png" "${GDM_PX}" "${S}/pixmaps/fedora-gdm-
 
 echo "Plymouth watermark        <- pulsar-mark-mono"
 png "${A}/icons/pulsar-mark-mono-1024.png" "${PLYMOUTH_PX}" "${S}/plymouth/themes/pulsar/watermark.png"
+
+# ---------------------------------------------------------------------------
+# GNOME Settings -> About lockup.
+#
+# NOT the os-release LOGO= icon. That key points at pulsar-logo-icon, which is
+# square, and the About panel does not use it -- gnome-control-center has these
+# two paths compiled in, and picks by theme:
+#
+#   fedora_whitelogo_med.png   dark theme
+#   fedora_logo_med.png        light theme
+#
+# So the filenames stay Fedora's, same reasoning as fedora-gdm-logo.png: the
+# path is hardcoded in a binary, and overwriting one file beats patching
+# gnome-control-center. 279x80 is the size Fedora ships; the panel does not
+# scale it.
+#
+# The mark alone looks wrong here -- Fedora fills this slot with a lockup, so
+# this is the one place the wordmark exists. The wordmark is PULSAR in Host
+# Grotesk Bold, uppercase, tracked 0.3em, which is the brand treatment;
+# it is NOT the UI font weight, and tightening the tracking kills it.
+#
+# The mark is sized to fit the 80px height COMPLETELY. Its gaussian glow is
+# soft alpha with no hard boundary, so any overflow clips to a straight edge
+# and reads as a cropped logo -- the glow has to live inside the canvas even
+# though that makes the visible disc smaller than the box suggests.
+#
+# Two cuts because the panel background flips with the theme: the mono art
+# disappears on light, and the color art's white core disappears just as badly,
+# hence pulsar-mark-ink.svg for the light side.
+# ---------------------------------------------------------------------------
+lockup() { # $1=mark svg  $2=text colour  $3=destination
+    magick -background none "$1" -resize 1024x1024 -trim -resize x76 "${TMP}/mark.png"
+    magick -background none -fill "$2" -font "${WORDMARK_FONT}" \
+           -pointsize "${WORDMARK_PT}" -kerning "${WORDMARK_TRACK}" label:PULSAR -trim "${TMP}/word.png"
+    magick "${TMP}/mark.png" "${TMP}/word.png" -background none -gravity center +smush 14 \
+           -background none -gravity center -extent 279x80 -strip "$3"
+    echo "  $3 (279x80)"
+}
+# 0.3em of tracking is the brand spec (44px/700/0.3em in the poster cut);
+# expressed here as a ratio so the pointsize can change without breaking it.
+WORDMARK_PT=30
+WORDMARK_TRACK=$(awk "BEGIN{printf \"%.0f\", ${WORDMARK_PT:-30}*0.3}")
+WORDMARK_FONT="${A}/fonts/Host_Grotesk/static/HostGrotesk-Bold.ttf"
+[[ -r "${WORDMARK_FONT}" ]] || { echo "missing wordmark font: ${WORDMARK_FONT}" >&2; exit 1; }
+TMP="$(mktemp -d)"; trap 'rm -rf "${TMP}"' EXIT
+
+echo "GNOME About lockup        <- pulsar-mark-mono + Host Grotesk"
+lockup "${A}/icons/pulsar-mark-mono.svg" white     "${S}/pixmaps/fedora_whitelogo_med.png"
+echo "GNOME About lockup (light) <- pulsar-mark-ink + Host Grotesk"
+lockup "${A}/icons/pulsar-mark-ink.svg"  '#241F3D' "${S}/pixmaps/fedora_logo_med.png"
 
 # ---------------------------------------------------------------------------
 # Fonts
