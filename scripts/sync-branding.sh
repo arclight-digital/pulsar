@@ -48,12 +48,8 @@ done
 echo "GDM login                 <- pulsar-mark-mono"
 png "${A}/icons/pulsar-mark-mono-1024.png" "${GDM_PX}" "${S}/pixmaps/fedora-gdm-logo.png"
 
-# Full color, not mono: plymouth composites the watermark PNG as-is on the
-# splash background, and the color mark reads correctly there -- same dark
-# ground as the wallpapers. (The mono cut was an overcorrection; only GDM
-# keeps it, whose grey ground genuinely fights the color art.)
-echo "Plymouth watermark        <- pulsar-mark (color)"
-png "${A}/icons/pulsar-mark-1024.png" "${PLYMOUTH_PX}" "${S}/plymouth/themes/pulsar/watermark.png"
+# Plymouth watermark is generated in the lockup section below -- it needs the
+# wordmark font variables, which are defined there.
 
 # ---------------------------------------------------------------------------
 # GNOME Settings -> About lockup.
@@ -104,6 +100,25 @@ echo "GNOME About lockup        <- pulsar-mark-mono + Host Grotesk"
 lockup "${A}/icons/pulsar-mark-mono.svg" white     "${S}/pixmaps/fedora_whitelogo_med.png"
 echo "GNOME About lockup (light) <- pulsar-mark-ink + Host Grotesk"
 lockup "${A}/icons/pulsar-mark-ink.svg"  '#241F3D' "${S}/pixmaps/fedora_logo_med.png"
+
+# ---------------------------------------------------------------------------
+# Plymouth watermark: the same lockup language, Fedora-style -- color mark +
+# wordmark, composited bottom-center by the theme (WatermarkVerticalAlignment).
+# Built from the 1024 PNG raster, NOT the SVG: ImageMagick's SVG filter
+# rendering produces ring artifacts in the gaussian glow (see the ink-mark
+# incident). Star-white wordmark; the splash ground is pure black. Sized for
+# 2560x1600 like the other physical-size assets.
+# ---------------------------------------------------------------------------
+PLY_MARK_H=${PLY_MARK_H:-88}
+PLY_PT=${PLY_PT:-36}
+PLY_TRACK=$(awk "BEGIN{printf \"%.0f\", ${PLY_PT}*0.3}")
+echo "Plymouth watermark        <- pulsar-mark (color) + Host Grotesk lockup"
+magick -background none "${A}/icons/pulsar-mark-1024.png" -trim -resize x${PLY_MARK_H} "${TMP}/ply-mark.png"
+magick -background none -fill '#E9EDF7' -font "${WORDMARK_FONT}" \
+       -pointsize "${PLY_PT}" -kerning "${PLY_TRACK}" label:PULSAR -trim "${TMP}/ply-word.png"
+magick "${TMP}/ply-mark.png" "${TMP}/ply-word.png" -background none -gravity center +smush 24 -strip \
+       "${S}/plymouth/themes/pulsar/watermark.png"
+echo "  ${S}/plymouth/themes/pulsar/watermark.png ($(magick identify -format '%wx%h' "${S}/plymouth/themes/pulsar/watermark.png"))"
 
 # ---------------------------------------------------------------------------
 # Fonts
