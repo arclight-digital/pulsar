@@ -128,7 +128,20 @@ RUN fc-cache -f && \
     systemctl disable NetworkManager-wait-online.service && \
     plymouth-set-default-theme pulsar && \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
-    dracut --force --kver ${KV} /usr/lib/modules/${KV}/initramfs.img
+    dracut --force --no-hostonly --reproducible --add ostree \
+      --kver ${KV} /usr/lib/modules/${KV}/initramfs.img && \
+    lsinitrd /usr/lib/modules/${KV}/initramfs.img | grep -q ostree-prepare-root || \
+      { echo "FATAL: initramfs is missing ostree-prepare-root; the image cannot switch root"; exit 1; }
+
+# `--add ostree` is BOOT-CRITICAL, learned the hard way: dracut decides which
+# modules to include by probing the environment it runs in, and a container
+# build has no /run/ostree-booted -- so a plain `dracut` silently omits the
+# ostree module. The resulting image boots the initramfs, shows plymouth, and
+# then dies at switch-root with "/sysroot does not seem to be an OS tree.
+# os-release file is missing", because nothing ever ran ostree-prepare-root.
+# The lsinitrd assertion turns that brick into a red build. --no-hostonly for
+# the same probing reason (the "host" is a build container, not the laptop),
+# --reproducible because there is no reason not to.
 
 # /var is machine-local state; nothing the build left there (dnf caches,
 # anything flatpak-shaped) belongs in the image, so clear it wholesale. Then

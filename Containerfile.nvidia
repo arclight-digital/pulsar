@@ -205,8 +205,15 @@ RUN chmod +x /usr/sbin/akmods-ostree-post
 # ---------------------------------------------------------------------------
 COPY system_files.nvidia/ /
 
+# --add ostree + assertion: same boot-critical reason as the base image's
+# dracut run (see Containerfile) -- in a container dracut cannot tell it is
+# building for an ostree system and silently drops the module that makes
+# switch-root possible.
 RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
-    dracut --force --kver ${KV} /usr/lib/modules/${KV}/initramfs.img
+    dracut --force --no-hostonly --reproducible --add ostree \
+      --kver ${KV} /usr/lib/modules/${KV}/initramfs.img && \
+    lsinitrd /usr/lib/modules/${KV}/initramfs.img | grep -q ostree-prepare-root || \
+      { echo "FATAL: initramfs is missing ostree-prepare-root; the image cannot switch root"; exit 1; }
 
 # Same rule as the base image: /var is machine-local, ship it empty (plus
 # the same sticky /var/tmp the base restores -- see Containerfile).
