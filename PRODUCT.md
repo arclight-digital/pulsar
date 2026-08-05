@@ -58,8 +58,8 @@ must never be triggered by site edits.
   `pulsar-mark-color-dark.svg` (light surfaces — colored arc, dark cores).
   All brand art is authored, in `assets/brand/`.
 - Wordmark: PULSAR, Host Grotesk Bold, uppercase, 0.3em tracking.
-- Tagline: "Fedora with a pulse." (replaced "Steady light. Atomic core.",
-  which is retired). Footer line: "AN IMMUTABLE FEDORA
+- Tagline: "Lighthouses don't drift." (immutability + the pulsar-as-cosmic-
+  lighthouse metaphor; replaced "Fedora with a pulse", retired). Footer line: "AN IMMUTABLE FEDORA
   SPIN · ARCLIGHT.BUILD".
 - Palette: ink #0B0E1A, deep #241F3D, cyan #3ECBFF, periwinkle #8FA8FF,
   violet #4B3FD4, star #E9EDF7. Fonts: Host Grotesk (UI), JetBrains Mono
