@@ -245,38 +245,105 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
   color: var(--muted);
   order: -1; /* the punchline reads before the controls */
 }
-.seg {
+/* One bar for both controls. The blur is load-bearing rather than decorative:
+   these sit on a live shader whose luminance is unknown across 4 looks x 2
+   themes, and the frosted ground is what keeps the labels readable over all
+   eight. */
+.ctl {
   display: flex;
+  align-items: stretch;
+  gap: 0;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  overflow: hidden;
+  border-radius: 14px;
   background: var(--chip);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 8px 24px -12px rgba(11, 14, 26, 0.7);
+  overflow: hidden;
 }
-.seg .lab {
-  align-self: center;
-  padding: 0 0.35rem 0 0.9rem;
-  font-size: 0.66rem;
+.ctl-zone {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+}
+.ctl-zone + .ctl-zone { border-left: 1px solid var(--line); }
+.ctl-zone[hidden] { display: none; }
+.ctl-lab {
+  font-size: 0.62rem;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--muted);
   user-select: none;
+  padding-left: 0.25rem;
 }
-.seg button {
+
+/* equal columns so the travelling pill can be a fixed fraction */
+.picker {
+  position: relative;
+  display: grid;
+  gap: 0;
+}
+.picker-4 { grid-template-columns: repeat(4, minmax(3.4rem, 1fr)); }
+.picker-2 { grid-template-columns: repeat(2, minmax(4.2rem, 1fr)); }
+.picker button {
+  position: relative;
+  z-index: 1;
   appearance: none;
   border: 0;
   background: transparent;
   color: var(--muted);
   font: 400 0.8rem/1 "Host Grotesk", system-ui, sans-serif; /* shipped weights only */
-  padding: 0.62rem 0.85rem;
+  min-height: 2.35rem;
+  padding: 0 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   cursor: pointer;
-  transition: color 0.15s ease-out;
+  border-radius: 9px;
+  transition: color 0.16s ease-out;
 }
-.seg button:hover { color: var(--text); }
-.seg button:focus-visible { outline-offset: -2px; }
-.seg button[aria-pressed="true"] { color: var(--accent); font-weight: 700; }
+.picker button:hover { color: var(--text); }
+.picker button:focus-visible { outline-offset: -2px; }
+.picker button[aria-pressed="true"] { color: var(--accent); font-weight: 700; }
+.picker button svg { flex: none; }
+
+/* The pill is the one authored motion in this control: it travels between
+   positions rather than blinking on. State is already carried by aria-pressed
+   and the label colour, so a browser without :has() simply loses the travel. */
+.pill {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 9px;
+  background: rgba(143, 168, 255, 0.16);
+  box-shadow: inset 0 0 0 1px var(--line);
+  /* No transition until the first reflect() has placed it: the active theme
+     is only known after JS reads storage/system, so an enabled transition
+     makes every load start on Dark and visibly slide. */
+  pointer-events: none;
+}
+:root[data-ready] .pill { transition: transform 0.34s cubic-bezier(0.16, 1, 0.3, 1); }
+.picker-4 .pill { width: 25%; }
+.picker-2 .pill { width: 50%; }
+.picker-4:has(button:nth-of-type(1)[aria-pressed="true"]) .pill { transform: translateX(0); }
+.picker-4:has(button:nth-of-type(2)[aria-pressed="true"]) .pill { transform: translateX(100%); }
+.picker-4:has(button:nth-of-type(3)[aria-pressed="true"]) .pill { transform: translateX(200%); }
+.picker-4:has(button:nth-of-type(4)[aria-pressed="true"]) .pill { transform: translateX(300%); }
+.picker-2:has(button:nth-of-type(1)[aria-pressed="true"]) .pill { transform: translateX(0); }
+.picker-2:has(button:nth-of-type(2)[aria-pressed="true"]) .pill { transform: translateX(100%); }
+@media (prefers-reduced-motion: reduce) { .pill { transition: none; } }
+
+@media (max-width: 34rem) {
+  .ctl { flex-direction: column; }
+  .ctl-zone + .ctl-zone { border-left: 0; border-top: 1px solid var(--line); }
+  .ctl-zone { justify-content: space-between; }
+  .picker-4 { grid-template-columns: repeat(4, minmax(2.9rem, 1fr)); }
+}
 
 /* ---- body sections ------------------------------------------------------- */
 main { max-width: 62rem; margin: 0 auto; padding: 5rem 1.5rem 4rem; }
@@ -352,6 +419,128 @@ h2 {
 .term .cmd { color: var(--cyan); }
 .term .out { color: rgba(233, 237, 247, 0.62); }
 .term .ok { color: var(--cyan); font-weight: 700; }
+
+/* ---- gamescale: the headline feature ------------------------------------- */
+/* This section outranks the others, so it gets the only display-scale heading
+   on the page -- the hierarchy is carried by size and weight, not by a label
+   above it. */
+.scaling {
+  margin-bottom: 5.5rem;
+  padding-bottom: 3.4rem;
+  border-bottom: 1px solid var(--line);
+}
+/* The heading IS the product name -- nothing sits above it. Mono because this
+   is a command you type into Steam, not a costume for "technical". */
+.scaling-h {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+}
+.gs-icon {
+  width: clamp(30px, 1.4rem + 1.6vw, 44px);
+  height: auto;
+  flex: none;
+  border-radius: 9px;
+}
+.gs-name {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: clamp(2.1rem, 1.2rem + 4vw, 4.1rem);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  color: var(--text);
+}
+.gs-deck {
+  font-size: clamp(1.12rem, 1rem + 0.7vw, 1.45rem);
+  line-height: 1.35;
+  max-width: 34ch;
+  color: var(--text);
+  text-wrap: balance;
+  margin-bottom: 1.4rem;
+}
+.scaling .lede {
+  color: var(--muted);
+  max-width: 44rem;
+  font-size: 1.05rem;
+}
+.scaling .lede em { color: var(--text); font-style: italic; }
+
+/* The numbers ARE the argument, so they get a real table: tabular figures so
+   the digits line up column-wise, and the panel's true mode marked as the
+   answer instead of being described as one. */
+.modes {
+  width: 100%;
+  margin: 2.2rem 0 0;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.modes thead th {
+  text-align: left;
+  font-size: 0.74rem;
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 0.9rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+}
+.modes thead th:nth-child(2) { text-align: right; }
+.modes tbody th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+  padding: 0.85rem 0.9rem;
+}
+.modes tbody th strong { color: var(--text); font-weight: 700; }
+.modes td { padding: 0.85rem 0.9rem; }
+.modes .res {
+  text-align: right;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 1rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+.modes .verdict { color: var(--muted); font-size: 0.88rem; }
+.modes tbody tr + tr { border-top: 1px solid rgba(143, 168, 255, 0.12); }
+/* the answer row: tinted ground and accent figures, no costume border */
+.modes .is-native { background: var(--card); }
+.modes .is-native th,
+.modes .is-native .res { color: var(--accent); }
+.modes .is-native .res { font-weight: 700; }
+.modes .is-native th strong { color: var(--accent); }
+.modes .is-native .verdict { color: var(--text); }
+.modes tbody tr:last-child td:first-of-type { border-bottom-left-radius: 8px; }
+
+.scaling-tail {
+  display: grid;
+  grid-template-columns: minmax(0, 23rem) minmax(0, 1fr);
+  gap: 2.2rem;
+  align-items: start;
+  margin-top: 2.4rem;
+}
+.gs-term { margin-top: 0; max-width: none; }
+/* one line, always: the prompt, the caption and the copy button wrapping onto
+   three rows made the page's most copyable command look broken */
+.gs-term figcaption { flex-wrap: nowrap; white-space: nowrap; }
+.gs-term pre { white-space: nowrap; }
+.gs-term pre code { font-size: 0.95rem; }
+.scaling-note p { color: var(--muted); max-width: 34rem; }
+.scaling-note p + p { margin-top: 0.9rem; }
+.scaling-note code {
+  font-size: 0.86em;
+  color: var(--text);
+  background: var(--card);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+@media (max-width: 46rem) {
+  .scaling-tail { grid-template-columns: 1fr; gap: 1.6rem; }
+  .modes { font-size: 0.9rem; }
+  .modes thead th:last-child, .modes .verdict { display: none; }
+  .modes tbody th, .modes td { padding: 0.75rem 0.6rem; }
+}
 
 /* ---- pipeline rail ------------------------------------------------------- */
 .pipeline { margin-top: 5.5rem; }
@@ -510,6 +699,7 @@ footer a:hover, footer a:focus-visible { text-decoration: underline; }
   .install .hint, .manifest pre, .term pre { padding-left: 0.8rem; padding-right: 0.8rem; }
   .manifest figcaption, .term figcaption { padding-left: 0.8rem; padding-right: 0.8rem; }
   .install code, .manifest code, .term code { font-size: 0.78rem; }
-  .seg button { padding: 0.6rem 0.7rem; }
+  .picker button { padding: 0 0.45rem; font-size: 0.76rem; }
+  .ctl-lab { font-size: 0.58rem; letter-spacing: 0.12em; }
   .foot-inner { flex-direction: column; align-items: flex-start; }
 }

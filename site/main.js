@@ -34,7 +34,11 @@
     if (theme) root.dataset.theme = theme;
     else delete root.dataset.theme;                        // back to system
     marks.forEach(m => {
-      m.src = t === 'light' ? 'assets/pulsar-mark-color-dark.svg' : 'assets/pulsar-mark.svg';
+      // the animated cuts carry their own CSS -- an <img> runs animation
+      // inside the SVG but exposes nothing to page CSS, and the file's own
+      // prefers-reduced-motion rule stops the sweep without JS involvement
+      m.src = t === 'light' ? 'assets/pulsar-animated-color-dark.svg'
+                            : 'assets/pulsar-animated.svg';
     });
     document.querySelectorAll('[data-theme-pick]').forEach(b =>
       b.setAttribute('aria-pressed', String(b.dataset.themePick === t)));
@@ -42,6 +46,8 @@
       b.setAttribute('aria-pressed', String(Number(b.dataset.look) === look)));
   };
   reflect();
+  // enable the pill's travel only after the first placement has painted
+  requestAnimationFrame(() => { root.dataset.ready = '1'; });
 
   document.querySelectorAll('[data-theme-pick]').forEach(b =>
     b.addEventListener('click', () => {

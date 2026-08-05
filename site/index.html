@@ -36,11 +36,12 @@ try { const t = localStorage.getItem('pulsar-theme');
   <canvas id="sky" aria-hidden="true"></canvas>
   <canvas id="skyfade" aria-hidden="true"></canvas>
   <div class="hero-inner">
-    <img class="mark" data-mark src="assets/pulsar-mark.svg" alt="" width="140" height="140">
+    <img class="mark" data-mark src="assets/pulsar-animated.svg" alt="" width="140" height="140">
     <h1 class="wordmark">PULSAR</h1>
     <p class="tagline">Lighthouses don&rsquo;t drift.</p>
-    <p class="sub">An immutable Fedora for gaming and development. A fresh image every
-       night, the same system every boot, and rollback is just a reboot.</p>
+    <p class="sub">An immutable Fedora for gaming and development. Games get the panel&rsquo;s
+       real resolution instead of a fractional-scaled one, the system is the same
+       every boot, and rollback is just a reboot.</p>
     <p class="srclink"><a href="https://github.com/arclight-digital/pulsar">Browse the source on GitHub →</a></p>
 
     <figure class="term install" role="group" aria-label="Install commands">
@@ -90,31 +91,135 @@ try { const t = localStorage.getItem('pulsar-theme');
   <!-- The backdrop deck drives the SAME uniforms the OS wallpapers are
        rendered with: four looks x two themes = the shipped set. -->
   <div class="deck">
+    <!-- One bar, two zones. The travelling pill is decoration on top of state
+         that is already carried by aria-pressed and the label colour, so a
+         browser without :has() loses the motion and nothing else. -->
+    <div class="ctl">
+      <!-- hidden until a GL context actually exists: no-WebGL visitors must
+           never see buttons that silently do nothing -->
+      <div class="ctl-zone" role="group" aria-label="Backdrop" id="lookSeg" hidden>
+        <span class="ctl-lab" aria-hidden="true">Backdrop</span>
+        <div class="picker picker-4">
+          <span class="pill" aria-hidden="true"></span>
+          <button data-look="0" aria-pressed="true">Silk</button>
+          <button data-look="1" aria-pressed="false">Leak</button>
+          <button data-look="2" aria-pressed="false">Satin</button>
+          <button data-look="3" aria-pressed="false">Holo</button>
+        </div>
+      </div>
+      <div class="ctl-zone" role="group" aria-label="Theme">
+        <span class="ctl-lab" aria-hidden="true">Theme</span>
+        <div class="picker picker-2">
+          <span class="pill" aria-hidden="true"></span>
+          <button data-theme-pick="dark" aria-pressed="true">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+                 stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M13.4 9.8A5.8 5.8 0 0 1 6.2 2.6a5.9 5.9 0 1 0 7.2 7.2Z"/>
+            </svg>
+            <span>Dark</span>
+          </button>
+          <button data-theme-pick="light" aria-pressed="false">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+                 stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="8" r="3"/>
+              <path d="M8 1.4v1.5M8 13.1v1.5M2.4 2.4l1.1 1.1M12.5 12.5l1.1 1.1M1.4 8h1.5M13.1 8h1.5M2.4 13.6l1.1-1.1M12.5 3.5l1.1-1.1"/>
+            </svg>
+            <span>Light</span>
+          </button>
+        </div>
+      </div>
+    </div>
     <span class="deck-note">the shipped wallpapers &mdash; live</span>
-    <!-- hidden until a GL context actually exists: no-WebGL visitors must
-         never see buttons that silently do nothing -->
-    <div class="seg" role="group" aria-label="Backdrop" id="lookSeg" hidden>
-      <span class="lab" aria-hidden="true">Backdrop</span>
-      <button data-look="0" aria-pressed="true">Silk</button>
-      <button data-look="1" aria-pressed="false">Leak</button>
-      <button data-look="2" aria-pressed="false">Satin</button>
-      <button data-look="3" aria-pressed="false">Holo</button>
-    </div>
-    <div class="seg" role="group" aria-label="Theme">
-      <button data-theme-pick="dark" aria-pressed="true">Dark</button>
-      <button data-theme-pick="light" aria-pressed="false">Light</button>
-    </div>
   </div>
 </header>
 
 <main>
+  <!-- The headline feature. The argument is arithmetic, so the numbers carry
+       it: a real table, tabular figures, and the one row that is the panel's
+       actual mode marked as the answer rather than described as one. -->
+  <section class="scaling" id="gamescale">
+    <h2 class="scaling-h">
+      <img class="gs-icon" src="assets/gamescale.svg" alt="" width="40" height="40">
+      <span class="gs-name">gamescale</span>
+    </h2>
+    <p class="gs-deck">Run a game at 1&times; so XWayland hands it the panel&rsquo;s real
+       mode, then put the desktop back when it exits.</p>
+    <p class="lede">Under GNOME fractional scaling, XWayland is handed an integer
+       multiple of your <em>logical</em> resolution, never the panel&rsquo;s real mode.
+       At 133% on a 2560&times;1600 display no factor lands on the hardware, and a
+       borderless-fullscreen game takes whatever the desktop reports.</p>
+
+    <table class="modes">
+      <caption class="sr-only">Resolution reported to an XWayland game at each scale factor</caption>
+      <thead>
+        <tr><th scope="col">What the game is handed</th><th scope="col">Resolution</th><th scope="col">Cost</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">The panel itself</th>
+          <td class="res">2560&times;1600</td>
+          <td class="verdict">what the hardware has</td>
+        </tr>
+        <tr>
+          <th scope="row">XWayland, scale factor 1</th>
+          <td class="res">1920&times;1200</td>
+          <td class="verdict">upscaled to fit; soft</td>
+        </tr>
+        <tr>
+          <th scope="row">XWayland, scale factor 2</th>
+          <td class="res">3840&times;2400</td>
+          <td class="verdict">2.25&times; the pixels, same image</td>
+        </tr>
+        <tr class="is-native">
+          <th scope="row">With <strong>gamescale</strong></th>
+          <td class="res">2560&times;1600</td>
+          <td class="verdict">the panel&rsquo;s real mode</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="scaling-tail">
+      <figure class="term gs-term" role="group" aria-label="Steam launch options">
+        <figcaption>
+          <span class="prompt" aria-hidden="true">&#10095;</span> steam &rsaquo; launch options
+          <button class="copy" data-copy data-copy-text="gamescale %command%"
+                  aria-label="Copy the Steam launch option">
+            <svg class="clip" viewBox="0 0 16 16" width="15" height="15" fill="none"
+                 stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/>
+              <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5"/>
+            </svg>
+            <svg class="check" viewBox="0 0 16 16" width="15" height="15" fill="none"
+                 stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M2.5 8.5l3.5 3.5 7-8"/>
+            </svg>
+          </button>
+        </figcaption>
+        <pre><code><span class="cmd">gamescale %command%</span></code></pre>
+      </figure>
+      <div class="scaling-note">
+        <p>Scale goes to 1.0 for the lifetime of that one process, font and cursor
+           sizes are compensated so the desktop stays usable, and everything goes
+           back when the game exits.</p>
+        <p>Including when it doesn&rsquo;t exit cleanly: a watchdog, a state file on
+           disk, and a login reconcile unit mean a crash or a <code>SIGKILL</code>
+           still gives you your desktop back. Lighthouses don&rsquo;t drift.</p>
+        <p class="hint">The script, its top-bar indicator, and the reconcile unit ship
+           in the image at a pinned tag. Flatpak launchers need one grant from
+           <a href="https://github.com/arclight-digital/gamescale">gamescale&rsquo;s installer</a>:
+           Flatpak reserves <code>/usr</code>, so no image can hand them a host binary.</p>
+      </div>
+    </div>
+  </section>
+
   <section class="inside">
     <div class="inside-copy">
       <h2>What's inside</h2>
-      <p>The scheduler is <strong>scx_bpfland</strong>, because stock EEVDF places
-         threads badly on a big hybrid die. Gamescope, gamemode, and MangoHud
-         are in the image; split-lock mitigation is off and the map count is
-         raised because games want both. Flathub comes unfiltered.</p>
+      <p><strong>Gamescope</strong>, gamemode, and MangoHud are in the image;
+         split-lock mitigation is off and the map count is raised because games
+         want both. <strong>ntsync</strong> is loaded and handed to the seat user,
+         so Proton can use it where the build supports it. Flathub comes
+         unfiltered.</p>
       <p>Every boot is checked. If the desktop does not come up three times
          running, the machine rolls itself back to the previous deployment
          without being asked.</p>
@@ -127,7 +232,7 @@ try { const t = localStorage.getItem('pulsar-theme');
          a readout this audience recognizes from their own terminal -->
     <figure class="manifest" role="group" aria-label="Image manifest">
       <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> pulsar manifest</figcaption>
-      <pre><code><span class="k">scheduler</span>   scx_bpfland
+      <pre><code><span class="k">scaling</span>     gamescale · 1× on demand
 <span class="k">boot</span>        greenboot · auto-rollback
 <span class="k">display</span>     gamescope · gamemode · mangohud
 <span class="k">wine</span>        ntsync

@@ -43,6 +43,8 @@ if [ -f "${REPO}/site/changelog.json" ]; then
 fi
 cp "${REPO}/assets/brand/pulsar-mark.svg" \
    "${REPO}/assets/brand/pulsar-mark-color-dark.svg" \
+   "${REPO}/assets/brand/pulsar-animated.svg" \
+   "${REPO}/assets/brand/pulsar-animated-color-dark.svg" \
    "${REPO}/assets/brand/favicon.svg" \
    "${REPO}/assets/shaders/pulsar.frag" \
    "${REPO}/assets/fonts/Host_Grotesk/static/HostGrotesk-Regular.ttf" \
@@ -52,6 +54,7 @@ cp "${REPO}/assets/brand/pulsar-mark.svg" \
 # committed silk stills: the no-WebGL/while-loading hero fallback. The one
 # exception to "nothing rendered lives in git" -- silk is locked, the pair is
 # ~180KB total, and regenerating is documented in the file's sibling renders.
+cp "${REPO}/site/assets-static/gamescale.svg" "${OUT}/assets/"
 cp "${REPO}/site/assets-static/silk-still-dark.jpg" \
    "${REPO}/site/assets-static/silk-still-light.jpg" \
    "${REPO}/site/assets-static/og.jpg" \
