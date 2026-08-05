@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""Render a brand SVG to half-block ANSI art for `pulsar manifest`.
+"""Render a brand SVG to colored-ASCII art for `pulsar manifest`.
 
-Hand-drawing the mark in block characters was a bad idea twice over: it came
-out as a closed ring when the mark is an open sweep that tapers, and it would
-drift from assets/brand/ the moment the art changed. This rasterises the real
-SVG instead, so the terminal readout and the wallpaper are the same artwork.
+Hand-drawing the mark was a bad idea twice over: it came out as a closed ring
+when the mark is an open sweep that tapers, and it would drift from
+assets/brand/ the moment the art changed. This rasterises the real SVG
+instead, so the terminal readout and the wallpaper are the same artwork.
 
-Two pixel rows share one character cell via U+2580 (upper half block): the top
-row becomes the foreground colour, the bottom row the background. That gives
-square pixels out of a cell that is twice as tall as it is wide, and 24-bit
-colour carries the sweep's cyan-to-violet gradient for free.
-
-Transparent pixels emit no background, so the terminal's own colour shows
-through and the art sits on whatever theme the user runs.
+Each pixel becomes one 7-bit character from a density ramp, with the pixel's
+own color as 24-bit foreground -- so the sweep keeps its cyan-to-violet
+gradient. Transparent pixels are plain spaces, so the art sits on whatever
+theme the user's terminal runs.
 
     render-ascii-logo.py assets/brand/pulsar-mark.svg -o out.ansi [--cols 26]
 """

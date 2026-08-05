@@ -166,9 +166,9 @@ check_nvidia() {
     # Only compare against something version-shaped. A manifest once carried
     # nvidia_driver="package kmod-nvidia-open is not installed" -- rpm prints
     # that on stdout and exits 1, so a `$(rpm -q ... || fallback)` captured it
-    # as the value. Comparing against it warns on every run, forever, about a
-    # driver that is perfectly fine. Garbage in the manifest is the manifest's
-    # bug to report, not a reason to cry wolf about the driver.
+    # as the value, and comparing against it warned on every run, forever.
+    # Garbage in the manifest is the manifest's bug to report, not a reason
+    # to cry wolf about a driver that is fine.
     case "$expected" in
         *[!0-9.]*|'') expected="" ;;
     esac
@@ -297,10 +297,8 @@ cmd_manifest() {
 
 # The mark as ASCII, rendered from assets/brand/pulsar-mark.svg by
 # scripts/render-ascii-logo.py and shipped at /usr/share/pulsar/logo.ansi.
-# Generated rather than hand-drawn for the same reason the wallpapers are: a
-# hand-drawn copy drifts from the artwork the moment the artwork changes, and
-# the first hand-drawn attempt came out a closed ring when the mark is an open
-# sweep that tapers.
+# Generated so it cannot drift from the artwork -- see that script for why
+# hand-drawing it failed.
 #
 # Every line carries exactly the same number of visible characters, so pasting
 # a second column beside it needs no width arithmetic -- and because the ramp

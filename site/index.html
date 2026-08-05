@@ -84,7 +84,9 @@ try { const t = localStorage.getItem('pulsar-theme');
       </div>
       <p class="hint">Fresh machine? Install
          <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>,
-         then run one of these. Secure Boot stays on &mdash; the nvidia module comes signed.</p>
+         then run one of these. The nvidia module comes signed &mdash;
+         <a href="https://github.com/arclight-digital/pulsar#install">enroll the cert once</a>
+         and keep Secure Boot on.</p>
     </figure>
   </div>
 
@@ -254,7 +256,7 @@ try { const t = localStorage.getItem('pulsar-theme');
       <li><strong>build</strong><small>both images, nightly</small></li>
       <li><strong>sign</strong><small>kmod keyed to the shipped MOK cert</small></li>
       <li><strong>attest</strong><small>SLSA provenance on ghcr</small></li>
-      <li><strong>boot</strong><small>bootc switches to the signed image</small></li>
+      <li><strong>boot</strong><small>bootc switches to the attested image</small></li>
     </ol>
     <!-- a real shell session, not another input-looking row: the command
          wrapped the way you'd actually type it, plus gh's genuine output
@@ -321,8 +323,8 @@ try { const t = localStorage.getItem('pulsar-theme');
       <a href="https://github.com/arclight-digital/pulsar/blob/main/LICENSE">MIT License</a>
     </nav>
   </div>
-  <p class="colophon">Set in Host Grotesk and JetBrains Mono. This background — and the
-     OS wallpapers — render from one fragment shader in CI. No analytics, no cookies.</p>
+  <p class="colophon">Set in Host Grotesk and JetBrains Mono. One fragment shader renders
+     this background live and the OS wallpapers in CI. No analytics, no cookies.</p>
 </footer>
 
 <span id="live" class="sr-only" aria-live="polite"></span>

@@ -1,6 +1,7 @@
 # Everything is built here. The machine running Pulsar builds nothing and is
-# configured with nothing: it pulls a signed image and bootc's own timer
-# stages it. Both variants are pushed to ghcr with provenance attestations.
+# configured with nothing: it pulls a published image and stages it as a
+# normal update. Both variants are pushed to ghcr with provenance
+# attestations.
 #
 # This workflow holds the Secure Boot signing key (secrets AKMODS_PRIV /
 # AKMODS_CERT, base64 of the DER key and cert that are ALREADY enrolled in
@@ -28,7 +29,7 @@ on:
       - '**.md'
       - 'LICENSE'
   schedule:
-    # Nightly, ahead of the machine's 04:00 local staging window.
+    # Nightly, so a fresh build is waiting when the machine checks for updates.
     - cron: '30 8 * * *'
   workflow_dispatch:
 

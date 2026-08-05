@@ -14,13 +14,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 A="${REPO}/assets"
 S="${REPO}/system_files/usr/share"
 
-# --- display-dependent sizes -------------------------------------------------
-# Neither of these scales at runtime, so both are physical-size decisions tied
-# to the panel. Sized for 2560x1600. On a 4K panel roughly double them; on
-# 1080p roughly halve them.
-PLYMOUTH_PX=${PLYMOUTH_PX:-320}   # boot splash watermark
-GDM_PX=${GDM_PX:-192}             # login screen logo
-# -----------------------------------------------------------------------------
+# The GDM logo and plymouth watermark sizes (below) do not scale at runtime:
+# both are physical-size decisions tied to the panel, sized for 2560x1600.
+# On a 4K panel roughly double them; on 1080p roughly halve them.
 
 command -v magick >/dev/null || { echo "needs ImageMagick 7 (magick)" >&2; exit 1; }
 for f in pulsar-mark.svg pulsar-mark-1024.png pulsar-mark-mono-1024.png \
@@ -46,21 +42,19 @@ done
 
 # GDM login screen.
 #
-# This one is NOT a hardcoded path, and used to be treated as one. The greeter
-# reads the org.gnome.login-screen "logo" key, which Fedora merely sets in
-# /usr/share/glib-2.0/schemas/org.gnome.login-screen.gschema.override. A key
-# with a default can be outranked by a later-sorting override, so Pulsar
-# points it at its own file (zz0-pulsar.gschema.override) instead of
-# overwriting a file gdm does not own. The About-panel cuts below are the
-# genuinely hardcoded case -- that distinction is real, and this file used to
-# blur it.
+# NOT a hardcoded path: the greeter reads the org.gnome.login-screen "logo"
+# key, which Fedora merely sets in its own gschema override. A key with a
+# default can be outranked by a later-sorting override, so Pulsar points it
+# at its own file (zz0-pulsar.gschema.override) instead of overwriting a file
+# gdm does not own. The About-panel cuts below are the genuinely hardcoded
+# case.
 #
 # Using the standard key also gets the placement for free: GDM positions the
 # logo low on the greeter, the way stock Fedora looks, with no theme patch.
-# Width, not the square GDM_PX: this is a horizontal lockup, and 192 square
-# would shrink the wordmark to nothing. Swap the source to
-# pulsar-mark-mono-1024.png and use "${GDM_PX}" if the lockup reads too busy
-# on the greeter -- the mono mark is the contrast-safe fallback.
+# Sized by width, not a square: this is a horizontal lockup, and 192 square
+# would shrink the wordmark to nothing. If the lockup reads too busy on the
+# greeter, swap the source to pulsar-mark-mono-1024.png at ~192px square --
+# the mono mark is the contrast-safe fallback.
 GDM_LOGO_W=${GDM_LOGO_W:-320}
 echo "GDM login                 <- pulsar-lockup-horizontal (color, dark-ground)"
 mkdir -p "${S}/pulsar"

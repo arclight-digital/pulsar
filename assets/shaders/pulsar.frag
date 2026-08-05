@@ -2,8 +2,8 @@
 //
 // Pure fragment shader, no textures, no dependencies. scripts/render-wallpapers.py
 // compiles it against a fullscreen triangle, writes PNGs, then composites the
-// mark on top (full-color mark on dark, ink mark on light -- the logo is alpha
-// art, so it is pasted after the render rather than reimplemented in GLSL).
+// mark on top (full-color mark on dark, the authored color-dark mark on light
+// -- the logo is alpha art, pasted after the render, not reimplemented in GLSL).
 // Nothing evaluates this at runtime on a real machine.
 //
 // Written for GLSL 120-style gl_FragColor. The harness injects a #version 330
@@ -208,8 +208,8 @@ void main() {
     night = mix(night, holo,  clamp(look - 2.0, 0.0, 1.0));
 
     // ---- dawn: every look gets a high-key counterpart ----------------------
-    // No darkening pool behind the mark: the light cuts carry the INK mark
-    // (pulsar-mark-ink), which is designed to read on pale ground as-is.
+    // No darkening pool behind the mark: the light cuts carry the authored
+    // color-dark mark, which is designed to read on pale ground as-is.
     // ground sits a full step below white -- "too light" feedback killed the
     // near-white version; the tint does the work of making the marks pop
     vec3 dawnBase = mix(vec3(0.906, 0.916, 0.958),

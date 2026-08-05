@@ -35,13 +35,12 @@ RUN dnf5 install -y \
 # per-CPU conditional nobody can test the other branch of.
 #
 # scx.service carries ConditionPathExists=/sys/kernel/sched_ext. That proves
-# the KERNEL supports sched_ext; it does NOT prove a scheduler attached, and
-# an earlier version of this comment claimed it "degrades to stock scheduling"
-# as though the two were the same thing. They are not: when the unit fails,
-# the kernel keeps running stock EEVDF and NOTHING says so. The service can
-# sit there reporting active while sched_ext reads disabled. The only honest
-# check is `cat /sys/kernel/sched_ext/state`, which must read "enabled" --
-# which is why greenboot check 20-scx-scheduler.sh reads exactly that file.
+# the KERNEL supports sched_ext; it does NOT prove a scheduler attached: when
+# the unit fails, the kernel keeps running stock EEVDF and NOTHING says so.
+# The service can sit there reporting active while sched_ext reads disabled.
+# The only honest check is `cat /sys/kernel/sched_ext/state`, which must read
+# "enabled" -- which is why greenboot check 20-scx-scheduler.sh reads exactly
+# that file.
 # ---------------------------------------------------------------------------
 RUN dnf5 install -y 'dnf5-command(copr)' && \
     dnf5 copr enable -y bieszczaders/kernel-cachyos-addons && \
@@ -67,17 +66,14 @@ RUN dnf5 install -y 'dnf5-command(copr)' && \
 #                   a sandboxed IDE cannot grant itself raw USB access
 #   libvirt+qemu    virtualization is a host daemon stack; the GUI (Boxes,
 #                   virt-manager) stays a Flatpak
-#   gh              a deliberate exception to the Flatpak rule above, stated
-#                   as one. gh extends nothing about what the OS can DO, needs
-#                   no host privilege, and would work fine in a distrobox --
-#                   by the letter of the rule it does not belong here.
-#                   It stays because this image is developed ON a machine
-#                   running it: the repo is on GitHub, the images are on ghcr,
-#                   and `gh attestation verify` is the command the README and
-#                   the site tell strangers to run against those images. On a
-#                   fresh install there is no box yet to run it in, and the
-#                   one command this project asks you to trust it by should
-#                   not require building a container first.
+#   gh              a deliberate exception to the rule above, stated as one:
+#                   it extends nothing about what the OS can DO and would
+#                   work fine in a distrobox. It stays because
+#                   `gh attestation verify` is the command the README and the
+#                   site tell strangers to run against these images, a fresh
+#                   install has no box yet to run it in, and the one command
+#                   this project asks you to trust it by should not require
+#                   building a container first.
 #   greenboot       boot-time health checks with automatic rollback. This is
 #                   what turns "lighthouses don't drift" from a manual
 #                   `bootc rollback` into something the machine does itself --

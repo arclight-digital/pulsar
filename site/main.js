@@ -2,8 +2,8 @@
 // WebGL1, plus the deck controls that drive it. u_theme starts from the
 // visitor's color scheme and u_look from Silk; both are overridable from the
 // deck and persisted. The theme choice also swaps the page tokens (via
-// data-theme on <html>) and the mark (ink cut on light, same as the shipped
-// wallpapers). Falls back to the page's CSS ground when WebGL is missing;
+// data-theme on <html>) and the mark (color-dark cut on light, same as the
+// shipped wallpapers). Falls back to the page's CSS ground when WebGL is missing;
 // prefers-reduced-motion gets still frames that redraw only on control use.
 (() => {
   const root = document.documentElement;
