@@ -24,7 +24,8 @@ GDM_PX=${GDM_PX:-192}             # login screen logo
 
 command -v magick >/dev/null || { echo "needs ImageMagick 7 (magick)" >&2; exit 1; }
 for f in pulsar-mark.svg pulsar-mark-1024.png pulsar-mark-mono-1024.png \
-         pulsar-mark-mono.svg pulsar-mark-ink.svg; do
+         pulsar-mark-mono.svg pulsar-lockup-horizontal.png \
+         pulsar-lockup-horizontal-mono.png; do
     [[ -r "${A}/icons/${f}" ]] || { echo "missing asset: ${A}/icons/${f}" >&2; exit 1; }
 done
 
@@ -66,59 +67,51 @@ png "${A}/icons/pulsar-mark-mono-1024.png" "${GDM_PX}" "${S}/pixmaps/fedora-gdm-
 # gnome-control-center. 279x80 is the size Fedora ships; the panel does not
 # scale it.
 #
-# The mark alone looks wrong here -- Fedora fills this slot with a lockup, so
-# this is the one place the wordmark exists. The wordmark is PULSAR in Host
-# Grotesk Bold, uppercase, tracked 0.3em, which is the brand treatment;
-# it is NOT the UI font weight, and tightening the tracking kills it.
-#
-# The mark is sized to fit the 80px height COMPLETELY. Its gaussian glow is
-# soft alpha with no hard boundary, so any overflow clips to a straight edge
-# and reads as a cropped logo -- the glow has to live inside the canvas even
-# though that makes the visible disc smaller than the box suggests.
-#
-# Two cuts because the panel background flips with the theme: the mono art
-# disappears on light, and the color art's white core disappears just as badly,
-# hence pulsar-mark-ink.svg for the light side.
+# The lockup art is AUTHORED, not generated: assets/icons/pulsar-lockup-*.png
+# are the design source (color and mono cuts, white wordmark -- dark-ground
+# art). Light surfaces get an INK derivation: the mono cut with its RGB
+# flattened to #241F3D, keeping the authored geometry and alpha. Do not
+# rebuild lockups from mark + font here; that generated look was retired.
 # ---------------------------------------------------------------------------
-lockup() { # $1=mark svg  $2=text colour  $3=destination
-    magick -background none "$1" -resize 1024x1024 -trim -resize x76 "${TMP}/mark.png"
-    magick -background none -fill "$2" -font "${WORDMARK_FONT}" \
-           -pointsize "${WORDMARK_PT}" -kerning "${WORDMARK_TRACK}" label:PULSAR -trim "${TMP}/word.png"
-    magick "${TMP}/mark.png" "${TMP}/word.png" -background none -gravity center +smush 14 \
-           -background none -gravity center -extent 279x80 -strip "$3"
-    echo "  $3 (279x80)"
-}
-# 0.3em of tracking is the brand spec (44px/700/0.3em in the poster cut);
-# expressed here as a ratio so the pointsize can change without breaking it.
-WORDMARK_PT=30
-WORDMARK_TRACK=$(awk "BEGIN{printf \"%.0f\", ${WORDMARK_PT:-30}*0.3}")
-WORDMARK_FONT="${A}/fonts/Host_Grotesk/static/HostGrotesk-Bold.ttf"
-[[ -r "${WORDMARK_FONT}" ]] || { echo "missing wordmark font: ${WORDMARK_FONT}" >&2; exit 1; }
 TMP="$(mktemp -d)"; trap 'rm -rf "${TMP}"' EXIT
+LOCKUP="${A}/icons/pulsar-lockup-horizontal.png"
+LOCKUP_MONO="${A}/icons/pulsar-lockup-horizontal-mono.png"
 
-echo "GNOME About lockup        <- pulsar-mark-mono + Host Grotesk"
-lockup "${A}/icons/pulsar-mark-mono.svg" white     "${S}/pixmaps/fedora_whitelogo_med.png"
-echo "GNOME About lockup (light) <- pulsar-mark-ink + Host Grotesk"
-lockup "${A}/icons/pulsar-mark-ink.svg"  '#241F3D' "${S}/pixmaps/fedora_logo_med.png"
+fit279() { # $1=source $2=destination -- contain into the panel's fixed box
+    magick -background none "$1" -trim -resize 279x80 \
+           -gravity center -extent 279x80 -strip "$2"
+    echo "  $2 (279x80)"
+}
+ink() { # $1=source $2=destination -- authored geometry, ink-colored for light
+    magick "$1" -channel RGB -fill '#241F3D' -colorize 100 +channel -strip "$2"
+}
+
+echo "GNOME About lockup        <- pulsar-lockup-horizontal (color)"
+fit279 "${LOCKUP}" "${S}/pixmaps/fedora_whitelogo_med.png"
+echo "GNOME About lockup (light) <- pulsar-lockup-horizontal-mono, inked"
+ink "${LOCKUP_MONO}" "${TMP}/lockup-ink.png"
+fit279 "${TMP}/lockup-ink.png" "${S}/pixmaps/fedora_logo_med.png"
 
 # ---------------------------------------------------------------------------
-# Plymouth watermark: the same lockup language, Fedora-style -- color mark +
-# wordmark, composited bottom-center by the theme (WatermarkVerticalAlignment).
-# Built from the 1024 PNG raster, NOT the SVG: ImageMagick's SVG filter
-# rendering produces ring artifacts in the gaussian glow (see the ink-mark
-# incident). Star-white wordmark; the splash ground is pure black. Sized for
-# 2560x1600 like the other physical-size assets.
+# Plymouth watermark: the authored color lockup, bottom-center via the theme's
+# WatermarkVerticalAlignment. Sized for 2560x1600 like the other physical-size
+# assets.
 # ---------------------------------------------------------------------------
-PLY_MARK_H=${PLY_MARK_H:-88}
-PLY_PT=${PLY_PT:-36}
-PLY_TRACK=$(awk "BEGIN{printf \"%.0f\", ${PLY_PT}*0.3}")
-echo "Plymouth watermark        <- pulsar-mark (color) + Host Grotesk lockup"
-magick -background none "${A}/icons/pulsar-mark-1024.png" -trim -resize x${PLY_MARK_H} "${TMP}/ply-mark.png"
-magick -background none -fill '#E9EDF7' -font "${WORDMARK_FONT}" \
-       -pointsize "${PLY_PT}" -kerning "${PLY_TRACK}" label:PULSAR -trim "${TMP}/ply-word.png"
-magick "${TMP}/ply-mark.png" "${TMP}/ply-word.png" -background none -gravity center +smush 24 -strip \
+echo "Plymouth watermark        <- pulsar-lockup-horizontal (color)"
+magick -background none "${LOCKUP}" -trim -resize x96 -strip \
        "${S}/plymouth/themes/pulsar/watermark.png"
 echo "  ${S}/plymouth/themes/pulsar/watermark.png ($(magick identify -format '%wx%h' "${S}/plymouth/themes/pulsar/watermark.png"))"
+
+# ---------------------------------------------------------------------------
+# Site light-theme mark: the ink derivation of the authored mono mark. The
+# ink SVGs were retired with the generated lockups; this raster is what
+# site/main.js swaps in on the light theme (site/build.sh stages it).
+# ---------------------------------------------------------------------------
+echo "Site ink mark             <- pulsar-mark-mono-1024, inked"
+ink "${A}/icons/pulsar-mark-mono-1024.png" "${TMP}/mark-ink-full.png"
+magick "${TMP}/mark-ink-full.png" -filter Lanczos -resize 512x512 -strip \
+       "${REPO}/site/assets-static/pulsar-mark-ink.png"
+echo "  ${REPO}/site/assets-static/pulsar-mark-ink.png (512px)"
 
 # ---------------------------------------------------------------------------
 # Fonts

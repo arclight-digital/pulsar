@@ -34,7 +34,7 @@
     if (theme) root.dataset.theme = theme;
     else delete root.dataset.theme;                        // back to system
     marks.forEach(m => {
-      m.src = t === 'light' ? 'assets/pulsar-mark-ink.svg' : 'assets/pulsar-mark.svg';
+      m.src = t === 'light' ? 'assets/pulsar-mark-ink.png' : 'assets/pulsar-mark.svg';
     });
     document.querySelectorAll('[data-theme-pick]').forEach(b =>
       b.setAttribute('aria-pressed', String(b.dataset.themePick === t)));
