@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulsar — an immutable Fedora spin</title>
+<meta name="description" content="Pulsar: an immutable Fedora Silverblue spin for gaming and development. Built in the cloud, signed end to end, updates itself quietly.">
+<link rel="icon" href="assets/favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- The hero background is assets/pulsar.frag -- the SAME shader that renders
+     the OS wallpapers, running live in WebGL. main.js falls back to a static
+     gradient when WebGL is unavailable or motion is reduced. -->
+<header class="hero">
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <div class="hero-inner">
+    <img class="mark" src="assets/pulsar-mark.svg" alt="" width="140" height="140">
+    <h1 class="wordmark">PULSAR</h1>
+    <p class="tagline">Steady light. Atomic core.</p>
+    <p class="sub">An immutable Fedora spin for gaming and development.
+       Built in the cloud, signed end to end, updates itself quietly.</p>
+    <pre class="switch"><code>sudo bootc switch ghcr.io/arclight-digital/pulsar:latest</code></pre>
+    <p class="hint">NVIDIA laptop? Use <code>pulsar-nvidia</code> — the kernel module
+       arrives pre-built and pre-signed for Secure Boot.</p>
+  </div>
+</header>
+
+<main>
+  <section class="grid" aria-label="What's in it">
+    <article>
+      <h2>Play</h2>
+      <p>Gamescope, MangoHud, and the scx_lavd scheduler picked for frame
+         pacing. Flathub is preconfigured for Steam and everything else.</p>
+    </article>
+    <article>
+      <h2>Build</h2>
+      <p>Distrobox for any userland, libvirt/KVM for real machines,
+         GitHub CLI and JetBrains Mono out of the box.</p>
+    </article>
+    <article>
+      <h2>Trust</h2>
+      <p>Every image is built and signed on public CI with provenance
+         attestations. The NVIDIA kernel module is signed against the
+         MOK cert the image itself carries.</p>
+    </article>
+  </section>
+
+  <section class="updates">
+    <h2>Updates, the boring way</h2>
+    <p>Images build nightly. Your machine notices, stages the update, and
+       GNOME Software tells you a reboot away — exactly how stock Silverblue
+       behaves. Nothing builds, compiles, or signs on your hardware. Ever.</p>
+  </section>
+</main>
+
+<footer>
+  <p class="brandline">AN IMMUTABLE FEDORA SPIN &middot; ARCLIGHT.BUILD</p>
+  <nav>
+    <a href="https://github.com/arclight-digital/pulsar">GitHub</a>
+    <a href="https://github.com/arclight-digital/pulsar/blob/main/LICENSE">MIT License</a>
+  </nav>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>

@@ -17,10 +17,21 @@ name: build
 on:
   push:
     branches: [main]
+    # the one-pager has its own pipeline (site.yml); docs and site edits
+    # must never cost a dual-image OS build
+    paths-ignore:
+      - 'site/**'
+      - '**.md'
+      - 'LICENSE'
   schedule:
     # Nightly, ahead of the machine's 04:00 local staging window.
     - cron: '30 8 * * *'
   workflow_dispatch:
+
+# queue image builds instead of racing pushes to :latest from parallel runs
+concurrency:
+  group: build
+  cancel-in-progress: false
 
 env:
   FEDORA_VERSION: "44"

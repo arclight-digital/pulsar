@@ -10,3 +10,4 @@ cosign.key
 .preview/
 system_files/usr/share/backgrounds/pulsar/*.png
 scripts/__pycache__/
+site/_site/

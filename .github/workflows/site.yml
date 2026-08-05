@@ -1,0 +1,43 @@
+# Deploys site/ to GitHub Pages. Completely separate pipeline from build.yml:
+# site edits must never cost a 15-minute dual-image OS build, and image
+# changes redeploy the site only when shared brand assets moved.
+#
+# Deploys from main only. First run may need Pages enabled once in repo
+# settings (Settings -> Pages -> Source: GitHub Actions); configure-pages
+# tries to do that itself via `enablement`.
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', 'assets/**', '.github/workflows/site.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# queue deploys; never let two runs race the same Pages environment
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        run: ./site/build.sh
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/_site
+      - id: deployment
+        uses: actions/deploy-pages@v4
