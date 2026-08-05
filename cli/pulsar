@@ -41,7 +41,13 @@ need() { have "$1" || die "required tool not found: $1"; }
 # Reads a top-level string out of the baked manifest. Absent manifest is not
 # fatal: a system rebased from an older image, or a hand-built one, still gets
 # a working doctor and status.
-mf() { [ -r "$MANIFEST" ] && jq -r --arg k "$1" '.[$k] // empty' "$MANIFEST" 2>/dev/null || true; }
+mf() {
+    # if-then, not `A && B || C`: in that form C also runs when A succeeds and
+    # B fails, which is the same shape as the fallback bug that made the
+    # greenboot check report health it could not see.
+    [ -r "$MANIFEST" ] || return 0
+    jq -r --arg k "$1" '.[$k] // empty' "$MANIFEST" 2>/dev/null || true
+}
 
 # ---------------------------------------------------------------------------
 # doctor -- the reason this CLI exists.

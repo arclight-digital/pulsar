@@ -36,6 +36,7 @@ RUNTIME=${CONTAINER_RUNTIME:-podman}
 
 if [ "$REF" = "--local" ] || [ -z "$REF" ]; then
     LOCAL=1
+    # shellcheck source=/dev/null  # os-release is generated, not in the repo
     REF="local:$(. /usr/lib/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}")"
     digest="local"
 else
