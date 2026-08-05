@@ -325,11 +325,11 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh && \
       --arg mesa      "$(rpm -q --qf '%{VERSION}-%{RELEASE}' mesa-dri-drivers)" \
       --arg gamescale "${GAMESCALE_VERSION}" \
       --arg changelog "${PULSAR_CHANGELOG_URL}" \
-      '{image:$image, variant:$variant, version:$version, base:$base, built:$built,
-        kernel:$kernel,
-        components:{scheduler:$scheduler, gamescope:$gamescope, mesa:$mesa,
-                    gamescale:$gamescale},
-        changelog_url:$changelog,
+      '{image:$image, variant:$variant, version:$version, base:$base, built:$built, \
+        kernel:$kernel, \
+        components:{scheduler:$scheduler, gamescope:$gamescope, mesa:$mesa, \
+                    gamescale:$gamescale}, \
+        changelog_url:$changelog, \
         attestation:"gh attestation verify oci://ghcr.io/arclight-digital/pulsar --owner arclight-digital"}' \
       > /usr/share/pulsar/manifest.json && \
     jq -e '.version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \

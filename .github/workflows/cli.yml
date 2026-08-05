@@ -15,12 +15,14 @@ on:
       - 'cli/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'Containerfile*'
       - '.github/workflows/cli.yml'
   pull_request:
     paths:
       - 'cli/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'Containerfile*'
   workflow_dispatch:
 
 jobs:
@@ -46,8 +48,16 @@ jobs:
             scripts/rpm-sbom.sh \
             scripts/sbom-changelog.sh \
             scripts/render-changelog.sh \
+            scripts/lint-containerfile.sh \
             site/build.sh
           echo "shellcheck: clean"
+
+      # The shell inside RUN instructions is shell too, and it is the most
+      # expensive place to have a syntax error: a quote left open by a missing
+      # line continuation costs a nine-minute image build to discover, which is
+      # exactly how it reached main once.
+      - name: shellcheck the Containerfile RUN bodies
+        run: ./scripts/lint-containerfile.sh Containerfile Containerfile.nvidia
 
       # The greenboot health checks are shipped shell too, and a syntax error
       # in one of them is a red boot on every machine that pulls the image.
