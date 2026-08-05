@@ -3,8 +3,13 @@
 <!-- Registers the four Pulsar wallpaper pairs with the Appearance panel.
      filename = light-style cut, filename-dark = dark-style cut; GNOME flips
      between them with the style toggle. The PNGs are rendered in CI from
-     assets/shaders/pulsar.frag (see scripts/render-wallpapers.py) -- these
-     paths must stay in sync with the VARIANTS table there. -->
+     assets/shaders/pulsar.frag (see scripts/render-wallpapers.py), so these
+     paths must stay in sync with the VARIANTS table there.
+
+     No double hyphen anywhere in this comment. XML forbids it, and a parse
+     error here is silent: gnome-control-center drops the whole file and the
+     Appearance panel simply shows no Pulsar wallpapers, with the PNGs sitting
+     correctly installed the entire time. -->
 <wallpapers>
   <wallpaper deleted="false">
     <name>Pulsar Silk</name>
