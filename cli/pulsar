@@ -36,7 +36,23 @@ need_root() {
     die "'$1' changes the system and must run as root -- try: sudo pulsar $1"
 }
 
+# The mirror image, for setup recipes: they write to $HOME and talk to the
+# user session bus, and under sudo both silently target root's. The failure
+# that surfaces otherwise is systemd's "Failed to connect to bus", which
+# points nowhere near the actual mistake.
+need_user() {
+    [ "$(id -u)" -ne 0 ] && return 0
+    die "'setup $1' configures your session and must not run as root -- drop the sudo"
+}
+
 need() { have "$1" || die "required tool not found: $1"; }
+
+# Commands that take no arguments say so, instead of silently ignoring what
+# they were given: `pulsar doctor tomorrow` should not run doctor today.
+no_args() {
+    local c=$1; shift
+    [ $# -eq 0 ] || die "'${c}' takes no arguments (got: $*)"
+}
 
 # Reads a top-level string out of the baked manifest. Absent manifest is not
 # fatal: a system rebased from an older image, or a hand-built one, still gets
@@ -69,6 +85,9 @@ record() {
         ok)   colour=$C_OK;   symbol="ok  " ;;
         warn) colour=$C_WARN; symbol="warn" ;;
         fail) colour=$C_FAIL; symbol="FAIL"; RC=1 ;;
+        # a typo'd severity would otherwise die on an unbound variable three
+        # lines down, attributed to nothing
+        *)    die "internal error: record() called with status '${status}'" ;;
     esac
     if [ "${JSON:-0}" = 1 ]; then
         CHECK_JSON+=$(jq -n -c --arg i "$id" --arg s "$status" --arg h "$head" --arg d "$detail" \
@@ -197,13 +216,18 @@ check_flathub() {
 
 check_updates() {
     have rpm-ostree || { record updates warn "rpm-ostree not available"; return; }
-    local js staged pinned total
+    local js line staged pinned total ver
     js=$(rpm-ostree status --json 2>/dev/null || echo '{}')
-    staged=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.staged == true)] | length')
-    pinned=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.pinned == true)] | length')
-    total=$(printf '%s' "$js" | jq -r '.deployments | length // 0')
+    # one jq pass for all four numbers, not four passes over the same JSON
+    line=$(printf '%s' "$js" | jq -r '
+      [ ([.deployments[]? | select(.staged == true)] | length),
+        ([.deployments[]? | select(.pinned == true)] | length),
+        (.deployments // [] | length),
+        ([.deployments[]? | select(.staged == true) | .version][0] // "?")
+      ] | map(tostring) | join("\t")' 2>/dev/null) || line=''
+    [ -n "$line" ] || line=$(printf '0\t0\t0\t?')
+    IFS=$'\t' read -r staged pinned total ver <<<"$line"
     if [ "${staged:-0}" -gt 0 ]; then
-        local ver; ver=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.staged==true) | .version][0] // "?"')
         record updates ok "update staged: ${ver}" "reboot to apply"
     else
         record updates ok "no update staged" "${total} deployment(s), ${pinned} pinned"
@@ -254,16 +278,41 @@ cmd_status() {
     need rpm-ostree
     local js; js=$(rpm-ostree status --json 2>/dev/null) || die "could not read deployment status"
     if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$js"; return 0; fi
-    printf '%s%-8s %-15s %-44s %s%s\n' "$C_BOLD" "STATE" "VERSION" "IMAGE" "PINNED" "$C_RESET"
-    printf '%s' "$js" | jq -r '
+    # The image reference sheds its whole transport prefix -- a single strip
+    # left "docker://" behind on "ostree-image-signed:docker://ghcr.io/...".
+    local tsv
+    tsv=$(printf '%s' "$js" | jq -r '
       .deployments[]? |
-      ((if .booted then "booted" elif .staged then "staged" else "-" end) + "\t"
-       + (.version // "?") + "\t"
-       + ((."container-image-reference" // .origin // "?") | sub("^[a-z-]+:"; "") | .[0:42]) + "\t"
-       + (if .pinned then "yes" else "no" end))' \
-    | while IFS=$'\t' read -r state ver img pin; do
-        printf '%-8s %-15s %-44s %s\n' "$state" "$ver" "$img" "$pin"
-      done
+      (if .booted then "booted" elif .staged then "staged" else "-" end) + "\t"
+      + (.version // "?") + "\t"
+      + ((."container-image-reference" // .origin // "?") | sub("^([a-z-]+:)+(//)?"; "")) + "\t"
+      + (if .pinned then "yes" else "no" end)')
+    [ -n "$tsv" ] || { printf 'no deployments reported\n'; return 0; }
+
+    # Columns measured from the data, like the manifest. The image reference
+    # is the elastic column: truncated only when a real terminal is too
+    # narrow to hold it -- a hardcoded 42 was cutting the tag off refs on
+    # terminals with a hundred columns to spare -- and a pipe always gets
+    # the full reference.
+    local verw=7 imgw=5 state ver img pin
+    while IFS=$'\t' read -r state ver img pin; do
+        [ "${#ver}" -gt "$verw" ] && verw=${#ver}
+        [ "${#img}" -gt "$imgw" ] && imgw=${#img}
+    done <<<"$tsv"
+    local cols=0 max=0
+    [ -n "$C_RESET" ] && cols=$(tput cols 2>/dev/null || echo 0)
+    if [ "$cols" -gt 0 ]; then
+        max=$((cols - 8 - 1 - verw - 1 - 1 - 6))   # state, gaps, version, pinned
+        if [ "$max" -ge 12 ] && [ "$imgw" -gt "$max" ]; then imgw=$max; else max=0; fi
+    fi
+
+    printf '%s%-8s %-*s %-*s %s%s\n' "$C_BOLD" "STATE" "$verw" "VERSION" "$imgw" "IMAGE" "PINNED" "$C_RESET"
+    while IFS=$'\t' read -r state ver img pin; do
+        if [ "$max" -gt 0 ] && [ "${#img}" -gt "$max" ]; then
+            img="${img:0:max-3}..."
+        fi
+        printf '%-8s %-*s %-*s %s\n' "$state" "$verw" "$ver" "$imgw" "$img" "$pin"
+    done <<<"$tsv"
 }
 
 cmd_manifest() {
@@ -377,7 +426,10 @@ want_logo() {
 logo_width() {
     local first
     IFS= read -r first < "$LOGO_FILE" || true
-    printf '%s' "$first" | sed $'s/\033\[[0-9;]*m//g' | wc -c
+    # ${#} rather than wc -c: paste_logo pads with ${#} too, and the two must
+    # agree on what "width" means if a custom PULSAR_LOGO is ever not 7-bit
+    first=$(printf '%s' "$first" | sed $'s/\033\[[0-9;]*m//g')
+    printf '%s\n' "${#first}"
 }
 
 paste_logo() {
@@ -451,13 +503,22 @@ cmd_changelog() {
     local js
     js=$(curl -fsSL "$url" 2>/dev/null) || die "could not fetch ${url}"
     if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$js"; return 0; fi
+    # A baseline diff says what it is instead of "0 upgraded · 0 added";
+    # downgrades are marked ! rather than blending into the upgrades; and a
+    # response that is not the changelog (a captive portal, an error page
+    # served as 200) dies with a message instead of raw jq stderr.
     printf '%s' "$js" | jq -r '
-      "\(.summary.upgraded) upgraded · \(.summary.added) added · \(.summary.removed) removed"
-      + (if .summary.downgraded > 0 then " · \(.summary.downgraded) downgraded" else "" end),
-      "generated \(.generated)", "",
-      (.changed[]? | "  ~ \(.name)  \(.from) → \(.to)"),
-      (.added[]?   | "  + \(.name)  \(.version)"),
-      (.removed[]? | "  - \(.name)  \(.version)")'
+      if .baseline == true then
+        "first build, nothing to compare against yet",
+        "generated \(.generated // "?")"
+      else
+        "\(.summary.upgraded // 0) upgraded · \(.summary.added // 0) added · \(.summary.removed // 0) removed"
+        + (if (.summary.downgraded // 0) > 0 then " · \(.summary.downgraded) downgraded" else "" end),
+        "generated \(.generated // "?")", "",
+        (.changed[]? | "  \(if .direction == "downgraded" then "!" else "~" end) \(.name)  \(.from) → \(.to)"),
+        (.added[]?   | "  + \(.name)  \(.version)"),
+        (.removed[]? | "  - \(.name)  \(.version)")
+      end' || die "the response from ${url} is not a changelog"
 }
 
 # ---------------------------------------------------------------------------
@@ -467,12 +528,14 @@ cmd_setup() {
     local recipe=${1:-}
     case "$recipe" in
     devbox)
+        need_user devbox
         need distrobox
         local ini=/usr/share/pulsar/distrobox.ini
         [ -r "$ini" ] || die "no distrobox manifest at ${ini}"
         distrobox assemble create --file "$ini"
         ;;
     quadlet)
+        need_user quadlet
         local tpl=/usr/share/pulsar/templates/example.container
         local dir="${HOME}/.config/containers/systemd"
         [ -r "$tpl" ] || die "no quadlet template at ${tpl}"
@@ -488,6 +551,7 @@ cmd_setup() {
         printf 'edit it, then: systemctl --user start example\n'
         ;;
     gamescale)
+        need_user gamescale
         # Delegates to upstream's installer against the copy staged in the
         # image, so this runs offline from pinned, hash-verified files and the
         # ~/.local copy matches the image exactly. Reimplementing the flatpak
@@ -510,7 +574,8 @@ usage() {
 pulsar -- manage a Pulsar system
 
   pulsar manifest          what is in this image
-  pulsar doctor            health snapshot (exit 1 if a check fails)
+  pulsar doctor            health snapshot (exit 1 if a check fails);
+                           the default when no command is given
   pulsar status            deployments: booted, staged, rollback, pins
   pulsar changelog         packages that moved in the latest published build
   pulsar sbom              this system's packages as SPDX 2.3
@@ -530,7 +595,6 @@ EOF
 }
 
 main() {
-    need jq
     JSON=0
     local args=() seen_cmd=0
     for a in "$@"; do
@@ -551,16 +615,22 @@ main() {
     set -- ${args[@]+"${args[@]}"}
     local cmd=${1:-doctor}
     shift || true
+    # jq is needed by nearly everything -- but not by help, which is how you
+    # find out what this is on a box that lacks jq.
+    case "$cmd" in help) ;; *) need jq ;; esac
+    # update/rollback pass their arguments through to bootc (which has flags
+    # worth passing, --check among them); setup hands them to its recipe.
+    # Everything else takes none and says so.
     case "$cmd" in
-        manifest)  cmd_manifest ;;
-        doctor)    cmd_doctor ;;
-        status)    cmd_status ;;
+        manifest)  no_args manifest "$@";  cmd_manifest ;;
+        doctor)    no_args doctor "$@";    cmd_doctor ;;
+        status)    no_args status "$@";    cmd_status ;;
         update)    cmd_update "$@" ;;
         rollback)  cmd_rollback "$@" ;;
-        pin)       cmd_pin ;;
-        unpin)     cmd_unpin ;;
-        changelog) cmd_changelog ;;
-        sbom)      cmd_sbom ;;
+        pin)       no_args pin "$@";       cmd_pin ;;
+        unpin)     no_args unpin "$@";     cmd_unpin ;;
+        changelog) no_args changelog "$@"; cmd_changelog ;;
+        sbom)      no_args sbom "$@";      cmd_sbom ;;
         setup)     cmd_setup "$@" ;;
         help)      usage ;;
         *)         usage >&2; die "unknown command: ${cmd}" ;;

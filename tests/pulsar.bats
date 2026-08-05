@@ -206,3 +206,58 @@ JSON
         [[ "$line" =~ ^[a-z_]+[[:space:]] ]] || fail "not a key row: $line"
     done <<< "$output"
 }
+
+# --- audit pass: argument and input hygiene ---------------------------------
+
+@test "commands that take no arguments reject them" {
+    run "$PULSAR" doctor tomorrow
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"takes no arguments"* ]]
+    run "$PULSAR" manifest extra
+    [ "$status" -ne 0 ]
+}
+
+@test "changelog renders a baseline as a baseline, not as zero changes" {
+    cl="${BATS_TEST_TMPDIR}/cl.json"
+    printf '{"baseline":true,"generated":"2026-08-05T00:00:00Z"}' > "$cl"
+    jq --arg u "file://${cl}" '.changelog_url = $u' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" \
+        && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    run "$PULSAR" changelog
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"first build"* ]]
+    [[ "$output" != *"0 upgraded"* ]]
+}
+
+@test "changelog marks a downgrade instead of blending it into upgrades" {
+    cl="${BATS_TEST_TMPDIR}/cl.json"
+    cat > "$cl" <<'JSON'
+{"generated":"2026-08-05T00:00:00Z",
+ "summary":{"added":0,"removed":0,"upgraded":1,"downgraded":1,"changed":0},
+ "changed":[{"name":"up","from":"1","to":"2","direction":"upgraded"},
+            {"name":"down","from":"2","to":"1","direction":"downgraded"}],
+ "added":[],"removed":[]}
+JSON
+    jq --arg u "file://${cl}" '.changelog_url = $u' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" \
+        && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    run "$PULSAR" changelog
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"~ up"* ]]
+    [[ "$output" == *"! down"* ]]
+}
+
+@test "changelog dies cleanly when the url serves something else" {
+    cl="${BATS_TEST_TMPDIR}/cl.json"
+    printf 'this is a captive portal, honest' > "$cl"
+    jq --arg u "file://${cl}" '.changelog_url = $u' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" \
+        && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    run "$PULSAR" changelog
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not a changelog"* ]]
+}
+
+@test "setup recipes refuse to run as root" {
+    [ "$(id -u)" -eq 0 ] || skip "meaningful only as root"
+    run "$PULSAR" setup quadlet
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"must not run as root"* ]]
+}
