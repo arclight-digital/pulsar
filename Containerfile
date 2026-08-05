@@ -297,6 +297,45 @@ RUN if [ -n "${PULSAR_VERSION}" ]; then \
 LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
 
 # ---------------------------------------------------------------------------
+# The pulsar CLI, and the manifest it prints.
+#
+# The SBOM generator is shared with CI rather than reimplemented: the same
+# script describes a container image there and the running system here, so the
+# two can never disagree about what a package version looks like.
+#
+# There is deliberately NO baked sbom.spdx.json. A file inside the image cannot
+# describe the image that contains it -- adding it changes what it describes.
+# `pulsar sbom` reads the live rpm database instead, which is the same source
+# and is correct by construction; the published per-build copies live in R2.
+# ---------------------------------------------------------------------------
+ARG PULSAR_CHANGELOG_URL="https://pulsar.arclight.digital/changelog.json"
+COPY cli/pulsar /usr/bin/pulsar
+COPY scripts/rpm-sbom.sh /usr/libexec/pulsar/rpm-sbom.sh
+RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh && \
+    mkdir -p /usr/share/pulsar && \
+    jq -n \
+      --arg image     "pulsar" \
+      --arg variant   "vanilla" \
+      --arg version   "${PULSAR_VERSION:-${FEDORA_VERSION}}" \
+      --arg base      "fedora-silverblue:${FEDORA_VERSION}" \
+      --arg built     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg kernel    "$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)" \
+      --arg scheduler "scx_bpfland" \
+      --arg gamescope "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamescope)" \
+      --arg mesa      "$(rpm -q --qf '%{VERSION}-%{RELEASE}' mesa-dri-drivers)" \
+      --arg gamescale "${GAMESCALE_VERSION}" \
+      --arg changelog "${PULSAR_CHANGELOG_URL}" \
+      '{image:$image, variant:$variant, version:$version, base:$base, built:$built,
+        kernel:$kernel,
+        components:{scheduler:$scheduler, gamescope:$gamescope, mesa:$mesa,
+                    gamescale:$gamescale},
+        changelog_url:$changelog,
+        attestation:"gh attestation verify oci://ghcr.io/arclight-digital/pulsar --owner arclight-digital"}' \
+      > /usr/share/pulsar/manifest.json && \
+    jq -e '.version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \
+    pulsar --version
+
+# ---------------------------------------------------------------------------
 # Finalize. The initramfs carries the plymouth theme, so the dracut regen has
 # to come after the overlay lands. The nvidia variant regenerates it a second
 # time because it adds modprobe.d options that also live in the initramfs.

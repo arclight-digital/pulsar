@@ -228,3 +228,18 @@ RUN dnf5 clean all && \
 # FROM -- so that `bootc status` reports the same version for either variant.
 ARG PULSAR_VERSION=""
 LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
+
+# Manifest: inherited from the base image, then corrected for this variant.
+# `pulsar doctor` reads .variant to decide whether a missing nvidia module is
+# a failure or the expected state, and .nvidia_driver to notice when the
+# running driver has drifted from what the image shipped -- so both have to be
+# right here rather than describing the vanilla image this derives from.
+RUN drv=$(rpm -q --qf '%{VERSION}' kmod-nvidia-open 2>/dev/null \
+          || rpm -qa --qf '%{VERSION}\n' 'nvidia-open*' 2>/dev/null | head -1 \
+          || true); \
+    jq --arg v "nvidia-open" --arg d "${drv:-unknown}" \
+       '.image = "pulsar-nvidia" | .variant = $v | .nvidia_driver = $d' \
+       /usr/share/pulsar/manifest.json > /tmp/m.json && \
+    mv /tmp/m.json /usr/share/pulsar/manifest.json && \
+    jq -e '.variant == "nvidia-open"' /usr/share/pulsar/manifest.json >/dev/null && \
+    cat /usr/share/pulsar/manifest.json

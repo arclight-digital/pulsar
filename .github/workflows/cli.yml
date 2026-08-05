@@ -1,0 +1,73 @@
+# Lint and test the shell that ships in the image.
+#
+# Separate from build.yml and cheap on purpose: this is the feedback loop that
+# should run in a minute on every push, while a dual-image OS build takes
+# fifteen. It also runs on Ubuntu rather than Fedora, which is not incidental
+# -- a jq object-value parse error shipped to main precisely because every
+# local test of that script ran on Fedora, whose jq was new enough to accept
+# it. The runner's toolchain is the one that has to be satisfied.
+name: cli
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cli/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/cli.yml'
+  pull_request:
+    paths:
+      - 'cli/**'
+      - 'scripts/**'
+      - 'tests/**'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck and bats
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck bats jq
+          shellcheck --version | head -2
+          bats --version
+
+      # Every shell artifact in the repo, not just the CLI. site/build.sh runs
+      # in Cloudflare's builder where a failure is a broken deploy, and the
+      # sbom/changelog scripts run in both CI and on user machines.
+      - name: shellcheck
+        run: |
+          shellcheck \
+            cli/pulsar \
+            scripts/rpm-sbom.sh \
+            scripts/sbom-changelog.sh \
+            scripts/render-changelog.sh \
+            site/build.sh
+          echo "shellcheck: clean"
+
+      # The greenboot health checks are shipped shell too, and a syntax error
+      # in one of them is a red boot on every machine that pulls the image.
+      - name: shellcheck the greenboot checks
+        run: |
+          shellcheck system_files/usr/lib/greenboot/check/*/*.sh
+          echo "greenboot checks: clean"
+
+      - name: bats
+        run: bats tests/
+
+      # The CLI must behave on a machine that is not a Pulsar system: no
+      # bootc, no rpm-ostree, no sched_ext. Asserted rather than assumed,
+      # because "works on my laptop" is how the jq bug reached main.
+      - name: degrade honestly on a non-Pulsar host
+        run: |
+          set -euo pipefail
+          ./cli/pulsar --version
+          ./cli/pulsar doctor --json | jq -e '.checks | length > 0'
+          ./cli/pulsar doctor --json | jq -e 'all(.checks[]; .summary | length > 0)'
+          echo "no manifest here, so this must fail cleanly rather than crash:"
+          ! ./cli/pulsar manifest 2>/dev/null
+          echo "ok"

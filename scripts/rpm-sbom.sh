@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Emit an SPDX 2.3 SBOM for a bootc image, from its RPM database.
 #
-#   rpm-sbom.sh IMAGE_REF > sbom.spdx.json
+#   rpm-sbom.sh IMAGE_REF > sbom.spdx.json   describe a container image
+#   rpm-sbom.sh --local  > sbom.spdx.json   describe the running system
 #
 # Why not syft, which is the obvious tool and the one this repo reached for
 # first: syft scans an IMAGE by squashing and indexing every layer, and on
@@ -24,23 +25,37 @@
 # filesAnalyzed:false, and no attempt at dependency relationships.
 set -euo pipefail
 
+# Two sources, one implementation. CI describes an image it just built;
+# `pulsar sbom` describes the running system. Both are the same query against
+# the same database, so they must not be two pieces of code that can disagree
+# about what a package version looks like.
 REF=${1:-}
-[ -n "$REF" ] || { echo "usage: $(basename "$0") IMAGE_REF" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 
 RUNTIME=${CONTAINER_RUNTIME:-podman}
 
-# Resolve the digest so the document identifies the exact bytes described,
-# not a tag that moves underneath it.
-digest=$("$RUNTIME" image inspect "$REF" --format '{{.Digest}}' 2>/dev/null || echo "")
-[ -n "$digest" ] || digest="unknown"
+if [ "$REF" = "--local" ] || [ -z "$REF" ]; then
+    LOCAL=1
+    REF="local:$(. /usr/lib/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}")"
+    digest="local"
+else
+    LOCAL=0
+    # Resolve the digest so the document identifies the exact bytes described,
+    # not a tag that moves underneath it.
+    digest=$("$RUNTIME" image inspect "$REF" --format '{{.Digest}}' 2>/dev/null || echo "")
+    [ -n "$digest" ] || digest="unknown"
+fi
 
 # EPOCH is the reason for the awk rather than a plain --qf: rpm prints
 # "(none)" for packages without one, and an SBOM that records a literal
 # "(none):1.2-3" as the version breaks every comparison downstream. Epoch is
 # folded in only when it exists, which is exactly how rpm itself renders NEVRA.
-pkgs=$("$RUNTIME" run --rm --network=none "$REF" \
-        rpm -qa --qf '%{NAME}\t%{EPOCH}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{LICENSE}\n')
+QF='%{NAME}\t%{EPOCH}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{LICENSE}\n'
+if [ "$LOCAL" = 1 ]; then
+    pkgs=$(rpm -qa --qf "$QF")
+else
+    pkgs=$("$RUNTIME" run --rm --network=none "$REF" rpm -qa --qf "$QF")
+fi
 
 # gpg-pubkey is not a package. rpm keeps imported signing keys in the same
 # database, versioned by key fingerprint; emitting them as SPDX packages

@@ -35,6 +35,36 @@ System-level capability only: `gamescope`, `gamemode`, `mangohud`,
 `steam-devices`, `distrobox`, `libvirt`, `android-tools`, `gnome-tweaks`,
 `greenboot`.
 
+## The `pulsar` command
+
+```
+pulsar doctor        health snapshot, exit 1 if a check fails
+pulsar manifest      what is in this image
+pulsar status        deployments: booted, staged, rollback, pins
+pulsar changelog     packages that moved in the latest published build
+pulsar sbom          this system's packages as SPDX 2.3
+pulsar update        fetch and stage an update      (root)
+pulsar rollback      boot the previous deployment   (root)
+pulsar pin | unpin   protect the booted deployment  (root)
+pulsar setup <recipe>   devbox | quadlet | gamescale
+```
+
+`doctor` exists for one reason. `systemctl is-active scx.service` reported
+active for minutes at a stretch while no scheduler was attached and the machine
+ran stock EEVDF — unit state is not system state. So `doctor` reads
+`/sys/kernel/sched_ext/state` and the other places where the truth actually
+lives, and `--json` makes it scriptable. Only a `fail` sets a nonzero exit;
+things like a scheduler that did not attach warn instead, because the machine
+is entirely usable without one.
+
+Reads go through `rpm-ostree`, which works unprivileged; only the commands that
+change the system ask for root. `bootc status` needs root even to read, and a
+health check you need sudo for is one you will not run.
+
+`pulsar sbom` is generated, never baked — a file inside the image cannot
+describe the image containing it, so it reads the live rpm database, which is
+the same source and the same script CI uses.
+
 For development: `bpftrace`, `bcc-tools`, `sysstat` and `perf`, which have to
 be on the host because a container cannot attach probes to the host kernel.
 `mise` and `direnv` handle toolchains, so compilers and SDKs are pinned per
