@@ -11,3 +11,4 @@ cosign.key
 system_files/usr/share/backgrounds/pulsar/*.png
 scripts/__pycache__/
 site/_site/
+site/.wrangler/

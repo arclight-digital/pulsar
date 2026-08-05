@@ -21,6 +21,7 @@ on:
     # must never cost a dual-image OS build
     paths-ignore:
       - 'site/**'
+      - '.github/workflows/site.yml'
       - '**.md'
       - 'LICENSE'
   schedule:

@@ -1,0 +1,13 @@
+{
+  // Assets-only Worker: no script, just the assembled one-pager served from
+  // Cloudflare's edge. site.yml runs site/build.sh, then deploys this config;
+  // the directory is relative to this file, so it points at the build output.
+  // Custom domain (pulsar.arclight.digital) is attached in the Cloudflare
+  // dashboard under this Worker's Domains & Routes, not here.
+  "name": "pulsar-site",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "./_site",
+    "html_handling": "auto-trailing-slash"
+  }
+}
