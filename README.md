@@ -3,7 +3,7 @@
 # Pulsar
 
 Fedora Silverblue with the sharp edges filed off, shipped as a bootc image.
-Straight Fedora underneath — no Universal Blue in the lineage. GitHub builds
+Built directly on the official Fedora base. GitHub builds
 and signs it; the machine that runs it never compiles anything.
 
 **Built for:** Intel Core Ultra 9 275HX (Arrow Lake-HX, 8 P-cores + 16 E-cores,
