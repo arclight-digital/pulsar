@@ -62,8 +62,13 @@ printf '%s\n' "$pkgs" \
           license: (.[5] // "NOASSERTION")
         })
       | map(. + {
-          nevr: (if .epoch == "(none)" or .epoch == "" then "" else .epoch + ":" end)
-                + .version + "-" + .release
+          # The whole value stays parenthesised. Inside object construction jq
+          # parses values at a restricted precedence, and older builds reject a
+          # bare "(if ... end) + .x" here with "unexpected +, expecting }" --
+          # which newer jq accepts, so this passed on Fedora and failed on the
+          # Ubuntu runner.
+          nevr: ((if .epoch == "(none)" or .epoch == "" then "" else .epoch + ":" end)
+                 + .version + "-" + .release)
         })' \
   | jq --arg ns "https://pulsar.arclight.digital/spdx/${digest}" \
        --arg created "${SOURCE_DATE_EPOCH:+}${SOURCE_DATE_EPOCH:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
