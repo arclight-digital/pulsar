@@ -398,6 +398,70 @@ h2 {
 .pipeline > .hint { max-width: 40rem; }
 .pipeline > .hint a { color: var(--accent); }
 
+/* The deck floats over the shader on desktop, and .hero-inner reserves room
+   for it with a fixed padding-bottom. That reservation is a constant; the
+   deck's height is not. On a phone it wraps to three rows -- note, backdrop
+   pill, theme pill -- outgrows the reserved space, and prints straight over
+   the install copy, because an absolutely positioned element cannot push
+   anything.
+   Below this width it simply rejoins the flow as the hero grid's second row.
+   Overlap then becomes structurally impossible rather than a number that has
+   to be re-tuned every time a button is added. */
+@media (max-width: 46rem) {
+  .deck {
+    position: static;
+    transform: none;
+    margin-top: 1.6rem;
+  }
+  .hero-inner { padding-bottom: 2.5rem; }
+}
+
+/* ---- changelog ----------------------------------------------------------- */
+/* Deliberately a plain list, not a card grid: this is a diff, and a diff that
+   reads like a diff is more convincing than one dressed up as a feature. */
+.changelog { margin-top: 4.5rem; }
+.changelog > .lede { color: var(--muted); max-width: 40rem; }
+.cl-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 1.4rem;
+}
+.cl-h {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 1.8rem 0 0.5rem;
+}
+.cl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+}
+.cl-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem 1.2rem;
+  /* version strings are long and phones are narrow: wrap to a second line
+     rather than forcing a horizontal scrollbar onto the page */
+  flex-wrap: wrap;
+  padding: 0.32rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.cl-pkg { color: var(--text); }
+.cl-ver { color: var(--muted); margin-left: auto; }
+.cl-more {
+  color: var(--muted);
+  font-style: italic;
+  border-bottom: 0 !important;
+}
+.changelog > .hint { margin-top: 1.6rem; max-width: 40rem; }
+.changelog > .hint a { color: var(--accent); }
+
 /* ---- footer -------------------------------------------------------------- */
 footer { padding: 0 0 3rem; }
 .spectrum {
@@ -437,7 +501,9 @@ footer a:hover, footer a:focus-visible { text-decoration: underline; }
 /* ---- small screens -------------------------------------------------------- */
 @media (max-width: 26rem) {
   .mark { height: 110px; width: 110px; }
-  .hero-inner { padding: 3rem 1rem 7.5rem; }
+  /* bottom padding no longer reserves deck space -- the deck is in flow at
+     this width (see the max-width:46rem block above) */
+  .hero-inner { padding: 3rem 1rem 2.5rem; }
   main { padding: 3.5rem 1.1rem 3rem; }
   .install .row { gap: 0.55rem; padding: 0.6rem 0.8rem; }
   .install .which { min-width: 0; }

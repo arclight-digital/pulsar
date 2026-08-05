@@ -111,10 +111,13 @@ try { const t = localStorage.getItem('pulsar-theme');
   <section class="inside">
     <div class="inside-copy">
       <h2>What's inside</h2>
-      <p>The scheduler is <strong>scx_lavd</strong>, because stock EEVDF places
+      <p>The scheduler is <strong>scx_bpfland</strong>, because stock EEVDF places
          threads badly on a big hybrid die. Gamescope, gamemode, and MangoHud
          are in the image; split-lock mitigation is off and the map count is
          raised because games want both. Flathub comes unfiltered.</p>
+      <p>Every boot is checked. If the desktop does not come up three times
+         running, the machine rolls itself back to the previous deployment
+         without being asked.</p>
       <p>For work: distrobox for any userland, libvirt/KVM for real machines,
          GitHub CLI in the base. Apps are Flatpaks; the image is the OS.</p>
       <p>The NVIDIA open module is compiled against the image's exact kernel
@@ -124,8 +127,10 @@ try { const t = localStorage.getItem('pulsar-theme');
          a readout this audience recognizes from their own terminal -->
     <figure class="manifest" role="group" aria-label="Image manifest">
       <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> pulsar --manifest</figcaption>
-      <pre><code><span class="k">scheduler</span>   scx_lavd
+      <pre><code><span class="k">scheduler</span>   scx_bpfland
+<span class="k">boot</span>        greenboot · auto-rollback
 <span class="k">display</span>     gamescope · gamemode · mangohud
+<span class="k">wine</span>        ntsync
 <span class="k">containers</span>  distrobox · toolbox
 <span class="k">virt</span>        libvirt · qemu-kvm
 <span class="k">tooling</span>     gh · android-tools · gnome-tweaks
@@ -175,6 +180,22 @@ try { const t = localStorage.getItem('pulsar-theme');
        Running someone else's signed images is a trust decision —
        <a href="https://github.com/arclight-digital/pulsar#two-variants-one-key">fork
        it and use your own key</a> if that's not a relationship you want.</p>
+  </section>
+
+  <!-- The claim the rest of the page makes, shown rather than asserted: the
+       image is inspectable. Rendered at build time from the SBOM diff the
+       nightly publishes, so this section cannot drift from what was built. -->
+  <section class="changelog">
+    <h2>What changed last night</h2>
+    <p class="lede">Every build is diffed against the one before it, package by
+       package, from the SBOMs attached to the images themselves. Nothing here
+       is written by hand.</p>
+    <div class="cl-body">
+      <!--CHANGELOG-->
+    </div>
+    <p class="hint">The full diff is <a href="changelog.json">changelog.json</a>,
+       and the SBOM ships attached to the image:
+       <code>oras discover ghcr.io/arclight-digital/pulsar:latest</code></p>
   </section>
 </main>
 
