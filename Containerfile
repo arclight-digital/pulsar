@@ -102,6 +102,25 @@ RUN dnf5 install -y \
       qemu-kvm
 
 # ---------------------------------------------------------------------------
+# Fedora's Background Logo extension paints /usr/share/fedora-logos over the
+# bottom-right of the desktop. It ships enabled on Silverblue, and it is not
+# this image's brand.
+#
+# Removed as a PACKAGE, not disabled by gschema. The override in
+# zz0-pulsar.gschema.override sets enabled-extensions, but that is only a
+# DEFAULT: the moment a session writes its own enabled-extensions to the
+# user's dconf -- which happens the first time anyone toggles any extension --
+# that list wins and the default is never consulted again. A file that is not
+# on disk cannot be enabled by anyone.
+# ---------------------------------------------------------------------------
+RUN dnf5 remove -y gnome-shell-extension-background-logo || true; \
+    if [ -e "/usr/share/gnome-shell/extensions/background-logo@fedorahosted.org" ]; then \
+      echo "FATAL: the background-logo extension is still installed"; \
+      exit 1; \
+    fi; \
+    echo "background-logo extension: removed"
+
+# ---------------------------------------------------------------------------
 # Dev layer. Two kinds of thing that genuinely cannot live in a container.
 #
 #   bpftrace     kernel tracing. A distrobox cannot attach BPF programs to
