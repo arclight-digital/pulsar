@@ -1,4 +1,12 @@
-/* Pulsar one-pager. Brand tokens only -- keep every color in this block. */
+/* Pulsar one-pager. Brand tokens only -- keep every color in this block.
+ *
+ * Theme plumbing: dark is the default world. The light tokens are applied
+ * twice on purpose -- once for system preference (scoped to :root without an
+ * explicit choice) and once for the visitor's explicit toggle, which sets
+ * data-theme and therefore escapes the media query entirely.
+ *
+ * --accent differs per theme for contrast, not taste: cyan reads at ~8:1 on
+ * ink but ~2.4:1 on the pale ground, where violet clears 4.5:1. */
 :root {
   --ink: #0B0E1A;
   --deep: #241F3D;
@@ -6,21 +14,50 @@
   --peri: #8FA8FF;
   --violet: #4B3FD4;
   --star: #E9EDF7;
+
   --text: var(--star);
-  --muted: rgba(233, 237, 247, 0.72);
+  --muted: rgba(233, 237, 247, 0.74);
   --ground: var(--ink);
   --card: rgba(143, 168, 255, 0.07);
   --line: rgba(143, 168, 255, 0.18);
+  --accent: var(--cyan);
+  --accent-soft: var(--peri);
+  --chip: rgba(11, 14, 26, 0.55);
 }
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme]) {
     --text: var(--deep);
-    --muted: rgba(36, 31, 61, 0.75);
-    --ground: #E9EDF7;
+    --muted: rgba(36, 31, 61, 0.78);
+    --ground: var(--star);
     --card: rgba(75, 63, 212, 0.06);
     --line: rgba(75, 63, 212, 0.20);
+    --accent: var(--violet);
+    --accent-soft: var(--violet);
+    --chip: rgba(233, 237, 247, 0.55);
   }
 }
+:root[data-theme="light"] {
+  --text: var(--deep);
+  --muted: rgba(36, 31, 61, 0.78);
+  --ground: var(--star);
+  --card: rgba(75, 63, 212, 0.06);
+  --line: rgba(75, 63, 212, 0.20);
+  --accent: var(--violet);
+  --accent-soft: var(--violet);
+  --chip: rgba(233, 237, 247, 0.55);
+}
+
+* { margin: 0; box-sizing: border-box; }
+html { scrollbar-color: var(--line) transparent; }
+body {
+  background: var(--ground);
+  color: var(--text);
+  font: 400 17px/1.65 "Host Grotesk", system-ui, sans-serif;
+  caret-color: var(--accent);
+}
+::selection { background: var(--accent); color: var(--ground); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a { color: var(--accent); text-underline-offset: 0.2em; }
 
 @font-face {
   font-family: "Host Grotesk";
@@ -35,20 +72,13 @@
   font-display: swap;
 }
 
-* { margin: 0; box-sizing: border-box; }
-body {
-  background: var(--ground);
-  color: var(--text);
-  font: 400 17px/1.65 "Host Grotesk", system-ui, sans-serif;
-}
-
 /* ---- hero ---------------------------------------------------------------- */
-.hero { position: relative; min-height: 92vh; display: grid; place-items: center; overflow: hidden; }
+.hero { position: relative; min-height: 96vh; display: grid; place-items: center; overflow: hidden; }
 #sky  { position: absolute; inset: 0; width: 100%; height: 100%; }
 .hero-inner {
   position: relative;
   text-align: center;
-  padding: 4rem 1.5rem;
+  padding: 4rem 1.5rem 7rem;
   max-width: 46rem;
 }
 .mark { height: 140px; width: 140px; }
@@ -62,7 +92,7 @@ body {
 .tagline {
   font-weight: 700;
   letter-spacing: 0.08em;
-  color: var(--peri);
+  color: var(--accent-soft);
   margin-top: 0.4rem;
 }
 .sub { color: var(--muted); margin: 1.2rem auto 0; max-width: 34rem; text-wrap: balance; }
@@ -78,9 +108,73 @@ body {
 }
 .switch code, .hint code {
   font: 0.86rem/1.5 ui-monospace, "JetBrains Mono", monospace;
-  color: var(--cyan);
+  color: var(--cyan); /* always on the dark chip, both themes */
 }
 .hint { color: var(--muted); font-size: 0.9rem; margin-top: 0.9rem; }
+
+/* the one authored moment: hero content settles in, staggered, then done */
+.hero-inner > * {
+  animation: settle 0.9s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.hero-inner > :nth-child(2) { animation-delay: 0.08s; }
+.hero-inner > :nth-child(3) { animation-delay: 0.16s; }
+.hero-inner > :nth-child(4) { animation-delay: 0.24s; }
+.hero-inner > :nth-child(5) { animation-delay: 0.32s; }
+.hero-inner > :nth-child(6) { animation-delay: 0.40s; }
+@keyframes settle {
+  from { opacity: 0; transform: translateY(14px); filter: blur(6px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-inner > * { animation: none; }
+}
+
+/* ---- hero deck: backdrop + theme controls -------------------------------- */
+/* Blur is earned here -- the deck floats on the live shader. */
+.deck {
+  position: absolute;
+  bottom: 1.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 0 1rem;
+  max-width: 100%;
+}
+.seg {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--chip);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.seg .lab {
+  align-self: center;
+  padding: 0 0.35rem 0 0.9rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  user-select: none;
+}
+.seg button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 500 0.8rem/1 "Host Grotesk", system-ui, sans-serif;
+  padding: 0.62rem 0.85rem;
+  cursor: pointer;
+  transition: color 0.15s ease-out;
+}
+.seg button:hover { color: var(--text); }
+.seg button:focus-visible { outline-offset: -2px; }
+.seg button[aria-pressed="true"] { color: var(--accent); font-weight: 700; }
 
 /* ---- body sections ------------------------------------------------------- */
 main { max-width: 62rem; margin: 0 auto; padding: 4rem 1.5rem; }
@@ -96,7 +190,7 @@ h2 {
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--peri);
+  color: var(--accent-soft);
   margin-bottom: 0.6rem;
 }
 .grid p, .updates p { color: var(--muted); }
@@ -110,5 +204,5 @@ footer {
 }
 .brandline { letter-spacing: 0.22em; font-size: 0.78rem; color: var(--muted); }
 footer nav { margin-top: 0.9rem; display: flex; gap: 1.5rem; justify-content: center; }
-footer a { color: var(--peri); text-decoration: none; }
-footer a:hover, footer a:focus-visible { color: var(--cyan); }
+footer a { text-decoration: none; }
+footer a:hover, footer a:focus-visible { text-decoration: underline; }
