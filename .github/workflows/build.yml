@@ -60,14 +60,40 @@ jobs:
       - uses: actions/checkout@v7
 
       # Both images together are ~17 GB plus intermediate layers, well past
-      # what a stock runner has free on /. The temp disk has room to spare.
+      # what a stock runner has free on /. The temp disk has room to spare --
+      # but it gets used at /var/mnt, not /mnt, and that distinction is the
+      # whole ballgame.
+      #
+      # The containers-storage library RESOLVES the configured graphroot
+      # through symlinks before comparing it to the path recorded in the
+      # store's database, and refuses the store on a mismatch. Previously the
+      # config said /mnt/podman while the mount was at /var/mnt/podman, which
+      # worked only because /mnt is a symlink to var/mnt inside the image and
+      # both sides happened to land on the same resolved path. That is a lot
+      # of coincidence to keep a build honest, on a step whose failure mode is
+      # not an error: when --from cannot read the store it PULLS the name from
+      # the registry instead of stopping, and a registry-shaped name succeeds
+      # at fetching something -- last night's image, chunked and pushed as
+      # though it were this build.
+      #
+      # Bind-mounting at /var/mnt removes the coincidence: the database
+      # records /var/mnt/podman, the config says /var/mnt/podman, and inside
+      # the image it resolves to itself with no symlink in the path.
+      #
+      # This is hardening, not a diagnosis. scripts/rechunk-selftest.sh
+      # verifies locally that a mismatch IS refused loudly and that a missing
+      # image IS pulled silently; it has not reproduced the stale content on
+      # a runner, and the assertion after the rechunk is what actually proves
+      # each build shipped its own bytes.
       - name: Put container storage on the temp disk
         run: |
-          sudo mkdir -p /mnt/podman && sudo chown "$(id -u):$(id -g)" /mnt/podman
-          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/podman"\nrunroot = "/tmp/podman-run"\n' \
+          sudo mkdir -p /var/mnt
+          sudo mount --bind /mnt /var/mnt
+          sudo mkdir -p /var/mnt/podman && sudo chown "$(id -u):$(id -g)" /var/mnt/podman
+          printf '[storage]\ndriver = "overlay"\ngraphroot = "/var/mnt/podman"\nrunroot = "/tmp/podman-run"\n' \
             > /tmp/storage.conf
           echo "CONTAINERS_STORAGE_CONF=/tmp/storage.conf" >> "$GITHUB_ENV"
-          df -h / /mnt
+          df -h / /var/mnt
 
       # ghcr namespaces must be lowercase; repository_owner may not be.
       - name: Resolve image names
@@ -174,7 +200,15 @@ jobs:
       # same rpm-ostree that will consume the result on machines. The host
       # storage is bind-mounted at the SAME path with the same storage.conf,
       # for the reason iso.yml documents: the storage database records
-      # absolute paths, and a relocated graphroot is refused.
+      # absolute paths, and a relocated graphroot is refused. "Same path"
+      # means same AFTER symlink resolution -- see the storage step above,
+      # where getting that wrong cost weeks of builds shipping stale content.
+      #
+      # --from names an image in containers-storage and nothing else: no
+      # transport prefix, which the tool adds itself and which double-prefixes
+      # into a parse error if written out. When it cannot find the image
+      # there, it pulls the name from the registry instead of failing, which
+      # is why the assertion below reads the content rather than a label.
       # =====================================================================
       - name: Rechunk vanilla
         run: |
@@ -188,23 +222,23 @@ jobs:
           # layout on disk is the stable interchange: the new tool writes
           # it, the old podman pulls it, and no storage internals cross
           # the version boundary.
-          sudo mkdir -p /mnt/oci && sudo chown "$(id -u):$(id -g)" /mnt/oci
+          sudo mkdir -p /var/mnt/oci && sudo chown "$(id -u):$(id -g)" /var/mnt/oci
           # the tool opens the destination before writing: seed an empty,
           # valid OCI layout or it dies on the missing index.json
-          mkdir -p /mnt/oci/vanilla/blobs/sha256
-          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/vanilla/oci-layout
-          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/vanilla/index.json
+          mkdir -p /var/mnt/oci/vanilla/blobs/sha256
+          printf '{"imageLayoutVersion":"1.0.0"}' > /var/mnt/oci/vanilla/oci-layout
+          printf '{"schemaVersion":2,"manifests":[]}' > /var/mnt/oci/vanilla/index.json
           rechunk() {
             podman run --rm --privileged \
-              -v /mnt/podman:/var/mnt/podman \
-              -v /mnt/oci:/var/mnt/oci \
+              -v /var/mnt/podman:/var/mnt/podman \
+              -v /var/mnt/oci:/var/mnt/oci \
               -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
               "${IMAGE}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
                 --max-layers 200 \
-                --from "containers-storage:${IMAGE}:${FEDORA_VERSION}" \
+                --from "${IMAGE}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "oci:/mnt/oci/vanilla:build" "$@"
+                --output "oci:/var/mnt/oci/vanilla:build" "$@"
           }
           rechunk --previous-build "docker://${IMAGE}:latest" \
             || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
@@ -214,7 +248,7 @@ jobs:
           # pointing at the podman-built image, which is content-identical
           # and serves the later local steps. The cheap assertion that
           # remains: the layout is complete, versioned, and layered.
-          skopeo inspect "oci:/mnt/oci/vanilla:build" > /tmp/chunked-vanilla.json
+          skopeo inspect "oci:/var/mnt/oci/vanilla:build" > /tmp/chunked-vanilla.json
           jq -r '"chunked vanilla: \(.Layers | length) layers"' /tmp/chunked-vanilla.json
           # The version LABEL proves nothing about the CONTENT: --label writes
           # it here, on whatever the tool read, so it matched on every night
@@ -224,7 +258,7 @@ jobs:
           # straight out of the layout's blobs -- they are already on disk,
           # and unpacking a copy to check one file is not worth 2GB of I/O.
           osr=""
-          for b in /mnt/oci/vanilla/blobs/sha256/*; do
+          for b in /var/mnt/oci/vanilla/blobs/sha256/*; do
             if osr=$(tar -xOf "$b" --wildcards '*usr/lib/os-release' 2>/dev/null) \
                && [ -n "$osr" ]; then break; fi
           done
@@ -244,7 +278,7 @@ jobs:
       # image dropped; reports plain mode drift without stopping the build,
       # because the first runs are how the baseline gets known.
       - name: Diff ownership and modes across the vanilla rechunk
-        run: scripts/diff-chunk-metadata.sh "${IMAGE}:${FEDORA_VERSION}" /mnt/oci/vanilla build
+        run: scripts/diff-chunk-metadata.sh "${IMAGE}:${FEDORA_VERSION}" /var/mnt/oci/vanilla build
 
       # skopeo copies the tool's already-compressed blobs verbatim; a
       # podman pull/push round trip recompressed ~200 layers for nothing.
@@ -256,9 +290,9 @@ jobs:
           set -euo pipefail
           for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
             skopeo copy --digestfile /tmp/digest-vanilla \
-              "oci:/mnt/oci/vanilla:build" "docker://${IMAGE}:${t}"
+              "oci:/var/mnt/oci/vanilla:build" "docker://${IMAGE}:${t}"
           done
-          rm -rf /mnt/oci/vanilla
+          rm -rf /var/mnt/oci/vanilla
           echo "digest=$(cat /tmp/digest-vanilla)" >> "$GITHUB_OUTPUT"
 
       # /dev/shm is tmpfs: the key never touches the runner's disk. The
@@ -308,35 +342,35 @@ jobs:
           # layout on disk is the stable interchange: the new tool writes
           # it, the old podman pulls it, and no storage internals cross
           # the version boundary.
-          sudo mkdir -p /mnt/oci && sudo chown "$(id -u):$(id -g)" /mnt/oci
+          sudo mkdir -p /var/mnt/oci && sudo chown "$(id -u):$(id -g)" /var/mnt/oci
           # the tool opens the destination before writing: seed an empty,
           # valid OCI layout or it dies on the missing index.json
-          mkdir -p /mnt/oci/nvidia/blobs/sha256
-          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/nvidia/oci-layout
-          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/nvidia/index.json
+          mkdir -p /var/mnt/oci/nvidia/blobs/sha256
+          printf '{"imageLayoutVersion":"1.0.0"}' > /var/mnt/oci/nvidia/oci-layout
+          printf '{"schemaVersion":2,"manifests":[]}' > /var/mnt/oci/nvidia/index.json
           rechunk() {
             podman run --rm --privileged \
-              -v /mnt/podman:/var/mnt/podman \
-              -v /mnt/oci:/var/mnt/oci \
+              -v /var/mnt/podman:/var/mnt/podman \
+              -v /var/mnt/oci:/var/mnt/oci \
               -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
               "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
                 --max-layers 200 \
-                --from "containers-storage:${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
+                --from "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "oci:/mnt/oci/nvidia:build" "$@"
+                --output "oci:/var/mnt/oci/nvidia:build" "$@"
           }
           rechunk --previous-build "docker://${IMAGE_NVIDIA}:latest" \
             || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
           # Same no-pull handoff as vanilla: assert the layout, ship the
           # blobs as-is at the push step.
-          skopeo inspect "oci:/mnt/oci/nvidia:build" > /tmp/chunked-nvidia.json
+          skopeo inspect "oci:/var/mnt/oci/nvidia:build" > /tmp/chunked-nvidia.json
           jq -r '"chunked nvidia: \(.Layers | length) layers"' /tmp/chunked-nvidia.json
           # Same content assertion as vanilla, and for the same reason. The
           # nvidia phases never rewrite os-release -- the stamp is inherited
           # from the vanilla base -- so DATETAG is the marker here too.
           osr=""
-          for b in /mnt/oci/nvidia/blobs/sha256/*; do
+          for b in /var/mnt/oci/nvidia/blobs/sha256/*; do
             if osr=$(tar -xOf "$b" --wildcards '*usr/lib/os-release' 2>/dev/null) \
                && [ -n "$osr" ]; then break; fi
           done
@@ -349,7 +383,7 @@ jobs:
       # Same question, and it has to be asked separately: nvidia is chunked by
       # its own invocation, and it is the variant carrying the signed kmods.
       - name: Diff ownership and modes across the nvidia rechunk
-        run: scripts/diff-chunk-metadata.sh "${IMAGE_NVIDIA}:${FEDORA_VERSION}" /mnt/oci/nvidia build
+        run: scripts/diff-chunk-metadata.sh "${IMAGE_NVIDIA}:${FEDORA_VERSION}" /var/mnt/oci/nvidia build
 
       - name: Push nvidia
         id: push_nvidia
@@ -357,9 +391,9 @@ jobs:
           set -euo pipefail
           for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
             skopeo copy --digestfile /tmp/digest-nvidia \
-              "oci:/mnt/oci/nvidia:build" "docker://${IMAGE_NVIDIA}:${t}"
+              "oci:/var/mnt/oci/nvidia:build" "docker://${IMAGE_NVIDIA}:${t}"
           done
-          rm -rf /mnt/oci/nvidia
+          rm -rf /var/mnt/oci/nvidia
           echo "digest=$(cat /tmp/digest-nvidia)" >> "$GITHUB_OUTPUT"
 
       - name: Attest vanilla
