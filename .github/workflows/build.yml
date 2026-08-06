@@ -202,7 +202,7 @@ jobs:
               "${IMAGE}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
                 --max-layers 200 \
-                --from "${IMAGE}:${FEDORA_VERSION}" \
+                --from "containers-storage:${IMAGE}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
                 --output "oci:/mnt/oci/vanilla:build" "$@"
           }
@@ -215,9 +215,24 @@ jobs:
           # and serves the later local steps. The cheap assertion that
           # remains: the layout is complete, versioned, and layered.
           skopeo inspect "oci:/mnt/oci/vanilla:build" > /tmp/chunked-vanilla.json
-          jq -e --arg v "${DATETAG}" \
-            '.Labels."org.opencontainers.image.version" == $v' /tmp/chunked-vanilla.json >/dev/null
           jq -r '"chunked vanilla: \(.Layers | length) layers"' /tmp/chunked-vanilla.json
+          # The version LABEL proves nothing about the CONTENT: --label writes
+          # it here, on whatever the tool read, so it matched on every night
+          # --from was silently pulling the published image instead of this
+          # build. /usr/lib/os-release carries the version the Containerfile
+          # baked in, so it is the source content speaking for itself. Read
+          # straight out of the layout's blobs -- they are already on disk,
+          # and unpacking a copy to check one file is not worth 2GB of I/O.
+          osr=""
+          for b in /mnt/oci/vanilla/blobs/sha256/*; do
+            if osr=$(tar -xOf "$b" --wildcards '*usr/lib/os-release' 2>/dev/null) \
+               && [ -n "$osr" ]; then break; fi
+          done
+          if ! printf '%s' "$osr" | grep -q "^VERSION=\"${DATETAG}\""; then
+            echo "::error::chunked vanilla holds $(printf '%s' "$osr" | grep '^VERSION=' || echo '<no os-release found>'), not ${DATETAG} -- --from did not read the local build"
+            exit 1
+          fi
+          echo "chunked vanilla content confirmed: ${DATETAG}"
 
       # skopeo copies the tool's already-compressed blobs verbatim; a
       # podman pull/push round trip recompressed ~200 layers for nothing.
@@ -295,7 +310,7 @@ jobs:
               "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
                 --max-layers 200 \
-                --from "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
+                --from "containers-storage:${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
                 --output "oci:/mnt/oci/nvidia:build" "$@"
           }
@@ -304,9 +319,20 @@ jobs:
           # Same no-pull handoff as vanilla: assert the layout, ship the
           # blobs as-is at the push step.
           skopeo inspect "oci:/mnt/oci/nvidia:build" > /tmp/chunked-nvidia.json
-          jq -e --arg v "${DATETAG}" \
-            '.Labels."org.opencontainers.image.version" == $v' /tmp/chunked-nvidia.json >/dev/null
           jq -r '"chunked nvidia: \(.Layers | length) layers"' /tmp/chunked-nvidia.json
+          # Same content assertion as vanilla, and for the same reason. The
+          # nvidia phases never rewrite os-release -- the stamp is inherited
+          # from the vanilla base -- so DATETAG is the marker here too.
+          osr=""
+          for b in /mnt/oci/nvidia/blobs/sha256/*; do
+            if osr=$(tar -xOf "$b" --wildcards '*usr/lib/os-release' 2>/dev/null) \
+               && [ -n "$osr" ]; then break; fi
+          done
+          if ! printf '%s' "$osr" | grep -q "^VERSION=\"${DATETAG}\""; then
+            echo "::error::chunked nvidia holds $(printf '%s' "$osr" | grep '^VERSION=' || echo '<no os-release found>'), not ${DATETAG} -- --from did not read the local build"
+            exit 1
+          fi
+          echo "chunked nvidia content confirmed: ${DATETAG}"
 
       - name: Push nvidia
         id: push_nvidia

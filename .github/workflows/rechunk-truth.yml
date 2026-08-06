@@ -17,11 +17,13 @@
 # every build since 44.20260806.1 shipped .1's content, and why it is the
 # authored files that froze while RPM content appeared to move.
 #
-# So the remaining question is narrow: what makes the tool read local
-# storage? Each variant runs until it either says "Generating commit"
-# (resolved locally, the answer) or "Trying to pull" (fell back again).
-# That verdict arrives in seconds, so no variant is allowed to run long
-# enough to finish chunking -- 90s is far past the decision point.
+# The second run proved only that much, on the rootful variant. The other
+# three never reached the question: two died mounting /mnt/oci (inside the
+# tool image /mnt is an ostree symlink to /var/mnt, the same trap af9ad0a
+# fixed for the store) and one died on an unseeded output layout, which the
+# tool opens before it reads --from at all. Both are harness faults, fixed
+# here: every variant now mounts where build.yml mounts and gets a seeded
+# destination, so the only thing left varying is the --from reference.
 #
 # Run: gh workflow run rechunk-truth.yml
 # ===========================================================================
@@ -45,6 +47,12 @@ jobs:
       # One marker per class of content that froze: a packaged file modified
       # after install, an unpackaged file, and a generated file in a
       # package-owned directory. The tag is what --from resolves.
+      #
+      # Two names for one build. Production's image is called
+      # ghcr.io/arclight-digital/pulsar, which parses as a registry reference
+      # and is why the fallback stayed silent for weeks; localhost/ does not,
+      # and fails loudly. A fix has to hold for the registry-shaped name --
+      # that is the one that lies -- so both are tested.
       - name: Build the toy image
         run: |
           set -euo pipefail
@@ -55,7 +63,9 @@ jobs:
             printf ' && echo TOY > /usr/share/pixmaps/toy-generated\n'
           } > Containerfile.toy
           cat Containerfile.toy
-          podman build -f Containerfile.toy -t localhost/toy:44 .
+          podman build -f Containerfile.toy \
+            -t localhost/toy:44 \
+            -t ghcr.io/arclight-digital/toy:44 .
           podman images
 
       - name: Which invocation reads local storage?
@@ -67,6 +77,31 @@ jobs:
           # single verdict printed. It did exactly that on the first try.
           set +e
           set -uo pipefail
+
+          # The tool opens the destination BEFORE it resolves --from, so an
+          # unseeded layout masks the answer with an output error. build.yml
+          # seeds one; so must every variant here, or it tests nothing.
+          seed() {
+            mkdir -p "/mnt/oci/$1/blobs/sha256"
+            printf '{"imageLayoutVersion":"1.0.0"}' > "/mnt/oci/$1/oci-layout"
+            printf '{"schemaVersion":2,"manifests":[]}' > "/mnt/oci/$1/index.json"
+          }
+
+          # Mounts are build.yml's, verbatim: host /mnt/podman and /mnt/oci
+          # land at /var/mnt/... because inside the image /mnt is a symlink
+          # to var/mnt, so the paths the tool is given still resolve.
+          try() {
+            local slot="$1" image="$2"; shift 2
+            seed "${slot}"
+            timeout 90 podman run --rm --privileged \
+              -v /mnt/podman:/var/mnt/podman \
+              -v /mnt/oci:/var/mnt/oci \
+              -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+              "${image}" \
+              rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+                "$@" \
+                --output "oci:/mnt/oci/${slot}:build" > "/tmp/${slot}.log" 2>&1
+          }
 
           # "Generating commit" = resolved from storage, which is the whole
           # question. "Trying to pull" = the silent fallback that caused this.
@@ -82,61 +117,75 @@ jobs:
             fi
           }
 
-          # 1. Exactly what build.yml does today, as the control.
-          timeout 90 podman run --rm --privileged \
-            -v /mnt/podman:/var/mnt/podman \
-            -v /mnt/oci:/var/mnt/oci \
-            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
-            localhost/toy:44 \
-            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-              --from localhost/toy:44 \
-              --output "oci:/mnt/oci/a:build" > /tmp/a.log 2>&1
-          verdict "as-shipped (graphroot /mnt/podman, mounted at /var/mnt/podman)" /tmp/a.log
+          # 1. The control: a bare name, which is what build.yml ships. Run
+          #    against the registry-SHAPED name, because that is production's
+          #    and the only one whose fallback can succeed at pulling.
+          try a ghcr.io/arclight-digital/toy:44 --from ghcr.io/arclight-digital/toy:44
+          verdict "bare registry-shaped name (as shipped)" /tmp/a.log
 
-          # 2. The mount at the path storage.conf actually declares -- what
-          #    the comment above the step has always claimed it was doing.
-          timeout 90 podman run --rm --privileged \
-            -v /mnt/podman:/mnt/podman \
-            -v /mnt/oci:/mnt/oci \
-            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
-            localhost/toy:44 \
-            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-              --from localhost/toy:44 \
-              --output "oci:/mnt/oci/b:build" > /tmp/b.log 2>&1
-          verdict "same-path mount" /tmp/b.log
+          # 2. The transport stated instead of inferred. If a ref cannot be
+          #    read as a registry name, the fallback cannot fire silently.
+          try b ghcr.io/arclight-digital/toy:44 \
+            --from containers-storage:ghcr.io/arclight-digital/toy:44
+          verdict "containers-storage: transport, registry-shaped name" /tmp/b.log
 
-          # 3. Same, with the transport stated instead of inferred: if the
-          #    ref cannot be read as a registry name, the fallback cannot
-          #    fire silently.
-          timeout 90 podman run --rm --privileged \
-            -v /mnt/podman:/mnt/podman \
-            -v /mnt/oci:/mnt/oci \
-            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
-            localhost/toy:44 \
-            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-              --from containers-storage:localhost/toy:44 \
-              --output "oci:/mnt/oci/c:build" > /tmp/c.log 2>&1
-          verdict "same-path mount + explicit containers-storage transport" /tmp/c.log
+          # 3. Same transport, localhost name -- separates "the transport
+          #    works" from "the name shape matters".
+          try c localhost/toy:44 --from containers-storage:localhost/toy:44
+          verdict "containers-storage: transport, localhost name" /tmp/c.log
 
-          # 4. The storage the runner writes is ROOTLESS; the tool runs as
-          #    root inside the container. If that is what it cannot read,
-          #    building as root is the fix rather than any mount path.
-          sudo CONTAINERS_STORAGE_CONF=/tmp/storage.conf podman build \
-            -f Containerfile.toy -t localhost/toy-root:44 . > /tmp/rootbuild.log 2>&1 \
-            || tail -5 /tmp/rootbuild.log
-          sudo timeout 90 podman run --rm --privileged \
-            -v /mnt/podman:/mnt/podman \
-            -v /mnt/oci:/mnt/oci \
-            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
-            localhost/toy-root:44 \
-            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-              --from localhost/toy-root:44 \
-              --output "oci:/mnt/oci/d:build" > /tmp/d.log 2>&1
-          verdict "rootful build + rootful tool, same-path mount" /tmp/d.log
+          # 4. If the transport alone does not find it, the store it reads is
+          #    the default one, not the graphroot storage.conf declares. This
+          #    names the store in the reference itself.
+          try d ghcr.io/arclight-digital/toy:44 \
+            --from "containers-storage:[overlay@/mnt/podman+/tmp/podman-run]ghcr.io/arclight-digital/toy:44"
+          verdict "containers-storage: with explicit store" /tmp/d.log
 
           echo
           echo "=== full output of each attempt ==="
           for f in a b c d; do
             echo "--- ${f} ---"
             head -20 "/tmp/${f}.log"
+          done
+
+      # A verdict of "resolved locally" is still an inference until the bytes
+      # are read back. This runs the winning form to completion and greps the
+      # chunked output for the marker: TOY can only be there if the tool read
+      # the image this job built, since no such image was ever pushed.
+      - name: Prove the chunked output holds the local content
+        run: |
+          set +e
+          set -uo pipefail
+          mkdir -p /mnt/oci/proof/blobs/sha256
+          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/proof/oci-layout
+          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/proof/index.json
+          for ref in \
+            "containers-storage:ghcr.io/arclight-digital/toy:44" \
+            "containers-storage:[overlay@/mnt/podman+/tmp/podman-run]ghcr.io/arclight-digital/toy:44"
+          do
+            echo "=== proving with --from ${ref} ==="
+            rm -rf /mnt/oci/proof; mkdir -p /mnt/oci/proof/blobs/sha256
+            printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/proof/oci-layout
+            printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/proof/index.json
+            podman run --rm --privileged \
+              -v /mnt/podman:/var/mnt/podman \
+              -v /mnt/oci:/var/mnt/oci \
+              -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+              ghcr.io/arclight-digital/toy:44 \
+              rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+                --max-layers 200 \
+                --from "${ref}" \
+                --output "oci:/mnt/oci/proof:build" 2>&1 | tail -20 || continue
+
+            # Unpack and look for the marker. VERSION="TOY" is a packaged
+            # file edited after install -- exactly the class of content that
+            # froze in production.
+            rm -rf /tmp/proof-root && mkdir -p /tmp/proof-root
+            sudo skopeo copy "oci:/mnt/oci/proof:build" "dir:/tmp/proof-oci" >/dev/null 2>&1
+            found=no
+            for blob in /tmp/proof-oci/*; do
+              tar -tzf "${blob}" 2>/dev/null | grep -q 'usr/lib/toy-unowned' && found=yes && break
+            done
+            echo "marker usr/lib/toy-unowned present in chunked output: ${found}"
+            [ "${found}" = yes ] && { echo "WINNER: ${ref}"; break; }
           done
