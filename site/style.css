@@ -127,12 +127,18 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
   background: radial-gradient(closest-side,
               color-mix(in srgb, var(--ground) 42%, transparent), transparent);
 }
-.mark { height: 140px; width: 140px; }
+.mark { height: 180px; width: 180px; }
+/* Tracked to the authored lockup rather than by eye. The hero stacks the mark
+   over the wordmark, so it is the STACKED cut this has to agree with
+   (assets/brand/pulsar-lockup-stacked.svg: font-size 34, letter-spacing 6.8 =
+   0.2em); the horizontal cut runs tighter at 0.16em because it sits beside
+   the mark instead of under it. Both are Host Grotesk 700, which the page
+   already loads. */
 .wordmark {
   font-weight: 700;
   font-size: clamp(2.6rem, 7vw, 4rem);
-  letter-spacing: 0.3em;
-  margin-left: 0.3em; /* optically recenter the tracked text */
+  letter-spacing: 0.2em;
+  margin-left: 0.2em; /* optically recenter: tracking also trails the final R */
   margin-top: 0.5rem;
 }
 /* the tagline is the statement; the wordmark is the nameplate above it */
@@ -794,7 +800,7 @@ footer { padding: 0 0 3rem; }
 .foot-word {
   font-weight: 700;
   font-size: 0.9rem;
-  letter-spacing: 0.3em;
+  letter-spacing: 0.2em; /* the same lockup tracking as .wordmark */
 }
 .brandline { letter-spacing: 0.22em; font-size: 0.68rem; color: var(--muted); margin-top: 0.2rem; }
 footer nav { display: flex; gap: 1.5rem; flex-wrap: wrap; }
@@ -854,7 +860,7 @@ footer a:hover, footer a:focus-visible { text-decoration: underline; }
 
 /* ---- small screens -------------------------------------------------------- */
 @media (max-width: 26rem) {
-  .mark { height: 110px; width: 110px; }
+  .mark { height: 128px; width: 128px; }
   /* bottom padding no longer reserves deck space -- the deck is in flow at
      this width (see the max-width:46rem block above) */
   .hero-inner { padding: 3rem 1rem 2.5rem; }
