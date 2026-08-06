@@ -3,16 +3,29 @@
 # normal update. Both variants are pushed to ghcr with provenance
 # attestations.
 #
-# This workflow holds the Secure Boot signing key (secrets AKMODS_PRIV /
-# AKMODS_CERT, base64 of the DER key and cert that are ALREADY enrolled in
-# this machine's MOK). That is a deliberate trade: the base image already
-# comes from here, so a compromise of this repo owns the target machine with
-# or without the signing key. The key is written to a tmpfs-backed path,
-# passed to podman as a build secret, and shredded in an always() step.
+# This workflow no longer holds the Secure Boot signing key. It holds a
+# bearer token (PULSAR_SIGNER_TOKEN) for the signer host, which returns a
+# signature per module and never hands over the key. A stolen token buys
+# signatures until it is revoked; a stolen key costs a MOK re-enrolment at
+# boot, physically, on every machine running Pulsar. The two are not the
+# same kind of loss, which is the whole reason for the split.
+#
+# The signer must be reachable from wherever this runs. On the build host it
+# sits on a private VPC; from a hosted runner it is whatever
+# PULSAR_SIGNER_URL points at. If it is unset or unreachable the build fails
+# rather than shipping an unsigned kmod -- a fail-closed choice, because the
+# macro that drives module signing SKIPS SILENTLY when its inputs are
+# missing (see Containerfile.nvidia phase 3).
 #
 # The committed public cert at system_files/etc/pki/pulsar/MOK.der must match
-# AKMODS_CERT. Phase 5 of Containerfile.nvidia fails the build if it does not,
-# which is what stops a stale cert from black-screening the machine.
+# the signer's key. Phase 5 of Containerfile.nvidia fails the build if it does
+# not, which is what stops a stale cert from black-screening the machine --
+# and it stays meaningful only because the build signs with the cert fetched
+# from the signer rather than the committed one.
+#
+# The image pipeline itself lives in scripts/build.sh; this file supplies the
+# runner-specific parts (credentials, versioning, attestation, SBOMs) and
+# calls it.
 name: build
 
 on:
@@ -157,244 +170,92 @@ jobs:
           prev="$(oras resolve "${IMAGE}:latest" 2>/dev/null || true)"
           echo "PREV_DIGEST=${prev}" >> "$GITHUB_ENV"
           echo "previous :latest digest: ${prev:-<none, first build>}"
-
       # The wallpapers are rendered from assets/shaders/pulsar.frag, not
       # committed -- they are 4K PNGs and fully reproducible from the shader.
       # This has to happen BEFORE the build, because the Containerfile just
       # COPYs system_files/ and the build container has no GL stack.
-      # llvmpipe does the rasterising; no GPU on a runner.
-      - name: Render wallpapers
+      # llvmpipe does the rasterising; no GPU on a runner. scripts/build.sh
+      # runs the renderer itself; this only supplies the toolchain, which is
+      # the one part that is genuinely runner-specific.
+      - name: Install the wallpaper render toolchain
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
             libegl1 libgl1 libgl-dev libgl1-mesa-dri libglvnd0
           pip install --quiet moderngl numpy pillow
-          python3 scripts/render-wallpapers.py
-
-      - name: Build vanilla
-        run: |
-          podman build --pull=newer \
-            --file Containerfile \
-            --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
-            --build-arg PULSAR_VERSION="${DATETAG}" \
-            -t "${IMAGE}:${FEDORA_VERSION}" -t "${IMAGE}:latest" -t "${IMAGE}:${DATETAG}" .
 
       # =====================================================================
-      # Rechunk. Without this, every nightly costs clients ~2GB: podman build
-      # slices the image along Containerfile boundaries, --pull=newer moves
-      # the base most nights, and that cache-busts every derived layer, so
-      # all of them re-upload even when the content barely moved. Measured
-      # between 44.20260805.11 and 44.20260806.0 -- a CLI tweak and two
-      # manifest fields -- the delta was 28 layers, 2,125MB.
+      # Everything from here to the push lives in scripts/build.sh, and this
+      # workflow calls it rather than reimplementing it.
       #
-      # rpm-ostree compose build-chunked-oci re-slices the FINAL filesystem
-      # into package-grouped chunks with stable boundaries: the same tool and
-      # layout Fedora composes the base image with. Identical content then
-      # yields identical layers regardless of build-cache luck, and a night
-      # where only the kernel moved costs roughly the kernel.
-      # --previous-build pins the layer plan to the image clients already
-      # run; the first chunked build has no such previous, so it falls back
-      # to a fresh plan -- that one push is a full download, once.
+      # It used to be inline, and the local script next to it did something
+      # subtly different -- no version stamp, no wallpapers, no rechunk, and
+      # image names shaped differently enough that the bug which shipped
+      # stale content for weeks could not reproduce locally at all. One
+      # implementation, called from both places, is what stops that
+      # recurring. What the script does and why is documented there; the
+      # short version is: build, re-slice into package-grouped layers, assert
+      # the chunked image holds THIS build's content, check that the round
+      # trip did not move any mode or owner, then push.
       #
-      # The tool runs inside the just-built image itself, which ships the
-      # same rpm-ostree that will consume the result on machines. The host
-      # storage is bind-mounted at the SAME path with the same storage.conf,
-      # for the reason iso.yml documents: the storage database records
-      # absolute paths, and a relocated graphroot is refused. "Same path"
-      # means same AFTER symlink resolution -- see the storage step above,
-      # where getting that wrong cost weeks of builds shipping stale content.
-      #
-      # --from names an image in containers-storage and nothing else: no
-      # transport prefix, which the tool adds itself and which double-prefixes
-      # into a parse error if written out. When it cannot find the image
-      # there, it pulls the name from the registry instead of failing, which
-      # is why the assertion below reads the content rather than a label.
+      # --push implies --verify implies --rechunk: nothing ships without
+      # having been checked.
       # =====================================================================
-      - name: Rechunk vanilla
-        run: |
-          set -euo pipefail
-          # The tool writes a plain OCI directory, not containers-storage:
-          # the runner's podman is generations older than the tool image's
-          # containers libraries, and metadata the new library wrote was
-          # invisible to the old one -- the digest landed, then
-          # "image not known" at the tag step. Verified working on a
-          # version-matched host, failing only across the skew. An OCI
-          # layout on disk is the stable interchange: the new tool writes
-          # it, the old podman pulls it, and no storage internals cross
-          # the version boundary.
-          sudo mkdir -p /var/mnt/oci && sudo chown "$(id -u):$(id -g)" /var/mnt/oci
-          # the tool opens the destination before writing: seed an empty,
-          # valid OCI layout or it dies on the missing index.json
-          mkdir -p /var/mnt/oci/vanilla/blobs/sha256
-          printf '{"imageLayoutVersion":"1.0.0"}' > /var/mnt/oci/vanilla/oci-layout
-          printf '{"schemaVersion":2,"manifests":[]}' > /var/mnt/oci/vanilla/index.json
-          rechunk() {
-            podman run --rm --privileged \
-              -v /var/mnt/podman:/var/mnt/podman \
-              -v /var/mnt/oci:/var/mnt/oci \
-              -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
-              "${IMAGE}:${FEDORA_VERSION}" \
-              rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-                --max-layers 200 \
-                --from "${IMAGE}:${FEDORA_VERSION}" \
-                --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "oci:/var/mnt/oci/vanilla:build" "$@"
-          }
-          rechunk --previous-build "docker://${IMAGE}:latest" \
-            || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
-          # No pull back into storage: the blobs ship from this directory
-          # as-is at the push step -- a pull/push round trip decompressed
-          # and recompressed every layer for nothing. The local tags keep
-          # pointing at the podman-built image, which is content-identical
-          # and serves the later local steps. The cheap assertion that
-          # remains: the layout is complete, versioned, and layered.
-          skopeo inspect "oci:/var/mnt/oci/vanilla:build" > /tmp/chunked-vanilla.json
-          jq -r '"chunked vanilla: \(.Layers | length) layers"' /tmp/chunked-vanilla.json
-          # The version LABEL proves nothing about the CONTENT: --label writes
-          # it here, on whatever the tool read, so it matched on every night
-          # --from was silently pulling the published image instead of this
-          # build. /usr/lib/os-release carries the version the Containerfile
-          # baked in, so it is the source content speaking for itself. Read
-          # straight out of the layout's blobs -- they are already on disk,
-          # and unpacking a copy to check one file is not worth 2GB of I/O.
-          osr=""
-          for b in /var/mnt/oci/vanilla/blobs/sha256/*; do
-            if osr=$(tar -xOf "$b" --wildcards '*usr/lib/os-release' 2>/dev/null) \
-               && [ -n "$osr" ]; then break; fi
-          done
-          if ! printf '%s' "$osr" | grep -q "^VERSION=\"${DATETAG}\""; then
-            echo "::error::chunked vanilla holds $(printf '%s' "$osr" | grep '^VERSION=' || echo '<no os-release found>'), not ${DATETAG} -- --from did not read the local build"
-            exit 1
-          fi
-          echo "chunked vanilla content confirmed: ${DATETAG}"
-
-      # The content assertion above proves the tool read the right image. It
-      # says nothing about what the round trip through an ostree commit did to
-      # the metadata, and there is a known upstream class of bug where modes
-      # and ownership come out different from the base commit. This image
-      # carries an enrolled Secure Boot key and signed kmods, so that question
-      # gets asked rather than assumed. Blocks the push on ownership,
-      # setuid/setgid, or world-writable changes and on anything the chunked
-      # image dropped; reports plain mode drift without stopping the build,
-      # because the first runs are how the baseline gets known.
-      - name: Diff ownership and modes across the vanilla rechunk
-        run: scripts/diff-chunk-metadata.sh "${IMAGE}:${FEDORA_VERSION}" /var/mnt/oci/vanilla build
-
-      # skopeo copies the tool's already-compressed blobs verbatim; a
-      # podman pull/push round trip recompressed ~200 layers for nothing.
-      # Three tags, one upload: after the first copy the registry holds
-      # every blob and the remaining copies are manifest writes.
-      - name: Push vanilla
+      - name: Build, rechunk and push vanilla
         id: push_vanilla
         run: |
           set -euo pipefail
-          for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
-            skopeo copy --digestfile /tmp/digest-vanilla \
-              "oci:/var/mnt/oci/vanilla:build" "docker://${IMAGE}:${t}"
-          done
-          rm -rf /var/mnt/oci/vanilla
-          echo "digest=$(cat /tmp/digest-vanilla)" >> "$GITHUB_OUTPUT"
+          scripts/build.sh \
+            --variant vanilla \
+            --version "${DATETAG}" \
+            --image "${IMAGE}" \
+            --work /var/mnt/oci \
+            --push
+          echo "digest=$(cat /var/mnt/oci/digest-vanilla)" >> "$GITHUB_OUTPUT"
 
-      # /dev/shm is tmpfs: the key never touches the runner's disk. The
-      # nvidia base resolves from local storage, so this layers on the exact
-      # image just pushed rather than racing the registry for it.
-      - name: Build nvidia
+      # The nvidia variant needs a signature, and the key is not here. It
+      # lives on the signer host; the build sends each module out and attaches
+      # what comes back (scripts/sign-file-oracle). This runner therefore
+      # holds a bearer token and nothing else -- there is no key material to
+      # shred afterwards, which is why the step that used to do that is gone.
+      #
+      # A hosted runner can only do this if the signer is reachable from it.
+      # On the build host the signer sits on a private VPC; from here it is
+      # whatever PULSAR_SIGNER_URL points at, and the build fails closed if
+      # that is unset or unreachable rather than shipping an unsigned kmod.
+      - name: Build, rechunk and push nvidia
+        id: push_nvidia
         env:
-          AKMODS_PRIV: ${{ secrets.AKMODS_PRIV }}
-          AKMODS_CERT: ${{ secrets.AKMODS_CERT }}
+          SIGNER_TOKEN: ${{ secrets.PULSAR_SIGNER_TOKEN }}
+          SIGNER_URL: ${{ secrets.PULSAR_SIGNER_URL }}
         run: |
-          if [ -z "$AKMODS_PRIV" ] || [ -z "$AKMODS_CERT" ]; then
-            echo "::error::AKMODS_PRIV/AKMODS_CERT secrets are not set; cannot sign the nvidia kmod."
+          set -euo pipefail
+          if [ -z "${SIGNER_TOKEN}" ] || [ -z "${SIGNER_URL}" ]; then
+            echo "::error::PULSAR_SIGNER_TOKEN/PULSAR_SIGNER_URL are not set;"
+            echo "::error::the nvidia kmod cannot be signed from this runner."
             exit 1
           fi
-          install -d -m 0700 /dev/shm/keys
+          install -d -m 0700 /dev/shm/signer
           umask 077
-          printf '%s' "$AKMODS_PRIV" | base64 -d > /dev/shm/keys/priv
-          printf '%s' "$AKMODS_CERT" | base64 -d > /dev/shm/keys/cert
-          podman build \
-            --file Containerfile.nvidia \
-            --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
-            --build-arg BASE_IMAGE="${IMAGE}" \
-            --build-arg PULSAR_VERSION="${DATETAG}" \
-            --secret id=akmods_priv,src=/dev/shm/keys/priv \
-            --secret id=akmods_cert,src=/dev/shm/keys/cert \
-            -t "${IMAGE_NVIDIA}:${FEDORA_VERSION}" -t "${IMAGE_NVIDIA}:latest" \
-            -t "${IMAGE_NVIDIA}:${DATETAG}" .
+          printf '%s' "${SIGNER_TOKEN}" > /dev/shm/signer/token
+          scripts/build.sh \
+            --variant nvidia \
+            --version "${DATETAG}" \
+            --image "${IMAGE}" \
+            --image-nvidia "${IMAGE_NVIDIA}" \
+            --signer-url "${SIGNER_URL}" \
+            --signer-token-file /dev/shm/signer/token \
+            --work /var/mnt/oci \
+            --no-wallpapers \
+            --push
+          echo "digest=$(cat /var/mnt/oci/digest-nvidia)" >> "$GITHUB_OUTPUT"
 
-      - name: Destroy the key material
+      - name: Destroy the signer token
         if: always()
         run: |
-          shred -u /dev/shm/keys/* 2>/dev/null || true
-          rm -rf /dev/shm/keys
+          shred -u /dev/shm/signer/* 2>/dev/null || true
+          rm -rf /dev/shm/signer
 
-      # Same as vanilla, and the derived layers it flattens include the ones
-      # the nvidia phases stack on top of the (already chunked) vanilla base.
-      # Runs after the key material is destroyed: chunking needs no secrets.
-      - name: Rechunk nvidia
-        run: |
-          set -euo pipefail
-          # The tool writes a plain OCI directory, not containers-storage:
-          # the runner's podman is generations older than the tool image's
-          # containers libraries, and metadata the new library wrote was
-          # invisible to the old one -- the digest landed, then
-          # "image not known" at the tag step. Verified working on a
-          # version-matched host, failing only across the skew. An OCI
-          # layout on disk is the stable interchange: the new tool writes
-          # it, the old podman pulls it, and no storage internals cross
-          # the version boundary.
-          sudo mkdir -p /var/mnt/oci && sudo chown "$(id -u):$(id -g)" /var/mnt/oci
-          # the tool opens the destination before writing: seed an empty,
-          # valid OCI layout or it dies on the missing index.json
-          mkdir -p /var/mnt/oci/nvidia/blobs/sha256
-          printf '{"imageLayoutVersion":"1.0.0"}' > /var/mnt/oci/nvidia/oci-layout
-          printf '{"schemaVersion":2,"manifests":[]}' > /var/mnt/oci/nvidia/index.json
-          rechunk() {
-            podman run --rm --privileged \
-              -v /var/mnt/podman:/var/mnt/podman \
-              -v /var/mnt/oci:/var/mnt/oci \
-              -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
-              "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
-              rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-                --max-layers 200 \
-                --from "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
-                --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "oci:/var/mnt/oci/nvidia:build" "$@"
-          }
-          rechunk --previous-build "docker://${IMAGE_NVIDIA}:latest" \
-            || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
-          # Same no-pull handoff as vanilla: assert the layout, ship the
-          # blobs as-is at the push step.
-          skopeo inspect "oci:/var/mnt/oci/nvidia:build" > /tmp/chunked-nvidia.json
-          jq -r '"chunked nvidia: \(.Layers | length) layers"' /tmp/chunked-nvidia.json
-          # Same content assertion as vanilla, and for the same reason. The
-          # nvidia phases never rewrite os-release -- the stamp is inherited
-          # from the vanilla base -- so DATETAG is the marker here too.
-          osr=""
-          for b in /var/mnt/oci/nvidia/blobs/sha256/*; do
-            if osr=$(tar -xOf "$b" --wildcards '*usr/lib/os-release' 2>/dev/null) \
-               && [ -n "$osr" ]; then break; fi
-          done
-          if ! printf '%s' "$osr" | grep -q "^VERSION=\"${DATETAG}\""; then
-            echo "::error::chunked nvidia holds $(printf '%s' "$osr" | grep '^VERSION=' || echo '<no os-release found>'), not ${DATETAG} -- --from did not read the local build"
-            exit 1
-          fi
-          echo "chunked nvidia content confirmed: ${DATETAG}"
-
-      # Same question, and it has to be asked separately: nvidia is chunked by
-      # its own invocation, and it is the variant carrying the signed kmods.
-      - name: Diff ownership and modes across the nvidia rechunk
-        run: scripts/diff-chunk-metadata.sh "${IMAGE_NVIDIA}:${FEDORA_VERSION}" /var/mnt/oci/nvidia build
-
-      - name: Push nvidia
-        id: push_nvidia
-        run: |
-          set -euo pipefail
-          for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
-            skopeo copy --digestfile /tmp/digest-nvidia \
-              "oci:/var/mnt/oci/nvidia:build" "docker://${IMAGE_NVIDIA}:${t}"
-          done
-          rm -rf /var/mnt/oci/nvidia
-          echo "digest=$(cat /tmp/digest-nvidia)" >> "$GITHUB_OUTPUT"
 
       - name: Attest vanilla
         uses: actions/attest-build-provenance@v4
