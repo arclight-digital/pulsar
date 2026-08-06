@@ -185,7 +185,7 @@ jobs:
                 --max-layers 200 \
                 --from "${IMAGE}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "containers-storage:${IMAGE}" --reference chunked "$@"
+                --output "containers-storage:${IMAGE}:chunked" "$@"
           }
           rechunk --previous-build "docker://${IMAGE}:latest" \
             || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
@@ -252,7 +252,7 @@ jobs:
                 --max-layers 200 \
                 --from "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "containers-storage:${IMAGE_NVIDIA}" --reference chunked "$@"
+                --output "containers-storage:${IMAGE_NVIDIA}:chunked" "$@"
           }
           rechunk --previous-build "docker://${IMAGE_NVIDIA}:latest" \
             || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
