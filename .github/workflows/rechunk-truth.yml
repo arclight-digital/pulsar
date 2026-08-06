@@ -1,33 +1,27 @@
 # ===========================================================================
-# What does the rechunk actually ship?
+# Which --from invocation actually reads the image we just built?
 #
-# Tonight's finding: the podman build stamps /usr/lib/os-release with the
-# build version, and the image that reaches the registry carries the stamp
-# from 44.20260806.1 -- the last build before rechunking landed. Everything
-# this repo authors is frozen at that build: the CLI, system_files, the
-# branding, the manifest. RPM-owned content still moves, which is what made
-# it look like updates were landing.
+# The first run of this workflow answered the question it was written for.
+# `--from localhost/toy:44` did not resolve out of containers-storage, and
+# the tool did not fail: it fell back to treating the name as a REGISTRY
+# reference and pulled it.
 #
-# Two candidate mechanisms, and they call for opposite fixes:
+#   Trying to pull localhost/toy:44...
+#   Error: initializing source docker://localhost/toy:44: pinging container
+#   registry localhost: dial tcp [::1]:443: connect: connection refused
 #
-#   1. --from does not see the freshly built image through the storage
-#      bind-mount the rechunk step sets up, and chunks something older.
-#   2. --previous-build supplies content, not just a layer plan.
+# `localhost` is not a registry, so the test failed loudly. Production's
+# name IS one. `--from ghcr.io/arclight-digital/pulsar:44` has therefore
+# been pulling the PUBLISHED image every night and re-chunking that, while
+# the freshly built image sat in local storage untouched -- which is why
+# every build since 44.20260806.1 shipped .1's content, and why it is the
+# authored files that froze while RPM content appeared to move.
 #
-# (2) contradicts the tool's own documentation -- "base the layer plan on
-# ... without needing to pull the remote image" -- but tonight has already
-# cost one fix built on an inference, so this measures instead of assuming.
-#
-# The production storage arrangement is reproduced EXACTLY, quirks included:
-# graphroot on /mnt via CONTAINERS_STORAGE_CONF, the tool running from the
-# image it is chunking, /mnt/podman bind-mounted at /var/mnt/podman. Any of
-# those is a suspect, so none of them may differ.
-#
-# Three markers per build, one per class of content that froze:
-#   os-release      -- packaged file, modified after install
-#   /usr/lib/toy-*  -- unpackaged file, the class the CLI and system_files
-#                      belong to
-#   a generated file in a package-owned directory
+# So the remaining question is narrow: what makes the tool read local
+# storage? Each variant runs until it either says "Generating commit"
+# (resolved locally, the answer) or "Trying to pull" (fell back again).
+# That verdict arrives in seconds, so no variant is allowed to run long
+# enough to finish chunking -- 90s is far past the decision point.
 #
 # Run: gh workflow run rechunk-truth.yml
 # ===========================================================================
@@ -48,98 +42,95 @@ jobs:
           echo "CONTAINERS_STORAGE_CONF=/tmp/storage.conf" >> "$GITHUB_ENV"
           sudo mkdir -p /mnt/oci && sudo chown "$(id -u):$(id -g)" /mnt/oci
 
-      # Two builds of the same tag, differing only in the three markers.
-      # V2 overwrites V1's tag, exactly as a nightly overwrites yesterday's.
-      - name: Build the toy images
+      # One marker per class of content that froze: a packaged file modified
+      # after install, an unpackaged file, and a generated file in a
+      # package-owned directory. The tag is what --from resolves.
+      - name: Build the toy image
         run: |
           set -euo pipefail
-          for v in V1 V2; do
-            {
-              echo 'FROM quay.io/fedora-ostree-desktops/silverblue:44'
-              printf 'RUN sed -i %ss|^VERSION=.*|VERSION="%s"|%s /usr/lib/os-release \\\n' "'" "$v" "'"
-              printf ' && echo %s > /usr/lib/toy-unowned \\\n' "$v"
-              printf ' && echo %s > /usr/share/pixmaps/toy-generated\n' "$v"
-            } > "Containerfile.${v}"
-            cat "Containerfile.${v}"
-            podman build -f "Containerfile.${v}" -t "localhost/toy:${v}" .
-          done
-          # the tag the rechunk resolves, pointed at V1 first
-          podman tag localhost/toy:V1 localhost/toy:44
+          {
+            echo 'FROM quay.io/fedora-ostree-desktops/silverblue:44'
+            printf 'RUN sed -i %ss|^VERSION=.*|VERSION="TOY"|%s /usr/lib/os-release \\\n' "'" "'"
+            printf ' && echo TOY > /usr/lib/toy-unowned \\\n'
+            printf ' && echo TOY > /usr/share/pixmaps/toy-generated\n'
+          } > Containerfile.toy
+          cat Containerfile.toy
+          podman build -f Containerfile.toy -t localhost/toy:44 .
+          podman images
 
-      # Verbatim from build.yml, including the bind-mount path asymmetry.
-      - name: Chunk V1, with no baseline
+      - name: Which invocation reads local storage?
         run: |
-          set -euo pipefail
-          mkdir -p /mnt/oci/v1/blobs/sha256
-          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/v1/oci-layout
-          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/v1/index.json
-          podman run --rm --privileged \
+          set -uo pipefail
+
+          # "Generating commit" = resolved from storage, which is the whole
+          # question. "Trying to pull" = the silent fallback that caused this.
+          verdict() {
+            local name="$1" log="$2"
+            if grep -q "Trying to pull" "${log}"; then
+              echo "  ${name}: FELL BACK TO REGISTRY PULL"
+            elif grep -qE "Generating commit|Building package mapping" "${log}"; then
+              echo "  ${name}: RESOLVED FROM LOCAL STORAGE"
+            else
+              echo "  ${name}: inconclusive"
+              tail -6 "${log}" | sed 's/^/      /'
+            fi
+          }
+
+          # 1. Exactly what build.yml does today, as the control.
+          timeout 90 podman run --rm --privileged \
             -v /mnt/podman:/var/mnt/podman \
             -v /mnt/oci:/var/mnt/oci \
             -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
             localhost/toy:44 \
             rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-              --max-layers 200 \
               --from localhost/toy:44 \
-              --output "oci:/mnt/oci/v1:build"
+              --output "oci:/mnt/oci/a:build" > /tmp/a.log 2>&1
+          verdict "as-shipped (graphroot /mnt/podman, mounted at /var/mnt/podman)" /tmp/a.log
 
-      - name: Retag to V2 and chunk again, WITH V1 as the baseline
-        run: |
-          set -euo pipefail
-          podman tag localhost/toy:V2 localhost/toy:44
-          mkdir -p /mnt/oci/v2/blobs/sha256
-          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/v2/oci-layout
-          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/v2/index.json
-          podman run --rm --privileged \
-            -v /mnt/podman:/var/mnt/podman \
-            -v /mnt/oci:/var/mnt/oci \
+          # 2. The mount at the path storage.conf actually declares -- what
+          #    the comment above the step has always claimed it was doing.
+          timeout 90 podman run --rm --privileged \
+            -v /mnt/podman:/mnt/podman \
+            -v /mnt/oci:/mnt/oci \
             -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
             localhost/toy:44 \
             rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-              --max-layers 200 \
               --from localhost/toy:44 \
-              --previous-build "oci:/mnt/oci/v1:build" \
-              --output "oci:/mnt/oci/v2:build" \
-            || { echo "::warning::oci: transport rejected for --previous-build; rerunning without it"; \
-                 podman run --rm --privileged \
-                   -v /mnt/podman:/var/mnt/podman \
-                   -v /mnt/oci:/var/mnt/oci \
-                   -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
-                   localhost/toy:44 \
-                   rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
-                     --max-layers 200 \
-                     --from localhost/toy:44 \
-                     --output "oci:/mnt/oci/v2:build"; }
+              --output "oci:/mnt/oci/b:build" > /tmp/b.log 2>&1
+          verdict "same-path mount" /tmp/b.log
 
-      # The toy is small enough that a pull-back round trip is the cheapest
-      # honest way to read the shipped bytes: no tar spelunking, no guessing
-      # which chunk owns which file.
-      - name: Read what each chunked image actually contains
-        run: |
-          set -euo pipefail
-          for v in v1 v2; do
-            skopeo copy "oci:/mnt/oci/${v}:build" "containers-storage:localhost/chunked-${v}:test"
-            echo "=== chunked ${v} ==="
-            podman run --rm --entrypoint /bin/sh "localhost/chunked-${v}:test" -c \
-              'grep ^VERSION= /usr/lib/os-release; \
-               echo "toy-unowned:    $(cat /usr/lib/toy-unowned)"; \
-               echo "toy-generated:  $(cat /usr/share/pixmaps/toy-generated)"'
-          done
+          # 3. Same, with the transport stated instead of inferred: if the
+          #    ref cannot be read as a registry name, the fallback cannot
+          #    fire silently.
+          timeout 90 podman run --rm --privileged \
+            -v /mnt/podman:/mnt/podman \
+            -v /mnt/oci:/mnt/oci \
+            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+            localhost/toy:44 \
+            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+              --from containers-storage:localhost/toy:44 \
+              --output "oci:/mnt/oci/c:build" > /tmp/c.log 2>&1
+          verdict "same-path mount + explicit containers-storage transport" /tmp/c.log
 
-      # V1 must read V1 and V2 must read V2. Anything else is the bug, and
-      # which line is wrong says which mechanism causes it.
-      - name: Verdict
-        run: |
-          set -euo pipefail
-          fail=0
-          for v in v1 v2; do
-            want=$(echo "$v" | tr 'a-z' 'A-Z')
-            got=$(podman run --rm --entrypoint /bin/sh "localhost/chunked-${v}:test" -c \
-                    'cat /usr/lib/toy-unowned')
-            stamp=$(podman run --rm --entrypoint /bin/sh "localhost/chunked-${v}:test" -c \
-                      '. /usr/lib/os-release; echo "$VERSION"')
-            echo "${v}: expected ${want} -- unowned file says ${got}, os-release says ${stamp}"
-            [ "${got}" = "${want}" ] || { echo "::error::${v} shipped a stale unpackaged file"; fail=1; }
-            [ "${stamp}" = "${want}" ] || { echo "::error::${v} shipped a stale os-release"; fail=1; }
+          # 4. The storage the runner writes is ROOTLESS; the tool runs as
+          #    root inside the container. If that is what it cannot read,
+          #    building as root is the fix rather than any mount path.
+          sudo CONTAINERS_STORAGE_CONF=/tmp/storage.conf podman build \
+            -f Containerfile.toy -t localhost/toy-root:44 . > /tmp/rootbuild.log 2>&1 \
+            || tail -5 /tmp/rootbuild.log
+          sudo timeout 90 podman run --rm --privileged \
+            -v /mnt/podman:/mnt/podman \
+            -v /mnt/oci:/mnt/oci \
+            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+            localhost/toy-root:44 \
+            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+              --from localhost/toy-root:44 \
+              --output "oci:/mnt/oci/d:build" > /tmp/d.log 2>&1
+          verdict "rootful build + rootful tool, same-path mount" /tmp/d.log
+
+          echo
+          echo "=== full output of each attempt ==="
+          for f in a b c d; do
+            echo "--- ${f} ---"
+            head -20 "/tmp/${f}.log"
           done
-          exit "${fail}"
