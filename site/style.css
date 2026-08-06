@@ -399,6 +399,14 @@ h2 {
   gap: 6px;
   padding: 0 1.1rem 1rem;
 }
+/* same register as the deck's note: a quiet claim under the readout */
+.mf-note {
+  padding: 0 1.1rem 0.9rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(233, 237, 247, 0.55); /* on the dark chip in both themes */
+}
 .swatches i {
   width: 14px;
   height: 14px;

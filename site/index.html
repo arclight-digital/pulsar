@@ -230,22 +230,16 @@ try { const t = localStorage.getItem('pulsar-theme');
       <p>The NVIDIA open module is compiled against the image's exact kernel
          and signed, so Secure Boot stays on.</p>
     </div>
-    <!-- styled after fastfetch on purpose: colored keys, palette swatches --
-         a readout this audience recognizes from their own terminal -->
+    <!-- Rendered at build time from the nvidia image's own baked manifest --
+         the same file `pulsar manifest` reads on the machine -- and committed
+         by the nightly beside the changelog, so this card is a transcript,
+         not an illustration. Styled after fastfetch on purpose: colored keys,
+         palette swatches -- a readout this audience recognizes. -->
     <figure class="manifest" role="group" aria-label="Image manifest">
       <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> pulsar manifest</figcaption>
-      <pre><code><span class="k">scaling</span>     gamescale · 1× on demand
-<span class="k">boot</span>        greenboot · auto-rollback
-<span class="k">display</span>     gamescope · gamemode · mangohud
-<span class="k">wine</span>        ntsync
-<span class="k">containers</span>  distrobox · toolbox
-<span class="k">virt</span>        libvirt · qemu-kvm
-<span class="k">tooling</span>     gh · android-tools · gnome-tweaks
-<span class="k">dev</span>         mise · direnv · bpftrace · perf
-<span class="k">driver</span>      nvidia-open, built + signed in CI
-<span class="k">apps</span>        unfiltered Flathub, image-native
-<span class="k">base</span>        Fedora Silverblue 44</code></pre>
+      <!--MANIFEST-->
       <p class="swatches" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i><i class="s4"></i><i class="s5"></i><i class="s6"></i></p>
+      <p class="mf-note">the image&rsquo;s own manifest &mdash; rendered, not written</p>
     </figure>
   </section>
 

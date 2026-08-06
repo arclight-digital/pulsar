@@ -341,21 +341,32 @@ jobs:
       # This commit touches only site/, which build.yml's paths-ignore
       # excludes, so it cannot retrigger an image build. It does wake
       # Cloudflare's git integration, which is exactly the point.
-      - name: Render and commit the site changelog
+      - name: Render and commit the site changelog and manifest
         run: |
           set -euo pipefail
           cp changelog.json site/changelog.json
           ./scripts/render-changelog.sh changelog.json > site/changelog.html
 
-          # Compare PACKAGE CONTENT, not the file. Every build stamps a fresh
-          # timestamp and fresh image digests, so a byte comparison always
-          # differs and would commit every single night even when nothing in
-          # the image moved -- daily bot noise in a hand-written history.
+          # The manifest card on the page is a transcript of the image's own
+          # baked manifest, extracted from the nvidia image just built --
+          # never hand-written HTML wearing terminal chrome.
+          podman run --rm "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
+            cat /usr/share/pulsar/manifest.json > manifest.json
+          cp manifest.json site/manifest.json
+          ./scripts/render-manifest.sh manifest.json > site/manifest.html
+
+          # Compare CONTENT, not the file. Every build stamps fresh timestamps
+          # and digests, so a byte comparison always differs and would commit
+          # every single night even when nothing in the image moved -- daily
+          # bot noise in a hand-written history.
           norm='del(.generated, .from, .to)'
           new=$(jq -S "$norm" changelog.json)
           old=$(git show "HEAD:site/changelog.json" 2>/dev/null | jq -S "$norm" 2>/dev/null || echo "__none__")
-          if [ "$new" = "$old" ]; then
-            echo "no package changes since the last committed changelog; nothing to commit"
+          mnorm='del(.version, .built)'
+          new_mf=$(jq -S "$mnorm" manifest.json)
+          old_mf=$(git show "HEAD:site/manifest.json" 2>/dev/null | jq -S "$mnorm" 2>/dev/null || echo "__none__")
+          if [ "$new" = "$old" ] && [ "$new_mf" = "$old_mf" ]; then
+            echo "no package or manifest changes since the last commit; nothing to commit"
             exit 0
           fi
 
@@ -365,7 +376,7 @@ jobs:
           # first run -- when these files are not in the repo yet -- it reported
           # "unchanged" and skipped the commit, which is precisely the run that
           # had to make it. That is why site/changelog.json was never committed.
-          git add site/changelog.json site/changelog.html
+          git add site/changelog.json site/changelog.html site/manifest.json site/manifest.html
           git commit -m "site: package changelog for ${DATETAG}"
           # Rebase rather than force: a human push that landed while the image
           # was building must not be discarded by the nightly.

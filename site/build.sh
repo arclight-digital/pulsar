@@ -25,6 +25,7 @@ cp "${REPO}/site/style.css" "${REPO}/site/main.js" "${OUT}/"
 # fail to deploy over a missing tool in Cloudflare's builder. Before the first
 # nightly lands, the marker collapses to a placeholder instead of a hole.
 CHANGELOG_FRAGMENT="${REPO}/site/changelog.html"
+MANIFEST_FRAGMENT="${REPO}/site/manifest.html"
 awk -v frag="${CHANGELOG_FRAGMENT}" '
   /<!--CHANGELOG-->/ {
     n = 0
@@ -35,11 +36,25 @@ awk -v frag="${CHANGELOG_FRAGMENT}" '
     next
   }
   { print }
-' "${REPO}/site/index.html" > "${OUT}/index.html"
+' "${REPO}/site/index.html" \
+| awk -v frag="${MANIFEST_FRAGMENT}" '
+  /<!--MANIFEST-->/ {
+    n = 0
+    while ((getline line < frag) > 0) { print line; n++ }
+    close(frag)
+    if (n == 0)
+      print "<pre><code>the first nightly has not rendered a manifest yet</code></pre>"
+    next
+  }
+  { print }
+' > "${OUT}/index.html"
 
-# The raw diff, served next to the page it is rendered from.
+# The raw diff and manifest, served next to the page they are rendered from.
 if [ -f "${REPO}/site/changelog.json" ]; then
   cp "${REPO}/site/changelog.json" "${OUT}/"
+fi
+if [ -f "${REPO}/site/manifest.json" ]; then
+  cp "${REPO}/site/manifest.json" "${OUT}/"
 fi
 cp "${REPO}/assets/brand/pulsar-mark.svg" \
    "${REPO}/assets/brand/pulsar-mark-color-dark.svg" \
