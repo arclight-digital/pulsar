@@ -7,10 +7,12 @@ FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 # ===========================================================================
 # Pulsar + NVIDIA.
 #
-# The only artifact that USES the Secure Boot signing key -- and it is safe
-# to publish: the key arrives as a build secret, is written to akmods-owned
-# paths and deleted inside the same RUN, and never reaches a layer. What
-# ships is the signed module plus the PUBLIC cert.
+# The only artifact whose build NEEDS a Secure Boot signature -- and it is
+# safe to publish, because the private key is never here. It stays on the
+# signer host; phase 3 sends each module out and attaches the signature that
+# comes back. What ships is the signed module plus the PUBLIC cert. The only
+# secret this build holds is a bearer token, which buys an attacker
+# signatures while they hold it, and nothing after it is revoked.
 #
 # NEVER install akmods-keys here. That RPM contains the private key itself,
 # and installing it would put the key in a published layer. This is the one
@@ -85,6 +87,27 @@ RUN dnf5 download --enablerepo=rpmfusion-nonfree-updates-testing \
 
 # Phase 3: build and sign, as the akmods user.
 #
+# The private key is NOT here. It stays on the signer host; this build sends
+# each module out and gets a detached signature back. scripts/sign-file-oracle
+# stands in for the kernel's scripts/sign-file, which is where signing already
+# happened: kmodtool's %__kmodtool_modsign_install_post runs brp-kmodsign,
+# which walks the buildroot and signs every uncompressed .ko before the RPM
+# compresses them to .ko.xz. Swapping that one binary is the whole change --
+# no forked akmods, no unpacking the built RPM, no rpmdb digest drift.
+#
+# The placeholder private key is load-bearing, unfortunately. That macro
+# guards on `[ -e privkey ] && [ -e pubkey ]` and SILENTLY SKIPS signing when
+# either is missing -- no error, just unsigned modules. So a file has to exist
+# at the path akmods configures, even though nothing reads it. Phase 5 is what
+# catches this if it ever regresses, which is why it is not optional.
+#
+# The cert comes from the signer rather than from the committed MOK.der. It
+# has to: sign-file takes the signer identifier from whatever cert it is
+# handed, so passing the committed cert would make phase 5 compare MOK.der
+# against itself and pass even if the signer held a completely different key.
+# Fetched, it asserts the signing key's cert IS the one users are told to
+# enrol.
+#
 # The secrets are mounted at neutral paths and copied to akmods-owned files,
 # because akmodsbuild runs unprivileged and cannot read a root-only mount.
 # The copies are removed inside this same RUN, so they never reach the layer.
@@ -94,21 +117,40 @@ RUN dnf5 download --enablerepo=rpmfusion-nonfree-updates-testing \
 # nvidia-kmod (this kmod) -- the two only close as a pair. Phase 4 installs
 # the userspace half and heals this immediately; scriptlets stay ON here
 # because the kmod's %post runs depmod, which we want.
-RUN --mount=type=secret,id=akmods_priv,target=/run/secrets/akmods_priv \
-    --mount=type=secret,id=akmods_cert,target=/run/secrets/akmods_cert \
+ARG PULSAR_SIGNER_URL
+RUN --mount=type=secret,id=signer_token,target=/run/secrets/signer_token \
+    --mount=type=bind,source=scripts/sign-file-oracle,target=/run/sign-file-oracle \
     set -eu; \
+    test -n "${PULSAR_SIGNER_URL}" || { echo "FATAL: PULSAR_SIGNER_URL is unset; the build cannot sign"; exit 1; }; \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core); \
     chmod 755 /var; \
     install -d -o akmods -g akmods /tmp/akmod-out; \
-    install -o akmods -g akmods -m 0400 /run/secrets/akmods_priv \
-        /etc/pki/akmods/private/private_key.priv; \
-    install -o akmods -g akmods -m 0444 /run/secrets/akmods_cert \
-        /etc/pki/akmods/certs/public_key.der; \
+    install -o akmods -g akmods -m 0400 /run/secrets/signer_token \
+        /etc/pki/akmods/signer-token; \
+    printf 'placeholder: the private key lives on the signer host.\n' \
+        > /etc/pki/akmods/private/private_key.priv; \
+    chown akmods:akmods /etc/pki/akmods/private/private_key.priv; \
+    curl -fsS --max-time 60 \
+        -H "Authorization: Bearer $(cat /run/secrets/signer_token)" \
+        "${PULSAR_SIGNER_URL%/}/cert" \
+        -o /etc/pki/akmods/certs/public_key.der; \
+    test -s /etc/pki/akmods/certs/public_key.der; \
+    chown akmods:akmods /etc/pki/akmods/certs/public_key.der; \
+    chmod 0444 /etc/pki/akmods/certs/public_key.der; \
+    mv "/usr/src/kernels/${KV}/scripts/sign-file" \
+       "/usr/src/kernels/${KV}/scripts/sign-file.real"; \
+    install -m 0755 /run/sign-file-oracle "/usr/src/kernels/${KV}/scripts/sign-file"; \
     runuser -s /bin/bash -c \
-      "akmodsbuild --kernels ${KV} --outputdir /tmp/akmod-out \
+      "PULSAR_SIGNER_URL='${PULSAR_SIGNER_URL}' \
+       PULSAR_SIGNER_TOKEN_FILE=/etc/pki/akmods/signer-token \
+       akmodsbuild --kernels ${KV} --outputdir /tmp/akmod-out \
        /usr/src/akmods/nvidia-open-kmod-*.src.rpm" akmods; \
     rm -f /etc/pki/akmods/private/private_key.priv \
-          /etc/pki/akmods/certs/public_key.der; \
+          /etc/pki/akmods/certs/public_key.der \
+          /etc/pki/akmods/signer-token \
+          "/usr/src/kernels/${KV}/scripts/sign-file"; \
+    mv "/usr/src/kernels/${KV}/scripts/sign-file.real" \
+       "/usr/src/kernels/${KV}/scripts/sign-file"; \
     rpm -Uvh --nodeps $(find /tmp/akmod-out -name 'kmod-nvidia-open-*.rpm' ! -name '*debug*'); \
     rm -rf /tmp/akmod-out
 

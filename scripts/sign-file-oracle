@@ -1,0 +1,116 @@
+#!/usr/bin/bash
+# Sign kernel modules without ever holding the signing key.
+#
+# This stands in for the kernel's scripts/sign-file inside the image build.
+# The build calls it exactly where signing already happened -- brp-kmodsign
+# walks the buildroot and runs
+#
+#     scripts/sign-file sha256 <key> <cert> <module>
+#
+# on every uncompressed .ko, BEFORE the RPM compresses them to .ko.xz. That
+# is the whole reason this seam works: the shim never has to decompress
+# anything, never touches the built RPM, and leaves the rpmdb file digests
+# intact. It also means brp-kmodsign's own check -- that every module ends
+# with "~Module signature appended~" -- validates this shim's work for free.
+#
+# What changes is only where the private key lives. The key stays on the
+# signer host; the builder sends the module and receives a detached signature
+# back, then attaches it with the real sign-file:
+#
+#     signer:  sign-file -d sha256 <key> <cert> <module>   -> <module>.p7s
+#     builder: sign-file -s <raw sig> sha256 <cert> <module>
+#
+# Both are upstream sign-file options. Nothing here parses or produces
+# cryptographic structures itself.
+#
+# The <key> argument this receives is ignored -- deliberately. akmods hands
+# over whatever path it was configured with, and in the oracle world there is
+# nothing at that path. The cert IS used: it is public, it ships in the image
+# already, and sign-file needs it to build the signature's signer identifier.
+#
+# Fails closed, always. A signer that is unreachable, unauthorised, slow, or
+# returning nonsense fails the module signing, which fails the RPM build,
+# which fails the image build. An unsigned nvidia.ko would black-screen the
+# machine under Secure Boot; a failed build is a strictly better outcome, and
+# phase 5 of Containerfile.nvidia would catch it anyway.
+#
+# Environment:
+#   PULSAR_SIGNER_URL     base URL of the signer, e.g. http://10.116.0.3:8099
+#   PULSAR_SIGNER_TOKEN   bearer token, or
+#   PULSAR_SIGNER_TOKEN_FILE  path to read it from (a build secret mount)
+#   PULSAR_SIGNER_TIMEOUT connect+total timeout in seconds (default 120)
+#   PULSAR_SIGN_FILE_REAL path to the real sign-file (default: alongside, .real)
+set -euo pipefail
+
+log() { printf 'sign-file-oracle: %s\n' "$*" >&2; }
+die() { log "$*"; exit 1; }
+
+REAL="${PULSAR_SIGN_FILE_REAL:-$(dirname "$0")/sign-file.real}"
+[ -x "${REAL}" ] || die "real sign-file not found at ${REAL}"
+
+# Anything that is not the plain <hash> <key> <x509> <module> [dest] form is
+# not ours to intercept: -s attaches a signature we already fetched, and -d
+# would need the private key, which is the entire point of not being here.
+if [ $# -lt 4 ] || [ "${1#-}" != "$1" ]; then
+  exec "${REAL}" "$@"
+fi
+
+HASH="$1"; KEY_IGNORED="$2"; CERT="$3"; MODULE="$4"; DEST="${5:-}"
+: "${KEY_IGNORED}"  # referenced so the contract stays visible; never read
+
+[ -r "${CERT}" ]   || die "certificate not readable: ${CERT}"
+[ -r "${MODULE}" ] || die "module not readable: ${MODULE}"
+
+URL="${PULSAR_SIGNER_URL:?PULSAR_SIGNER_URL is not set}"
+TIMEOUT="${PULSAR_SIGNER_TIMEOUT:-120}"
+
+TOKEN="${PULSAR_SIGNER_TOKEN:-}"
+if [ -z "${TOKEN}" ] && [ -n "${PULSAR_SIGNER_TOKEN_FILE:-}" ]; then
+  TOKEN="$(cat "${PULSAR_SIGNER_TOKEN_FILE}")"
+fi
+[ -n "${TOKEN}" ] || die "no signer token (set PULSAR_SIGNER_TOKEN or _FILE)"
+
+SIG="$(mktemp)"; ERR="$(mktemp)"
+trap 'rm -f "${SIG}" "${ERR}"' EXIT
+
+# curl's stderr goes to its own file rather than into the status capture: a
+# connection refused says nothing useful if the message ends up parsed as an
+# HTTP status. Whoever reads a failed nightly gets the real reason.
+#
+# --fail-with-body so an error page never lands in the signature file, and the
+# token goes in a header rather than the URL so it stays out of any access log
+# the signer or a proxy keeps. -sS: quiet, but still report real errors.
+if ! http_code="$(
+  curl -sS --fail-with-body \
+    --max-time "${TIMEOUT}" \
+    -o "${SIG}" -w '%{http_code}' \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "X-Pulsar-Hash-Algo: ${HASH}" \
+    -H "X-Pulsar-Module: $(basename "${MODULE}")" \
+    -H 'Content-Type: application/octet-stream' \
+    --data-binary "@${MODULE}" \
+    "${URL%/}/sign-module" 2>"${ERR}"
+)"; then
+  die "signer request failed: $(tr '\n' ' ' < "${ERR}" | head -c 300)$(head -c 200 "${SIG}")"
+fi
+
+[ "${http_code}" = 200 ] || die "signer returned HTTP ${http_code}"
+[ -s "${SIG}" ] || die "signer returned an empty signature"
+
+# A PKCS#7/CMS signature is DER: it must start with a SEQUENCE tag (0x30).
+# Cheap, but it is the difference between attaching a signature and attaching
+# an HTML error page that happened to arrive with a 200.
+first_byte="$(head -c 1 "${SIG}" | od -An -tx1 | tr -d ' \n')"
+[ "${first_byte}" = "30" ] \
+  || die "signer response is not DER (first byte 0x${first_byte:-??})"
+
+"${REAL}" -s "${SIG}" "${HASH}" "${CERT}" "${MODULE}" ${DEST:+"${DEST}"} \
+  || die "attaching the signature to ${MODULE} failed"
+
+# Belt and braces: the same trailer brp-kmodsign checks. If this is missing,
+# the module is unsigned and the build must not continue.
+target="${DEST:-${MODULE}}"
+[ "$(tail -c 28 "${target}")" = "~Module signature appended~" ] \
+  || die "no signature trailer on ${target} after attaching"
+
+log "signed $(basename "${MODULE}") via ${URL%/}"

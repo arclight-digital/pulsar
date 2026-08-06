@@ -58,9 +58,19 @@ jobs:
             scripts/lint-containerfile.sh \
             scripts/check-scx-btf.sh \
             scripts/diff-chunk-metadata.sh \
+            scripts/rechunk-selftest.sh \
+            scripts/sign-file-oracle \
             scripts/sync-branding.sh \
             site/build.sh
           echo "shellcheck: clean"
+
+      # The signer holds the Secure Boot key, so a syntax error in it is a
+      # nightly that cannot sign. Compile-checking is the cheap half; the
+      # behaviour is covered by the shim's own end-to-end run.
+      - name: compile-check the signer
+        run: |
+          python3 -m py_compile scripts/pulsar-signer.py
+          echo "pulsar-signer: compiles"
 
       # The shell inside RUN instructions is shell too, and it is the most
       # expensive place to have a syntax error: a quote left open by a missing
