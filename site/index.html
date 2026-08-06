@@ -74,9 +74,9 @@ try { const t = localStorage.getItem('pulsar-theme');
     <img class="mark" data-mark src="assets/pulsar-animated.svg" alt="" width="140" height="140">
     <h1 class="wordmark">PULSAR</h1>
     <p class="tagline">Lighthouses don&rsquo;t drift.</p>
-    <p class="sub">An immutable Fedora for gaming and development. Games get the panel&rsquo;s
+    <p class="sub"><span class="sent">An immutable Fedora for gaming and development.</span> Games get the panel&rsquo;s
        real resolution instead of a fractional-scaled one, the system is the same
-       every boot, and rollback is just a reboot.</p>
+       every&nbsp;boot, and rollback is just a&nbsp;reboot.</p>
     <!-- The VERSION marker in the chip is substituted by site/build.sh from
          site/version.txt, which the nightly commits beside the manifest, so
          the chip, the manifest card, and the changelog name the same build. -->
@@ -86,10 +86,10 @@ try { const t = localStorage.getItem('pulsar-theme');
         latest build&ensp;<strong><!--VERSION--></strong>
       </a>
     </p>
-    <p class="srclink"><a href="https://github.com/arclight-digital/pulsar">Browse the source on GitHub →</a></p>
+    <p class="srclink"><a href="https://github.com/arclight-digital/pulsar">Browse the source on GitHub&nbsp;→</a></p>
 
     <figure class="term install" role="group" aria-label="Install commands">
-      <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> already on <strong>Fedora Silverblue / Kinoite 44+</strong></figcaption>
+      <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> already on <strong>Fedora&nbsp;Silverblue / Kinoite&nbsp;44+</strong></figcaption>
       <div class="row">
         <span class="which">standard</span>
         <code>sudo bootc switch \
@@ -127,10 +127,10 @@ try { const t = localStorage.getItem('pulsar-theme');
         </button>
       </div>
       <p class="hint">Fresh machine? <a href="#iso">Take the ISO</a>, or install
-         <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>
-         and run one of these. The nvidia module comes signed &mdash;
+         <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora&nbsp;Silverblue</a>
+         and run one of&nbsp;these. The nvidia module comes signed &mdash;
          <a href="https://github.com/arclight-digital/pulsar#install">enroll the cert once</a>
-         and keep Secure&nbsp;Boot on.</p>
+         and keep Secure&nbsp;Boot&nbsp;on.</p>
     </figure>
   </div>
 
@@ -175,7 +175,7 @@ try { const t = localStorage.getItem('pulsar-theme');
         </div>
       </div>
     </div>
-    <span class="deck-note">the shipped wallpapers &mdash; live</span>
+    <span class="deck-note">the shipped wallpapers&nbsp;&mdash;&nbsp;live</span>
   </div>
 </header>
 
@@ -188,12 +188,12 @@ try { const t = localStorage.getItem('pulsar-theme');
       <img class="gs-icon" src="assets/gamescale.svg" alt="" width="40" height="40">
       <span class="gs-name">gamescale</span>
     </h2>
-    <p class="gs-deck">Run a game at 1&times; so XWayland hands it the panel&rsquo;s real
-       mode, then put the desktop back when it exits.</p>
+    <p class="gs-deck">Run a game at&nbsp;1&times; so XWayland hands it the panel&rsquo;s real
+       mode, then put the desktop back when it&nbsp;exits.</p>
     <p class="lede">Under GNOME fractional scaling, XWayland is handed an integer
-       multiple of your <em>logical</em> resolution, never the panel&rsquo;s real mode.
+       multiple of your <em>logical</em> resolution, never the panel&rsquo;s real&nbsp;mode.
        At 133% on a 2560&times;1600 display no factor lands on the hardware, and a
-       borderless-fullscreen game takes whatever the desktop reports.</p>
+       borderless-fullscreen game takes whatever the desktop&nbsp;reports.</p>
 
     <table class="modes">
       <caption class="sr-only">Resolution reported to an XWayland game at each scale factor</caption>
@@ -246,14 +246,14 @@ try { const t = localStorage.getItem('pulsar-theme');
       <div class="scaling-note">
         <p>Scale goes to 1.0 for the lifetime of that one process, font and cursor
            sizes are compensated so the desktop stays usable, and everything goes
-           back when the game exits.</p>
+           back when the game&nbsp;exits.</p>
         <p>Including when it doesn&rsquo;t exit cleanly: a watchdog, a state file on
            disk, and a login reconcile unit mean a crash or a <code>SIGKILL</code>
-           still gives you your desktop back. Lighthouses don&rsquo;t drift.</p>
+           still gives you your desktop&nbsp;back. <span class="ns">Lighthouses don&rsquo;t drift.</span></p>
         <p class="hint">The script, its top-bar indicator, and the reconcile unit ship
-           in the image at a pinned tag. Flatpak launchers need one grant from
+           in the image at a pinned&nbsp;tag. Flatpak launchers need one grant from
            <a href="https://github.com/arclight-digital/gamescale">gamescale&rsquo;s installer</a>:
-           Flatpak reserves <code>/usr</code>, so no image can hand them a host binary.</p>
+           Flatpak reserves <code>/usr</code>, so no image can hand them a host&nbsp;binary.</p>
       </div>
     </div>
   </section>
@@ -264,15 +264,14 @@ try { const t = localStorage.getItem('pulsar-theme');
       <p><strong>Gamescope</strong>, gamemode, and MangoHud are in the image;
          split-lock mitigation is off and the map count is raised because games
          want both. <strong>ntsync</strong> is loaded and handed to the seat user,
-         so Proton can use it where the build supports it. Flathub comes
-         unfiltered.</p>
-      <p>Every boot is checked. If the desktop does not come up three times
+         so Proton can use it where the build supports it. Flathub comes&nbsp;unfiltered.</p>
+      <p><span class="sent">Every boot is checked.</span> If the desktop does not come up three times
          running, the machine rolls itself back to the previous deployment
-         without being asked.</p>
+         without being&nbsp;asked.</p>
       <p>For work: distrobox for any userland, libvirt/KVM for real machines,
-         GitHub CLI in the base. Apps are Flatpaks; the image is the OS.</p>
+         GitHub&nbsp;CLI in the&nbsp;base. Apps are Flatpaks; <span class="ns">the image is the&nbsp;OS.</span></p>
       <p>The NVIDIA open module is compiled against the image's exact kernel
-         and signed, so Secure&nbsp;Boot stays on.</p>
+         and signed, so Secure&nbsp;Boot stays&nbsp;on.</p>
     </div>
     <!-- Rendered at build time from the nvidia image's own baked manifest --
          the same file `pulsar manifest` reads on the machine -- and committed
@@ -283,7 +282,7 @@ try { const t = localStorage.getItem('pulsar-theme');
       <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> pulsar manifest</figcaption>
       <!--MANIFEST-->
       <p class="swatches" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i><i class="s4"></i><i class="s5"></i><i class="s6"></i></p>
-      <p class="mf-note">the image&rsquo;s own manifest &mdash; rendered, not written</p>
+      <p class="mf-note">the image&rsquo;s own manifest &mdash;&nbsp;rendered, not&nbsp;written</p>
     </figure>
   </section>
 
@@ -292,7 +291,7 @@ try { const t = localStorage.getItem('pulsar-theme');
     <ol class="rail">
       <li><strong>commit</strong><small>push to main</small></li>
       <li><strong>build</strong><small>both images, nightly</small></li>
-      <li><strong>sign</strong><small>kmod keyed to the shipped MOK cert</small></li>
+      <li><strong>sign</strong><small>kmod keyed to the shipped MOK&nbsp;cert</small></li>
       <li><strong>attest</strong><small>SLSA provenance on ghcr</small></li>
       <li><strong>boot</strong><small>bootc switches to the attested image</small></li>
     </ol>
@@ -301,7 +300,7 @@ try { const t = localStorage.getItem('pulsar-theme');
          shape. The button copies the one-line form. -->
     <figure class="term" role="group" aria-label="Verify the provenance attestation">
       <figcaption>
-        <span class="prompt" aria-hidden="true">&#10095;</span> don't take the page's word for it
+        <span class="prompt" aria-hidden="true">&#10095;</span> don't take the page's word for&nbsp;it
         <button class="copy" data-copy
                 data-copy-text="gh attestation verify oci://ghcr.io/arclight-digital/pulsar-nvidia:latest --owner arclight-digital"
                 aria-label="Copy the attestation verify command">
@@ -322,7 +321,7 @@ try { const t = localStorage.getItem('pulsar-theme');
 <span class="out">Loaded digest sha256:&hellip; for oci://&hellip;/pulsar-nvidia:latest</span>
 <span class="ok">&#10003; Verification succeeded!</span></code></pre>
     </figure>
-    <p class="hint">One person's laptop OS, over-engineered on purpose, MIT-licensed.
+    <p class="hint"><span class="sent">One person's laptop OS, over-engineered on purpose, MIT-licensed.</span>
        Running someone else's signed images is a trust decision —
        <a href="https://github.com/arclight-digital/pulsar#two-variants-one-key">fork
        it and use your own key</a> if that's not a relationship you want.</p>
@@ -336,8 +335,8 @@ try { const t = localStorage.getItem('pulsar-theme');
     <h2>Starting from bare metal</h2>
     <p class="lede">A weekly installer ISO for each variant, built from the
        published image itself — the same Anaconda installer stock Silverblue
-       uses, landing directly in Pulsar. Checksummed, and signed in the open
-       with keyless cosign.</p>
+       uses, landing directly in Pulsar.
+       <span class="sent">Checksummed, and signed in the open with keyless&nbsp;cosign.</span></p>
     <figure class="term install iso-card" role="group" aria-label="ISO downloads">
       <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> weekly &middot; x86_64 &middot; 5&ndash;6&nbsp;GB</figcaption>
       <div class="row">
@@ -358,13 +357,13 @@ try { const t = localStorage.getItem('pulsar-theme');
           <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso.pem">cert</a>
         </span>
       </div>
-      <p class="hint">Write it to a USB stick with GNOME Disks or
-         <code>dd</code>, boot, install. <code>sha256sum -c</code> against the
-         manifest checks the download; the signature proves CI built it:</p>
+      <p class="hint">Write it to a USB&nbsp;stick with GNOME&nbsp;Disks or
+         <code>dd</code>, boot,&nbsp;install. <code>sha256sum&nbsp;-c</code> against the
+         manifest checks the download; the signature proves CI built&nbsp;it:</p>
     </figure>
     <figure class="term" role="group" aria-label="Verify the ISO signature">
       <figcaption>
-        <span class="prompt" aria-hidden="true">&#10095;</span> the signature is bound to this repo's CI, not a key that can leak
+        <span class="prompt" aria-hidden="true">&#10095;</span> the signature is bound to this repo's CI, not a key that can&nbsp;leak
         <button class="copy" data-copy
                 data-copy-text="cosign verify-blob pulsar-latest-x86_64.iso --signature pulsar-latest-x86_64.iso.sig --certificate pulsar-latest-x86_64.iso.pem --certificate-identity-regexp 'github.com/arclight-digital/pulsar' --certificate-oidc-issuer https://token.actions.githubusercontent.com"
                 aria-label="Copy the ISO verify command">
@@ -394,14 +393,13 @@ try { const t = localStorage.getItem('pulsar-theme');
   <section class="changelog" id="changelog">
     <h2>What changed last night</h2>
     <p class="lede">Every build is diffed against the one before it, package by
-       package, from the SBOMs attached to the images themselves. Nothing here
-       is written by hand.</p>
+       package, from the SBOMs attached to the images themselves. <span class="sent">Nothing here is written by&nbsp;hand.</span></p>
     <div class="cl-body">
       <!--CHANGELOG-->
     </div>
     <p class="hint">The full diff is <a href="changelog.json">changelog.json</a>,
        and the SBOM ships attached to the image:
-       <code>oras discover ghcr.io/arclight-digital/pulsar:latest</code></p>
+       <code>oras discover ghcr.io/<wbr>arclight-digital/<wbr>pulsar:latest</code></p>
   </section>
 </main>
 
@@ -422,8 +420,8 @@ try { const t = localStorage.getItem('pulsar-theme');
     </nav>
   </div>
   <div class="foot-base">
-    <p class="colophon">Set in Host Grotesk and JetBrains Mono. One fragment shader renders
-       this background live and the OS wallpapers in CI. No analytics, no cookies.</p>
+    <p class="colophon">Set in Host&nbsp;Grotesk and JetBrains&nbsp;Mono. One fragment shader renders
+       this background live and the OS wallpapers in&nbsp;CI. No analytics, no&nbsp;cookies.</p>
     <!-- The arclight-by badge from @arclux/brand@1.2.0, inlined by hand: the
          lockup is the package's logoWordmarkInline asset (currentColor
          throughout, letterforms as paths), pasted rather than imported

@@ -60,6 +60,13 @@ body {
    stays on the display lines that want symmetric halves (headings, tagline,
    decks), where its class specificity outranks this. */
 p, li, figcaption { text-wrap: pretty; }
+/* break-control on top of it: .ns pins a short signature sentence whole
+   (only for lines that fit the narrowest phone); .sent makes a sentence a
+   PREFERRED wrap unit -- an inline-block moves to the next line intact when
+   it fits and only breaks internally when it cannot, so line breaks land
+   between sentences before they land inside them. */
+.ns { white-space: nowrap; }
+.sent { display: inline-block; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 a { color: var(--accent); text-underline-offset: 0.2em; }
 
@@ -145,6 +152,7 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  white-space: nowrap; /* a pill that wraps is two broken pills */
   padding: 0.42rem 0.85rem;
   border: 1px solid var(--line);
   border-radius: 999px;
