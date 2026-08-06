@@ -59,6 +59,8 @@ jobs:
             scripts/check-scx-btf.sh \
             scripts/build.sh \
             scripts/diff-chunk-metadata.sh \
+            scripts/next-version.sh \
+            scripts/nightly.sh \
             scripts/rechunk-selftest.sh \
             scripts/sign-file-oracle \
             scripts/sync-branding.sh \

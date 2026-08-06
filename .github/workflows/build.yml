@@ -147,17 +147,9 @@ jobs:
       - name: Compute the build version
         run: |
           set -euo pipefail
-          day=$(date -u +%Y%m%d)
-          prefix="${FEDORA_VERSION}.${day}"
-          n=0
-          existing=$(oras repo tags "${IMAGE}" 2>/dev/null \
-                       | grep -E "^${prefix}\.[0-9]+$" || true)
-          if [ -n "$existing" ]; then
-            n=$(printf '%s\n' "$existing" | sed "s/^${prefix}\.//" | sort -n | tail -1)
-            n=$((n + 1))
-          fi
-          echo "DATETAG=${prefix}.${n}" >> "$GITHUB_ENV"
-          echo "this build is ${prefix}.${n}"
+          tag="$(scripts/next-version.sh --fedora "${FEDORA_VERSION}" "${IMAGE}")"
+          echo "DATETAG=${tag}" >> "$GITHUB_ENV"
+          echo "this build is ${tag}"
 
       # MUST run before the push below overwrites :latest. This is the image
       # the changelog diffs against; once :latest moves, the previous build is

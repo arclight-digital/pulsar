@@ -1,0 +1,20 @@
+[Unit]
+Description=Nightly Pulsar image build
+Documentation=https://github.com/arclight-digital/pulsar
+
+[Timer]
+# 08:30 UTC, matching what the GitHub schedule did, so a fresh build is
+# waiting when the machine checks for updates.
+OnCalendar=*-*-* 08:30:00 UTC
+
+# Persistent, because a build host reboots and a cron-shaped schedule that
+# silently skips the night it was patched is exactly the failure this whole
+# move is supposed to make visible.
+Persistent=true
+
+# Nothing downstream cares about the exact minute, and hammering ghcr and the
+# Fedora mirrors at the same second as everyone else's cron is impolite.
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

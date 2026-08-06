@@ -1,0 +1,39 @@
+[Unit]
+Description=Build and publish the Pulsar images
+Documentation=https://github.com/arclight-digital/pulsar
+# The build pulls a base image, RPMs, and talks to the signer. Starting before
+# the network is properly up produces a confusing failure a long way from the
+# cause.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pulsar
+Group=pulsar
+WorkingDirectory=/srv/pulsar
+EnvironmentFile=/etc/pulsar/build.env
+ExecStart=/srv/pulsar/scripts/nightly.sh
+
+# A full build is tens of minutes; a hung one should not sit on the volume
+# until the next timer fires and races it. Three hours is far past the
+# observed worst case and well short of a day.
+TimeoutStartSec=3h
+
+# journald keeps the output. This is the replacement for reading a workflow
+# log, so it needs to be findable: journalctl -u pulsar-build.service
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pulsar-build
+
+# The build writes only to its work volume and the container store. It does
+# need real privileges for podman, so this is not a sandbox -- it is a
+# statement of what should never be touched.
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
