@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# The nightly, as the build host runs it.
+# The nightly, as an ephemeral builder runs it.
 #
-# Everything here is deliberately thin: compute the version, call the
-# pipeline, tell the dead-man's switch it finished. The pipeline itself is
-# scripts/build.sh, which is the same code a workstation and a GitHub runner
-# call, so this adds scheduling and alerting and nothing else.
+# This is the entry point the builder's cloud-init calls: compute the version,
+# call the pipeline, tell the dead-man's switch it finished. It lives here
+# rather than in arclight-infra because it is build logic, and the repo that
+# knows how Pulsar is built should own it -- the infra repo spawns a droplet
+# and hands it a ref, and everything after that is this.
+#
+# Deliberately thin. The pipeline is scripts/build.sh, the same code a
+# workstation runs; this adds versioning and alerting and nothing else.
 #
 # A timer that silently stops firing is the classic failure of moving off
-# hosted CI: GitHub emails when a workflow fails, a systemd timer does not.
+# hosted CI: GitHub emails when a workflow fails, a systemd timer does not,
+# and an ephemeral droplet that dies early leaves nothing behind to notice.
 # PULSAR_HEALTHCHECK_URL is pinged only on success, so a missed or failed run
 # raises an alert by omission. If it is unset this still runs -- it just runs
 # unwatched, and says so.
@@ -35,10 +40,9 @@ WORK="${PULSAR_BUILD_WORK:-/var/mnt/pulsar-build}"
 started="$(date -u +%s)"
 echo "pulsar nightly starting $(date -u -Iseconds)"
 
-# The repo is the source of truth for what gets built; a build host that
-# quietly builds a stale checkout is worse than one that fails.
-git fetch --quiet origin main
-git checkout --quiet -B main origin/main
+# The checkout belongs to whatever spawned this: the builder's cloud-init
+# clones this repo at an explicit ref, so re-fetching here would silently
+# build something other than what was asked for. Just say what is being built.
 echo "building $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 
 VERSION="$("${REPO}/scripts/next-version.sh" --fedora "${FEDORA_VERSION}" "${IMAGE}")"

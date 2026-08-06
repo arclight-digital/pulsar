@@ -35,7 +35,8 @@
 # phase 5 of Containerfile.nvidia would catch it anyway.
 #
 # Environment:
-#   PULSAR_SIGNER_URL     base URL of the signer, e.g. http://10.116.0.3:8099
+#   PULSAR_SIGNER_URL     base URL of the signer on the VPC, e.g.
+#                         https://10.116.0.3:8443 (halo, in arclight-infra)
 #   PULSAR_SIGNER_TOKEN   bearer token, or
 #   PULSAR_SIGNER_TOKEN_FILE  path to read it from (a build secret mount)
 #   PULSAR_SIGNER_TIMEOUT connect+total timeout in seconds (default 120)
