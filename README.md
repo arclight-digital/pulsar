@@ -92,10 +92,11 @@ cannot act on.
 
 ```text
 pulsar doctor        health snapshot, exit 1 if a check fails
-pulsar manifest      what is in this image
+pulsar manifest      what is in this image, and what it is running on
 pulsar status        deployments: booted, staged, rollback, pins
 pulsar changelog     packages that moved in the latest published build
 pulsar sbom          this system's packages as SPDX 2.3
+pulsar attest        verify this image's build provenance (needs gh)
 pulsar update        fetch and stage an update      (root)
 pulsar rollback      boot the previous deployment   (root)
 pulsar pin | unpin   protect the booted deployment  (root)

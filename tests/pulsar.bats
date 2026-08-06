@@ -65,14 +65,67 @@ JSON
     [ "$status" -eq 0 ]
     [[ "$output" == *"44.20260805.0"* ]]
     [[ "$output" == *"scx_bpfland"* ]]
-    # "attestation" is exactly 11 chars and once collided with its value
-    [[ "$output" == *"attestation "* ]]
+}
+
+@test "manifest lists facts, not other commands to run" {
+    # `sbom` and `attestation` were rows whose values were commands. The
+    # attestation one was 82 characters wide to restate what --help says.
+    run "$PULSAR" manifest
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"pulsar sbom"* ]]
+    [[ "$output" != *"pulsar attest"* ]]
+    [[ "$output" != *"gh attestation"* ]]
+}
+
+@test "attest runs the verify command the manifest carries, not a baked one" {
+    # The owner and registry are build-time facts: an image built from a fork
+    # must verify against the fork, so the command comes from the manifest.
+    # Naming a verifier that does not exist proves which one it reached for.
+    cat > "$PULSAR_MANIFEST" <<'JSON'
+{"image":"pulsar","attestation":"definitely-not-a-real-verifier verify oci://x"}
+JSON
+    run "$PULSAR" attest
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"definitely-not-a-real-verifier"* ]]
+}
+
+@test "attest refuses an image whose manifest has no attestation" {
+    echo '{"image":"pulsar"}' > "$PULSAR_MANIFEST"
+    run "$PULSAR" attest
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no attestation"* ]]
 }
 
 @test "manifest --json is machine readable and unstyled" {
     run "$PULSAR" manifest --json
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.version == "44.20260805.0"'
+}
+
+@test "manifest --json carries the host facts the rows show" {
+    run "$PULSAR" manifest --json
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.host | type == "object"'
+    # /proc/uptime exists on anything this can run on, and it goes out as a
+    # number: a machine should not have to parse "2h 14m".
+    echo "$output" | jq -e '.host.uptime_s | type == "number"'
+    echo "$output" | jq -e '.host.gpu == null or (.host.gpu | type == "array")'
+}
+
+@test "deleting the host key leaves exactly the baked manifest" {
+    # The reason host is one key instead of merged fields: two machines on the
+    # same build must still compare equal.
+    run "$PULSAR" manifest --json
+    [ "$status" -eq 0 ]
+    echo "$output" | jq --slurpfile baked "$PULSAR_MANIFEST" -e 'del(.host) == $baked[0]'
+}
+
+@test "host facts never contain the hostname" {
+    # The rows identify the hardware, not the machine or its owner -- this
+    # output gets pasted into public bug reports.
+    run "$PULSAR" manifest
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"$(hostname)"* ]]
 }
 
 @test "piped output carries no ANSI escapes" {

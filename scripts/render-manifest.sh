@@ -6,8 +6,15 @@
 # Same contract as render-changelog.sh: runs in CI, where jq exists; the
 # output is committed; site/build.sh only splices, so the deploy can never
 # fail over a missing tool. The rows are the ones `pulsar manifest` prints,
-# in the CLI's order, except attestation -- the page's pipeline section IS
-# that command, live, with a copy button.
+# in the CLI's order.
+#
+# No sbom or attestation row. Both were values that named another command to
+# run, which is not what an inventory is for; the CLI dropped them for the
+# same reason. The page loses nothing -- its pipeline section IS the
+# attestation command, live, with a copy button.
+#
+# The host rows the CLI prints have no meaning here either: this renders a
+# BUILD's manifest, and there is no machine on the other side of it.
 #
 # Values are escaped through @html: they come from rpm and os-release, and
 # metadata is not a trust boundary you want to discover the hard way.
@@ -25,8 +32,7 @@ jq -r '
      ["built",   (.built // "?")],
      ["kernel",  (.kernel // "?")]
    ]
-   + (.components // {} | to_entries | map([.key, (.value | tostring)]))
-   + [["sbom", "pulsar sbom"]]) as $rows
+   + (.components // {} | to_entries | map([.key, (.value | tostring)]))) as $rows
   | ($rows | map(.[0] | length) | max + 2) as $w
   | "<pre><code>"
     + ($rows
