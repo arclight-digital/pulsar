@@ -1,0 +1,145 @@
+# ===========================================================================
+# What does the rechunk actually ship?
+#
+# Tonight's finding: the podman build stamps /usr/lib/os-release with the
+# build version, and the image that reaches the registry carries the stamp
+# from 44.20260806.1 -- the last build before rechunking landed. Everything
+# this repo authors is frozen at that build: the CLI, system_files, the
+# branding, the manifest. RPM-owned content still moves, which is what made
+# it look like updates were landing.
+#
+# Two candidate mechanisms, and they call for opposite fixes:
+#
+#   1. --from does not see the freshly built image through the storage
+#      bind-mount the rechunk step sets up, and chunks something older.
+#   2. --previous-build supplies content, not just a layer plan.
+#
+# (2) contradicts the tool's own documentation -- "base the layer plan on
+# ... without needing to pull the remote image" -- but tonight has already
+# cost one fix built on an inference, so this measures instead of assuming.
+#
+# The production storage arrangement is reproduced EXACTLY, quirks included:
+# graphroot on /mnt via CONTAINERS_STORAGE_CONF, the tool running from the
+# image it is chunking, /mnt/podman bind-mounted at /var/mnt/podman. Any of
+# those is a suspect, so none of them may differ.
+#
+# Three markers per build, one per class of content that froze:
+#   os-release      -- packaged file, modified after install
+#   /usr/lib/toy-*  -- unpackaged file, the class the CLI and system_files
+#                      belong to
+#   a generated file in a package-owned directory
+#
+# Run: gh workflow run rechunk-truth.yml
+# ===========================================================================
+name: rechunk-truth
+
+on:
+  workflow_dispatch:
+
+jobs:
+  truth:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Put container storage on the temp disk
+        run: |
+          sudo mkdir -p /mnt/podman && sudo chown "$(id -u):$(id -g)" /mnt/podman
+          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/podman"\nrunroot = "/tmp/podman-run"\n' \
+            > /tmp/storage.conf
+          echo "CONTAINERS_STORAGE_CONF=/tmp/storage.conf" >> "$GITHUB_ENV"
+          sudo mkdir -p /mnt/oci && sudo chown "$(id -u):$(id -g)" /mnt/oci
+
+      # Two builds of the same tag, differing only in the three markers.
+      # V2 overwrites V1's tag, exactly as a nightly overwrites yesterday's.
+      - name: Build the toy images
+        run: |
+          set -euo pipefail
+          for v in V1 V2; do
+            {
+              echo 'FROM quay.io/fedora-ostree-desktops/silverblue:44'
+              printf 'RUN sed -i %ss|^VERSION=.*|VERSION="%s"|%s /usr/lib/os-release \\\n' "'" "$v" "'"
+              printf ' && echo %s > /usr/lib/toy-unowned \\\n' "$v"
+              printf ' && echo %s > /usr/share/pixmaps/toy-generated\n' "$v"
+            } > "Containerfile.${v}"
+            cat "Containerfile.${v}"
+            podman build -f "Containerfile.${v}" -t "localhost/toy:${v}" .
+          done
+          # the tag the rechunk resolves, pointed at V1 first
+          podman tag localhost/toy:V1 localhost/toy:44
+
+      # Verbatim from build.yml, including the bind-mount path asymmetry.
+      - name: Chunk V1, with no baseline
+        run: |
+          set -euo pipefail
+          mkdir -p /mnt/oci/v1/blobs/sha256
+          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/v1/oci-layout
+          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/v1/index.json
+          podman run --rm --privileged \
+            -v /mnt/podman:/var/mnt/podman \
+            -v /mnt/oci:/var/mnt/oci \
+            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+            localhost/toy:44 \
+            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+              --max-layers 200 \
+              --from localhost/toy:44 \
+              --output "oci:/mnt/oci/v1:build"
+
+      - name: Retag to V2 and chunk again, WITH V1 as the baseline
+        run: |
+          set -euo pipefail
+          podman tag localhost/toy:V2 localhost/toy:44
+          mkdir -p /mnt/oci/v2/blobs/sha256
+          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/v2/oci-layout
+          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/v2/index.json
+          podman run --rm --privileged \
+            -v /mnt/podman:/var/mnt/podman \
+            -v /mnt/oci:/var/mnt/oci \
+            -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+            localhost/toy:44 \
+            rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+              --max-layers 200 \
+              --from localhost/toy:44 \
+              --previous-build "oci:/mnt/oci/v1:build" \
+              --output "oci:/mnt/oci/v2:build" \
+            || { echo "::warning::oci: transport rejected for --previous-build; rerunning without it"; \
+                 podman run --rm --privileged \
+                   -v /mnt/podman:/var/mnt/podman \
+                   -v /mnt/oci:/var/mnt/oci \
+                   -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+                   localhost/toy:44 \
+                   rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+                     --max-layers 200 \
+                     --from localhost/toy:44 \
+                     --output "oci:/mnt/oci/v2:build"; }
+
+      # The toy is small enough that a pull-back round trip is the cheapest
+      # honest way to read the shipped bytes: no tar spelunking, no guessing
+      # which chunk owns which file.
+      - name: Read what each chunked image actually contains
+        run: |
+          set -euo pipefail
+          for v in v1 v2; do
+            skopeo copy "oci:/mnt/oci/${v}:build" "containers-storage:localhost/chunked-${v}:test"
+            echo "=== chunked ${v} ==="
+            podman run --rm --entrypoint /bin/sh "localhost/chunked-${v}:test" -c \
+              'grep ^VERSION= /usr/lib/os-release; \
+               echo "toy-unowned:    $(cat /usr/lib/toy-unowned)"; \
+               echo "toy-generated:  $(cat /usr/share/pixmaps/toy-generated)"'
+          done
+
+      # V1 must read V1 and V2 must read V2. Anything else is the bug, and
+      # which line is wrong says which mechanism causes it.
+      - name: Verdict
+        run: |
+          set -euo pipefail
+          fail=0
+          for v in v1 v2; do
+            want=$(echo "$v" | tr 'a-z' 'A-Z')
+            got=$(podman run --rm --entrypoint /bin/sh "localhost/chunked-${v}:test" -c \
+                    'cat /usr/lib/toy-unowned')
+            stamp=$(podman run --rm --entrypoint /bin/sh "localhost/chunked-${v}:test" -c \
+                      '. /usr/lib/os-release; echo "$VERSION"')
+            echo "${v}: expected ${want} -- unowned file says ${got}, os-release says ${stamp}"
+            [ "${got}" = "${want}" ] || { echo "::error::${v} shipped a stale unpackaged file"; fail=1; }
+            [ "${stamp}" = "${want}" ] || { echo "::error::${v} shipped a stale os-release"; fail=1; }
+          done
+          exit "${fail}"
