@@ -60,6 +60,12 @@ jobs:
 
       - name: Which invocation reads local storage?
         run: |
+          # Every variant here is EXPECTED to exit non-zero -- timeout kills
+          # the ones that resolve, and the ones that fall back error out. The
+          # runner invokes this with `bash -e`, which set -uo does not clear,
+          # so the first attempt would take the whole step down before a
+          # single verdict printed. It did exactly that on the first try.
+          set +e
           set -uo pipefail
 
           # "Generating commit" = resolved from storage, which is the whole
