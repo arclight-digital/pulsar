@@ -204,6 +204,41 @@ code { font-family: "JetBrains Mono", ui-monospace, monospace; }
 }
 .install figcaption { flex-wrap: wrap; }
 .install figcaption strong { color: var(--star); }
+.install .hint strong { color: rgba(233, 237, 247, 0.92); }
+
+/* terminal tabs in the titlebar: the active one is bright with a cyan
+   baseline riding the caption's own border */
+.tabs-cap { padding-top: 0; padding-bottom: 0; }
+.tabs { display: flex; gap: 0.2rem; }
+.tabs [role="tab"] {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.82rem;
+  color: rgba(233, 237, 247, 0.55);
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s ease-out;
+}
+.tabs [role="tab"]:hover { color: var(--star); }
+.tabs [role="tab"]:focus-visible { outline-offset: -2px; }
+.tabs [role="tab"][aria-selected="true"] { color: var(--star); }
+.tabs [role="tab"][aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0.6rem;
+  right: 0.6rem;
+  bottom: -1px; /* sits on the caption border */
+  height: 2px;
+  background: var(--cyan);
+}
+.tabpanel .sums { justify-self: end; }
+.install .tabpanel code a {
+  color: var(--cyan);
+  text-decoration-color: rgba(62, 203, 255, 0.4);
+}
 .install .row {
   display: grid;
   grid-template-columns: auto 1fr auto;

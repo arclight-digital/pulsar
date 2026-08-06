@@ -66,6 +66,28 @@
     }));
   sysLight.addEventListener('change', reflect);
 
+  // ---- install tabs -------------------------------------------------------
+  // The default tab is whichever button starts aria-selected in the markup,
+  // so flipping the default is a markup edit, not a code change. Arrow keys
+  // move between tabs per the tablist pattern.
+  document.querySelectorAll('.tabs').forEach(list => {
+    const tabs = [...list.querySelectorAll('[role="tab"]')];
+    const select = (tab) => tabs.forEach(t => {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      const panel = document.getElementById(t.getAttribute('aria-controls'));
+      if (panel) panel.hidden = !on;
+    });
+    tabs.forEach(t => t.addEventListener('click', () => select(t)));
+    list.addEventListener('keydown', (e) => {
+      const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!dir) return;
+      const next = tabs[(tabs.indexOf(document.activeElement) + dir + tabs.length) % tabs.length];
+      next.focus();
+      select(next);
+    });
+  });
+
   // ---- copy buttons -------------------------------------------------------
   // data-copy-text wins (the verify session copies its one-line form);
   // otherwise the nearest row/figure's code. Denied clipboard falls back to

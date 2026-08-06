@@ -58,7 +58,11 @@ try { const t = localStorage.getItem('pulsar-theme');
       if (t) document.documentElement.dataset.theme = t; } catch {}
 </script>
 <link rel="stylesheet" href="style.css">
-<noscript><style>.deck, .copy { display: none; }</style></noscript>
+<noscript><style>
+  .deck, .copy, .tabs { display: none; }
+  /* without JS both install paths stack; nothing hides behind a dead tab */
+  .tabpanel[hidden] { display: block; }
+</style></noscript>
 </head>
 <body>
 
@@ -88,8 +92,19 @@ try { const t = localStorage.getItem('pulsar-theme');
     </p>
     <p class="srclink"><a href="https://github.com/arclight-digital/pulsar">Browse the source on GitHub&nbsp;→</a></p>
 
-    <figure class="term install" role="group" aria-label="Install commands">
-      <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> already on <strong>Fedora&nbsp;Silverblue / Kinoite&nbsp;44+</strong></figcaption>
+    <!-- Two install paths, worn as terminal tabs. The DEFAULT is whichever
+         tab starts aria-selected with its panel un-hidden -- flipping the
+         default to the ISO is a markup swap, not a code change. Without JS
+         the tab bar hides and both panels stack, so nothing is unreachable. -->
+    <figure class="term install" role="group" aria-label="Install">
+      <figcaption class="tabs-cap">
+        <span class="prompt" aria-hidden="true">&#10095;</span>
+        <div class="tabs" role="tablist" aria-label="Install method">
+          <button role="tab" id="tab-switch" aria-selected="true" aria-controls="panel-switch">bootc switch</button>
+          <button role="tab" id="tab-iso" aria-selected="false" aria-controls="panel-iso">weekly iso</button>
+        </div>
+      </figcaption>
+      <div class="tabpanel" id="panel-switch" role="tabpanel" aria-labelledby="tab-switch">
       <div class="row">
         <span class="which">standard</span>
         <code>sudo bootc switch \
@@ -126,11 +141,33 @@ try { const t = localStorage.getItem('pulsar-theme');
           </svg>
         </button>
       </div>
-      <p class="hint">Fresh machine? <a href="#iso">Take the ISO</a>, or install
-         <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora&nbsp;Silverblue</a>
-         and run one of&nbsp;these. The nvidia module comes signed &mdash;
+      <p class="hint">Already on <strong>Fedora&nbsp;Silverblue / Kinoite&nbsp;44+</strong>?
+         Run one of these. Fresh machine? The weekly iso is one tab over.
+         The nvidia module comes signed &mdash;
          <a href="https://github.com/arclight-digital/pulsar#install">enroll the cert once</a>
          and keep Secure&nbsp;Boot&nbsp;on.</p>
+      </div>
+      <div class="tabpanel" id="panel-iso" role="tabpanel" aria-labelledby="tab-iso" hidden>
+        <div class="row">
+          <span class="which">standard</span>
+          <code><a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso">pulsar-latest-x86_64.iso</a></code>
+          <span class="sums">
+            <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso.sha256">sha256</a>
+            <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso.sig">sig</a>
+          </span>
+        </div>
+        <div class="row">
+          <span class="which">nvidia</span>
+          <code><a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso">pulsar-nvidia-latest-x86_64.iso</a></code>
+          <span class="sums">
+            <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso.sha256">sha256</a>
+            <a href="https://lighthouse.arclight.digital/pulsar/iso/pulsar-nvidia-latest-x86_64.iso.sig">sig</a>
+          </span>
+        </div>
+        <p class="hint">x86_64 &middot; 5&ndash;6&nbsp;GB &middot; write to a USB&nbsp;stick,
+           boot,&nbsp;install. Checksummed and signed in the open &mdash;
+           <a href="#iso">verify below</a>.</p>
+      </div>
     </figure>
   </div>
 
