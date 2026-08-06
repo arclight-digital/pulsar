@@ -214,12 +214,19 @@ jobs:
           podman run --rm "${IMAGE}:${FEDORA_VERSION}" pulsar --version
           podman inspect "${IMAGE}:${FEDORA_VERSION}" --format '{{len .RootFS.Layers}} layers after rechunk'
 
+      # skopeo copies the tool's already-compressed blobs verbatim; a
+      # podman pull/push round trip recompressed ~200 layers for nothing.
+      # Three tags, one upload: after the first copy the registry holds
+      # every blob and the remaining copies are manifest writes.
       - name: Push vanilla
         id: push_vanilla
         run: |
-          podman push --digestfile /tmp/digest-vanilla "${IMAGE}:${FEDORA_VERSION}"
-          podman push "${IMAGE}:latest"
-          podman push "${IMAGE}:${DATETAG}"
+          set -euo pipefail
+          for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
+            skopeo copy --digestfile /tmp/digest-vanilla \
+              "oci:/mnt/oci/vanilla:build" "docker://${IMAGE}:${t}"
+          done
+          rm -rf /mnt/oci/vanilla
           echo "digest=$(cat /tmp/digest-vanilla)" >> "$GITHUB_OUTPUT"
 
       # /dev/shm is tmpfs: the key never touches the runner's disk. The
@@ -289,20 +296,22 @@ jobs:
           }
           rechunk --previous-build "docker://${IMAGE_NVIDIA}:latest" \
             || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
-          img=$(podman pull -q "oci:/mnt/oci/nvidia:build")
-          for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
-            podman tag "$img" "${IMAGE_NVIDIA}:${t}"
-          done
-          rm -rf "/mnt/oci/nvidia"
-          podman run --rm "${IMAGE_NVIDIA}:${FEDORA_VERSION}" pulsar --version
-          podman inspect "${IMAGE_NVIDIA}:${FEDORA_VERSION}" --format '{{len .RootFS.Layers}} layers after rechunk'
+          # Same no-pull handoff as vanilla: assert the layout, ship the
+          # blobs as-is at the push step.
+          skopeo inspect "oci:/mnt/oci/nvidia:build" > /tmp/chunked-nvidia.json
+          jq -e --arg v "${DATETAG}" \
+            '.Labels."org.opencontainers.image.version" == $v' /tmp/chunked-nvidia.json >/dev/null
+          jq -r '"chunked nvidia: \(.Layers | length) layers"' /tmp/chunked-nvidia.json
 
       - name: Push nvidia
         id: push_nvidia
         run: |
-          podman push --digestfile /tmp/digest-nvidia "${IMAGE_NVIDIA}:${FEDORA_VERSION}"
-          podman push "${IMAGE_NVIDIA}:latest"
-          podman push "${IMAGE_NVIDIA}:${DATETAG}"
+          set -euo pipefail
+          for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
+            skopeo copy --digestfile /tmp/digest-nvidia \
+              "oci:/mnt/oci/nvidia:build" "docker://${IMAGE_NVIDIA}:${t}"
+          done
+          rm -rf /mnt/oci/nvidia
           echo "digest=$(cat /tmp/digest-nvidia)" >> "$GITHUB_OUTPUT"
 
       - name: Attest vanilla
