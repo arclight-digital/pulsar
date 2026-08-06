@@ -71,7 +71,7 @@ jobs:
           || github.event.inputs.variant == 'pulsar-nvidia' && '["pulsar-nvidia"]'
           || '["pulsar","pulsar-nvidia"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: sigstore/cosign-installer@v3
 
       # Everything that touches multiple GB lives on /mnt: the runner's root

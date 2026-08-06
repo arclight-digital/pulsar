@@ -57,7 +57,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Both images together are ~17 GB plus intermediate layers, well past
       # what a stock runner has free on /. The temp disk has room to spare.
@@ -90,7 +90,7 @@ jobs:
       # Tooling for the SBOM/signing steps at the end. Pinned to major tags
       # so a compromised point release cannot silently change what signs.
       # No syft: see the SBOM step for why it was removed.
-      - uses: oras-project/setup-oras@v1
+      - uses: oras-project/setup-oras@v2
       - uses: sigstore/cosign-installer@v3
 
       # Per-build version, Fedora's own shape: <release>.<YYYYMMDD>.<n>.
@@ -320,14 +320,14 @@ jobs:
           echo "digest=$(cat /tmp/digest-nvidia)" >> "$GITHUB_OUTPUT"
 
       - name: Attest vanilla
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push_vanilla.outputs.digest }}
           push-to-registry: true
 
       - name: Attest nvidia
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE_NVIDIA }}
           subject-digest: ${{ steps.push_nvidia.outputs.digest }}
