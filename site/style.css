@@ -56,6 +56,10 @@ body {
   caret-color: var(--accent);
 }
 ::selection { background: var(--accent); color: var(--ground); }
+/* pretty does the paragraph-level work -- no orphans, a calmer rag; balance
+   stays on the display lines that want symmetric halves (headings, tagline,
+   decks), where its class specificity outranks this. */
+p, li, figcaption { text-wrap: pretty; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 a { color: var(--accent); text-underline-offset: 0.2em; }
 

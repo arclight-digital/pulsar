@@ -63,6 +63,9 @@ fi
 if [ -f "${REPO}/site/manifest.json" ]; then
   cp "${REPO}/site/manifest.json" "${OUT}/"
 fi
+# crawler plumbing: robots points at the sitemap, the sitemap names the one
+# page there is
+cp "${REPO}/site/robots.txt" "${REPO}/site/sitemap.xml" "${OUT}/"
 cp "${REPO}/assets/brand/pulsar-mark.svg" \
    "${REPO}/assets/brand/pulsar-mark-color-dark.svg" \
    "${REPO}/assets/brand/pulsar-animated.svg" \

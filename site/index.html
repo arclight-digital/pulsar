@@ -3,11 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pulsar — lighthouses don't drift</title>
+<!-- The title carries the keywords; og:title keeps the tagline -- search
+     snippets and share cards have different jobs. -->
+<title>Pulsar — an immutable Fedora for gaming &amp; development</title>
 <meta name="description" content="Pulsar: an immutable Fedora spin tuned for gaming and development. Rebuilt nightly; the last good version is always one reboot away.">
-<!-- og:image/og:url must be absolute; crawlers resolve nothing relative.
-     Keep in sync with the live domain. -->
+<!-- Canonical matters here: the page is also reachable at a github.io
+     subpath, and split indexing helps neither. og:image/og:url must be
+     absolute; crawlers resolve nothing relative. -->
+<link rel="canonical" href="https://pulsar.arclight.digital/">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="Pulsar">
 <meta property="og:title" content="Pulsar — lighthouses don't drift">
 <meta property="og:description" content="An immutable Fedora spin tuned for gaming and development. Rebuilt nightly; the last good version is always one reboot away.">
 <meta property="og:url" content="https://pulsar.arclight.digital/">
@@ -16,7 +21,37 @@
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="The Pulsar mark and wordmark over the silk wallpaper: lighthouses don't drift.">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0B0E1A" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#E9EDF7" media="(prefers-color-scheme: light)">
 <link rel="icon" href="assets/favicon.svg">
+<!-- The hero ground and the UI faces are the LCP path; preloads keep the
+     first paint from waiting on discovery. Fonts need crossorigin even
+     same-origin -- font fetches are CORS-mode, and a preload that does not
+     match is a double download. -->
+<link rel="preload" as="image" href="assets/silk-still-dark.jpg" media="(prefers-color-scheme: dark)">
+<link rel="preload" as="image" href="assets/silk-still-light.jpg" media="(prefers-color-scheme: light)">
+<link rel="preload" as="font" type="font/ttf" href="assets/HostGrotesk-Regular.ttf" crossorigin>
+<link rel="preload" as="font" type="font/ttf" href="assets/HostGrotesk-Bold.ttf" crossorigin>
+<!-- Structured data, honest only: everything here is real and verifiable.
+     softwareVersion is the VERSION splice, so it names the actual build. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Pulsar",
+  "applicationCategory": "OperatingSystem",
+  "operatingSystem": "Linux",
+  "softwareVersion": "<!--VERSION-->",
+  "description": "An immutable Fedora spin tuned for gaming and development, built and signed in CI, published nightly with SBOMs and provenance attestations.",
+  "url": "https://pulsar.arclight.digital/",
+  "image": "https://pulsar.arclight.digital/assets/og.jpg",
+  "downloadUrl": "https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso",
+  "license": "https://github.com/arclight-digital/pulsar/blob/main/LICENSE",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Organization", "name": "Arclight", "url": "https://arclight.build" },
+  "sameAs": ["https://github.com/arclight-digital/pulsar"]
+}
+</script>
 <script>
 /* before first paint: a stored theme choice must not flash the system theme */
 try { const t = localStorage.getItem('pulsar-theme');
@@ -95,7 +130,7 @@ try { const t = localStorage.getItem('pulsar-theme');
          <a href="https://fedoraproject.org/atomic-desktops/silverblue/">Fedora Silverblue</a>
          and run one of these. The nvidia module comes signed &mdash;
          <a href="https://github.com/arclight-digital/pulsar#install">enroll the cert once</a>
-         and keep Secure Boot on.</p>
+         and keep Secure&nbsp;Boot on.</p>
     </figure>
   </div>
 
@@ -237,7 +272,7 @@ try { const t = localStorage.getItem('pulsar-theme');
       <p>For work: distrobox for any userland, libvirt/KVM for real machines,
          GitHub CLI in the base. Apps are Flatpaks; the image is the OS.</p>
       <p>The NVIDIA open module is compiled against the image's exact kernel
-         and signed, so Secure Boot stays on.</p>
+         and signed, so Secure&nbsp;Boot stays on.</p>
     </div>
     <!-- Rendered at build time from the nvidia image's own baked manifest --
          the same file `pulsar manifest` reads on the machine -- and committed
