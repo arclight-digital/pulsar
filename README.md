@@ -5,7 +5,7 @@
 <h1 align="center">Pulsar</h1>
 
 <p align="center">
-  <strong>Lighthouses don&rsquo;t drift.</strong><br>
+  <strong>Your lighthouse in the sky.</strong><br>
   An immutable Fedora for gaming and development, built and signed entirely in CI.
 </p>
 

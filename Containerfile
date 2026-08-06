@@ -75,8 +75,9 @@ RUN dnf5 install -y 'dnf5-command(copr)' && \
 #                   this project asks you to trust it by should not require
 #                   building a container first.
 #   greenboot       boot-time health checks with automatic rollback. This is
-#                   what turns "lighthouses don't drift" from a manual
-#                   `bootc rollback` into something the machine does itself --
+#                   what turns "the last good version is one reboot away"
+#                   from a manual `bootc rollback` into something the
+#                   machine does itself --
 #                   and a manual rollback is precisely what you CANNOT run
 #                   when the deployment you need to escape has no session to
 #                   type it in. Checks ship in system_files under
