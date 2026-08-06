@@ -7,8 +7,10 @@
 # knows how Pulsar is built should own it -- the infra repo spawns a droplet
 # and hands it a ref, and everything after that is this.
 #
-# Deliberately thin. The pipeline is scripts/build.sh, the same code a
-# workstation runs; this adds versioning and alerting and nothing else.
+# Deliberately thin, and it stays a scheduler. The pipeline is
+# scripts/build.sh and everything downstream of the push is
+# scripts/publish.sh -- the same code a workstation runs, and the same code
+# build.yml calls. This adds versioning, ordering and alerting, nothing else.
 #
 # A timer that silently stops firing is the classic failure of moving off
 # hosted CI: GitHub emails when a workflow fails, a systemd timer does not,
@@ -27,6 +29,11 @@
 #   PULSAR_SIGNER_TOKEN_FILE    bearer token, root-owned, 0400
 #   PULSAR_BUILD_WORK           OCI layouts; wants the big volume
 #   PULSAR_HEALTHCHECK_URL      pinged on success (optional)
+#   R2_BUCKET, R2_ACCOUNT_ID    where SBOMs and changelogs are published
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY    R2 credentials
+#   PULSAR_GIT_TOKEN_FILE       token for the site commit
+#   PULSAR_PUBLISH_BRANCH       branch the site commit lands on (default main)
+#   PULSAR_PUBLISH              yes (default) | dry-run | no
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,6 +43,12 @@ IMAGE="${IMAGE:?IMAGE is not set}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:?IMAGE_NVIDIA is not set}"
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
 WORK="${PULSAR_BUILD_WORK:-/var/mnt/pulsar-build}"
+
+# All of it in one function, because publish.sh syncs the checkout to origin
+# before it commits and that rewrites this file underneath the running shell.
+# Bash parses a function whole; it re-reads the file by offset between
+# top-level statements, and there are none left after the call below.
+main() {
 
 started="$(date -u +%s)"
 echo "pulsar nightly starting $(date -u -Iseconds)"
@@ -48,6 +61,14 @@ echo "building $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 VERSION="$("${REPO}/scripts/next-version.sh" --fedora "${FEDORA_VERSION}" "${IMAGE}")"
 echo "this build is ${VERSION}"
 
+# MUST happen before the build. This is the image tonight's changelog says it
+# came from, and the push below moves :latest onto the new one -- after that
+# the outgoing digest is only recoverable if someone wrote it down, and this
+# is the someone. Empty on the very first run, which is the baseline case and
+# not an error.
+PREV_DIGEST="$(oras resolve "${IMAGE}:latest" 2>/dev/null || true)"
+echo "previous :latest digest: ${PREV_DIGEST:-<none, first build>}"
+
 "${REPO}/scripts/build.sh" \
   --variant all \
   --version "${VERSION}" \
@@ -57,6 +78,28 @@ echo "this build is ${VERSION}"
   --signer-token-file "${PULSAR_SIGNER_TOKEN_FILE:?PULSAR_SIGNER_TOKEN_FILE is not set}" \
   --work "${WORK}" \
   --push
+
+# Describe what was just published: SBOMs onto the images, the changelog
+# against last night, the page. Part of the nightly rather than a step after
+# it -- an image nobody can inspect is a blob users are asked to trust, and a
+# night that ships one without saying what changed has not finished.
+case "${PULSAR_PUBLISH:-yes}" in
+  no) echo "PULSAR_PUBLISH=no -- images pushed, nothing described" >&2 ;;
+  *)
+    publish_args=(
+      --version "${VERSION}"
+      --image "${IMAGE}"
+      --image-nvidia "${IMAGE_NVIDIA}"
+      --prev-digest "${PREV_DIGEST}"
+      --work "${WORK}"
+      --branch "${PULSAR_PUBLISH_BRANCH:-main}"
+    )
+    [ "${PULSAR_PUBLISH:-yes}" = dry-run ] && publish_args+=(--dry-run)
+    [ -n "${PULSAR_GIT_TOKEN_FILE:-}" ] \
+      && publish_args+=(--git-token-file "${PULSAR_GIT_TOKEN_FILE}")
+    "${REPO}/scripts/publish.sh" "${publish_args[@]}"
+    ;;
+esac
 
 elapsed=$(( $(date -u +%s) - started ))
 echo "pulsar nightly ${VERSION} finished in ${elapsed}s"
@@ -69,3 +112,7 @@ if [ -n "${PULSAR_HEALTHCHECK_URL:-}" ]; then
 else
   echo "NOTE: PULSAR_HEALTHCHECK_URL unset -- nothing is watching this timer." >&2
 fi
+
+}
+
+main

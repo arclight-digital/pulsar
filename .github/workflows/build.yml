@@ -23,9 +23,12 @@
 # and it stays meaningful only because the build signs with the cert fetched
 # from the signer rather than the committed one.
 #
-# The image pipeline itself lives in scripts/build.sh; this file supplies the
-# runner-specific parts (credentials, versioning, attestation, SBOMs) and
-# calls it.
+# Almost nothing happens in this file. The image pipeline is
+# scripts/build.sh and everything after the push -- SBOMs, changelog, site --
+# is scripts/publish.sh; both are the same code the build host runs. What is
+# left here is genuinely runner-specific: credentials, the storage layout, the
+# render toolchain, and provenance attestation, which only exists inside
+# Actions.
 name: build
 
 on:
@@ -264,216 +267,43 @@ jobs:
           push-to-registry: true
 
       # =====================================================================
-      # Supply chain: what is IN the image, and what changed since last night.
+      # Everything downstream of the push -- SBOMs, the changelog, the site --
+      # is scripts/publish.sh, and this workflow calls it rather than
+      # reimplementing it. Same reasoning as the build half above: two
+      # implementations of the changelog is how you get a night where the site
+      # says something the registry does not.
       #
-      # The attestation above proves WHERE an image came from. An SBOM proves
-      # WHAT IS IN IT. Both are needed before "nightly image you can inspect"
-      # means anything -- provenance without contents just tells you who built
-      # the blob you still cannot see into.
+      # It runs where the images are. rpm-sbom.sh reads the RPM database out
+      # of the image and the manifest card is a transcript of the image's own
+      # baked manifest, so this needs local podman storage -- which is here,
+      # and which is why the same script runs on the build host rather than on
+      # anything that would have to pull 17GB back down to do it.
       #
-      # SBOMs are scanned from the REGISTRY by digest, not from local storage:
-      # that scans the exact bytes that were pushed, so the SBOM cannot
-      # describe an image that differs from the one users pull.
+      # ONE SEQUENCING RULE, and it bites quietly: this step and the DO
+      # nightly must never both run. Step 1 (build) can overlap -- they race
+      # for :latest and next-version.sh keeps the tags distinct -- but if both
+      # write vanilla-latest.spdx.json, the next night's diff baseline is
+      # whichever finished last and the changelog is wrong without saying so.
+      # When publish.sh is enabled on the build host, the `schedule:` trigger
+      # at the top of this file comes out in the same change.
       # =====================================================================
-      # This used syft and could not work. syft scans an IMAGE by squashing
-      # and indexing every layer, which on this image needs more than the
-      # 16GB a standard runner has. That is measured, not inferred: the first
-      # run here died on signal 15 after 6m41s, and reproducing it locally
-      # under a 16GB cgroup cap got the OOM killer to log 16.67GB with stock
-      # settings, 16.74GB with file analysis off, and 16.74GB with only the
-      # RPM cataloger selected. The figure barely moves because the cost is
-      # the layer indexing, before any cataloger runs -- no syft flag avoids
-      # it, and disk was never the problem (145GB, 60% free).
-      #
-      # scripts/rpm-sbom.sh reads the RPM database the image already carries
-      # and produces the SAME 1790 packages in 0.49s and 52MB. That equality
-      # was checked against syft's own rpm-db cataloger on this image, which
-      # is what makes dropping syft a simplification rather than a downgrade.
-      - name: Generate SBOMs
-        run: |
-          set -euo pipefail
-          ./scripts/rpm-sbom.sh "${IMAGE}:${FEDORA_VERSION}"        > sbom-vanilla.spdx.json
-          ./scripts/rpm-sbom.sh "${IMAGE_NVIDIA}:${FEDORA_VERSION}" > sbom-nvidia.spdx.json
-          for f in sbom-vanilla sbom-nvidia; do
-            n=$(jq '[.packages[] | select(.versionInfo)] | length' "${f}.spdx.json")
-            echo "${f}: ${n} packages"
-            [ "$n" -gt 100 ] || { echo "::error::${f} has only ${n} packages; the SBOM is not usable"; exit 1; }
-          done
-          # The nvidia image derives from vanilla, so it can never legitimately
-          # carry fewer packages. If it does, the wrong image was inspected.
-          v=$(jq '.packages | length' sbom-vanilla.spdx.json)
-          n=$(jq '.packages | length' sbom-nvidia.spdx.json)
-          [ "$n" -ge "$v" ] || { echo "::error::nvidia (${n}) has fewer packages than vanilla (${v})"; exit 1; }
-
-      # Attached to the image itself, so the SBOM travels with the thing it
-      # describes and is fetchable by anyone with `oras discover`. R2 gets a
-      # copy below, but the registry copy is the authoritative one.
-      - name: Attach SBOMs as OCI referrers
-        run: |
-          oras attach --artifact-type application/spdx+json \
-            "${IMAGE}@${{ steps.push_vanilla.outputs.digest }}" \
-            sbom-vanilla.spdx.json:application/spdx+json
-          oras attach --artifact-type application/spdx+json \
-            "${IMAGE_NVIDIA}@${{ steps.push_nvidia.outputs.digest }}" \
-            sbom-nvidia.spdx.json:application/spdx+json
-
-      # The diff baseline comes from R2's stable key, NOT from discovering the
-      # previous image's referrer. `oras discover` has changed its JSON shape
-      # between releases (manifests[] vs referrers[], --output vs --format),
-      # and a changelog that silently empties itself when a tool updates is
-      # worse than no changelog. A fixed R2 key cannot drift like that.
-      - name: Build the changelog against last night's SBOM
+      - name: Publish SBOMs, changelog and site
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          # AWS CLI v2 sends checksum headers R2 has historically rejected.
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          R2_BUCKET: ${{ vars.R2_BUCKET }}
-          FROM_REF: ${{ env.IMAGE }}@${{ env.PREV_DIGEST }}
-          TO_REF: ${{ env.IMAGE }}@${{ steps.push_vanilla.outputs.digest }}
-          TO_DIGEST: ${{ steps.push_vanilla.outputs.digest }}
-          FROM_DIGEST: ${{ env.PREV_DIGEST }}
-        run: |
-          set -euo pipefail
-          baseline=false
-          aws s3 cp "s3://${R2_BUCKET}/pulsar/sbom/vanilla-latest.spdx.json" prev.spdx.json \
-            --endpoint-url "${R2_ENDPOINT}" 2>/dev/null || baseline=true
-
-          if [ "$baseline" = true ]; then
-            echo "no previous SBOM in R2 -- emitting a baseline changelog"
-            jq -n --arg g "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                  --arg to "${IMAGE}@${{ steps.push_vanilla.outputs.digest }}" '{
-              generated: $g, baseline: true,
-              from: {ref: "", digest: ""}, to: {ref: $to, digest: ""},
-              summary: {added:0, removed:0, upgraded:0, downgraded:0, changed:0},
-              added: [], removed: [], changed: []
-            }' > changelog.json
-          else
-            # Runs inside Fedora on purpose: the direction of a version change
-            # is decided by rpmdev-vercmp, which implements real RPM ordering
-            # (epochs, tildes, carets). GNU sort -V gets those wrong, and an
-            # "upgraded" label that is actually a downgrade is a lie.
-            podman run --rm -v "${PWD}":/w:z -w /w \
-              -e FROM_REF -e TO_REF -e FROM_DIGEST -e TO_DIGEST \
-              "registry.fedoraproject.org/fedora:${FEDORA_VERSION}" \
-              bash -c 'dnf5 -y install jq rpmdevtools >/dev/null 2>&1 &&
-                       ./scripts/sbom-changelog.sh prev.spdx.json sbom-vanilla.spdx.json' \
-              > changelog.json
-          fi
-          jq '.summary' changelog.json
-
-      - name: Publish SBOMs and changelog to R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
           R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
           R2_BUCKET: ${{ vars.R2_BUCKET }}
         run: |
           set -euo pipefail
-          up() { aws s3 cp "$1" "s3://${R2_BUCKET}/$2" --endpoint-url "${R2_ENDPOINT}"; }
-          # Immutable, per-build copies first...
-          up sbom-vanilla.spdx.json "pulsar/sbom/${DATETAG}-vanilla.spdx.json"
-          up sbom-nvidia.spdx.json  "pulsar/sbom/${DATETAG}-nvidia.spdx.json"
-          up changelog.json         "pulsar/changelog/${DATETAG}.json"
-          # ...then the moving pointers. vanilla-latest.spdx.json is the key
-          # the NEXT nightly diffs against, so it is written last: if anything
-          # above failed, the baseline still describes a real published image.
-          up changelog.json         "pulsar/changelog/latest.json"
-          up sbom-nvidia.spdx.json  "pulsar/sbom/nvidia-latest.spdx.json"
-          up sbom-vanilla.spdx.json "pulsar/sbom/vanilla-latest.spdx.json"
-
-      # Renders here, in Actions, where jq exists -- NOT in site/build.sh,
-      # which Cloudflare runs and which stays dependency-free on purpose.
-      #
-      # This commit touches only site/, which build.yml's paths-ignore
-      # excludes, so it cannot retrigger an image build. It does wake
-      # Cloudflare's git integration, which is exactly the point.
-      - name: Render and commit the site changelog and manifest
-        run: |
-          set -euo pipefail
-
-          # The manifest card on the page is a transcript of the image's own
-          # baked manifest, extracted from the nvidia image just built --
-          # never hand-written HTML wearing terminal chrome. Pulled out here,
-          # once, because publish() below may run more than once and this is
-          # the expensive part.
-          podman run --rm "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
-            cat /usr/share/pulsar/manifest.json > manifest.json
-
-          # SYNC FIRST, THEN RENDER. This used to render against the checkout
-          # and reconcile afterwards with `git pull --rebase`, which was wrong
-          # twice over.
-          #
-          # The quiet failure: an image build takes fifteen minutes, so by the
-          # time this step runs the checkout can be several commits stale --
-          # INCLUDING the renderers themselves. Rendering with the stale copy
-          # and rebasing means the nightly silently reverts whatever changed
-          # about the output. A commit that dropped a row from
-          # render-manifest.sh was undone exactly this way, and a rebase does
-          # it without complaining.
-          #
-          # The loud one: these five files are wholly REGENERATED each run, so
-          # a rebase is two full-file rewrites with no common hunk. It
-          # conflicts whenever anything else has touched them -- which is
-          # every time two builds overlap. There is nothing to rebase if the
-          # commit is built on the tip to begin with.
-          #
-          # The generated inputs (changelog.json, manifest.json) sit at the
-          # workspace root and are untracked, so the reset cannot take them.
-          git config user.name  "pulsar-ci"
-          git config user.email "ci@arclight.build"
-
-          publish() {
-            git fetch -q --depth=1 origin "${GITHUB_REF_NAME}" || return 1
-            git reset -q --hard FETCH_HEAD || return 1
-
-            cp changelog.json site/changelog.json                            || return 1
-            ./scripts/render-changelog.sh changelog.json > site/changelog.html || return 1
-            cp manifest.json site/manifest.json                              || return 1
-            ./scripts/render-manifest.sh manifest.json > site/manifest.html  || return 1
-            jq -r '.version // "nightly"' manifest.json > site/version.txt   || return 1
-
-            # Compare CONTENT, not the file. Every build stamps fresh
-            # timestamps and digests, so a byte comparison always differs and
-            # would commit every single night even when nothing in the image
-            # moved -- daily bot noise in a hand-written history.
-            local norm mnorm new old new_mf old_mf
-            norm='del(.generated, .from, .to)'
-            new=$(jq -S "$norm" changelog.json)
-            old=$(git show "HEAD:site/changelog.json" 2>/dev/null | jq -S "$norm" 2>/dev/null || echo "__none__")
-            mnorm='del(.version, .built)'
-            new_mf=$(jq -S "$mnorm" manifest.json)
-            old_mf=$(git show "HEAD:site/manifest.json" 2>/dev/null | jq -S "$mnorm" 2>/dev/null || echo "__none__")
-            if [ "$new" = "$old" ] && [ "$new_mf" = "$old_mf" ]; then
-              echo "no package or manifest changes since the last commit; nothing to commit"
-              return 2
-            fi
-
-            # Stage BEFORE testing. `git diff` ignores untracked files, so on
-            # the first run -- when these files are not in the repo yet -- it
-            # reported "unchanged" and skipped the commit, which is precisely
-            # the run that had to make it. That is why site/changelog.json was
-            # never committed.
-            git add site/changelog.json site/changelog.html \
-                    site/manifest.json site/manifest.html site/version.txt || return 1
-            git commit -q -m "site: package changelog for ${DATETAG}" || return 1
-            git push -q origin "HEAD:${GITHUB_REF_NAME}"
-          }
-
-          # A push can still lose a race with a commit that landed in the last
-          # second. That is a retry, not a merge: resync and render again.
-          for attempt in 1 2 3; do
-            set +e; publish; rc=$?; set -e
-            case "$rc" in
-              0) echo "site commit published (attempt ${attempt})"; exit 0 ;;
-              2) exit 0 ;;
-            esac
-            echo "could not publish (attempt ${attempt}); resyncing" >&2
-            sleep $((attempt * 5))
-          done
-          echo "gave up publishing the site commit after 3 attempts" >&2
-          exit 1
+          # No --git-token-file: actions/checkout leaves a credential helper
+          # in the checkout, so the site commit pushes with what is already
+          # there. A build host has no such thing and passes one.
+          scripts/publish.sh \
+            --version "${DATETAG}" \
+            --image "${IMAGE}" \
+            --image-nvidia "${IMAGE_NVIDIA}" \
+            --digest-vanilla "${{ steps.push_vanilla.outputs.digest }}" \
+            --digest-nvidia "${{ steps.push_nvidia.outputs.digest }}" \
+            --prev-digest "${PREV_DIGEST}" \
+            --work /var/mnt/oci \
+            --branch "${GITHUB_REF_NAME}"

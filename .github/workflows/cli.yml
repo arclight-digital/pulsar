@@ -61,6 +61,7 @@ jobs:
             scripts/diff-chunk-metadata.sh \
             scripts/next-version.sh \
             scripts/nightly.sh \
+            scripts/publish.sh \
             scripts/rechunk-selftest.sh \
             scripts/sign-file-oracle \
             scripts/sync-branding.sh \
