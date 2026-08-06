@@ -1,202 +1,21 @@
 {
-  "generated": "2026-08-06T03:38:23Z",
+  "generated": "2026-08-06T04:59:24Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:233ec00877fa0de9d3b3f97a7b89b8cc9a6e706ff8ae88dca61aae7ce352f6be",
-    "digest": "sha256:233ec00877fa0de9d3b3f97a7b89b8cc9a6e706ff8ae88dca61aae7ce352f6be"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:9a31c952d3466d51d3d9129bc8eb3ecf321742f43160cb97add4a2c34216d721",
+    "digest": "sha256:9a31c952d3466d51d3d9129bc8eb3ecf321742f43160cb97add4a2c34216d721"
   },
   "to": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:1a9f2479e8a1214af99476bb325828fb110000e454d435ca7402f3764b1f9b6b",
-    "digest": "sha256:1a9f2479e8a1214af99476bb325828fb110000e454d435ca7402f3764b1f9b6b"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:2b19d924adb93c4c5315ba17827a45c9c72f41995702de5c0642ee462fdcda8d",
+    "digest": "sha256:2b19d924adb93c4c5315ba17827a45c9c72f41995702de5c0642ee462fdcda8d"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 30,
+    "upgraded": 0,
     "downgraded": 0,
     "changed": 0
   },
   "added": [],
   "removed": [],
-  "changed": [
-    {
-      "name": "at-spi2-atk",
-      "from": "2.60.5-1.fc44",
-      "to": "2.60.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "at-spi2-core",
-      "from": "2.60.5-1.fc44",
-      "to": "2.60.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "atk",
-      "from": "2.60.5-1.fc44",
-      "to": "2.60.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "coreutils",
-      "from": "9.10-4.fc44",
-      "to": "9.10-5.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "coreutils-common",
-      "from": "9.10-4.fc44",
-      "to": "9.10-5.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "glib2",
-      "from": "2.88.2-1.fc44",
-      "to": "2.88.3-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-control-center",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-control-center-filesystem",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-user-docs",
-      "from": "50.2-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-afc",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-afp",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-archive",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-client",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-fuse",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-goa",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-gphoto2",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-mtp",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gvfs-smb",
-      "from": "1.60.1-1.fc44",
-      "to": "1.60.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-core",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules-core",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules-extra",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-tools",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-tools-libs",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "python3-perf",
-      "from": "7.1.5-201.fc44",
-      "to": "7.1.6-201.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "vte-profile",
-      "from": "0.84.0-1.fc44",
-      "to": "0.84.1-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "vte291",
-      "from": "0.84.0-1.fc44",
-      "to": "0.84.1-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "vte291-gtk4",
-      "from": "0.84.0-1.fc44",
-      "to": "0.84.1-1.fc44",
-      "direction": "upgraded"
-    }
-  ]
+  "changed": []
 }
