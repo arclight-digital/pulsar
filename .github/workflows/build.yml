@@ -465,42 +465,85 @@ jobs:
       - name: Render and commit the site changelog and manifest
         run: |
           set -euo pipefail
-          cp changelog.json site/changelog.json
-          ./scripts/render-changelog.sh changelog.json > site/changelog.html
 
           # The manifest card on the page is a transcript of the image's own
           # baked manifest, extracted from the nvidia image just built --
-          # never hand-written HTML wearing terminal chrome.
+          # never hand-written HTML wearing terminal chrome. Pulled out here,
+          # once, because publish() below may run more than once and this is
+          # the expensive part.
           podman run --rm "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
             cat /usr/share/pulsar/manifest.json > manifest.json
-          cp manifest.json site/manifest.json
-          ./scripts/render-manifest.sh manifest.json > site/manifest.html
-          jq -r '.version // "nightly"' manifest.json > site/version.txt
 
-          # Compare CONTENT, not the file. Every build stamps fresh timestamps
-          # and digests, so a byte comparison always differs and would commit
-          # every single night even when nothing in the image moved -- daily
-          # bot noise in a hand-written history.
-          norm='del(.generated, .from, .to)'
-          new=$(jq -S "$norm" changelog.json)
-          old=$(git show "HEAD:site/changelog.json" 2>/dev/null | jq -S "$norm" 2>/dev/null || echo "__none__")
-          mnorm='del(.version, .built)'
-          new_mf=$(jq -S "$mnorm" manifest.json)
-          old_mf=$(git show "HEAD:site/manifest.json" 2>/dev/null | jq -S "$mnorm" 2>/dev/null || echo "__none__")
-          if [ "$new" = "$old" ] && [ "$new_mf" = "$old_mf" ]; then
-            echo "no package or manifest changes since the last commit; nothing to commit"
-            exit 0
-          fi
-
+          # SYNC FIRST, THEN RENDER. This used to render against the checkout
+          # and reconcile afterwards with `git pull --rebase`, which was wrong
+          # twice over.
+          #
+          # The quiet failure: an image build takes fifteen minutes, so by the
+          # time this step runs the checkout can be several commits stale --
+          # INCLUDING the renderers themselves. Rendering with the stale copy
+          # and rebasing means the nightly silently reverts whatever changed
+          # about the output. A commit that dropped a row from
+          # render-manifest.sh was undone exactly this way, and a rebase does
+          # it without complaining.
+          #
+          # The loud one: these five files are wholly REGENERATED each run, so
+          # a rebase is two full-file rewrites with no common hunk. It
+          # conflicts whenever anything else has touched them -- which is
+          # every time two builds overlap. There is nothing to rebase if the
+          # commit is built on the tip to begin with.
+          #
+          # The generated inputs (changelog.json, manifest.json) sit at the
+          # workspace root and are untracked, so the reset cannot take them.
           git config user.name  "pulsar-ci"
           git config user.email "ci@arclight.build"
-          # Stage BEFORE testing. `git diff` ignores untracked files, so on the
-          # first run -- when these files are not in the repo yet -- it reported
-          # "unchanged" and skipped the commit, which is precisely the run that
-          # had to make it. That is why site/changelog.json was never committed.
-          git add site/changelog.json site/changelog.html site/manifest.json site/manifest.html site/version.txt
-          git commit -m "site: package changelog for ${DATETAG}"
-          # Rebase rather than force: a human push that landed while the image
-          # was building must not be discarded by the nightly.
-          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          publish() {
+            git fetch -q --depth=1 origin "${GITHUB_REF_NAME}" || return 1
+            git reset -q --hard FETCH_HEAD || return 1
+
+            cp changelog.json site/changelog.json                            || return 1
+            ./scripts/render-changelog.sh changelog.json > site/changelog.html || return 1
+            cp manifest.json site/manifest.json                              || return 1
+            ./scripts/render-manifest.sh manifest.json > site/manifest.html  || return 1
+            jq -r '.version // "nightly"' manifest.json > site/version.txt   || return 1
+
+            # Compare CONTENT, not the file. Every build stamps fresh
+            # timestamps and digests, so a byte comparison always differs and
+            # would commit every single night even when nothing in the image
+            # moved -- daily bot noise in a hand-written history.
+            local norm mnorm new old new_mf old_mf
+            norm='del(.generated, .from, .to)'
+            new=$(jq -S "$norm" changelog.json)
+            old=$(git show "HEAD:site/changelog.json" 2>/dev/null | jq -S "$norm" 2>/dev/null || echo "__none__")
+            mnorm='del(.version, .built)'
+            new_mf=$(jq -S "$mnorm" manifest.json)
+            old_mf=$(git show "HEAD:site/manifest.json" 2>/dev/null | jq -S "$mnorm" 2>/dev/null || echo "__none__")
+            if [ "$new" = "$old" ] && [ "$new_mf" = "$old_mf" ]; then
+              echo "no package or manifest changes since the last commit; nothing to commit"
+              return 2
+            fi
+
+            # Stage BEFORE testing. `git diff` ignores untracked files, so on
+            # the first run -- when these files are not in the repo yet -- it
+            # reported "unchanged" and skipped the commit, which is precisely
+            # the run that had to make it. That is why site/changelog.json was
+            # never committed.
+            git add site/changelog.json site/changelog.html \
+                    site/manifest.json site/manifest.html site/version.txt || return 1
+            git commit -q -m "site: package changelog for ${DATETAG}" || return 1
+            git push -q origin "HEAD:${GITHUB_REF_NAME}"
+          }
+
+          # A push can still lose a race with a commit that landed in the last
+          # second. That is a retry, not a merge: resync and render again.
+          for attempt in 1 2 3; do
+            set +e; publish; rc=$?; set -e
+            case "$rc" in
+              0) echo "site commit published (attempt ${attempt})"; exit 0 ;;
+              2) exit 0 ;;
+            esac
+            echo "could not publish (attempt ${attempt}); resyncing" >&2
+            sleep $((attempt * 5))
+          done
+          echo "gave up publishing the site commit after 3 attempts" >&2
+          exit 1
