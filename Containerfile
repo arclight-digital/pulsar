@@ -446,8 +446,15 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl disable NetworkManager-wait-online.service && \
     plymouth-set-default-theme pulsar && \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
-    dracut --force --no-hostonly --reproducible --add ostree \
-      --kver ${KV} /usr/lib/modules/${KV}/initramfs.img && \
+    install -d -m 0700 /var/roothome && \
+    { dracut --force --no-hostonly --reproducible --add ostree \
+        --kver ${KV} /usr/lib/modules/${KV}/initramfs.img >/tmp/dracut.log 2>&1 || \
+      { cat /tmp/dracut.log; echo "FATAL: dracut exited nonzero"; exit 1; }; }; \
+    cat /tmp/dracut.log; \
+    if grep -q 'dracut\[E\]: FAILED' /tmp/dracut.log; then \
+      echo "FATAL: dracut logged a module-install failure above and exited 0 anyway"; \
+      exit 1; \
+    fi; \
     lsinitrd /usr/lib/modules/${KV}/initramfs.img | grep -q ostree-prepare-root || \
       { echo "FATAL: initramfs is missing ostree-prepare-root; the image cannot switch root"; exit 1; }
 
@@ -460,6 +467,16 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
 # The lsinitrd assertion turns that brick into a red build. --no-hostonly for
 # the same probing reason (the "host" is a build container, not the laptop),
 # --reproducible because there is no reason not to.
+#
+# /var/roothome exists before dracut runs because /root is an ostree symlink
+# into it and the base image started shipping /var empty: dracut's base
+# module installs /root, and a dangling symlink turned into
+# "dracut-install: ERROR: installing '/root'" -- which dracut logs as
+# dracut[E]: FAILED and then EXITS 0. That is why the log is grepped: the
+# lsinitrd assertion checks one known-critical file, the grep catches every
+# module-install failure dracut swallowed. Grepped for "FAILED" specifically,
+# not every [E] line -- "No '/dev/log' or 'logger'" is chronic container
+# noise with nothing behind it.
 
 # /var is machine-local state; nothing the build left there (dnf caches,
 # anything flatpak-shaped) belongs in the image, so clear it wholesale. Then

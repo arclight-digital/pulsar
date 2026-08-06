@@ -208,10 +208,20 @@ COPY system_files.nvidia/ /
 # --add ostree + assertion: same boot-critical reason as the base image's
 # dracut run (see Containerfile) -- in a container dracut cannot tell it is
 # building for an ostree system and silently drops the module that makes
-# switch-root possible.
+# switch-root possible. /var/roothome and the log grep for the same reasons
+# too: /var is empty HERE by the vanilla image's own cleanup, so /root is a
+# dangling ostree symlink, and dracut logs module-install failures as
+# dracut[E]: FAILED while exiting 0.
 RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
-    dracut --force --no-hostonly --reproducible --add ostree \
-      --kver ${KV} /usr/lib/modules/${KV}/initramfs.img && \
+    install -d -m 0700 /var/roothome && \
+    { dracut --force --no-hostonly --reproducible --add ostree \
+        --kver ${KV} /usr/lib/modules/${KV}/initramfs.img >/tmp/dracut.log 2>&1 || \
+      { cat /tmp/dracut.log; echo "FATAL: dracut exited nonzero"; exit 1; }; }; \
+    cat /tmp/dracut.log; \
+    if grep -q 'dracut\[E\]: FAILED' /tmp/dracut.log; then \
+      echo "FATAL: dracut logged a module-install failure above and exited 0 anyway"; \
+      exit 1; \
+    fi; \
     lsinitrd /usr/lib/modules/${KV}/initramfs.img | grep -q ostree-prepare-root || \
       { echo "FATAL: initramfs is missing ostree-prepare-root; the image cannot switch root"; exit 1; }
 
