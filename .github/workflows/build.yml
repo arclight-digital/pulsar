@@ -23,6 +23,9 @@ on:
     paths-ignore:
       - 'site/**'
       - '.github/workflows/site.yml'
+      # the og-card renderer is a site tool that happens to live in scripts/;
+      # the rest of that directory is genuinely image input and must trigger
+      - 'scripts/render-og.py'
       # ISOs are built FROM a published image, never into one, so iso.yml
       # cannot change what this workflow produces.
       - '.github/workflows/iso.yml'
