@@ -150,6 +150,53 @@ jobs:
             --build-arg PULSAR_VERSION="${DATETAG}" \
             -t "${IMAGE}:${FEDORA_VERSION}" -t "${IMAGE}:latest" -t "${IMAGE}:${DATETAG}" .
 
+      # =====================================================================
+      # Rechunk. Without this, every nightly costs clients ~2GB: podman build
+      # slices the image along Containerfile boundaries, --pull=newer moves
+      # the base most nights, and that cache-busts every derived layer, so
+      # all of them re-upload even when the content barely moved. Measured
+      # between 44.20260805.11 and 44.20260806.0 -- a CLI tweak and two
+      # manifest fields -- the delta was 28 layers, 2,125MB.
+      #
+      # rpm-ostree compose build-chunked-oci re-slices the FINAL filesystem
+      # into package-grouped chunks with stable boundaries: the same tool and
+      # layout Fedora composes the base image with. Identical content then
+      # yields identical layers regardless of build-cache luck, and a night
+      # where only the kernel moved costs roughly the kernel.
+      # --previous-build pins the layer plan to the image clients already
+      # run; the first chunked build has no such previous, so it falls back
+      # to a fresh plan -- that one push is a full download, once.
+      #
+      # The tool runs inside the just-built image itself, which ships the
+      # same rpm-ostree that will consume the result on machines. The host
+      # storage is bind-mounted at the SAME path with the same storage.conf,
+      # for the reason iso.yml documents: the storage database records
+      # absolute paths, and a relocated graphroot is refused.
+      # =====================================================================
+      - name: Rechunk vanilla
+        run: |
+          set -euo pipefail
+          rechunk() {
+            podman run --rm --privileged \
+              -v /mnt/podman:/mnt/podman \
+              -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+              "${IMAGE}:${FEDORA_VERSION}" \
+              rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+                --max-layers 200 \
+                --from "${IMAGE}:${FEDORA_VERSION}" \
+                --label "org.opencontainers.image.version=${DATETAG}" \
+                --output "containers-storage:${IMAGE}" --reference chunked "$@"
+          }
+          rechunk --previous-build "docker://${IMAGE}:latest" \
+            || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
+          for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
+            podman tag "${IMAGE}:chunked" "${IMAGE}:${t}"
+          done
+          podman rmi "${IMAGE}:chunked"
+          # the chunked image must still be a working Pulsar before it ships
+          podman run --rm "${IMAGE}:${FEDORA_VERSION}" pulsar --version
+          podman inspect "${IMAGE}:${FEDORA_VERSION}" --format '{{len .RootFS.Layers}} layers after rechunk'
+
       - name: Push vanilla
         id: push_vanilla
         run: |
@@ -189,6 +236,32 @@ jobs:
         run: |
           shred -u /dev/shm/keys/* 2>/dev/null || true
           rm -rf /dev/shm/keys
+
+      # Same as vanilla, and the derived layers it flattens include the ones
+      # the nvidia phases stack on top of the (already chunked) vanilla base.
+      # Runs after the key material is destroyed: chunking needs no secrets.
+      - name: Rechunk nvidia
+        run: |
+          set -euo pipefail
+          rechunk() {
+            podman run --rm --privileged \
+              -v /mnt/podman:/mnt/podman \
+              -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
+              "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
+              rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
+                --max-layers 200 \
+                --from "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
+                --label "org.opencontainers.image.version=${DATETAG}" \
+                --output "containers-storage:${IMAGE_NVIDIA}" --reference chunked "$@"
+          }
+          rechunk --previous-build "docker://${IMAGE_NVIDIA}:latest" \
+            || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
+          for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
+            podman tag "${IMAGE_NVIDIA}:chunked" "${IMAGE_NVIDIA}:${t}"
+          done
+          podman rmi "${IMAGE_NVIDIA}:chunked"
+          podman run --rm "${IMAGE_NVIDIA}:${FEDORA_VERSION}" pulsar --version
+          podman inspect "${IMAGE_NVIDIA}:${FEDORA_VERSION}" --format '{{len .RootFS.Layers}} layers after rechunk'
 
       - name: Push nvidia
         id: push_nvidia
