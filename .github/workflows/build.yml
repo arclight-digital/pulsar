@@ -178,7 +178,7 @@ jobs:
           set -euo pipefail
           rechunk() {
             podman run --rm --privileged \
-              -v /mnt/podman:/mnt/podman \
+              -v /mnt/podman:/var/mnt/podman \
               -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
               "${IMAGE}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
@@ -245,7 +245,7 @@ jobs:
           set -euo pipefail
           rechunk() {
             podman run --rm --privileged \
-              -v /mnt/podman:/mnt/podman \
+              -v /mnt/podman:/var/mnt/podman \
               -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
               "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
