@@ -26,6 +26,12 @@ cp "${REPO}/site/style.css" "${REPO}/site/main.js" "${OUT}/"
 # nightly lands, the marker collapses to a placeholder instead of a hole.
 CHANGELOG_FRAGMENT="${REPO}/site/changelog.html"
 MANIFEST_FRAGMENT="${REPO}/site/manifest.html"
+# The hero's build chip. version.txt is one line, committed by the nightly
+# beside the manifest; the value is digits and dots, so plain awk gsub is
+# safe and jq stays out of this script.
+ver=""
+[ -f "${REPO}/site/version.txt" ] && ver=$(tr -cd '0-9.\n' < "${REPO}/site/version.txt" | head -1)
+[ -n "$ver" ] || ver="nightly"
 awk -v frag="${CHANGELOG_FRAGMENT}" '
   /<!--CHANGELOG-->/ {
     n = 0
@@ -47,7 +53,8 @@ awk -v frag="${CHANGELOG_FRAGMENT}" '
     next
   }
   { print }
-' > "${OUT}/index.html"
+' \
+| awk -v ver="$ver" '{ gsub(/<!--VERSION-->/, ver); print }' > "${OUT}/index.html"
 
 # The raw diff and manifest, served next to the page they are rendered from.
 if [ -f "${REPO}/site/changelog.json" ]; then

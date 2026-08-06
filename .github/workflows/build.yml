@@ -354,6 +354,7 @@ jobs:
             cat /usr/share/pulsar/manifest.json > manifest.json
           cp manifest.json site/manifest.json
           ./scripts/render-manifest.sh manifest.json > site/manifest.html
+          jq -r '.version // "nightly"' manifest.json > site/version.txt
 
           # Compare CONTENT, not the file. Every build stamps fresh timestamps
           # and digests, so a byte comparison always differs and would commit
@@ -376,7 +377,7 @@ jobs:
           # first run -- when these files are not in the repo yet -- it reported
           # "unchanged" and skipped the commit, which is precisely the run that
           # had to make it. That is why site/changelog.json was never committed.
-          git add site/changelog.json site/changelog.html site/manifest.json site/manifest.html
+          git add site/changelog.json site/changelog.html site/manifest.json site/manifest.html site/version.txt
           git commit -m "site: package changelog for ${DATETAG}"
           # Rebase rather than force: a human push that landed while the image
           # was building must not be discarded by the nightly.

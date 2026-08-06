@@ -42,6 +42,15 @@ try { const t = localStorage.getItem('pulsar-theme');
     <p class="sub">An immutable Fedora for gaming and development. Games get the panel&rsquo;s
        real resolution instead of a fractional-scaled one, the system is the same
        every boot, and rollback is just a reboot.</p>
+    <!-- The VERSION marker in the chip is substituted by site/build.sh from
+         site/version.txt, which the nightly commits beside the manifest, so
+         the chip, the manifest card, and the changelog name the same build. -->
+    <p class="buildline">
+      <a class="build-chip" href="#changelog">
+        <span class="build-dot" aria-hidden="true"></span>
+        latest build&ensp;<strong><!--VERSION--></strong>
+      </a>
+    </p>
     <p class="srclink"><a href="https://github.com/arclight-digital/pulsar">Browse the source on GitHub →</a></p>
 
     <figure class="term install" role="group" aria-label="Install commands">
@@ -347,7 +356,7 @@ try { const t = localStorage.getItem('pulsar-theme');
   <!-- The claim the rest of the page makes, shown rather than asserted: the
        image is inspectable. Rendered at build time from the SBOM diff the
        nightly publishes, so this section cannot drift from what was built. -->
-  <section class="changelog">
+  <section class="changelog" id="changelog">
     <h2>What changed last night</h2>
     <p class="lede">Every build is diffed against the one before it, package by
        package, from the SBOMs attached to the images themselves. Nothing here
