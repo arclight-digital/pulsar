@@ -123,9 +123,16 @@ JSON
 @test "host facts never contain the hostname" {
     # The rows identify the hardware, not the machine or its owner -- this
     # output gets pasted into public bug reports.
+    #
+    # Read from /proc rather than calling hostname(1): the binary is absent
+    # from a minimal container, and a test that silently errors instead of
+    # checking is worse than no test.
+    local host
+    host=$(cat /proc/sys/kernel/hostname 2>/dev/null || true)
+    [ -n "$host" ] || skip "no hostname to look for"
     run "$PULSAR" manifest
     [ "$status" -eq 0 ]
-    [[ "$output" != *"$(hostname)"* ]]
+    [[ "$output" != *"$host"* ]]
 }
 
 @test "piped output carries no ANSI escapes" {
@@ -239,13 +246,16 @@ JSON
 @test "manifest draws the logo when asked and omits it when told not to" {
     PULSAR_LOGO="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/logo.ansi"
     export PULSAR_LOGO
+    # NOT a line count. That worked only while the art was taller than the
+    # readout; once the host rows fill in, the readout is the longer column
+    # and both forms come out the same height. The art is the only thing that
+    # carries colour into a pipe, so that is the tell.
     run env LOGO=always "$PULSAR" manifest
     [ "$status" -eq 0 ]
-    with=$(printf '%s\n' "$output" | wc -l)
+    [[ "$output" == *$'\033'* ]]
     run env LOGO=never "$PULSAR" manifest
     [ "$status" -eq 0 ]
-    without=$(printf '%s\n' "$output" | wc -l)
-    [ "$with" -gt "$without" ]
+    [[ "$output" != *$'\033'* ]]
 }
 
 @test "the logo never appears in piped output" {

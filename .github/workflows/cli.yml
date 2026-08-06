@@ -57,6 +57,7 @@ jobs:
             scripts/render-manifest.sh \
             scripts/lint-containerfile.sh \
             scripts/check-scx-btf.sh \
+            scripts/sync-branding.sh \
             site/build.sh
           echo "shellcheck: clean"
 

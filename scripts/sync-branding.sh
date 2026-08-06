@@ -183,10 +183,14 @@ echo "Fonts                     <- static cuts"
 rm -rf "${S}/fonts/pulsar"
 while IFS='|' read -r src dst; do
     [[ -n "$src" ]] || continue
+    # Globbed once into an array: the count then comes from the same list that
+    # was installed, rather than from a second glob piped through `ls` that
+    # could disagree with it.
+    faces=("${A}/fonts/${src}/static/"*.ttf)
     mkdir -p "${S}/fonts/pulsar/${dst}"
-    install -m644 "${A}/fonts/${src}/static/"*.ttf "${S}/fonts/pulsar/${dst}/"
-    install -m644 "${A}/fonts/${src}/OFL.txt"      "${S}/fonts/pulsar/${dst}/"
-    echo "  ${S}/fonts/pulsar/${dst}/ ($(ls "${A}/fonts/${src}/static/"*.ttf | wc -l) faces + OFL)"
+    install -m644 "${faces[@]}"                "${S}/fonts/pulsar/${dst}/"
+    install -m644 "${A}/fonts/${src}/OFL.txt"  "${S}/fonts/pulsar/${dst}/"
+    echo "  ${S}/fonts/pulsar/${dst}/ (${#faces[@]} faces + OFL)"
 done <<'EOF'
 Host_Grotesk|host-grotesk
 JetBrains_Mono|jetbrains-mono
