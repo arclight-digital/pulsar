@@ -176,23 +176,40 @@ jobs:
       - name: Rechunk vanilla
         run: |
           set -euo pipefail
+          # The tool writes a plain OCI directory, not containers-storage:
+          # the runner's podman is generations older than the tool image's
+          # containers libraries, and metadata the new library wrote was
+          # invisible to the old one -- the digest landed, then
+          # "image not known" at the tag step. Verified working on a
+          # version-matched host, failing only across the skew. An OCI
+          # layout on disk is the stable interchange: the new tool writes
+          # it, the old podman pulls it, and no storage internals cross
+          # the version boundary.
+          sudo mkdir -p /mnt/oci && sudo chown "$(id -u):$(id -g)" /mnt/oci
+          # the tool opens the destination before writing: seed an empty,
+          # valid OCI layout or it dies on the missing index.json
+          mkdir -p /mnt/oci/vanilla/blobs/sha256
+          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/vanilla/oci-layout
+          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/vanilla/index.json
           rechunk() {
             podman run --rm --privileged \
               -v /mnt/podman:/var/mnt/podman \
+              -v /mnt/oci:/var/mnt/oci \
               -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
               "${IMAGE}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
                 --max-layers 200 \
                 --from "${IMAGE}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "containers-storage:${IMAGE}:chunked" "$@"
+                --output "oci:/mnt/oci/vanilla:build" "$@"
           }
           rechunk --previous-build "docker://${IMAGE}:latest" \
             || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
+          img=$(podman pull -q "oci:/mnt/oci/vanilla:build")
           for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
-            podman tag "${IMAGE}:chunked" "${IMAGE}:${t}"
+            podman tag "$img" "${IMAGE}:${t}"
           done
-          podman rmi "${IMAGE}:chunked"
+          rm -rf "/mnt/oci/vanilla"
           # the chunked image must still be a working Pulsar before it ships
           podman run --rm "${IMAGE}:${FEDORA_VERSION}" pulsar --version
           podman inspect "${IMAGE}:${FEDORA_VERSION}" --format '{{len .RootFS.Layers}} layers after rechunk'
@@ -243,23 +260,40 @@ jobs:
       - name: Rechunk nvidia
         run: |
           set -euo pipefail
+          # The tool writes a plain OCI directory, not containers-storage:
+          # the runner's podman is generations older than the tool image's
+          # containers libraries, and metadata the new library wrote was
+          # invisible to the old one -- the digest landed, then
+          # "image not known" at the tag step. Verified working on a
+          # version-matched host, failing only across the skew. An OCI
+          # layout on disk is the stable interchange: the new tool writes
+          # it, the old podman pulls it, and no storage internals cross
+          # the version boundary.
+          sudo mkdir -p /mnt/oci && sudo chown "$(id -u):$(id -g)" /mnt/oci
+          # the tool opens the destination before writing: seed an empty,
+          # valid OCI layout or it dies on the missing index.json
+          mkdir -p /mnt/oci/nvidia/blobs/sha256
+          printf '{"imageLayoutVersion":"1.0.0"}' > /mnt/oci/nvidia/oci-layout
+          printf '{"schemaVersion":2,"manifests":[]}' > /mnt/oci/nvidia/index.json
           rechunk() {
             podman run --rm --privileged \
               -v /mnt/podman:/var/mnt/podman \
+              -v /mnt/oci:/var/mnt/oci \
               -v /tmp/storage.conf:/etc/containers/storage.conf:ro \
               "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
               rpm-ostree compose build-chunked-oci --bootc --format-version 1 \
                 --max-layers 200 \
                 --from "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
                 --label "org.opencontainers.image.version=${DATETAG}" \
-                --output "containers-storage:${IMAGE_NVIDIA}:chunked" "$@"
+                --output "oci:/mnt/oci/nvidia:build" "$@"
           }
           rechunk --previous-build "docker://${IMAGE_NVIDIA}:latest" \
             || { echo "::warning::no usable previous build; chunking from a fresh plan"; rechunk; }
+          img=$(podman pull -q "oci:/mnt/oci/nvidia:build")
           for t in "${FEDORA_VERSION}" latest "${DATETAG}"; do
-            podman tag "${IMAGE_NVIDIA}:chunked" "${IMAGE_NVIDIA}:${t}"
+            podman tag "$img" "${IMAGE_NVIDIA}:${t}"
           done
-          podman rmi "${IMAGE_NVIDIA}:chunked"
+          rm -rf "/mnt/oci/nvidia"
           podman run --rm "${IMAGE_NVIDIA}:${FEDORA_VERSION}" pulsar --version
           podman inspect "${IMAGE_NVIDIA}:${FEDORA_VERSION}" --format '{{len .RootFS.Layers}} layers after rechunk'
 
