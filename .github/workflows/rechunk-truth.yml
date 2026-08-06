@@ -36,6 +36,9 @@ jobs:
   truth:
     runs-on: ubuntu-latest
     steps:
+      # the metadata diff at the end runs scripts/diff-chunk-metadata.sh
+      - uses: actions/checkout@v7
+
       - name: Put container storage on the temp disk
         run: |
           sudo mkdir -p /mnt/podman && sudo chown "$(id -u):$(id -g)" /mnt/podman
@@ -177,15 +180,32 @@ jobs:
                 --from "${ref}" \
                 --output "oci:/mnt/oci/proof:build" 2>&1 | tail -20 || continue
 
-            # Unpack and look for the marker. VERSION="TOY" is a packaged
-            # file edited after install -- exactly the class of content that
-            # froze in production.
-            rm -rf /tmp/proof-root && mkdir -p /tmp/proof-root
-            sudo skopeo copy "oci:/mnt/oci/proof:build" "dir:/tmp/proof-oci" >/dev/null 2>&1
+            # Look for the marker in the blobs the tool just wrote. An
+            # earlier version copied the layout to /tmp first and the runner
+            # was lost mid-step with no logs -- 2-3GB onto the small root
+            # disk, to read one path out of a tree already sitting on the
+            # big one. tar auto-detects the compression, so no -z guess.
+            df -h / /mnt | sed 's/^/    /'
             found=no
-            for blob in /tmp/proof-oci/*; do
-              tar -tzf "${blob}" 2>/dev/null | grep -q 'usr/lib/toy-unowned' && found=yes && break
+            for blob in /mnt/oci/proof/blobs/sha256/*; do
+              if tar -tf "${blob}" 2>/dev/null | grep -q 'usr/lib/toy-unowned'; then
+                found=yes; break
+              fi
             done
             echo "marker usr/lib/toy-unowned present in chunked output: ${found}"
             [ "${found}" = yes ] && { echo "WINNER: ${ref}"; break; }
           done
+
+      # What the round trip does to modes and ownership, learned on a toy
+      # before it can gate a nightly. build.yml runs this same script against
+      # the real images and blocks the push on what it calls critical; this
+      # run is where the benign baseline comes from, so a first failure there
+      # is a finding rather than a surprise. Never fails this workflow -- it
+      # is here to report, and the exit code is printed rather than obeyed.
+      - name: What did the rechunk do to modes and ownership?
+        run: |
+          set +e
+          [ -f /mnt/oci/proof/index.json ] || { echo "no chunked output to compare"; exit 0; }
+          scripts/diff-chunk-metadata.sh \
+            ghcr.io/arclight-digital/toy:44 /mnt/oci/proof build
+          echo "diff-chunk-metadata exit: $?"

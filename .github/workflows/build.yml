@@ -234,6 +234,18 @@ jobs:
           fi
           echo "chunked vanilla content confirmed: ${DATETAG}"
 
+      # The content assertion above proves the tool read the right image. It
+      # says nothing about what the round trip through an ostree commit did to
+      # the metadata, and there is a known upstream class of bug where modes
+      # and ownership come out different from the base commit. This image
+      # carries an enrolled Secure Boot key and signed kmods, so that question
+      # gets asked rather than assumed. Blocks the push on ownership,
+      # setuid/setgid, or world-writable changes and on anything the chunked
+      # image dropped; reports plain mode drift without stopping the build,
+      # because the first runs are how the baseline gets known.
+      - name: Diff ownership and modes across the vanilla rechunk
+        run: scripts/diff-chunk-metadata.sh "${IMAGE}:${FEDORA_VERSION}" /mnt/oci/vanilla build
+
       # skopeo copies the tool's already-compressed blobs verbatim; a
       # podman pull/push round trip recompressed ~200 layers for nothing.
       # Three tags, one upload: after the first copy the registry holds
@@ -333,6 +345,11 @@ jobs:
             exit 1
           fi
           echo "chunked nvidia content confirmed: ${DATETAG}"
+
+      # Same question, and it has to be asked separately: nvidia is chunked by
+      # its own invocation, and it is the variant carrying the signed kmods.
+      - name: Diff ownership and modes across the nvidia rechunk
+        run: scripts/diff-chunk-metadata.sh "${IMAGE_NVIDIA}:${FEDORA_VERSION}" /mnt/oci/nvidia build
 
       - name: Push nvidia
         id: push_nvidia
