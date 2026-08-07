@@ -43,7 +43,10 @@ WORK="$(mktemp -d)"
 # The source listing runs in the background, so an early exit anywhere below
 # would otherwise leave an orphaned podman export and a stray container behind
 # on a build host that reuses its store between runs.
-# shellcheck disable=SC2329  # invoked by the EXIT trap below
+# Both codes, because the two shellcheck generations name this differently:
+# 0.9 (ubuntu-latest today) calls the body unreachable, SC2317; 0.10+ calls
+# the function uninvoked, SC2329. Neither can see an EXIT trap.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   [ -n "${source_pid:-}" ] && kill "${source_pid}" 2>/dev/null
   [ -n "${cid:-}" ] && podman rm -f "${cid}" >/dev/null 2>&1
