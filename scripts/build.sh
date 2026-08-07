@@ -238,15 +238,43 @@ rechunk() {
 # Containerfile baked in, so it is the source speaking for itself. Read out of
 # the layout's own blobs, which are already on disk.
 # ---------------------------------------------------------------------------
+#
+# Reading it back is not a plain tar extract. In a bootc chunked layer every
+# file under /usr is a tar HARDLINK to the ostree object that holds the bytes:
+#
+#   hrw-r--r-- 0/0  0  usr/lib/os-release link to sysroot/ostree/repo/objects/20/bfc2...file
+#
+# The named entry is zero-length, so extracting the path yields nothing at all.
+# The content lives at the object path, and tar requires a hardlink's target to
+# appear earlier in the SAME archive -- so the object is always in the same
+# blob, and resolving it costs no extra pass.
 assert_content() {
-  local name="$1" layout="${WORK}/$2" osr="" b
+  local name="$1" layout="${WORK}/$2" osr="" b line
   [ -n "${VERSION}" ] || { echo "no --version; skipping the content assertion" >&2; return 0; }
+
   for b in "${layout}/blobs/sha256/"*; do
-    if osr="$(tar -xOf "${b}" --wildcards '*usr/lib/os-release' 2>/dev/null)" \
-       && [ -n "${osr}" ]; then break; fi
+    line="$(tar -tvf "${b}" 2>/dev/null | grep -Em1 ' usr/lib/os-release( link to .*)?$' || true)"
+    [ -n "${line}" ] || continue
+    case "${line}" in
+      # bootc/ostree: follow the hardlink to the object holding the bytes
+      *' link to '*) osr="$(tar -xOf "${b}" "${line#* link to }" 2>/dev/null || true)" ;;
+      # a plain layer, where the path is the content
+      *)             osr="$(tar -xOf "${b}" --wildcards '*usr/lib/os-release' 2>/dev/null || true)" ;;
+    esac
+    [ -n "${osr}" ] && break
   done
+
+  # "the check could not run" and "the image is wrong" are different failures
+  # and must not share a message. Conflating them is how a broken assertion
+  # reports itself as stale content and sends you looking at the rechunk.
+  if [ -z "${osr}" ]; then
+    echo "could not read /usr/lib/os-release out of the chunked ${name} layout." >&2
+    echo "That is this CHECK failing rather than the image; nothing is pushed" >&2
+    echo "either way, but fix the check, not the build." >&2
+    exit 1
+  fi
   if ! printf '%s' "${osr}" | grep -q "^VERSION=\"${VERSION}\""; then
-    echo "chunked ${name} holds $(printf '%s' "${osr}" | grep '^VERSION=' || echo '<no os-release>')," >&2
+    echo "chunked ${name} holds $(printf '%s' "${osr}" | grep '^VERSION=' || echo '<none>')," >&2
     echo "not ${VERSION} -- the rechunk did not read this build" >&2
     exit 1
   fi
