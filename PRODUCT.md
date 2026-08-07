@@ -76,8 +76,13 @@ edit them by hand, and never render them anywhere else.
   a decoder ring, which replaced "Fedora with a pulse", retired). Footer
   line: "AN IMMUTABLE FEDORA SPIN · ARCLIGHT.BUILD".
 - Palette: ink #0B0E1A, deep #241F3D, cyan #3ECBFF, periwinkle #8FA8FF,
-  violet #4B3FD4, star #E9EDF7. Fonts: Host Grotesk (UI), JetBrains Mono
-  (code), OFL — license file must travel with any font redistribution.
+  violet #4B3FD4, star #E9EDF7. Fonts: Host Grotesk (UI and wordmark),
+  JetBrains Mono (code), both OFL — license file must travel with any font
+  redistribution. Nimbus Sans (documents) is not redistributed by this repo;
+  it comes from urw-base35-nimbus-sans-fonts, installed by the Containerfile.
+  Host Grotesk and JetBrains Mono are also bound to the generic `sans-serif`
+  and `monospace` aliases in fontconfig, so apps that never read the GNOME
+  settings still render in brand.
 - Voice: dry, technical, confident; no marketing superlatives.
 
 ## Evidence on Hand

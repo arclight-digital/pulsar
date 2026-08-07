@@ -83,12 +83,20 @@ RUN dnf5 install -y 'dnf5-command(copr)' && \
 #                   type it in. Checks ship in system_files under
 #                   /usr/lib/greenboot/check/; rollback is armed by GRUB's
 #                   boot_counter, installed via bootupd (asserted below).
+#   urw-base35-     the document font, per zz0-pulsar.gschema.override. Already
+#   nimbus-sans     present transitively (libgs requires urw-base35-fonts), and
+#                   asked for by name anyway: the desktop's body face should
+#                   not ride on ghostscript staying in the Silverblue base, and
+#                   the failure mode is silent, because fontconfig SUBSTITUTES
+#                   for a family it cannot find rather than erroring. Asserted
+#                   below with the other two.
 # ---------------------------------------------------------------------------
 RUN dnf5 install -y \
       gh \
       greenboot \
       greenboot-default-health-checks \
       gnome-tweaks \
+      urw-base35-nimbus-sans-fonts \
       steam-devices \
       gamemode \
       mangohud \
@@ -439,6 +447,19 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh && \
 RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
       { echo "FATAL: greenboot no longer ships its bootupd grub fragment; without it GRUB never decrements boot_counter and automatic rollback silently never arms"; exit 1; }; \
     fc-cache -f && \
+    for f in "Host Grotesk" "JetBrains Mono" "Nimbus Sans"; do \
+      got=$(fc-match -f '%{family[0]}' "$f"); \
+      [ "$got" = "$f" ] || \
+        { echo "FATAL: font '$f' does not resolve; fontconfig substitutes '$got'. Every font key in zz0-pulsar.gschema.override would silently render in the wrong face"; exit 1; }; \
+    done; \
+    for g in sans-serif:"Host Grotesk" monospace:"JetBrains Mono"; do \
+      got=$(fc-match -f '%{family[0]}' "${g%%:*}"); \
+      [ "$got" = "${g#*:}" ] || \
+        { echo "FATAL: generic '${g%%:*}' resolves to '$got', not '${g#*:}'; 52-pulsar.conf is not winning its sort order against Fedora's font configs"; exit 1; }; \
+    done; \
+    fc-match -f '%{family[0]}' sans-serif:lang=ja | grep -q '^Noto' || \
+      { echo "FATAL: non-Latin sans-serif fallback no longer reaches Noto; 52-pulsar.conf has pinned a Latin-only face ahead of the CJK chain"; exit 1; }; \
+    echo "fonts: Host Grotesk / JetBrains Mono / Nimbus Sans resolve; generics bound; non-Latin fallback intact" && \
     glib-compile-schemas /usr/share/glib-2.0/schemas && \
     systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \

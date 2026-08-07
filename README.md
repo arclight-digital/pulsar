@@ -51,9 +51,10 @@ base        Fedora Silverblue 44
 
 ## What's in it
 
-Branding, Host Grotesk + JetBrains Mono, a plymouth theme, and the papercuts
-already fixed. Unfiltered Flathub, shipped as an image-native remote so it
-survives a rebase. Split-lock mitigation off and `vm.max_map_count` raised,
+Branding, Host Grotesk + JetBrains Mono + Nimbus Sans bound all the way down
+to fontconfig's generics, a plymouth theme, and the papercuts already fixed.
+Unfiltered Flathub, shipped as an image-native remote so it survives a
+rebase. Split-lock mitigation off and `vm.max_map_count` raised,
 because several games need both. `ntsync` loaded and handed to the seat user,
 so Proton can use it where the build supports it. System-level capability
 only: `gamescope`, `gamemode`, `mangohud`, `steam-devices`, `distrobox`,

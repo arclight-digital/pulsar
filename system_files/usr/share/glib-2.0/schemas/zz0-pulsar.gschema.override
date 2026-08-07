@@ -1,10 +1,31 @@
-# 12, not GNOME's stock 11: Host Grotesk runs optically smaller than Inter
-# (and than Cantarell, which the 11 default was set for), so it reads a size
-# down at the same nominal pt. Mono matches at 12 rather than trailing at 11 --
-# one size across the desktop, so terminal text and UI text agree.
+# 12, not GNOME's stock 11: every face here runs optically smaller than the
+# Adwaita Sans that GNOME's 11 was set for, so it reads a size down at the same
+# nominal pt. x-height as a fraction of em, read off the font binaries:
+#
+#   Adwaita Sans  0.546      Nimbus Sans  0.516      Host Grotesk  0.496
+#
+# which puts Adwaita Sans 11 and Host Grotesk 12 within a rounding error of
+# each other -- 6.01pt of x-height against 5.95pt -- and Nimbus Sans 12 just
+# above both at 6.19pt, which is where body text wants to sit. Mono matches at
+# 12 rather than trailing at 11 -- one size across the desktop, so terminal
+# text and UI text agree.
+#
+# Documents get Nimbus Sans rather than the brand face. Host Grotesk is the
+# interface and the chrome; a document set in the same face as the menu bar
+# above it has nothing to distinguish it. Nimbus Sans ships Regular and Bold
+# and nothing else, which is plenty for body copy and is precisely why it is
+# not a candidate for font-name: libadwaita asks for weight 500 and 600 in
+# places, and with no Medium or SemiBold to snap to, those labels would
+# collapse back to Regular and lose their emphasis.
+#
+# Nimbus Sans comes from urw-base35-nimbus-sans-fonts, installed explicitly in
+# the Containerfile. It was already present transitively (libgs pulls
+# urw-base35-fonts), but an incidental dependency is not a guarantee -- and the
+# failure is silent, because an unresolvable family substitutes rather than
+# errors. The Containerfile asserts all three families resolve.
 [org.gnome.desktop.interface]
 font-name='Host Grotesk 12'
-document-font-name='Host Grotesk 12'
+document-font-name='Nimbus Sans 12'
 monospace-font-name='JetBrains Mono 12'
 color-scheme='prefer-dark'
 # Both keys are HiDPI decisions, not taste. The target panel is 2560x1600 at
@@ -12,9 +33,12 @@ color-scheme='prefer-dark'
 # pixel grid costs more than it buys:
 #
 #   hinting=slight   vertical hinting only, outlines otherwise untouched.
-#                    'full' snaps stems to the grid, which distorts shapes --
-#                    and Host Grotesk is a VARIABLE font, so aggressive
-#                    hinting fights the interpolated outlines it is given.
+#                    'full' snaps stems to the grid, which distorts shapes, and
+#                    neither face here has hinting worth honouring: the image
+#                    ships Host Grotesk as static cuts drawn for print-quality
+#                    output, and Nimbus Sans is a PostScript-era CFF face with
+#                    no TrueType instructions at all. At 'full' both get handed
+#                    to FreeType's autohinter, which reshapes them.
 #   antialiasing=grayscale
 #                    'rgba' assumes a known RGB stripe geometry AND a 1:1
 #                    glyph-to-physical-pixel mapping. Neither holds once the
