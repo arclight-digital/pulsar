@@ -154,8 +154,12 @@ jobs:
       #
       # n is derived from what the registry already holds rather than from a
       # run counter, so it stays correct across re-runs and manual dispatches.
-      # An unreachable registry falls back to .0 rather than failing the build,
-      # which is the same tag the old scheme produced.
+      # A registry that does not answer FAILS this step rather than falling
+      # back to .0: the fallback used to be excused as "the same tag the old
+      # scheme produced", which is precisely the objection to it, and on
+      # 2026-08-07 it collided two host builds onto one tag. The push in
+      # build.sh carries a second guard that refuses to overwrite a version
+      # tag, so this cannot be lost to a bad merge here.
       - name: Compute the build version
         run: |
           set -euo pipefail

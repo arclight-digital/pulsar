@@ -39,6 +39,15 @@
 #   --work DIR          where OCI layouts go; needs several GB
 #   --no-wallpapers     skip the shader render (they are gitignored 4K PNGs,
 #                       so skipping means the image ships without them)
+#   --allow-existing-version
+#                       publish a version tag the guard would not clear. The
+#                       push refuses by default, because that tag is the one
+#                       thing here that promises not to move. Two cases want
+#                       this flag, both human-initiated and neither of them
+#                       the nightly: a deliberate replacement, and the FIRST
+#                       push of a brand-new image name, which ghcr.io reports
+#                       as 403 rather than 404 -- indistinguishable from a
+#                       credential that has gone stale.
 #
 # The nvidia variant no longer needs root or a local key: the signing key
 # lives on the signer host and this only needs a token. See
@@ -54,6 +63,7 @@ DO_RECHUNK=no
 DO_VERIFY=no
 DO_PUSH=no
 DO_WALLPAPERS=yes
+ALLOW_EXISTING_VERSION=no
 IMAGE="${IMAGE:-localhost/pulsar}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:-localhost/pulsar-nvidia}"
 SIGNER_URL="${PULSAR_SIGNER_URL:-}"
@@ -75,8 +85,9 @@ while [ $# -gt 0 ]; do
     --signer-ca-file)    SIGNER_CA_FILE="${2:?}"; shift ;;
     --work)              WORK="${2:?}"; shift ;;
     --no-wallpapers)     DO_WALLPAPERS=no ;;
+    --allow-existing-version) ALLOW_EXISTING_VERSION=yes ;;
     vanilla|nvidia|all)  VARIANT="$1" ;;
-    -h|--help)           sed -n '2,42p' "$0"; exit 0 ;;
+    -h|--help)           sed -n '2,50p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -312,11 +323,48 @@ assert_content() {
   echo "chunked ${name} content confirmed: ${VERSION}"
 }
 
+# Is the version tag still free?
+#
+# 44 and latest are MEANT to move; the version tag is the one that promises it
+# will not. That promise was broken on 2026-08-07: two runs computed the same
+# tag and the second overwrote the first, which is only discoverable afterwards
+# by noticing two deployments carrying one version string. The image someone
+# already booted is then reachable only by a digest nobody wrote down.
+#
+# "Could not check" counts as NOT free. A guard that passes when it cannot see
+# is the same silent fallback that caused this, one layer up.
+version_tag_is_free() {
+  local ref="$1" probe rc=0
+  probe="$(skopeo inspect --raw "docker://${ref}" 2>&1)" || rc=$?
+  if [ "${rc}" -eq 0 ]; then
+    echo "${ref} already exists in the registry" >&2
+    return 1
+  fi
+  printf '%s' "${probe}" \
+    | grep -qiE 'manifest unknown|MANIFEST_UNKNOWN|NAME_UNKNOWN|repository name not known' \
+    && return 0
+  echo "could not tell whether ${ref} exists:" >&2
+  printf '%s\n' "${probe}" >&2
+  return 1
+}
+
 push() {
   local image="$1" layout="${WORK}/$2" t
   say "pushing ${image}"
   local -a tags=("${FEDORA_VERSION}" latest)
-  [ -n "${VERSION}" ] && tags+=("${VERSION}")
+  # Checked before ANY tag is written: aborting after latest has already moved
+  # would leave the registry advertising a build that was refused.
+  if [ -n "${VERSION}" ]; then
+    if [ "${ALLOW_EXISTING_VERSION}" = yes ]; then
+      say "--allow-existing-version: not checking ${image}:${VERSION}"
+    elif ! version_tag_is_free "${image}:${VERSION}"; then
+      echo "refusing to publish ${image}:${VERSION}" >&2
+      echo "re-run to get the next number, or pass --allow-existing-version" >&2
+      echo "if replacing it is genuinely what you want" >&2
+      exit 1
+    fi
+    tags+=("${VERSION}")
+  fi
   # skopeo copies the already-compressed blobs verbatim; a podman pull/push
   # round trip recompressed ~200 layers for nothing. After the first copy the
   # registry holds every blob and the rest are manifest writes.
