@@ -146,8 +146,10 @@ build_vanilla() {
 build_nvidia() {
   [ -n "${SIGNER_URL}" ] \
     || { echo "nvidia needs --signer-url: the kmod cannot be signed without it" >&2; exit 2; }
-  [ -n "${SIGNER_TOKEN_FILE}" ] && [ -r "${SIGNER_TOKEN_FILE}" ] \
-    || { echo "nvidia needs --signer-token-file pointing at a readable token" >&2; exit 2; }
+  if [ -z "${SIGNER_TOKEN_FILE}" ] || [ ! -r "${SIGNER_TOKEN_FILE}" ]; then
+    echo "nvidia needs --signer-token-file pointing at a readable token" >&2
+    exit 2
+  fi
   podman image exists "${IMAGE}:${FEDORA_VERSION}" \
     || { echo "no ${IMAGE}:${FEDORA_VERSION}; build vanilla first" >&2; exit 2; }
 

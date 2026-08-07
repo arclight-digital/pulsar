@@ -74,7 +74,10 @@ mkdir -p "${WORK}" || exit 2
 GRAPHROOT="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)"
 RUNROOT="$(podman info --format '{{.Store.RunRoot}}' 2>/dev/null)"
 DRIVER="$(podman info --format '{{.Store.GraphDriverName}}' 2>/dev/null)"
-[ -n "${GRAPHROOT}" ] && [ -n "${DRIVER}" ] || { echo "cannot read podman store info" >&2; exit 2; }
+if [ -z "${GRAPHROOT}" ] || [ -z "${DRIVER}" ]; then
+  echo "cannot read podman store info" >&2
+  exit 2
+fi
 
 case "${GRAPHROOT}" in
   /mnt/*) MOUNT_TARGET="/var${GRAPHROOT}" ;;
