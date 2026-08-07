@@ -448,7 +448,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     plymouth-set-default-theme pulsar && \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     install -d -m 0700 /var/roothome && \
-    { dracut --force --no-hostonly --reproducible --add ostree \
+    { DRACUT_NO_XATTR=1 dracut --force --no-hostonly --reproducible --add ostree \
         --kver ${KV} /usr/lib/modules/${KV}/initramfs.img >/tmp/dracut.log 2>&1 || \
       { cat /tmp/dracut.log; echo "FATAL: dracut exited nonzero"; exit 1; }; }; \
     cat /tmp/dracut.log; \
@@ -468,6 +468,30 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
 # The lsinitrd assertion turns that brick into a red build. --no-hostonly for
 # the same probing reason (the "host" is a build container, not the laptop),
 # --reproducible because there is no reason not to.
+#
+# DRACUT_NO_XATTR=1 is what lets this build on an SELinux host at all, and it
+# is not a workaround for a policy problem -- there is no denial and no AVC.
+# podman mounts the container rootfs with a MOUNT-WIDE context=:
+#
+#   overlay / overlay rw,context="system_u:object_r:container_file_t:s0:c793,c938",...
+#
+# A filesystem mounted that way has one label for every file by definition, so
+# the kernel answers setxattr("security.selinux") with EOPNOTSUPP -- Operation
+# not supported, never Permission denied. dracut-init.sh then builds its copy
+# command as `cp --preserve=mode,xattr,timestamps,ownership` whenever it is
+# root and DRACUT_NO_XATTR is unset, cp exits 1 on the failed attribute, and
+# dracut logs dracut[E]: FAILED and EXITS 0 -- caught only by the grep below.
+#
+# Because it is a mount option rather than an enforcement decision, SELinux
+# being permissive does not help: permissive relaxes denials, and this is not
+# one. Only a host with SELinux fully disabled avoids it, which is why this
+# never appeared on the Ubuntu runners and appeared immediately on Rocky.
+#
+# Dropping the xattr costs nothing here. The labels being copied are the
+# container's own mount-wide label, not the image's, and files inside an
+# initramfs cpio are labelled from policy at runtime regardless. It also makes
+# the initramfs identical to the one an SELinux-less builder produces, which
+# is what --reproducible is for.
 #
 # /var/roothome exists before dracut runs because /root is an ostree symlink
 # into it and the base image started shipping /var empty: dracut's base
