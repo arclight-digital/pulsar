@@ -42,14 +42,15 @@ const FILES = [
   ['assets/fonts/Host_Grotesk/OFL.txt', 'OFL-host-grotesk.txt'],
   ['assets/fonts/JetBrains_Mono/OFL.txt', 'OFL-jetbrains-mono.txt'],
 
-  // Committed stills: the no-WebGL and still-loading hero ground, the gamescale
-  // icon, and the share card. The one place rendered output lives in git --
-  // silk is locked, the set is ~230KB, and re-rendering is documented beside
-  // the files.
+  // Committed stills: the no-WebGL and still-loading hero ground, plus the
+  // gamescale icon. The one place rendered output lives in git -- silk is
+  // locked, the pair is ~180KB, and re-rendering is documented beside the
+  // files. src/pages/og.png.ts also reads silk-still-dark as its background.
+  //
+  // The share card is NOT here any more: it is rendered at build time.
   ['site/assets-static/silk-still-dark.jpg', 'silk-still-dark.jpg'],
   ['site/assets-static/silk-still-light.jpg', 'silk-still-light.jpg'],
   ['site/assets-static/gamescale.svg', 'gamescale.svg'],
-  ['site/assets-static/og.jpg', 'og.jpg'],
 ];
 
 // Clear first: a file dropped from the list above must leave the deploy too,
