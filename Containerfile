@@ -438,12 +438,17 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh && \
 #
 # Deliberately the ONLY enablement. A second symlink under /usr/lib would
 # survive `systemctl disable`, leaving a unit that reports disabled and keeps
-# running.
+# running. The preset files mirror this list as POLICY, not symlinks -- see
+# their headers for why that does not recreate the problem -- and the
+# assertion below keeps them in lockstep with the calls here.
 # Nothing here touches update policy. Stock Silverblue behaviour is what we
 # want -- GNOME Software (its rpm-ostree plugin is installed) checks and
 # notifies, and the update installs when you choose. bootc's
 # fetch-apply-updates.timer is deliberately left DISABLED: it runs
-# `bootc upgrade --apply`, which reboots on its own.
+# `bootc upgrade --apply`, which reboots on its own. rpm-ostree-countme.timer
+# stays at its stock enablement too: an anonymous population count that keeps
+# the Fedora base this image rides on counted, and a fork that objects turns
+# off one timer.
 RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
       { echo "FATAL: greenboot no longer ships its bootupd grub fragment; without it GRUB never decrements boot_counter and automatic rollback silently never arms"; exit 1; }; \
     fc-cache -f && \
@@ -466,6 +471,14 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable podman-auto-update.timer && \
     systemctl --global enable gamescale-reconcile.service && \
     systemctl disable NetworkManager-wait-online.service && \
+    for u in scx.service greenboot-healthcheck.service; do \
+      grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
+        { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
+    done && \
+    for u in podman-auto-update.timer gamescale-reconcile.service; do \
+      grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
+        { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
+    done && \
     plymouth-set-default-theme pulsar && \
     KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     install -d -m 0700 /var/roothome && \

@@ -1,6 +1,15 @@
-# Only honoured by a fresh `bootc install`; a rebase onto this image never
-# re-runs presets. The /etc wants symlink written at image build (see the
-# Containerfile's finalize step) is what actually enables scx.service on a
-# rebased system.
+# Only honoured when presets are APPLIED: first boot of a fresh `bootc
+# install` (enable-only mode) or an admin running `systemctl preset-all`
+# (full mode). A rebase re-runs neither -- the /etc wants symlinks written at
+# image build (see the Containerfile's finalize step) are what actually
+# enable these units on a rebased system.
+#
+# Every unit the finalize step enables must ALSO be listed here. Presets are
+# policy, not symlinks, so this file cannot recreate the two-symlink problem
+# the Containerfile warns about -- but greenboot ships no preset entry of its
+# own, so a `systemctl preset-all` run in full mode would fall through to
+# Fedora's `disable *` and quietly disarm automatic rollback. The
+# Containerfile asserts this list and its enablements agree.
 enable scx.service
+enable greenboot-healthcheck.service
 disable NetworkManager-wait-online.service

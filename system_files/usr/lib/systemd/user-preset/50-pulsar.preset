@@ -1,0 +1,6 @@
+# User-session mirror of ../system-preset/50-pulsar.preset: every unit the
+# Containerfile enables with `systemctl --global enable` is listed here too,
+# for the reasons in that file's header. The Containerfile asserts the two
+# stay in lockstep.
+enable podman-auto-update.timer
+enable gamescale-reconcile.service
