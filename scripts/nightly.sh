@@ -44,6 +44,19 @@
 #   PULSAR_PUBLISH              yes (default) | dry-run | no
 set -euo pipefail
 
+# cloud-init's runcmd is not a login shell: it runs as root with no $HOME.
+# oras resolves the running user's home for its registry config and
+# hard-fails without it -- and oras answers the version lookup, so no $HOME
+# means no version. The old .0 fallback was almost certainly masking exactly
+# this failure on every host run, which is how two builds computed .0 on
+# 2026-08-07. Derived from the passwd entry rather than assumed to be /root:
+# the directory exists, only the variable is missing.
+if [ -z "${HOME:-}" ]; then
+  HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+  [ -n "${HOME}" ] || { echo "no \$HOME and no passwd entry for uid $(id -u)" >&2; exit 2; }
+  export HOME
+fi
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
 

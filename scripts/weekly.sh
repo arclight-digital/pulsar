@@ -30,6 +30,15 @@
 #   R2_CREDENTIALS_FILE           file setting AWS_ACCESS_KEY_ID/SECRET
 set -euo pipefail
 
+# Same as nightly.sh: cloud-init's runcmd sets no $HOME, and the aws CLI
+# build-iso.sh publishes through expands ~ for its config and cache.
+# Derived, not assumed -- see the nightly for the full story.
+if [ -z "${HOME:-}" ]; then
+  HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+  [ -n "${HOME}" ] || { echo "no \$HOME and no passwd entry for uid $(id -u)" >&2; exit 2; }
+  export HOME
+fi
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
 
