@@ -74,13 +74,18 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
 # so under dnf5 it "failed" as a tolerated non-critical error -- but plain
 # rpm turns a failing scriptlet into a failing install. Skip it; phase 3 is
 # the build.
-# updates-testing, reluctantly: this image's kernel (7.1.x) dropped headers
-# that nvidia-open <= 595 still includes (of_gpio.h), so stable's -open akmod
-# cannot compile at all. The matching >= 610 -open build currently sits in
-# updates-testing only. dnf picks the newest candidate across both repos, so
-# this line keeps working -- and can lose the --enablerepo -- once it lands
-# in stable.
-RUN dnf5 download --enablerepo=rpmfusion-nonfree-updates-testing \
+# rpmfusion-nonfree-nvidia-driver, by name: this image's kernel (7.1.x)
+# dropped headers that nvidia-open <= 595 still includes (of_gpio.h), so the
+# 595 in stable cannot compile at all. The >= 610 -open akmod lived in
+# updates-testing until 2026-08-07, then graduated to rpmfusion's dedicated
+# nvidia-driver repo INSTEAD of stable -- 610's USERSPACE reached stable
+# updates, but the akmod did not. The night it moved, "newest candidate
+# across enabled repos" quietly became 595 again and a compile error forty
+# minutes in was the only thing that said so. So the enablerepo names the
+# repo that actually carries the akmod; if this download ever resolves an
+# -open the kernel cannot compile again, the repo has moved again -- chase
+# the akmod, not the userspace, which travels separately.
+RUN dnf5 download --enablerepo=rpmfusion-nonfree-nvidia-driver \
       --destdir /tmp/akmod-rpm akmod-nvidia-open && \
     rpm -Uvh --nodeps --noscripts /tmp/akmod-rpm/akmod-nvidia-open-*.rpm && \
     rm -rf /tmp/akmod-rpm
@@ -195,9 +200,11 @@ RUN --mount=type=secret,id=signer_token,target=/run/secrets/signer_token \
 # Userspace is pinned to the akmod's exact epoch:version, because anything
 # newer would require a newer nvidia-kmod than the shim asserts. Unpinned,
 # this breaks the moment rpmfusion updates userspace ahead of -open.
-# updates-testing here matches phase 2: the pin follows whatever version the
-# akmod came from, and while that is a testing-only version its userspace is
-# too.
+# nvidia-driver here matches phase 2: the pin follows whatever version the
+# akmod came from, and that repo carries the matching userspace. (610's
+# userspace also sits in plain nonfree updates now, but the akmod does not
+# -- the two travel separately, which is why this stays yoked to phase 2's
+# repo rather than trusting stable to have the pair.)
 RUN NVVER=$(rpm -q --qf '%{EPOCH}:%{VERSION}' akmod-nvidia-open) && \
     echo "pinning userspace to ${NVVER}" && \
     mkdir -p /tmp/shim && \
@@ -215,7 +222,7 @@ RUN NVVER=$(rpm -q --qf '%{EPOCH}:%{VERSION}' akmod-nvidia-open) && \
       "%files" > /tmp/shim/shim.spec && \
     rpmbuild -bb --define '_topdir /tmp/shim/rpmbuild' /tmp/shim/shim.spec && \
     dnf5 install -y --exclude=akmod-nvidia \
-      --enablerepo=rpmfusion-nonfree-updates-testing \
+      --enablerepo=rpmfusion-nonfree-nvidia-driver \
       /tmp/shim/rpmbuild/RPMS/noarch/pulsar-nvidia-kmod-shim-*.rpm \
       "xorg-x11-drv-nvidia-${NVVER}*" \
       "xorg-x11-drv-nvidia-cuda-${NVVER}*" \
