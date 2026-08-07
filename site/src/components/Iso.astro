@@ -5,16 +5,22 @@
 import CopyButton from './CopyButton.astro';
 import DownloadRow from './DownloadRow.astro';
 import Term from './Term.astro';
-import { ISOS } from '../data/site';
+import { COSIGN_PUB, ISOS } from '../data/site';
 
-const SUMS = ['sha256', 'sig', 'cert'];
+const SUMS = ['sha256', 'sha256.sig', 'json'];
 
+// The signature covers the checksum manifest, not the 5GB ISO -- verifying
+// the manifest and then checking the ISO against it proves the same thing
+// without cosign reading five gigabytes. --insecure-ignore-tlog is the
+// documented flag for plain key-based verification: the trust anchor here is
+// the published key, not a transparency-log entry, and the name is cosign's,
+// not a warning about this page.
 const VERIFY = [
-  `cosign verify-blob ${ISOS.vanilla}`,
-  `--signature ${ISOS.vanilla}.sig`,
-  `--certificate ${ISOS.vanilla}.pem`,
-  "--certificate-identity-regexp 'github.com/arclight-digital/pulsar'",
-  '--certificate-oidc-issuer https://token.actions.githubusercontent.com',
+  `cosign verify-blob ${ISOS.vanilla}.sha256`,
+  `--key ${COSIGN_PUB}`,
+  `--signature ${ISOS.vanilla}.sha256.sig`,
+  '--insecure-ignore-tlog=true',
+  `&& sha256sum -c ${ISOS.vanilla}.sha256`,
 ].join(' ');
 ---
 
@@ -24,7 +30,7 @@ const VERIFY = [
   <p class="lede">
     A weekly installer ISO for each variant, built from the published image itself &mdash; the same
     Anaconda installer stock Silverblue uses, landing directly in Pulsar.{' '}
-    <span class="sent">Checksummed, and signed in the open with keyless&nbsp;cosign.</span>
+    <span class="sent">Checksummed, and signed with Pulsar's release&nbsp;key.</span>
   </p>
 
   <Term ariaLabel="ISO downloads" class="install iso-card">
@@ -33,22 +39,23 @@ const VERIFY = [
     <DownloadRow which="nvidia" file={ISOS.nvidia} sums={SUMS} />
     <p class="hint">
       Write it to a USB&nbsp;stick with GNOME&nbsp;Disks or <code>dd</code>, boot,&nbsp;install.{' '}
-      <code>sha256sum&nbsp;-c</code> against the manifest checks the download; the signature proves
-      CI built&nbsp;it:
+      The <code>.json</code> sidecar records exactly which image digest the installer carries.
+      Verify the manifest's signature, then the ISO against the&nbsp;manifest:
     </p>
   </Term>
 
   <Term ariaLabel="Verify the ISO signature">
     <Fragment slot="caption">
-      the signature is bound to this repo's CI, not a key that can&nbsp;leak
+      signed with the release key &mdash; it never leaves the signing&nbsp;host
       <CopyButton text={VERIFY} label="Copy the ISO verify command" />
     </Fragment>
-    <pre><code><span class="cmd">cosign verify-blob {ISOS.vanilla} \
-  --signature {ISOS.vanilla}.sig \
-  --certificate {ISOS.vanilla}.pem \
-  --certificate-identity-regexp 'github.com/arclight-digital/pulsar' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com</span>
-<span class="ok">Verified OK</span></code></pre>
+    <pre><code><span class="cmd">cosign verify-blob {ISOS.vanilla}.sha256 \
+  --key {COSIGN_PUB} \
+  --signature {ISOS.vanilla}.sha256.sig \
+  --insecure-ignore-tlog=true</span>
+<span class="ok">Verified OK</span>
+<span class="cmd">sha256sum -c {ISOS.vanilla}.sha256</span>
+<span class="ok">{ISOS.vanilla}: OK</span></code></pre>
   </Term>
 </section>
 

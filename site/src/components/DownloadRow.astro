@@ -1,8 +1,8 @@
 ---
 // One ISO download: the variant label, the filename as a link, and its
 // verification sidecars. Worn by both the install card's iso tab and the
-// bare-metal section, which differ only in whether they offer the cosign
-// certificate alongside the signature.
+// bare-metal section, which differ only in whether they offer the metadata
+// sidecar alongside the manifest and its signature.
 import { ISO_BASE } from '../data/site';
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
   sums?: string[];
 }
 
-const { which, file, sums = ['sha256', 'sig'] } = Astro.props;
+const { which, file, sums = ['sha256', 'sha256.sig'] } = Astro.props;
 ---
 
 <div class="row">

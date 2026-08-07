@@ -9,8 +9,8 @@
 #
 # Deliberately thin, and it stays a scheduler. The pipeline is
 # scripts/build.sh and everything downstream of the push is
-# scripts/publish.sh -- the same code a workstation runs, and the same code
-# build.yml calls. This adds versioning, ordering and alerting, nothing else.
+# scripts/publish.sh -- the same code a workstation runs. This adds
+# versioning, ordering and alerting, nothing else.
 #
 # A timer that silently stops firing is the classic failure of moving off
 # hosted CI: GitHub emails when a workflow fails, a systemd timer does not,

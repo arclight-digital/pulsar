@@ -187,7 +187,7 @@ CHUNK_TIMEOUT=120 chunk absent \
   --from "${TOY}-does-not-exist:${FEDORA_VERSION}" > "${WORK}/absent.log" 2>&1
 if grep -q "Trying to pull" "${WORK}/absent.log"; then
   echo "  falls back to a registry pull, silently -- as expected, and why"
-  echo "  build.yml asserts on os-release content after every rechunk"
+  echo "  build.sh asserts on os-release content after every rechunk"
 else
   echo "  no registry fallback observed; the build's content assertion may"
   echo "  now be guarding a failure mode that no longer exists"

@@ -14,7 +14,8 @@
 </p>
 
 Fedora Silverblue with the sharp edges filed off, shipped as a bootc image on
-the official Fedora base. CI builds, signs, and attests every image nightly;
+the official Fedora base. An ephemeral build host builds, signs, and
+publishes every image nightly;
 the machine that runs one never compiles anything, the system is the same
 every boot, and the last good version is always one reboot away.
 
@@ -112,7 +113,7 @@ and a health check you need sudo for is one you will not run.
 
 `pulsar sbom` is generated, never baked — a file inside the image cannot
 describe the image containing it, so it reads the live rpm database, through
-the same script CI uses.
+the same script the nightly uses.
 
 ## For development
 
@@ -177,13 +178,15 @@ signs it. Blackwell has no closed-driver option, which is fine — the open
 module is the better one now anyway.
 
 `Containerfile` declares no build secrets, so it is safe to build anywhere.
-`Containerfile.nvidia` uses the Secure Boot signing key, which lives in the
-repo secrets `AKMODS_PRIV` / `AKMODS_CERT` and never reaches an image layer.
+`Containerfile.nvidia` needs the Secure Boot signing key — which it never
+holds. The key lives on the signing host; the build carries a bearer token,
+sends each module's bytes, and attaches the detached signature that comes
+back (docs/SIGNING.md). Neither key nor token reaches an image layer.
 
 `system_files/etc/pki/pulsar/MOK.der` is the public half. It ships in
 **both** images so the key can be enrolled before the driver is in play. The
 nvidia build fails if the module's signer doesn't match that cert — a stale
-cert becomes a red CI run instead of a black screen at boot.
+cert becomes a failed build instead of a black screen at boot.
 
 **Running this yourself?** Fork it and use your own key. Enrolling my cert
 means your machine permanently trusts modules I sign, which is not a
@@ -227,8 +230,8 @@ Stock Silverblue behaviour, on purpose. GNOME Software notices and tells you;
 it installs when you choose to restart. bootc's `fetch-apply-updates.timer`
 is left disabled deliberately — it reboots on its own.
 
-CI rebuilds nightly, so kernels, security updates, and driver bumps arrive as
-a normal update notification. Impatient: `sudo pulsar update`.
+Pulsar rebuilds nightly, so kernels, security updates, and driver bumps
+arrive as a normal update notification. Impatient: `sudo pulsar update`.
 
 Use `pulsar update` rather than `bootc upgrade` directly if you have layered
 anything with `rpm-ostree install`. bootc's model is the container image alone
@@ -265,21 +268,25 @@ by hand.
 ```text
 Containerfile          -> ghcr.io/arclight-digital/pulsar
 Containerfile.nvidia   -> ghcr.io/arclight-digital/pulsar-nvidia
-.github/workflows/build.yml   builds, signs, pushes, attests both (nightly)
-.github/workflows/iso.yml     weekly installer ISOs, checksummed + signed
+scripts/nightly.sh     the nightly: version, build, push, publish — run by
+                       the build host (arclight-infra), 8pm Mountain
+scripts/weekly.sh      weekly installer ISOs, Saturday night — checksummed,
+                       manifest signed with the release key (keys/cosign.pub)
+scripts/build-iso.sh   the ISO pipeline weekly.sh drives, one variant at a time
 assets/                source of truth for art — edit these
 system_files/          overlay for vanilla (branding here is GENERATED)
 system_files.nvidia/   overlay for nvidia only
 scripts/sync-branding.sh   assets/ -> system_files/
-scripts/build.sh           local TEST builds; CI ships the real ones
+scripts/build.sh           local TEST builds; the build host ships the real ones
 site/                  the one-pager (Astro); Cloudflare builds it on push
 site/src/data/         written by the nightly — never edit by hand
 ```
 
-Push to `main` and CI does the rest. `build.sh` is only for checking a
-Containerfile edit before it gets there, and it needs root — the nvidia
-variant derives `FROM` the vanilla image, and rootless and rootful podman
-keep separate storage.
+Push to `main` and the next nightly ships it — nothing builds off a push;
+the schedule lives on the build host as systemd timers. `build.sh` is only
+for checking a Containerfile edit before it gets there, and it needs root —
+the nvidia variant derives `FROM` the vanilla image, and rootless and
+rootful podman keep separate storage.
 
 ## Field notes
 

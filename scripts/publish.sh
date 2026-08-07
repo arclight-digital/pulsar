@@ -11,9 +11,9 @@
 # manifest. Both need the images in local podman storage. A host without them
 # would have to pull ~17GB back down to do work the builder can do for free.
 #
-# One implementation, called from both places. build.yml calls this during the
-# migration to DigitalOcean, and scripts/nightly.sh calls it after that -- the
-# same code, so the site cannot say something the registry does not. The repo
+# One implementation, wherever it runs. scripts/nightly.sh calls this on the
+# build host, and a workstation can call it directly -- the same code, so the
+# site cannot say something the registry does not. The repo
 # has already paid for the other arrangement once: the local build script and
 # the inline CI pipeline drifted until a bug that shipped stale content for
 # weeks could not reproduce locally at all.
@@ -139,6 +139,13 @@ if [ -n "${R2_CREDENTIALS_FILE:-}" ] && [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
   # shellcheck source=/dev/null  # a runtime credentials file, never in the repo
   . "${R2_CREDENTIALS_FILE}"
   set +a
+  # The build host spells them R2_* precisely so the file cannot leak ambient
+  # AWS_* names into anything that sources it casually -- Spaces speaks S3
+  # too, and the wrong ambient key uploads to the wrong store. The mapping to
+  # the names the aws cli wants happens here, in the one scope that talks to
+  # R2. A file that sets AWS_* directly still works: it wins above.
+  export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${R2_ACCESS_KEY_ID:-}}"
+  export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${R2_SECRET_ACCESS_KEY:-}}"
 fi
 
 R2_ENDPOINT="${R2_ENDPOINT:-${R2_ACCOUNT_ID:+https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}}"
@@ -330,9 +337,9 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
 # page. site/version.txt went with them: the hero's build chip reads
 # manifest.version, so there is one fact instead of two that could disagree.
 #
-# The commit touches only site/, which build.yml's paths-ignore excludes, so it
-# cannot retrigger an image build. It does wake Cloudflare's git integration,
-# which is the point.
+# The commit touches only site/. Nothing schedules off a push any more --
+# the nightly is a systemd timer on the build host -- so the only thing this
+# commit wakes is Cloudflare's git integration, which is the point.
 # ---------------------------------------------------------------------------
 publish_site() {
   # The manifest card is a transcript of the image's own baked manifest, never
