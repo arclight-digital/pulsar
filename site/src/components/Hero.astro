@@ -18,7 +18,16 @@ import { REPO } from '../data/site';
   <canvas id="skyfade" aria-hidden="true"></canvas>
 
   <div class="hero-inner">
-    <img class="mark" data-mark src="/assets/pulsar-animated.svg" alt="" width="180" height="180" />
+    {/* data-spin is the easter egg's hook -- see src/scripts/spin.ts */}
+    <img
+      class="mark"
+      data-mark
+      data-spin
+      src="/assets/pulsar-animated.svg"
+      alt=""
+      width="180"
+      height="180"
+    />
     <h1 class="wordmark">PULSAR</h1>
     <p class="tagline">Your lighthouse in the sky.</p>
     <p class="sub">
@@ -106,6 +115,41 @@ import { REPO } from '../data/site';
   .mark {
     height: 180px;
     width: 180px;
+  }
+
+  /* Easter egg: the mark takes a flick and spins down like a flywheel. The
+     core sits dead centre and the arc is the only asymmetric part of the cut,
+     so rotating the whole image reads as the arc orbiting the core.
+     A WHOLE number of turns, so it comes to rest exactly where it started.
+
+     The curve is the decay, and it was picked against numbers rather than by
+     eye: it opens at ~3.6 turns/s (21 degrees a frame at 60fps -- fast, but
+     short of the speed where a 145-segment arc starts to strobe), is about
+     half way round after a second, and is still turning at 0.34 turns/s at
+     3.5s. An ordinary ease-out spends ~80% of the travel in the first second
+     and then creeps invisibly, which reads as a stall, not a decay.
+
+     --spin-from lets a second click pick up from wherever the mark has got
+     to instead of snapping back to zero; spin.ts sets it.
+
+     The target is ABSOLUTE rather than --spin-from plus four turns, and that
+     matters: a finished animation with no fill-mode leaves the mark at an
+     untransformed 0deg. Landing on 1440deg -- a whole number of turns from
+     zero, whatever angle the flick started at -- is what makes that handover
+     invisible. A relative target would end at --spin-from and visibly snap.
+     A re-flick therefore travels a little more or less than four turns,
+     which is what a second flick should do anyway. */
+  .mark.is-spinning {
+    animation: flywheel 4s cubic-bezier(0.07, 0.28, 0.45, 0.9);
+  }
+
+  @keyframes flywheel {
+    from {
+      transform: rotate(var(--spin-from, 0deg));
+    }
+    to {
+      transform: rotate(1440deg);
+    }
   }
 
   /* Tracked to the authored lockup rather than by eye. The hero stacks the
@@ -244,8 +288,11 @@ import { REPO } from '../data/site';
     }
   }
 
+  /* The belt to spin.ts's braces: the script never adds the class under
+     reduced motion, and if it somehow did, this refuses to run it. */
   @media (prefers-reduced-motion: reduce) {
     .build-dot,
+    .mark.is-spinning,
     .hero-inner > :global(*) {
       animation: none;
     }
