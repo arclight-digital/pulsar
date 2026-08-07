@@ -52,8 +52,11 @@ trap 'rm -rf "${WORK}"' EXIT
 # as links and resolved against the target entry after the union is built.
 # Directories arrive with a trailing slash on one side and not always the
 # other; a leading ./ is likewise a producer's habit, not a path difference.
-normalise() {
-  awk '
+#
+# Written out as a file rather than inlined so the parallel pass below can run
+# it with awk -f. One implementation, used by both sides -- the whole point of
+# this script is that the two sides are read by the same producer.
+cat > "${WORK}/normalise.awk" <<'NORMALISE'
     {
       mode = $1
       split($2, own, "/")
@@ -78,8 +81,9 @@ normalise() {
 
       print name "\t" mode "\t" own[1] "\t" own[2] "\t" link
     }
-  '
-}
+NORMALISE
+
+normalise() { awk -f "${WORK}/normalise.awk"; }
 
 # ---------------------------------------------------------------------------
 # Source side: the image podman just built, flattened by export. A created
@@ -117,15 +121,30 @@ if [ -z "${layers}" ]; then
   exit 2
 fi
 
-: > "${WORK}/chunked.raw"
 count=0
+: > "${WORK}/blobs.list"
 while read -r digest; do
   blob="${LAYOUT}/blobs/sha256/${digest#sha256:}"
   [ -f "${blob}" ] || { echo "missing blob for ${digest}" >&2; exit 2; }
-  tar -tv --numeric-owner -f "${blob}" 2>/dev/null \
-    | normalise >> "${WORK}/chunked.raw" 2>>"${WORK}/chunked.wh"
+  printf '%05d %s\n' "${count}" "${blob}" >> "${WORK}/blobs.list"
   count=$((count + 1))
 done <<< "${layers}"
+
+# Read in parallel, CONCATENATE IN MANIFEST ORDER. Two hundred layers of
+# single-threaded gunzip is most of this script's wall clock, and on a build
+# host whose store is a network volume it is the difference between a minute
+# and twenty. Order is not cosmetic -- the union below keeps the LAST writer
+# for each path, so a reordered concatenation silently compares the wrong
+# layer. Zero-padded indices make the glob restore manifest order exactly.
+# shellcheck disable=SC2016  # $1..$3 are sh -c's positionals, not this shell's
+xargs -P "$(nproc 2>/dev/null || echo 4)" -L1 sh -c '
+  tar -tv --numeric-owner -f "$3" 2>/dev/null \
+    | awk -f "$1/normalise.awk" > "$1/part.$2.raw" 2> "$1/part.$2.wh"
+' _ "${WORK}" < "${WORK}/blobs.list"
+
+cat "${WORK}"/part.*.raw > "${WORK}/chunked.raw"
+cat "${WORK}"/part.*.wh  > "${WORK}/chunked.wh"
+rm -f "${WORK}"/part.*
 echo "compared ${count} chunked layers against ${SOURCE_IMAGE}"
 
 if [ -s "${WORK}/chunked.wh" ]; then
