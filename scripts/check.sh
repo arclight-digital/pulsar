@@ -95,7 +95,10 @@ say "degrade honestly on a non-Pulsar host"
 ./cli/pulsar doctor --json | jq -e '.checks | length > 0' >/dev/null
 ./cli/pulsar doctor --json | jq -e 'all(.checks[]; .summary | length > 0)' >/dev/null
 echo "no manifest here, so this must fail cleanly rather than crash:"
-if ./cli/pulsar manifest 2>/dev/null; then
+# Pointed at a path that exists nowhere, because "here" is not always a
+# non-Pulsar host: run on an actual Pulsar machine, the bare command finds
+# the real /usr/share/pulsar/manifest.json and this check fails backwards.
+if PULSAR_MANIFEST=/proc/no-such-manifest ./cli/pulsar manifest 2>/dev/null; then
   echo "pulsar manifest succeeded on a host with no manifest" >&2
   exit 1
 fi

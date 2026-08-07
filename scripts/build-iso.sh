@@ -259,8 +259,9 @@ if [ -n "${R2_CREDENTIALS_FILE:-}" ] && [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
   export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${R2_SECRET_ACCESS_KEY:-}}"
 fi
 R2_ENDPOINT="${R2_ENDPOINT:-${R2_ACCOUNT_ID:+https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}}"
-[ -n "${R2_ENDPOINT}" ] && [ -n "${R2_BUCKET:-}" ] && [ -n "${AWS_ACCESS_KEY_ID:-}" ] \
-  || { echo "--push needs R2_BUCKET, R2_ENDPOINT (or R2_ACCOUNT_ID), and credentials" >&2; exit 2; }
+if [ -z "${R2_ENDPOINT}" ] || [ -z "${R2_BUCKET:-}" ] || [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+  echo "--push needs R2_BUCKET, R2_ENDPOINT (or R2_ACCOUNT_ID), and credentials" >&2; exit 2
+fi
 command -v aws >/dev/null || { echo "missing: aws" >&2; exit 2; }
 # AWS CLI v2 sends checksum headers R2 has historically rejected.
 export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
