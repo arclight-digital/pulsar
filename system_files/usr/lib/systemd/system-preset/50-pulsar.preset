@@ -12,4 +12,5 @@
 # Containerfile asserts this list and its enablements agree.
 enable scx.service
 enable greenboot-healthcheck.service
+enable pulsar-flatpaks.service
 disable NetworkManager-wait-online.service

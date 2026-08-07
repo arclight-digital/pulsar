@@ -1,0 +1,28 @@
+# Installs the default Flatpaks (/usr/share/pulsar/flatpaks.list) on the
+# first boot that can reach flathub, then stamps /var/lib/pulsar and never
+# runs again -- so a user who removes a default app does not get it back.
+#
+# network-online.target is a weak signal here: this image disables
+# NetworkManager-wait-online, and on a genuinely fresh install Wi-Fi
+# credentials do not even exist until the user types them into
+# gnome-initial-setup, minutes after this unit first fires. So failure on
+# the first attempt is the EXPECTED path, and Restart= is the actual
+# mechanism: keep retrying every two minutes until flathub answers, and let
+# the success-only stamp (written by the script) end the loop. The spacing
+# also keeps the default start-rate limit (5 in 10s) from ever tripping,
+# so the retry loop cannot kill itself.
+[Unit]
+Description=Install the default Pulsar Flatpaks (first boot only)
+Documentation=file:///usr/share/pulsar/flatpaks.list
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=!/var/lib/pulsar/flatpaks-installed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/flatpak-defaults.sh
+Restart=on-failure
+RestartSec=120
+
+[Install]
+WantedBy=multi-user.target

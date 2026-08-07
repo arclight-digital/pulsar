@@ -298,6 +298,12 @@ RUN set -eux; \
 # from an image seeds first boot only, so it never reliably survived a rebase.
 # A remotes.d file lives in /etc, which ostree merges into existing systems
 # too -- this fixes rebases, not just fresh installs.
+#
+# The same /var constraint is why the DEFAULT apps are not baked either: the
+# image carries only a list (/usr/share/pulsar/flatpaks.list, in the overlay)
+# and pulsar-flatpaks.service installs it on the first boot that can reach
+# flathub, stamping /var/lib/pulsar so user removals stick afterwards.
+# `sudo pulsar setup apps` is the same script run on demand.
 
 # ---------------------------------------------------------------------------
 # Branding + config overlay. system_files/ mirrors / exactly.
@@ -388,7 +394,11 @@ LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
 ARG PULSAR_CHANGELOG_URL="https://pulsar.arclight.digital/changelog.json"
 COPY cli/pulsar /usr/bin/pulsar
 COPY scripts/rpm-sbom.sh /usr/libexec/pulsar/rpm-sbom.sh
-RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh && \
+COPY scripts/flatpak-defaults.sh /usr/libexec/pulsar/flatpak-defaults.sh
+RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
+      /usr/libexec/pulsar/flatpak-defaults.sh && \
+    grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
+      { echo "FATAL: flatpaks.list ships no apps; pulsar-flatpaks.service would fail on every boot forever"; exit 1; } && \
     mkdir -p /usr/share/pulsar && \
     jq -n \
       --arg image     "pulsar" \
@@ -469,10 +479,11 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     glib-compile-schemas /usr/share/glib-2.0/schemas && \
     systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \
+    systemctl enable pulsar-flatpaks.service && \
     systemctl --global enable podman-auto-update.timer && \
     systemctl --global enable gamescale-reconcile.service && \
     systemctl disable NetworkManager-wait-online.service && \
-    for u in scx.service greenboot-healthcheck.service; do \
+    for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \

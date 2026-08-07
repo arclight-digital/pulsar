@@ -1,0 +1,23 @@
+# The default Flatpaks. Installed system-wide from the flathub remote, once:
+# by pulsar-flatpaks.service on the first boot that has a network, or by
+# `sudo pulsar setup apps` if you would rather watch it happen. After that
+# first success the service never runs again, so removing an app on a
+# running system sticks -- this list is a starting set, not enforced state.
+#
+# One application ID per line; '#' starts a comment. Curation rules: the
+# launchers and daily drivers a fresh install is actually missing, nothing
+# Microsoft-owned, nothing an average boot does not use.
+
+# launchers -- the out-of-box gap between a fresh image and a playable one
+com.valvesoftware.Steam
+io.github.Faugus.faugus-launcher
+
+# plumbing -- proton management, sandbox permissions, wine prefixes
+com.vysp3r.ProtonPlus
+com.github.tchx84.Flatseal
+com.usebottles.bottles
+
+# daily drivers
+com.discordapp.Discord
+com.obsproject.Studio
+com.github.wwmm.easyeffects

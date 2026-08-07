@@ -867,6 +867,17 @@ cmd_setup() {
         systemctl --user enable --now podman-auto-update.timer
         printf 'edit it, then: systemctl --user start example\n'
         ;;
+    apps)
+        # The one recipe that is root, not user: the defaults install
+        # system-wide, same as the first-boot service. Both run the same
+        # script, so this is also the manual retry path if that service is
+        # sitting in its offline retry loop and you would rather watch.
+        need_root "setup apps"
+        need flatpak
+        local script=/usr/libexec/pulsar/flatpak-defaults.sh
+        [ -x "$script" ] || die "flatpak-defaults is not staged in this image (${script})"
+        exec "$script"
+        ;;
     gamescale)
         need_user gamescale
         # Delegates to upstream's installer against the copy staged in the
@@ -880,7 +891,7 @@ cmd_setup() {
         "$src" "$@"
         ;;
     ""|-h|--help)
-        printf 'usage: pulsar setup <recipe>\n\n  devbox      create the default distrobox\n  quadlet     install the quadlet template and enable auto-update\n  gamescale   grant flatpak launchers, from the staged copy\n'
+        printf 'usage: pulsar setup <recipe>\n\n  apps        install the default Flatpaks (root)\n  devbox      create the default distrobox\n  quadlet     install the quadlet template and enable auto-update\n  gamescale   grant flatpak launchers, from the staged copy\n'
         ;;
     *) die "unknown recipe: ${recipe} (try: pulsar setup --help)" ;;
     esac
@@ -904,7 +915,7 @@ pulsar -- manage a Pulsar system
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
 
-  pulsar setup <recipe>    devbox | quadlet | gamescale
+  pulsar setup <recipe>    apps | devbox | quadlet | gamescale
 
 Options
   --logo, --no-logo        force or suppress the mark in `manifest`

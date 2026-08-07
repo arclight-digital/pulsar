@@ -37,6 +37,7 @@ shellcheck \
   scripts/check-scx-btf.sh \
   scripts/check.sh \
   scripts/diff-chunk-metadata.sh \
+  scripts/flatpak-defaults.sh \
   scripts/lint-containerfile.sh \
   scripts/next-version.sh \
   scripts/nightly.sh \
