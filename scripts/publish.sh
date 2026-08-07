@@ -117,7 +117,15 @@ fi
 # $XDG_RUNTIME_DIR/containers/auth.json, oras reads ~/.docker/config.json.
 # REGISTRY_AUTH_FILE is the one variable that can point both at the same file.
 ORAS_AUTH=()
-[ -n "${REGISTRY_AUTH_FILE:-}" ] && ORAS_AUTH=(--registry-config "${REGISTRY_AUTH_FILE}")
+if [ -n "${REGISTRY_AUTH_FILE:-}" ]; then
+  # Absolute on purpose: attach_sboms runs oras from inside ${STAGE}, and a
+  # relative auth path would quietly resolve against the staging directory and
+  # fail to authenticate rather than fail to be found.
+  case "${REGISTRY_AUTH_FILE}" in
+    /*) ORAS_AUTH=(--registry-config "${REGISTRY_AUTH_FILE}") ;;
+    *)  ORAS_AUTH=(--registry-config "${PWD}/${REGISTRY_AUTH_FILE}") ;;
+  esac
+fi
 
 # The build host hands R2 credentials over as a FILE, matching the idiom the
 # signer token already uses: a secret in a root-owned 0600 file is not in the
@@ -201,12 +209,24 @@ attach_sboms() {
     return 0
   fi
   say "attaching SBOMs as OCI referrers"
-  oras attach "${ORAS_AUTH[@]}" --artifact-type application/spdx+json \
-    "${IMAGE}@${DIGEST_VANILLA}" \
-    "${STAGE}/sbom-vanilla.spdx.json:application/spdx+json"
-  oras attach "${ORAS_AUTH[@]}" --artifact-type application/spdx+json \
-    "${IMAGE_NVIDIA}@${DIGEST_NVIDIA}" \
-    "${STAGE}/sbom-nvidia.spdx.json:application/spdx+json"
+  # Run from ${STAGE} with BARE filenames. oras refuses an absolute path
+  # outright, but the refusal is the lesser reason to avoid one: oras records
+  # whatever path it is handed as the layer's org.opencontainers.image.title,
+  # so an absolute path would publish this build host's directory layout --
+  # /var/mnt/pulsar-build/publish/... -- into the metadata of a public
+  # artifact. What a consumer running `oras discover` should see is
+  # sbom-vanilla.spdx.json.
+  #
+  # Not --disable-path-validation. That would silence the error and ship the
+  # leak, which is the wrong half of the problem to fix.
+  ( cd "${STAGE}" && oras attach "${ORAS_AUTH[@]}" \
+      --artifact-type application/spdx+json \
+      "${IMAGE}@${DIGEST_VANILLA}" \
+      "sbom-vanilla.spdx.json:application/spdx+json" )
+  ( cd "${STAGE}" && oras attach "${ORAS_AUTH[@]}" \
+      --artifact-type application/spdx+json \
+      "${IMAGE_NVIDIA}@${DIGEST_NVIDIA}" \
+      "sbom-nvidia.spdx.json:application/spdx+json" )
 }
 
 # ---------------------------------------------------------------------------
