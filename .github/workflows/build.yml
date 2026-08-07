@@ -129,11 +129,16 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # Tooling for the SBOM/signing steps at the end. Pinned to major tags
-      # so a compromised point release cannot silently change what signs.
-      # No syft: see the SBOM step for why it was removed.
+      # oras resolves the outgoing :latest below, computes the version, and
+      # attaches the SBOMs from publish.sh. Pinned to a major tag so a
+      # compromised point release cannot silently change what publishes.
+      #
+      # No syft, and no cosign here: syft could not fit in 16GB (the reasoning
+      # is in scripts/publish.sh, next to what replaced it), and image signing
+      # is attest-build-provenance below for as long as this runs in Actions.
+      # When the build host takes over, that becomes a cosign signature from
+      # the signer -- there, not here.
       - uses: oras-project/setup-oras@v2
-      - uses: sigstore/cosign-installer@v3
 
       # Per-build version, Fedora's own shape: <release>.<YYYYMMDD>.<n>.
       #
