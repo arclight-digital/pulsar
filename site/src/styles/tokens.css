@@ -1,0 +1,85 @@
+/* Brand tokens and the two faces. Keep every color in this file -- component
+ * styles are scoped, so a color written into one of them is invisible from
+ * everywhere else and will drift.
+ *
+ * Theme plumbing: dark is the default world. The light tokens are applied
+ * twice on purpose -- once for system preference (scoped to :root without an
+ * explicit choice) and once for the visitor's explicit toggle, which sets
+ * data-theme and therefore escapes the media query entirely.
+ *
+ * --accent differs per theme for contrast, not taste: cyan reads at ~8:1 on
+ * ink but ~2.4:1 on the pale ground, where violet clears 4.5:1. */
+:root {
+  --ink: #0b0e1a;
+  --deep: #241f3d;
+  --cyan: #3ecbff;
+  --peri: #8fa8ff;
+  --violet: #4b3fd4;
+  --star: #e9edf7;
+
+  --text: var(--star);
+  --muted: rgba(233, 237, 247, 0.74);
+  --ground: var(--ink);
+  --card: rgba(143, 168, 255, 0.07);
+  --line: rgba(143, 168, 255, 0.18);
+  --accent: var(--cyan);
+  --accent-soft: var(--peri);
+  --chip: rgba(11, 14, 26, 0.55);
+
+  /* The terminal family is dark in both themes -- these are terminals, not
+     cards. Text sitting on that dark chip needs its own muted value, or it
+     inherits the light theme's near-black and disappears. */
+  --on-chip: rgba(233, 237, 247, 0.66);
+  --chip-line: rgba(143, 168, 255, 0.12);
+
+  --font-ui: "Host Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* one easing for every authored motion on the page */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --text: var(--deep);
+    --muted: rgba(36, 31, 61, 0.78);
+    --ground: var(--star);
+    --card: rgba(75, 63, 212, 0.06);
+    --line: rgba(75, 63, 212, 0.2);
+    --accent: var(--violet);
+    --accent-soft: var(--violet);
+    --chip: rgba(233, 237, 247, 0.55);
+  }
+}
+
+:root[data-theme="light"] {
+  --text: var(--deep);
+  --muted: rgba(36, 31, 61, 0.78);
+  --ground: var(--star);
+  --card: rgba(75, 63, 212, 0.06);
+  --line: rgba(75, 63, 212, 0.2);
+  --accent: var(--violet);
+  --accent-soft: var(--violet);
+  --chip: rgba(233, 237, 247, 0.55);
+}
+
+/* Staged from assets/fonts by stage-assets.mjs; OFL.txt travels beside each,
+   which the license requires. */
+@font-face {
+  font-family: "Host Grotesk";
+  src: url("/assets/HostGrotesk-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Host Grotesk";
+  src: url("/assets/HostGrotesk-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/JetBrainsMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}

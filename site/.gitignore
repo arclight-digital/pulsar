@@ -1,0 +1,13 @@
+# Astro build output and caches.
+dist/
+.astro/
+node_modules/
+.wrangler/
+
+# Staged by stage-assets.mjs from the repo's assets/ on every build. Nothing
+# here is a source file -- edit assets/ (or site/assets-static/) instead.
+public/assets/
+
+# Editor state. Here rather than in the root .gitignore because it only
+# appears now that site/ is an npm project an IDE recognises.
+.idea/

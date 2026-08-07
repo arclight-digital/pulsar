@@ -1,0 +1,23 @@
+---
+// One labelled, copyable command in the install card.
+//
+// `display` carries its own backslash continuation so the command wraps where
+// a person would break it rather than wherever the column happens to end;
+// `text` is the single line that reaches the clipboard.
+import CopyButton from './CopyButton.astro';
+
+interface Props {
+  which: string;
+  display: string;
+  text: string;
+  copyLabel: string;
+}
+
+const { which, display, text, copyLabel } = Astro.props;
+---
+
+<div class="row">
+  <span class="which">{which}</span>
+  <code>{display}</code>
+  <CopyButton text={text} label={copyLabel} />
+</div>

@@ -1,0 +1,29 @@
+---
+import Changelog from '../components/Changelog.astro';
+import Gamescale from '../components/Gamescale.astro';
+import Hero from '../components/Hero.astro';
+import Inside from '../components/Inside.astro';
+import Iso from '../components/Iso.astro';
+import Pipeline from '../components/Pipeline.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import Base from '../layouts/Base.astro';
+
+const DESCRIPTION =
+  'Pulsar: an immutable Fedora spin tuned for gaming and development. Rebuilt nightly; the last good version is always one reboot away.';
+---
+
+<Base
+  title="Pulsar — an immutable Fedora for gaming & development"
+  ogTitle="Pulsar — your lighthouse in the sky"
+  description={DESCRIPTION}
+>
+  <Hero />
+  <main>
+    <Gamescale />
+    <Inside />
+    <Pipeline />
+    <Iso />
+    <Changelog />
+  </main>
+  <SiteFooter />
+</Base>

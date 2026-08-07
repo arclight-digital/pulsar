@@ -1,0 +1,124 @@
+---
+import ByArclight from './ByArclight.astro';
+import { REPO } from '../data/site';
+
+const LINKS = [
+  { label: 'GitHub', href: REPO },
+  { label: 'The shader', href: `${REPO}/blob/main/assets/shaders/pulsar.frag` },
+  { label: 'MIT License', href: `${REPO}/blob/main/LICENSE` },
+];
+---
+
+<footer>
+  <div class="spectrum" aria-hidden="true"></div>
+
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <img data-mark class="foot-mark" src="/assets/pulsar-mark.svg" alt="" width="44" height="44" />
+      <div>
+        <p class="foot-word">PULSAR</p>
+        <p class="brandline">AN IMMUTABLE FEDORA SPIN</p>
+      </div>
+    </div>
+
+    <nav aria-label="Project links">
+      {LINKS.map((link) => <a href={link.href}>{link.label}</a>)}
+    </nav>
+  </div>
+
+  <div class="foot-base">
+    <p class="colophon">
+      Set in Host&nbsp;Grotesk and JetBrains&nbsp;Mono. One fragment shader renders this background
+      live and the OS wallpapers in&nbsp;CI. No analytics, no&nbsp;cookies.
+    </p>
+    <ByArclight />
+  </div>
+</footer>
+
+<style>
+  footer {
+    padding: 0 0 3rem;
+  }
+
+  .spectrum {
+    height: 2px;
+    background: linear-gradient(90deg, var(--cyan), var(--peri), var(--violet));
+  }
+
+  .foot-inner {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 2.4rem 1.5rem 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .foot-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+  }
+
+  .foot-mark {
+    width: 44px;
+    height: 44px;
+  }
+
+  .foot-word {
+    font-weight: 700;
+    font-size: 0.9rem;
+    letter-spacing: 0.2em; /* the same lockup tracking as the hero wordmark */
+  }
+
+  .brandline {
+    letter-spacing: 0.22em;
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 0.2rem;
+  }
+
+  nav {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  a {
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+
+  a:hover,
+  a:focus-visible {
+    text-decoration: underline;
+  }
+
+  /* the colophon on the left, the by-arclight badge on the right; wraps to two
+     rows when the colophon needs the width */
+  .foot-base {
+    max-width: 62rem;
+    margin: 2rem auto 0;
+    padding: 0 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem 2rem;
+    flex-wrap: wrap;
+  }
+
+  .colophon {
+    flex: 1 1 30rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 26rem) {
+    .foot-inner {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+</style>

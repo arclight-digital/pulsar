@@ -1,0 +1,127 @@
+---
+// The document shell: what search and share cards read, the pre-paint theme
+// restore, and the one script tag the page ships.
+import '../styles/tokens.css';
+import '../styles/base.css';
+import '../styles/terminal.css';
+import { version } from '../data/build';
+
+interface Props {
+  /** carries the keywords -- a search snippet and a share card have different jobs */
+  title: string;
+  description: string;
+  /** og:title keeps the tagline, where there is room for a voice */
+  ogTitle: string;
+}
+
+const { title, description, ogTitle } = Astro.props;
+
+// Absolute, always: crawlers resolve nothing relative, and the page is also
+// reachable at a github.io subpath, where split indexing helps neither.
+const canonical = new URL('/', Astro.site).href;
+const ogImage = new URL('/assets/og.jpg', Astro.site).href;
+
+// Structured data, honest only: everything here is real and verifiable, and
+// softwareVersion names the build the nightly actually published.
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Pulsar',
+  applicationCategory: 'OperatingSystem',
+  operatingSystem: 'Linux',
+  softwareVersion: version,
+  description:
+    'An immutable Fedora spin tuned for gaming and development, built and signed in CI, published nightly with SBOMs and provenance attestations.',
+  url: canonical,
+  image: ogImage,
+  downloadUrl: 'https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso',
+  license: 'https://github.com/arclight-digital/pulsar/blob/main/LICENSE',
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+  sameAs: ['https://github.com/arclight-digital/pulsar'],
+};
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pulsar" />
+    <meta property="og:title" content={ogTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The Pulsar mark and wordmark over the silk wallpaper: your lighthouse in the sky."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <meta name="theme-color" content="#0B0E1A" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#E9EDF7" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/assets/favicon.svg" />
+
+    {/* The hero ground and the UI faces are the LCP path; preloads keep the
+        first paint from waiting on discovery. Fonts need crossorigin even
+        same-origin -- font fetches are CORS-mode, and a preload that does not
+        match is a double download. */}
+    <link
+      rel="preload"
+      as="image"
+      href="/assets/silk-still-dark.jpg"
+      media="(prefers-color-scheme: dark)"
+    />
+    <link
+      rel="preload"
+      as="image"
+      href="/assets/silk-still-light.jpg"
+      media="(prefers-color-scheme: light)"
+    />
+    <link rel="preload" as="font" type="font/ttf" href="/assets/HostGrotesk-Regular.ttf" crossorigin />
+    <link rel="preload" as="font" type="font/ttf" href="/assets/HostGrotesk-Bold.ttf" crossorigin />
+
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+
+    {/* is:inline and before the stylesheet: a stored theme choice must not
+        flash the system theme, so this cannot be bundled and deferred. */}
+    <script is:inline>
+      try {
+        const t = localStorage.getItem('pulsar-theme');
+        if (t) document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+
+    <noscript>
+      <style>
+        .deck,
+        .copy,
+        .tabs {
+          display: none;
+        }
+        /* without JS both install paths stack; nothing hides behind a dead tab */
+        .tabpanel[hidden] {
+          display: block;
+        }
+      </style>
+    </noscript>
+  </head>
+
+  <body>
+    <slot />
+
+    {/* narrates the copy buttons' two outcomes */}
+    <span id="live" class="sr-only" aria-live="polite"></span>
+
+    <script>
+      import '../scripts/main';
+    </script>
+  </body>
+</html>

@@ -318,10 +318,21 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
 # ---------------------------------------------------------------------------
 # The page.
 #
-# Rendered here, where jq exists -- NOT in site/build.sh, which Cloudflare
-# runs and which stays dependency-free on purpose. The commit touches only
-# site/, which build.yml's paths-ignore excludes, so it cannot retrigger an
-# image build. It does wake Cloudflare's git integration, which is the point.
+# This step commits DATA, not markup. The site is an Astro project (site/), and
+# Astro reads site/src/data/*.json at build time to render the manifest card
+# and the changelog list. Nothing here renders HTML.
+#
+# It used to. site/build.sh was a dependency-free shell script -- Cloudflare's
+# builder had no jq -- so the fragments were pre-rendered here by
+# render-changelog.sh and render-manifest.sh and spliced in with awk. The
+# builder runs `npm run build` now and has node, so those three scripts and the
+# committed .html fragments are gone; the JSON goes straight from here to the
+# page. site/version.txt went with them: the hero's build chip reads
+# manifest.version, so there is one fact instead of two that could disagree.
+#
+# The commit touches only site/, which build.yml's paths-ignore excludes, so it
+# cannot retrigger an image build. It does wake Cloudflare's git integration,
+# which is the point.
 # ---------------------------------------------------------------------------
 publish_site() {
   # The manifest card is a transcript of the image's own baked manifest, never
@@ -334,9 +345,7 @@ publish_site() {
     || die "the image's manifest.json has no version; refusing to render it"
 
   if [ "${DRY_RUN}" = yes ]; then
-    "${REPO}/scripts/render-changelog.sh" "${STAGE}/changelog.json" > "${STAGE}/changelog.html"
-    "${REPO}/scripts/render-manifest.sh"  "${STAGE}/manifest.json"  > "${STAGE}/manifest.html"
-    echo "dry run: rendered to ${STAGE}, committed nothing"
+    echo "dry run: staged ${STAGE}/changelog.json and ${STAGE}/manifest.json, committed nothing"
     return 0
   fi
 
@@ -351,28 +360,27 @@ publish_site() {
     cfg+=(-c "credential.helper=store --file=${CRED}")
   fi
 
-  # SYNC FIRST, THEN RENDER. This used to render against the checkout and
-  # reconcile afterwards with `git pull --rebase`, which was wrong twice over.
+  # SYNC FIRST, THEN COPY. This used to reconcile afterwards with
+  # `git pull --rebase`, which was wrong twice over.
   #
-  # The quiet failure: an image build takes fifteen minutes, so by the time
-  # this runs the checkout can be several commits stale -- INCLUDING the
-  # renderers themselves. Rendering with the stale copy and rebasing silently
-  # reverts whatever changed about the output. A commit that dropped a row
-  # from render-manifest.sh was undone exactly this way, without complaint.
+  # The loud failure: both files are wholly REGENERATED each run, so a rebase
+  # is a full-file rewrite with no common hunk. It conflicts whenever anything
+  # else has touched them. There is nothing to rebase if the commit is built on
+  # the tip to begin with.
   #
-  # The loud one: these five files are wholly REGENERATED each run, so a
-  # rebase is two full-file rewrites with no common hunk. It conflicts
-  # whenever anything else has touched them. There is nothing to rebase if the
-  # commit is built on the tip to begin with.
+  # The quiet one, from when this step also rendered HTML: an image build takes
+  # fifteen minutes, so by the time this runs the checkout can be several
+  # commits stale -- INCLUDING the renderers themselves. Rendering with the
+  # stale copy and rebasing silently reverted whatever had changed about the
+  # output, and a commit that dropped a row from render-manifest.sh was undone
+  # exactly that way, without complaint. Rendering has since moved into the
+  # site build, so only the sync-first half of that lesson still applies here.
   publish() {
     git "${cfg[@]}" fetch -q --depth=1 origin "${BRANCH}" || return 1
     git "${cfg[@]}" reset -q --hard FETCH_HEAD           || return 1
 
-    cp "${STAGE}/changelog.json" "${REPO}/site/changelog.json" || return 1
-    cp "${STAGE}/manifest.json"  "${REPO}/site/manifest.json"  || return 1
-    "${REPO}/scripts/render-changelog.sh" "${STAGE}/changelog.json" > "${REPO}/site/changelog.html" || return 1
-    "${REPO}/scripts/render-manifest.sh"  "${STAGE}/manifest.json"  > "${REPO}/site/manifest.html"  || return 1
-    jq -r '.version // "nightly"' "${STAGE}/manifest.json" > "${REPO}/site/version.txt" || return 1
+    cp "${STAGE}/changelog.json" "${REPO}/site/src/data/changelog.json" || return 1
+    cp "${STAGE}/manifest.json"  "${REPO}/site/src/data/manifest.json"  || return 1
 
     # Compare CONTENT, not the file. Every build stamps fresh timestamps and
     # digests, so a byte comparison always differs and would commit every
@@ -381,10 +389,10 @@ publish_site() {
     local norm mnorm new old new_mf old_mf
     norm='del(.generated, .from, .to)'
     new=$(jq -S "${norm}" "${STAGE}/changelog.json")
-    old=$(git -C "${REPO}" show "HEAD:site/changelog.json" 2>/dev/null | jq -S "${norm}" 2>/dev/null || echo "__none__")
+    old=$(git -C "${REPO}" show "HEAD:site/src/data/changelog.json" 2>/dev/null | jq -S "${norm}" 2>/dev/null || echo "__none__")
     mnorm='del(.version, .built)'
     new_mf=$(jq -S "${mnorm}" "${STAGE}/manifest.json")
-    old_mf=$(git -C "${REPO}" show "HEAD:site/manifest.json" 2>/dev/null | jq -S "${mnorm}" 2>/dev/null || echo "__none__")
+    old_mf=$(git -C "${REPO}" show "HEAD:site/src/data/manifest.json" 2>/dev/null | jq -S "${mnorm}" 2>/dev/null || echo "__none__")
     if [ "${new}" = "${old}" ] && [ "${new_mf}" = "${old_mf}" ]; then
       echo "no package or manifest changes since the last commit; nothing to commit"
       return 2
@@ -394,13 +402,13 @@ publish_site() {
     # first run -- when these files are not in the repo yet -- it reported
     # "unchanged" and skipped the commit, which is precisely the run that had
     # to make it. That is why site/changelog.json was never committed.
-    git "${cfg[@]}" add site/changelog.json site/changelog.html \
-                        site/manifest.json site/manifest.html site/version.txt || return 1
+    git "${cfg[@]}" add site/src/data/changelog.json \
+                        site/src/data/manifest.json || return 1
     git "${cfg[@]}" commit -q -m "site: package changelog for ${VERSION}" || return 1
     git "${cfg[@]}" push -q origin "HEAD:${BRANCH}"
   }
 
-  say "rendering and committing the site"
+  say "committing the build data the site renders from"
   # A push can still lose a race with a commit that landed in the last second.
   # That is a retry, not a merge: resync and render again.
   local attempt rc

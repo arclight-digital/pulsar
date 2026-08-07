@@ -1,0 +1,149 @@
+---
+// What changed last night, rendered at build time from the SBOM diff the
+// nightly publishes. The claim the rest of the page makes, shown rather than
+// asserted: the image is inspectable, and this section cannot drift from what
+// was built because it is built from it.
+//
+// This replaces scripts/render-changelog.sh, which pre-rendered the same list
+// into committed HTML because site/build.sh had no jq. Escaping is no longer
+// hand-rolled either -- package names reach this from RPM metadata, and Astro
+// escapes every interpolated value, which is the right default for input that
+// is machine-generated but not a trust boundary.
+import { CHANGELOG_LIMIT, changelog } from '../data/build';
+
+const { summary } = changelog;
+
+// Upgrades and downgrades are the same shape from the diff's side; they are
+// split here because "upgraded" and "downgraded" are not the same news.
+const upgraded = changelog.changed.filter((entry) => entry.direction !== 'downgraded');
+const downgraded = changelog.changed.filter((entry) => entry.direction === 'downgraded');
+
+const sections = [
+  { title: 'Upgraded', rows: upgraded.map((p) => ({ name: p.name, version: `${p.from} → ${p.to}` })) },
+  { title: 'Downgraded', rows: downgraded.map((p) => ({ name: p.name, version: `${p.from} → ${p.to}` })) },
+  { title: 'Added', rows: changelog.added.map((p) => ({ name: p.name, version: p.version })) },
+  { title: 'Removed', rows: changelog.removed.map((p) => ({ name: p.name, version: p.version })) },
+].filter((section) => section.rows.length > 0);
+
+// The counts line. On the first build there is nothing on the other side of
+// the diff, and saying "0 upgraded" would read as "nothing changed".
+const counts = changelog.baseline
+  ? 'first build, nothing to compare against yet'
+  : [
+      `${summary.upgraded} upgraded`,
+      `${summary.added} added`,
+      `${summary.removed} removed`,
+      ...(summary.downgraded > 0 ? [`${summary.downgraded} downgraded`] : []),
+      ...(summary.changed > 0 ? [`${summary.changed} changed`] : []),
+    ].join(' · ');
+---
+
+<section class="changelog" id="changelog">
+  <h2>What changed last night</h2>
+
+  <p class="lede">
+    Every build is diffed against the one before it, package by package, from the SBOMs attached to
+    the images themselves. <span class="sent">Nothing here is written by&nbsp;hand.</span>
+  </p>
+
+  <div class="cl-body">
+    <p class="cl-meta">Generated {changelog.generated} · {counts}</p>
+
+    {
+      sections.map((section) => (
+        <Fragment>
+          <h3 class="cl-h">{section.title}</h3>
+          <ul class="cl-list">
+            {section.rows.slice(0, CHANGELOG_LIMIT).map((row) => (
+              <li>
+                <span class="cl-pkg">{row.name}</span>
+                <span class="cl-ver">{row.version}</span>
+              </li>
+            ))}
+            {/* The remainder is COUNTED, never dropped silently -- a truncated
+                list that looks complete is how a changelog starts lying about
+                what shipped. */}
+            {section.rows.length > CHANGELOG_LIMIT && (
+              <li class="cl-more">and {section.rows.length - CHANGELOG_LIMIT} more</li>
+            )}
+          </ul>
+        </Fragment>
+      ))
+    }
+  </div>
+
+  <p class="hint">
+    The full diff is <a href="/changelog.json">changelog.json</a>, and the SBOM ships attached to
+    the image:{' '}
+    <code>oras discover ghcr.io/<wbr />arclight-digital/<wbr />pulsar:latest</code>
+  </p>
+</section>
+
+<style>
+  /* Deliberately a plain list, not a card grid: this is a diff, and a diff
+     that reads like a diff is more convincing than one dressed up as a
+     feature. */
+  .changelog {
+    margin-top: 4.5rem;
+  }
+
+  .lede {
+    color: var(--muted);
+    max-width: 40rem;
+  }
+
+  .cl-meta {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-top: 1.4rem;
+  }
+
+  .cl-h {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 1.8rem 0 0.5rem;
+  }
+
+  .cl-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+  }
+
+  .cl-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.6rem 1.2rem;
+    /* version strings are long and phones are narrow: wrap to a second line
+       rather than forcing a horizontal scrollbar onto the page */
+    flex-wrap: wrap;
+    padding: 0.32rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .cl-pkg {
+    color: var(--text);
+  }
+
+  .cl-ver {
+    color: var(--muted);
+    margin-left: auto;
+  }
+
+  .cl-list .cl-more {
+    color: var(--muted);
+    font-style: italic;
+    border-bottom: 0;
+  }
+
+  .changelog > .hint {
+    margin-top: 1.6rem;
+    max-width: 40rem;
+  }
+</style>

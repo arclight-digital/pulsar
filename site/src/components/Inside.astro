@@ -1,0 +1,59 @@
+---
+// Prose against the manifest, not three orphan cards: the claims on the left
+// are answered by the image's own readout on the right.
+import Manifest from './Manifest.astro';
+---
+
+<section class="inside">
+  <div class="inside-copy">
+    <h2>What's inside</h2>
+    <p>
+      <strong>Gamescope</strong>, gamemode, and MangoHud are in the image; split-lock mitigation is
+      off and the map count is raised because games want both. <strong>ntsync</strong> is loaded and
+      handed to the seat user, so Proton can use it where the build supports it. Flathub
+      comes&nbsp;unfiltered.
+    </p>
+    <p>
+      <span class="sent">Every boot is checked.</span> If the desktop does not come up three times
+      running, the machine rolls itself back to the previous deployment without being&nbsp;asked.
+    </p>
+    <p>
+      For work: distrobox for any userland, libvirt/KVM for real machines, GitHub&nbsp;CLI in
+      the&nbsp;base. Apps are Flatpaks; <span class="ns">the image is the&nbsp;OS.</span>
+    </p>
+    <p>
+      The NVIDIA open module is compiled against the image's exact kernel and signed, so
+      Secure&nbsp;Boot stays&nbsp;on.
+    </p>
+  </div>
+
+  <Manifest />
+</section>
+
+<style>
+  .inside {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 2.6rem;
+    align-items: start;
+  }
+
+  .inside-copy p {
+    color: var(--muted);
+    max-width: 32rem;
+  }
+
+  .inside-copy p + p {
+    margin-top: 0.9rem;
+  }
+
+  .inside-copy strong {
+    color: var(--text);
+  }
+
+  @media (max-width: 46rem) {
+    .inside {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

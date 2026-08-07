@@ -44,17 +44,16 @@ jobs:
           shellcheck --version | head -2
           bats --version
 
-      # Every shell artifact in the repo, not just the CLI. site/build.sh runs
-      # in Cloudflare's builder where a failure is a broken deploy, and the
-      # sbom/changelog scripts run in both CI and on user machines.
+      # Every shell artifact in the repo, not just the CLI. The sbom/changelog
+      # scripts run in both CI and on user machines. Nothing in site/ is shell
+      # any more -- Cloudflare's builder runs `npm run build` against the Astro
+      # project, and site/build.sh went with the renderers it fed.
       - name: shellcheck
         run: |
           shellcheck \
             cli/pulsar \
             scripts/rpm-sbom.sh \
             scripts/sbom-changelog.sh \
-            scripts/render-changelog.sh \
-            scripts/render-manifest.sh \
             scripts/lint-containerfile.sh \
             scripts/check-scx-btf.sh \
             scripts/build.sh \
@@ -64,8 +63,7 @@ jobs:
             scripts/publish.sh \
             scripts/rechunk-selftest.sh \
             scripts/sign-file-oracle \
-            scripts/sync-branding.sh \
-            site/build.sh
+            scripts/sync-branding.sh
           echo "shellcheck: clean"
 
       # The signer holds the Secure Boot key, so a syntax error in it is a

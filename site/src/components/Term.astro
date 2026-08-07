@@ -1,0 +1,29 @@
+---
+// A member of the terminal family: the titlebar with its prompt, and whatever
+// the caller puts in the body. Used for the install card, the two verify
+// sessions, the Steam launch option and the ISO downloads.
+//
+// The chrome's styles live in src/styles/terminal.css rather than here on
+// purpose. Astro scopes a component's styles to the markup that component
+// authored, and the body of every one of these is slotted in by the caller --
+// a scoped `.term pre` would match nothing.
+interface Props {
+  /** names the group for a screen reader; every one of these is a figure */
+  ariaLabel: string;
+  class?: string;
+  captionClass?: string;
+}
+
+const { ariaLabel, class: className, captionClass } = Astro.props;
+---
+
+<figure class:list={['term', className]} role="group" aria-label={ariaLabel}>
+  <figcaption class={captionClass}>
+    {/* The explicit space is load-bearing: Astro trims whitespace at a line
+        break next to an inline element, so a newline here would print the
+        prompt glyph flush against the caption. */}
+    <span class="prompt" aria-hidden="true">&#10095;</span>{' '}
+    <slot name="caption" />
+  </figcaption>
+  <slot />
+</figure>

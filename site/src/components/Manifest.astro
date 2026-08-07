@@ -1,0 +1,106 @@
+---
+// The shipped image's own baked manifest -- the same file `pulsar manifest`
+// reads on the machine -- rendered at build time from src/data/manifest.json.
+// A transcript, not an illustration.
+//
+// This replaces scripts/render-manifest.sh, which pre-rendered the same rows
+// into committed HTML because site/build.sh had no jq to do it with. Astro
+// does, so the JSON goes straight from the build host to the page and the
+// fragment in between is gone. The rows are still the ones `pulsar manifest`
+// prints, in the CLI's order.
+//
+// No sbom or attestation row. Both were values that named another command to
+// run, which is not what an inventory is for; the CLI dropped them for the
+// same reason. The page loses nothing -- the pipeline section IS the
+// attestation command, live, with a copy button.
+//
+// The host rows the CLI prints have no meaning here either: this renders a
+// BUILD's manifest, and there is no machine on the other side of it.
+//
+// Styled after fastfetch on purpose: coloured keys, palette swatches -- a
+// readout this audience recognises.
+import { manifest } from '../data/build';
+
+const rows: Array<[string, string]> = [
+  ['image', manifest.variant ? `${manifest.image} (${manifest.variant})` : manifest.image],
+  ['version', manifest.version],
+  ['base', manifest.base],
+  ['built', manifest.built],
+  ['kernel', manifest.kernel],
+  ...Object.entries(manifest.components ?? {}).map(
+    ([key, value]) => [key, String(value)] as [string, string],
+  ),
+];
+
+// the column the values line up on, from the longest key present
+const gutter = Math.max(...rows.map(([key]) => key.length)) + 2;
+---
+
+<figure class="manifest" role="group" aria-label="Image manifest">
+  <figcaption><span class="prompt" aria-hidden="true">&#10095;</span> pulsar manifest</figcaption>
+  <pre><code>{rows.map(([key, value], index) => (
+    <Fragment><span class="k">{key}</span>{' '.repeat(gutter - key.length)}{value}{index < rows.length - 1 ? '\n' : ''}</Fragment>
+  ))}</code></pre>
+  <p class="swatches" aria-hidden="true">
+    <i class="s1"></i><i class="s2"></i><i class="s3"></i><i class="s4"></i><i class="s5"></i><i
+      class="s6"></i>
+  </p>
+  <p class="mf-note">the image&rsquo;s own manifest &mdash;&nbsp;rendered, not&nbsp;written</p>
+</figure>
+
+<style>
+  .manifest .k {
+    color: var(--peri);
+  }
+
+  /* the fastfetch signature: the palette, wearing itself */
+  .swatches {
+    display: flex;
+    gap: 6px;
+    padding: 0 1.1rem 1rem;
+  }
+
+  .swatches i {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(143, 168, 255, 0.25);
+  }
+
+  .swatches .s1 {
+    background: var(--ink);
+  }
+  .swatches .s2 {
+    background: var(--deep);
+  }
+  .swatches .s3 {
+    background: var(--violet);
+  }
+  .swatches .s4 {
+    background: var(--peri);
+  }
+  .swatches .s5 {
+    background: var(--cyan);
+  }
+  .swatches .s6 {
+    background: var(--star);
+  }
+
+  /* same register as the deck's note: a quiet claim under the readout, on the
+     dark chip in both themes */
+  .mf-note {
+    padding: 0 1.1rem 0.9rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(233, 237, 247, 0.55);
+  }
+
+  @media (max-width: 26rem) {
+    .swatches,
+    .mf-note {
+      padding-left: 0.8rem;
+      padding-right: 0.8rem;
+    }
+  }
+</style>

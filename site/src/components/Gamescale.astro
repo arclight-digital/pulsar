@@ -1,0 +1,282 @@
+---
+// The headline feature. The argument is arithmetic, so the numbers carry it: a
+// real table, tabular figures, and the one row that is the panel's actual mode
+// marked as the answer rather than described as one.
+import CopyButton from './CopyButton.astro';
+import Term from './Term.astro';
+
+const LAUNCH_OPTION = 'gamescale %command%';
+
+const MODES = [
+  { what: 'The panel itself', res: '2560×1600', cost: 'what the hardware has' },
+  { what: 'XWayland, scale factor 1', res: '1920×1200', cost: 'upscaled to fit; soft' },
+  { what: 'XWayland, scale factor 2', res: '3840×2400', cost: '2.25× the pixels, same image' },
+];
+---
+
+<section class="scaling" id="gamescale">
+  <h2 class="scaling-h">
+    <img class="gs-icon" src="/assets/gamescale.svg" alt="" width="40" height="40" />
+    <span class="gs-name">gamescale</span>
+  </h2>
+
+  <p class="gs-deck">
+    Run a game at&nbsp;1&times; so XWayland hands it the panel&rsquo;s real mode, then put the
+    desktop back when it&nbsp;exits.
+  </p>
+
+  <p class="lede">
+    Under GNOME fractional scaling, XWayland is handed an integer multiple of your
+    <em>logical</em>{' '}
+    resolution, never the panel&rsquo;s real&nbsp;mode. At 133% on a 2560&times;1600 display no
+    factor lands on the hardware, and a borderless-fullscreen game takes whatever the desktop&nbsp;reports.
+  </p>
+
+  <table class="modes">
+    <caption class="sr-only">Resolution reported to an XWayland game at each scale factor</caption>
+    <thead>
+      <tr>
+        <th scope="col">What the game is handed</th>
+        <th scope="col">Resolution</th>
+        <th scope="col">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        MODES.map((mode) => (
+          <tr>
+            <th scope="row">{mode.what}</th>
+            <td class="res">{mode.res}</td>
+            <td class="verdict">{mode.cost}</td>
+          </tr>
+        ))
+      }
+      <tr class="is-native">
+        <th scope="row">With <strong>gamescale</strong></th>
+        <td class="res">2560&times;1600</td>
+        <td class="verdict">the panel&rsquo;s real mode</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="scaling-tail">
+    <Term ariaLabel="Steam launch options" class="gs-term">
+      <Fragment slot="caption">
+        steam &rsaquo; launch options
+        <CopyButton text={LAUNCH_OPTION} label="Copy the Steam launch option" />
+      </Fragment>
+      <pre><code><span class="cmd">{LAUNCH_OPTION}</span></code></pre>
+    </Term>
+
+    <div class="scaling-note">
+      <p>
+        Scale goes to 1.0 for the lifetime of that one process, font and cursor sizes are
+        compensated so the desktop stays usable, and everything goes back when the game&nbsp;exits.
+      </p>
+      <p>
+        Including when it doesn&rsquo;t exit cleanly: a watchdog, a state file on disk, and a login
+        reconcile unit mean a crash or a <code>SIGKILL</code> still gives you your desktop&nbsp;back.
+      </p>
+      <p class="hint">
+        The script, its top-bar indicator, and the reconcile unit ship in the image at a
+        pinned&nbsp;tag. Flatpak launchers need one grant from{' '}
+        <a href="https://github.com/arclight-digital/gamescale">gamescale&rsquo;s installer</a>:
+        Flatpak reserves <code>/usr</code>, so no image can hand them a host&nbsp;binary.
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .scaling {
+    margin-bottom: 5.5rem;
+    padding-bottom: 3.4rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* This section outranks the others, so it gets the only display-scale
+     heading on the page -- the hierarchy is carried by size and weight, not by
+     a label above it. The heading IS the product name; nothing sits above it.
+     Mono because this is a command you type into Steam, not a costume for
+     "technical". */
+  .scaling-h {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .gs-icon {
+    width: clamp(30px, 1.4rem + 1.6vw, 44px);
+    height: auto;
+    flex: none;
+    border-radius: 9px;
+  }
+
+  .gs-name {
+    font-family: var(--font-mono);
+    font-size: clamp(2.1rem, 1.2rem + 4vw, 4.1rem);
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: -0.045em;
+    color: var(--text);
+  }
+
+  .gs-deck {
+    font-size: clamp(1.12rem, 1rem + 0.7vw, 1.45rem);
+    line-height: 1.35;
+    max-width: 34ch;
+    color: var(--text);
+    text-wrap: balance;
+    margin-bottom: 1.4rem;
+  }
+
+  .lede {
+    color: var(--muted);
+    max-width: 44rem;
+    font-size: 1.05rem;
+  }
+
+  .lede em {
+    color: var(--text);
+    font-style: italic;
+  }
+
+  /* The numbers ARE the argument, so they get a real table: tabular figures so
+     the digits line up column-wise, and the panel's true mode marked as the
+     answer instead of being described as one. */
+  .modes {
+    width: 100%;
+    margin: 2.2rem 0 0;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+  }
+
+  .modes thead th {
+    text-align: left;
+    font-size: 0.74rem;
+    font-weight: 400;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 0.9rem 0.7rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .modes thead th:nth-child(2) {
+    text-align: right;
+  }
+
+  .modes tbody th {
+    text-align: left;
+    font-weight: 400;
+    color: var(--muted);
+    padding: 0.85rem 0.9rem;
+  }
+
+  .modes tbody th strong {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .modes td {
+    padding: 0.85rem 0.9rem;
+  }
+
+  .modes .res {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1rem;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .modes .verdict {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+
+  .modes tbody tr + tr {
+    border-top: 1px solid var(--chip-line);
+  }
+
+  /* the answer row: tinted ground and accent figures, no costume border */
+  .modes .is-native {
+    background: var(--card);
+  }
+  .modes .is-native th,
+  .modes .is-native th strong,
+  .modes .is-native .res {
+    color: var(--accent);
+  }
+  .modes .is-native .res {
+    font-weight: 700;
+  }
+  .modes .is-native .verdict {
+    color: var(--text);
+  }
+
+  .scaling-tail {
+    display: grid;
+    grid-template-columns: minmax(0, 23rem) minmax(0, 1fr);
+    gap: 2.2rem;
+    align-items: start;
+    margin-top: 2.4rem;
+  }
+
+  /* Reaching into Term's own chrome, which carries Term's scope and not this
+     component's -- hence :global, kept narrow by the .gs-term key. One line,
+     always: the prompt, the caption and the copy button wrapping onto three
+     rows made the page's most copyable command look broken. */
+  :global(.gs-term) {
+    margin-top: 0;
+    max-width: none;
+  }
+  :global(.gs-term figcaption) {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  :global(.gs-term pre) {
+    white-space: nowrap;
+  }
+  :global(.gs-term pre code) {
+    font-size: 0.95rem;
+  }
+
+  .scaling-note p {
+    color: var(--muted);
+    max-width: 34rem;
+  }
+
+  .scaling-note p + p {
+    margin-top: 0.9rem;
+  }
+
+  .scaling-note code {
+    font-size: 0.86em;
+    color: var(--text);
+    background: var(--card);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+
+  @media (max-width: 46rem) {
+    .scaling-tail {
+      grid-template-columns: 1fr;
+      gap: 1.6rem;
+    }
+    .modes {
+      font-size: 0.9rem;
+    }
+    /* the cost column is commentary; the two that carry the argument stay */
+    .modes thead th:last-child,
+    .modes .verdict {
+      display: none;
+    }
+    .modes tbody th,
+    .modes td {
+      padding: 0.75rem 0.6rem;
+    }
+  }
+</style>

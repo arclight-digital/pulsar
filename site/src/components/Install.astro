@@ -1,0 +1,96 @@
+---
+// Two install paths, worn as terminal tabs.
+//
+// The DEFAULT is whichever tab starts aria-selected with its panel un-hidden;
+// flipping the default to the ISO is a markup swap here, not a code change in
+// tabs.ts. Without JS the tab bar hides and both panels stack, so nothing is
+// unreachable -- see the noscript block in the layout.
+import CommandRow from './CommandRow.astro';
+import DownloadRow from './DownloadRow.astro';
+import Term from './Term.astro';
+import { IMAGES, ISOS, REPO } from '../data/site';
+
+const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
+const wrapped = (image: string) => `sudo bootc switch \\\n  ${image}:latest`;
+---
+
+<Term ariaLabel="Install" class="install" captionClass="tabs-cap">
+  <div class="tabs" role="tablist" aria-label="Install method" slot="caption">
+    <button role="tab" id="tab-switch" aria-selected="true" aria-controls="panel-switch">
+      bootc switch
+    </button>
+    <button role="tab" id="tab-iso" aria-selected="false" aria-controls="panel-iso">
+      weekly iso
+    </button>
+  </div>
+
+  <div class="tabpanel" id="panel-switch" role="tabpanel" aria-labelledby="tab-switch">
+    <CommandRow
+      which="standard"
+      display={wrapped(IMAGES.vanilla)}
+      text={switchTo(IMAGES.vanilla)}
+      copyLabel="Copy the standard install command"
+    />
+    <CommandRow
+      which="nvidia"
+      display={wrapped(IMAGES.nvidia)}
+      text={switchTo(IMAGES.nvidia)}
+      copyLabel="Copy the NVIDIA install command"
+    />
+    <p class="hint">
+      Already on <strong>Fedora&nbsp;Silverblue / Kinoite&nbsp;44+</strong>? Run one of these.
+      Fresh machine? The weekly iso is one tab over. The nvidia module comes signed &mdash;{' '}
+      <a href={`${REPO}#install`}>enrol the cert once</a> and keep Secure&nbsp;Boot&nbsp;on.
+    </p>
+  </div>
+
+  <div class="tabpanel" id="panel-iso" role="tabpanel" aria-labelledby="tab-iso" hidden>
+    <DownloadRow which="standard" file={ISOS.vanilla} />
+    <DownloadRow which="nvidia" file={ISOS.nvidia} />
+    <p class="hint">
+      x86_64 &middot; 5&ndash;6&nbsp;GB &middot; write to a USB&nbsp;stick, boot,&nbsp;install.
+      Checksummed and signed in the open &mdash; <a href="#iso">verify below</a>.
+    </p>
+  </div>
+</Term>
+
+<style>
+  /* terminal tabs in the titlebar: the active one is bright, with a cyan
+     baseline riding the caption's own border */
+  .tabs {
+    display: flex;
+    gap: 0.2rem;
+  }
+
+  .tabs [role="tab"] {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: rgba(233, 237, 247, 0.55);
+    padding: 0.65rem 0.9rem;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.15s ease-out;
+  }
+
+  .tabs [role="tab"]:hover,
+  .tabs [role="tab"][aria-selected="true"] {
+    color: var(--star);
+  }
+
+  .tabs [role="tab"]:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .tabs [role="tab"][aria-selected="true"]::after {
+    content: "";
+    position: absolute;
+    left: 0.6rem;
+    right: 0.6rem;
+    bottom: -1px; /* sits on the caption border */
+    height: 2px;
+    background: var(--cyan);
+  }
+</style>

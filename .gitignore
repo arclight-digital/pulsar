@@ -10,5 +10,5 @@ cosign.key
 .preview/
 system_files/usr/share/backgrounds/pulsar/*.png
 scripts/__pycache__/
-site/_site/
-site/.wrangler/
+# The site's own build output, caches and staged assets are ignored by
+# site/.gitignore, beside the project they belong to.

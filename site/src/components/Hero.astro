@@ -1,0 +1,271 @@
+---
+// The hero. Its background is assets/shaders/pulsar.frag -- the same shader
+// that renders the OS wallpapers -- running live in WebGL; src/scripts/sky.ts
+// compiles it. The CI-rendered silk still sits underneath as the CSS ground:
+// it is the no-WebGL fallback AND the first paint while the bundle loads, so
+// the weakest degraded state is another output of the same pipeline.
+//
+// #skyfade holds a snapshot of the outgoing look so backdrop switches
+// crossfade directly instead of sweeping u_look through the intermediate ones.
+import Deck from './Deck.astro';
+import Install from './Install.astro';
+import { version } from '../data/build';
+import { REPO } from '../data/site';
+---
+
+<header class="hero">
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <canvas id="skyfade" aria-hidden="true"></canvas>
+
+  <div class="hero-inner">
+    <img class="mark" data-mark src="/assets/pulsar-animated.svg" alt="" width="180" height="180" />
+    <h1 class="wordmark">PULSAR</h1>
+    <p class="tagline">Your lighthouse in the sky.</p>
+    <p class="sub">
+      <span class="sent">An immutable Fedora for gaming and development.</span> Games get the
+      panel&rsquo;s real resolution instead of a fractional-scaled one, the system is the same
+      every&nbsp;boot, and rollback is just a&nbsp;reboot.
+    </p>
+
+    {/* The one number that proves the nightly is real, worn in the hero. It
+        comes from the manifest the build host committed, so the chip, the
+        manifest card and the changelog cannot name different builds. */}
+    <p class="buildline">
+      <a class="build-chip" href="#changelog">
+        <span class="build-dot" aria-hidden="true"></span>
+        latest build&ensp;<strong>{version}</strong>
+      </a>
+    </p>
+
+    <p class="srclink"><a href={REPO}>Browse the source on GitHub&nbsp;→</a></p>
+
+    <Install />
+  </div>
+
+  <Deck />
+</header>
+
+<style>
+  .hero {
+    position: relative;
+    min-height: 96vh;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: url("/assets/silk-still-dark.jpg") center / cover no-repeat var(--ink);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) .hero {
+      background-image: url("/assets/silk-still-light.jpg");
+    }
+  }
+  :root[data-theme="light"] .hero {
+    background-image: url("/assets/silk-still-light.jpg");
+  }
+  :root[data-theme="dark"] .hero {
+    background-image: url("/assets/silk-still-dark.jpg");
+  }
+
+  #sky,
+  #skyfade {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* the snapshot of the outgoing backdrop; sky.ts flashes it to 1 and lets it fall */
+  #skyfade {
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .hero-inner {
+    position: relative;
+    z-index: 0; /* a stacking context, so the scrim's -1 stays above the canvases */
+    text-align: center;
+    padding: 4rem 1.5rem 7rem;
+    max-width: 46rem;
+  }
+
+  /* Contrast insurance: the shader is unpredictable across four looks x two
+     themes, so the text sits on a soft pool of its own ground colour. */
+  .hero-inner::before {
+    content: "";
+    position: absolute;
+    inset: -1rem -3rem;
+    z-index: -1;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--ground) 42%, transparent),
+      transparent
+    );
+  }
+
+  .mark {
+    height: 180px;
+    width: 180px;
+  }
+
+  /* Tracked to the authored lockup rather than by eye. The hero stacks the
+     mark over the wordmark, so it is the STACKED cut this has to agree with
+     (assets/brand/pulsar-lockup-stacked.svg: font-size 34, letter-spacing 6.8
+     = 0.2em); the horizontal cut runs tighter at 0.16em because it sits beside
+     the mark instead of under it. Both are Host Grotesk 700. */
+  .wordmark {
+    font-weight: 700;
+    font-size: clamp(2.6rem, 7vw, 4rem);
+    letter-spacing: 0.2em;
+    margin-left: 0.2em; /* optically recentre: tracking also trails the final R */
+    margin-top: 0.5rem;
+  }
+
+  /* the tagline is the statement; the wordmark is the nameplate above it */
+  .tagline {
+    font-weight: 700;
+    font-size: clamp(1.35rem, 3.4vw, 2rem);
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+    margin-top: 0.9rem;
+  }
+
+  .sub {
+    color: var(--muted);
+    margin: 1rem auto 0;
+    max-width: 34rem;
+    text-wrap: balance;
+  }
+
+  /* the build chip, frosted like the deck -- it sits on the live shader */
+  .buildline {
+    margin-top: 1.1rem;
+  }
+
+  .build-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap; /* a pill that wraps is two broken pills */
+    padding: 0.42rem 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--chip);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    backdrop-filter: blur(14px) saturate(1.2);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-decoration: none;
+    transition:
+      border-color 0.15s ease-out,
+      color 0.15s ease-out;
+  }
+
+  .build-chip strong {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .build-chip:hover,
+  .build-chip:focus-visible {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  /* a pulsar pulses; reduced motion gets a steady beacon */
+  .build-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: beacon 2.4s ease-in-out infinite;
+  }
+
+  @keyframes beacon {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .srclink {
+    margin-top: 0.7rem;
+    font-size: 0.92rem;
+  }
+
+  .srclink a {
+    text-decoration: none;
+  }
+
+  .srclink a:hover,
+  .srclink a:focus-visible {
+    text-decoration: underline;
+  }
+
+  /* The one authored moment: the hero content settles in, staggered, then is
+     done. :global on the child because the last of them is the <Install />
+     component, whose root element carries its own scope and not this one. */
+  .hero-inner > :global(*) {
+    animation: settle 0.9s var(--ease-out) backwards;
+  }
+  .hero-inner > :global(:nth-child(2)) {
+    animation-delay: 0.08s;
+  }
+  .hero-inner > :global(:nth-child(3)) {
+    animation-delay: 0.16s;
+  }
+  .hero-inner > :global(:nth-child(4)) {
+    animation-delay: 0.24s;
+  }
+  .hero-inner > :global(:nth-child(5)) {
+    animation-delay: 0.32s;
+  }
+  .hero-inner > :global(:nth-child(6)) {
+    animation-delay: 0.4s;
+  }
+  .hero-inner > :global(:nth-child(7)) {
+    animation-delay: 0.48s;
+  }
+
+  @keyframes settle {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+      filter: blur(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      filter: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .build-dot,
+    .hero-inner > :global(*) {
+      animation: none;
+    }
+  }
+
+  /* below this width the deck rejoins the flow, so the hero stops reserving
+     room for it -- see the matching note in Deck.astro */
+  @media (max-width: 46rem) {
+    .hero-inner {
+      padding-bottom: 2.5rem;
+    }
+  }
+
+  @media (max-width: 26rem) {
+    .mark {
+      height: 128px;
+      width: 128px;
+    }
+    .hero-inner {
+      padding: 3rem 1rem 2.5rem;
+    }
+  }
+</style>

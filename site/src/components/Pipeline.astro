@@ -1,0 +1,142 @@
+---
+// The supply chain, as a rail, and then the command that checks it. A real
+// shell session rather than another input-looking row: the command wrapped the
+// way you would actually type it, plus gh's genuine output shape. The button
+// copies the one-line form.
+import CopyButton from './CopyButton.astro';
+import Term from './Term.astro';
+import { IMAGES, REPO } from '../data/site';
+
+const VERIFY = `gh attestation verify oci://${IMAGES.nvidia}:latest --owner arclight-digital`;
+
+const STAGES = [
+  { name: 'commit', detail: 'push to main' },
+  { name: 'build', detail: 'both images, nightly' },
+  { name: 'sign', detail: 'kmod keyed to the shipped MOK cert' },
+  { name: 'attest', detail: 'SLSA provenance on ghcr' },
+  { name: 'boot', detail: 'bootc switches to the attested image' },
+];
+---
+
+<section class="pipeline">
+  <h2>Every image has a paper trail</h2>
+
+  <ol class="rail">
+    {
+      STAGES.map((stage) => (
+        <li>
+          <strong>{stage.name}</strong>
+          <small>{stage.detail}</small>
+        </li>
+      ))
+    }
+  </ol>
+
+  <Term ariaLabel="Verify the provenance attestation">
+    <Fragment slot="caption">
+      don't take the page's word for&nbsp;it
+      <CopyButton text={VERIFY} label="Copy the attestation verify command" />
+    </Fragment>
+    <pre><code><span class="cmd">gh attestation verify \
+  oci://{IMAGES.nvidia}:latest \
+  --owner arclight-digital</span>
+<span class="out">Loaded digest sha256:&hellip; for oci://&hellip;/pulsar-nvidia:latest</span>
+<span class="ok">&#10003; Verification succeeded!</span></code></pre>
+  </Term>
+
+  <p class="hint">
+    <span class="sent">One person's laptop OS, over-engineered on purpose, MIT-licensed.</span>{' '}
+    Running someone else's signed images is a trust decision &mdash;{' '}
+    <a href={`${REPO}#two-variants-one-key`}>fork it and use your own key</a> if that's not a
+    relationship you want.
+  </p>
+</section>
+
+<style>
+  .pipeline {
+    margin-top: 5.5rem;
+  }
+
+  .rail {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.8rem;
+  }
+
+  .rail li {
+    position: relative;
+    padding-top: 1.3rem;
+  }
+
+  /* the rail line and its nodes are drawn, not borrowed */
+  .rail li::before {
+    content: "";
+    position: absolute;
+    top: 5px;
+    left: 12px;
+    right: -0.8rem;
+    height: 2px;
+    background: var(--line);
+  }
+
+  .rail li:last-child::before {
+    right: 0;
+  }
+
+  .rail li::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--ground);
+    box-sizing: border-box;
+  }
+
+  .rail strong {
+    display: block;
+    font-size: 0.95rem;
+  }
+
+  .rail small {
+    display: block;
+    color: var(--muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    margin-top: 0.15rem;
+  }
+
+  .pipeline > .hint {
+    max-width: 40rem;
+  }
+
+  @media (max-width: 46rem) {
+    .rail {
+      grid-template-columns: 1fr;
+      gap: 1.1rem;
+    }
+    .rail li {
+      padding: 0 0 0 1.6rem;
+    }
+    /* the rail turns vertical: the line runs down the gutter instead of across */
+    .rail li::before {
+      top: 12px;
+      bottom: -1.1rem;
+      left: 5px;
+      right: auto;
+      width: 2px;
+      height: auto;
+    }
+    .rail li:last-child::before {
+      display: none;
+    }
+    .rail li::after {
+      top: 2px;
+    }
+  }
+</style>

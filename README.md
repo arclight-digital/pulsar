@@ -272,6 +272,8 @@ system_files/          overlay for vanilla (branding here is GENERATED)
 system_files.nvidia/   overlay for nvidia only
 scripts/sync-branding.sh   assets/ -> system_files/
 scripts/build.sh           local TEST builds; CI ships the real ones
+site/                  the one-pager (Astro); Cloudflare builds it on push
+site/src/data/         written by the nightly — never edit by hand
 ```
 
 Push to `main` and CI does the rest. `build.sh` is only for checking a

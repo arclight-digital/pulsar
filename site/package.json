@@ -1,0 +1,22 @@
+{
+  "name": "pulsar-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Pulsar one-pager. Deployed to the pulsar-site Cloudflare Worker as static assets.",
+  "scripts": {
+    "stage": "node stage-assets.mjs",
+    "dev": "npm run stage && astro dev",
+    "build": "npm run stage && astro build",
+    "preview": "astro preview",
+    "check": "astro check"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "astro": "^7.2.0",
+    "typescript": "^6.0.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
+}

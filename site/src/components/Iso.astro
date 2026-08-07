@@ -1,0 +1,72 @@
+---
+// Starting from bare metal. Reuses the install card's chrome -- same terminal
+// family, same labelled rows -- but the filename is a link rather than a
+// command to copy.
+import CopyButton from './CopyButton.astro';
+import DownloadRow from './DownloadRow.astro';
+import Term from './Term.astro';
+import { ISOS } from '../data/site';
+
+const SUMS = ['sha256', 'sig', 'cert'];
+
+const VERIFY = [
+  `cosign verify-blob ${ISOS.vanilla}`,
+  `--signature ${ISOS.vanilla}.sig`,
+  `--certificate ${ISOS.vanilla}.pem`,
+  "--certificate-identity-regexp 'github.com/arclight-digital/pulsar'",
+  '--certificate-oidc-issuer https://token.actions.githubusercontent.com',
+].join(' ');
+---
+
+<section class="iso" id="iso">
+  <h2>Starting from bare metal</h2>
+
+  <p class="lede">
+    A weekly installer ISO for each variant, built from the published image itself &mdash; the same
+    Anaconda installer stock Silverblue uses, landing directly in Pulsar.{' '}
+    <span class="sent">Checksummed, and signed in the open with keyless&nbsp;cosign.</span>
+  </p>
+
+  <Term ariaLabel="ISO downloads" class="install iso-card">
+    <Fragment slot="caption">weekly &middot; x86_64 &middot; 5&ndash;6&nbsp;GB</Fragment>
+    <DownloadRow which="standard" file={ISOS.vanilla} sums={SUMS} />
+    <DownloadRow which="nvidia" file={ISOS.nvidia} sums={SUMS} />
+    <p class="hint">
+      Write it to a USB&nbsp;stick with GNOME&nbsp;Disks or <code>dd</code>, boot,&nbsp;install.{' '}
+      <code>sha256sum&nbsp;-c</code> against the manifest checks the download; the signature proves
+      CI built&nbsp;it:
+    </p>
+  </Term>
+
+  <Term ariaLabel="Verify the ISO signature">
+    <Fragment slot="caption">
+      the signature is bound to this repo's CI, not a key that can&nbsp;leak
+      <CopyButton text={VERIFY} label="Copy the ISO verify command" />
+    </Fragment>
+    <pre><code><span class="cmd">cosign verify-blob {ISOS.vanilla} \
+  --signature {ISOS.vanilla}.sig \
+  --certificate {ISOS.vanilla}.pem \
+  --certificate-identity-regexp 'github.com/arclight-digital/pulsar' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com</span>
+<span class="ok">Verified OK</span></code></pre>
+  </Term>
+</section>
+
+<style>
+  .iso {
+    margin-top: 5.5rem;
+  }
+
+  .lede {
+    color: var(--muted);
+    max-width: 40rem;
+  }
+
+  /* the download card is wider than the terminal default -- filenames plus
+     three sidecar links need the room. :global because the element carries
+     Term's scope, not this component's. */
+  :global(.iso-card) {
+    margin: 1.8rem 0 0;
+    max-width: 46rem;
+  }
+</style>

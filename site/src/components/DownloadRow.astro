@@ -1,0 +1,25 @@
+---
+// One ISO download: the variant label, the filename as a link, and its
+// verification sidecars. Worn by both the install card's iso tab and the
+// bare-metal section, which differ only in whether they offer the cosign
+// certificate alongside the signature.
+import { ISO_BASE } from '../data/site';
+
+interface Props {
+  /** "standard" or "nvidia" -- the label in the row's first column */
+  which: string;
+  file: string;
+  /** sidecar extensions to link, in the order they are listed */
+  sums?: string[];
+}
+
+const { which, file, sums = ['sha256', 'sig'] } = Astro.props;
+---
+
+<div class="row">
+  <span class="which">{which}</span>
+  <code><a href={`${ISO_BASE}/${file}`}>{file}</a></code>
+  <span class="sums">
+    {sums.map((ext) => <a href={`${ISO_BASE}/${file}.${ext}`}>{ext}</a>)}
+  </span>
+</div>

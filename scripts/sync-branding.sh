@@ -165,8 +165,9 @@ echo "Plymouth watermark        <- pulsar-lockup-horizontal (color)"
 reduce "${WORK}/lockup.png" x96 "${S}/plymouth/themes/pulsar/watermark.png"
 echo "  ${S}/plymouth/themes/pulsar/watermark.png ($(magick identify -format '%wx%h' "${S}/plymouth/themes/pulsar/watermark.png"))"
 
-# (The site's light-theme mark is authored art too -- site/build.sh stages
-# assets/brand/pulsar-mark-color-dark.svg directly; nothing to generate.)
+# (The site's light-theme mark is authored art too -- site/stage-assets.mjs
+# stages assets/brand/pulsar-mark-color-dark.svg directly; nothing to
+# generate.)
 
 # ---------------------------------------------------------------------------
 # Fonts

@@ -32,16 +32,29 @@ over-engineered on purpose, MIT-licensed to fork.
 
 ## Operating Context
 
-Site source lives in `site/` of the arclight-digital/pulsar monorepo; `site/build.sh` stages brand assets and the wallpaper
-shader from `assets/` into `site/_site`, built and deployed by Cloudflare
-Workers git integration on push to main (root dir `site`, build `./build.sh`,
-deploy `npx wrangler deploy`) to the pulsar-site Worker. Local preview: `./site/build.sh && python3 -m
-http.server -d site/_site`. The OS image build is a separate workflow and
-must never be triggered by site edits.
+Site source lives in `site/` of the arclight-digital/pulsar monorepo, as an
+Astro project. `site/stage-assets.mjs` (run by `npm run stage`, which `dev`
+and `build` both depend on) copies the brand assets from `assets/` into
+`site/public/assets`; the wallpaper shader is imported straight from
+`assets/shaders/pulsar.frag` and compiled into the bundle. Built and deployed
+by Cloudflare Workers git integration on push to main (root dir `site`, build
+`npm run build`, output `dist`, deploy `npx wrangler deploy`) to the
+pulsar-site Worker. Local preview: `cd site && npm run dev`. The OS image
+build is a separate workflow and must never be triggered by site edits.
+
+The nightly on the build host commits `site/src/data/changelog.json` and
+`site/src/data/manifest.json` (scripts/publish.sh); Astro renders the
+changelog list, the manifest card and the hero's build chip from them at
+build time. Those two files are the only thing that hookup writes — never
+edit them by hand, and never render them anywhere else.
 
 ## Capabilities and Constraints
 
-- Static HTML/CSS/JS only; no framework, no build step beyond asset staging.
+- Astro, static output, zero client framework. The only JavaScript shipped is
+  `site/src/scripts/` — theme, tabs, copy buttons, shader — bundled by Astro.
+- Global CSS is the design system only (`src/styles/`: tokens, base, the
+  terminal family, which crosses component boundaries). Everything else is a
+  scoped `<style>` block in the component it belongs to.
 - The hero background is `assets/shaders/pulsar.frag` (the actual OS
   wallpaper shader) in WebGL1; uniforms: u_resolution, u_time, u_theme
   (0 dark / 1 dawn), u_look (0 silk / 1 leak / 2 satin / 3 holo). CSS
