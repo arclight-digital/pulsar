@@ -5,7 +5,7 @@ thing:
 
 | | signs | key | when |
 |---|---|---|---|
-| **kernel module** | `nvidia.ko` bytes | the MOK-enrolled akmods key | during the image build |
+| **kernel module** | `nvidia.ko` bytes | the MOK key shipped as `MOK.der` | during the image build |
 | **image** | a published image digest | a cosign key | after the push |
 
 Only the first is Secure Boot. It is the one that black-screens a machine when
@@ -155,6 +155,28 @@ display on an nvidia machine.
 5. Once every machine is enrolled and booted, `mokutil --delete` the old cert
    and remove it from halo.
 
-Note for `bootstrap.md` in `arclight-infra`: the cosign key can be generated on
-halo, because it is new. **The module key cannot** — it is already enrolled in
-firmware, so it must be imported to halo, never created there.
+### Where this rotation currently stands
+
+`bd476ac` did step 2: the committed cert is no longer the akmods-generated
+`fedora_1784000352_fff45832` but a purpose-made
+`O=Arclight Digital, CN=Pulsar Secure Boot Signing Key`
+(SHA1 `71:c0:a5:0c:d2:21:1a:bd:e4:dd:27:c6:15:44:c3:26:3b:18:86:eb`).
+
+Steps 1 and 4 are outstanding, and until they are done:
+
+- **halo must hold this keypair and serve this cert at `/cert`.** Phase 5
+  compares the module's signer against the committed `MOK.der`, so a halo
+  holding anything else fails every nvidia build. Loudly, which is the good
+  case.
+- **no machine has enrolled it.** The old akmods cert is what is in firmware.
+  An image signed with the new key builds, pushes, and then does not load its
+  module — which on an nvidia machine is a black screen. Do step 4 before
+  booting anything built after this.
+
+Note for `bootstrap.md` in `arclight-infra`: **both** keys can now be
+generated on halo, because neither is enrolled anywhere yet — the module key
+stopped being a thing that had to be imported the moment it was rotated to one
+firmware has never seen. That is only true until step 4 runs. Once this cert
+is enrolled on real machines, a future rotation is back to import-only:
+generating a replacement on halo would mean re-enrolling every machine by
+hand, at boot, in person.
