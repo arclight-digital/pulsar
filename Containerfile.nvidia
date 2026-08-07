@@ -278,9 +278,17 @@ COPY system_files.nvidia/ /
 # too: /var is empty HERE by the vanilla image's own cleanup, so /root is a
 # dangling ostree symlink, and dracut logs module-install failures as
 # dracut[E]: FAILED while exiting 0.
+#
+# DRACUT_NO_XATTR=1 for the same reason as well, and it belongs on BOTH runs:
+# there are two dracut invocations in this build and fixing only the vanilla
+# one bought a green vanilla image and a red nvidia one an hour later. The
+# reasoning is written out in full next to the base image's run; the short
+# version is that podman mounts the rootfs with a single mount-wide
+# context=, so setxattr(security.selinux) answers EOPNOTSUPP and the copy
+# dracut shells out to exits 1.
 RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     install -d -m 0700 /var/roothome && \
-    { dracut --force --no-hostonly --reproducible --add ostree \
+    { DRACUT_NO_XATTR=1 dracut --force --no-hostonly --reproducible --add ostree \
         --kver ${KV} /usr/lib/modules/${KV}/initramfs.img >/tmp/dracut.log 2>&1 || \
       { cat /tmp/dracut.log; echo "FATAL: dracut exited nonzero"; exit 1; }; }; \
     cat /tmp/dracut.log; \
