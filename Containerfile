@@ -66,14 +66,6 @@ RUN dnf5 install -y 'dnf5-command(copr)' && \
 #                   a sandboxed IDE cannot grant itself raw USB access
 #   libvirt+qemu    virtualization is a host daemon stack; the GUI (Boxes,
 #                   virt-manager) stays a Flatpak
-#   gh              a deliberate exception to the rule above, stated as one:
-#                   it extends nothing about what the OS can DO and would
-#                   work fine in a distrobox. It stays because
-#                   `gh attestation verify` is the command the README and the
-#                   site tell strangers to run against these images, a fresh
-#                   install has no box yet to run it in, and the one command
-#                   this project asks you to trust it by should not require
-#                   building a container first.
 #   greenboot       boot-time health checks with automatic rollback. This is
 #                   what turns "the last good version is one reboot away"
 #                   from a manual `bootc rollback` into something the
@@ -90,9 +82,18 @@ RUN dnf5 install -y 'dnf5-command(copr)' && \
 #                   the failure mode is silent, because fontconfig SUBSTITUTES
 #                   for a family it cannot find rather than erroring. Asserted
 #                   below with the other two.
+#
+# `gh` was here once, carried as an admitted exception to the rule above so
+# that `pulsar attest` had its verifier on a fresh install. The exception is
+# withdrawn: by its own entry it extended nothing about what the OS can DO and
+# worked fine in a distrobox, which is the test every other line here has to
+# pass. Verifying is something you do TO this image, from wherever you already
+# are, and one convenience is not worth a vendor's client in the base layer.
+# `pulsar attest` still prints the exact command; it just no longer pretends
+# the tool is the OS's problem. Do not add it back without a reason the rule
+# above does not already answer.
 # ---------------------------------------------------------------------------
 RUN dnf5 install -y \
-      gh \
       greenboot \
       greenboot-default-health-checks \
       gnome-tweaks \

@@ -791,16 +791,22 @@ cmd_sbom() {
 # data file and running a string out of one is a habit worth not having; the
 # array also means a value containing a pipe or a semicolon fails loudly
 # instead of doing something inventive.
+#
+# The verifier is NOT shipped in the image, so the command is printed before
+# anything is checked. Printing first is what makes the missing-tool path
+# useful rather than a dead end: the line on your screen is the whole answer
+# to "how do I check this myself", and it is as true from a distrobox or a
+# laptop that has never booted Pulsar as it is from here.
 # ---------------------------------------------------------------------------
 cmd_attest() {
     local cmd; cmd=$(mf attestation)
     [ -n "$cmd" ] || die "this image's manifest carries no attestation command"
     local -a argv=(); read -ra argv <<<"$cmd"
     [ "${#argv[@]}" -gt 0 ] || die "the manifest's attestation command is empty"
-    have "${argv[0]}" || die "verifying needs '${argv[0]}', which is not installed"
     # Echoed first: the point of the command is that you can check it yourself,
     # and a verifier you cannot read is not much of one.
     printf '%s%s%s\n' "$C_DIM" "$cmd" "$C_RESET"
+    have "${argv[0]}" || die "this image does not ship '${argv[0]}'; run the command above wherever you have it"
     "${argv[@]}"
 }
 
@@ -890,7 +896,7 @@ pulsar -- manage a Pulsar system
   pulsar status            deployments: booted, staged, rollback, pins
   pulsar changelog         packages that moved in the latest published build
   pulsar sbom              this system's packages as SPDX 2.3
-  pulsar attest            verify this image's build provenance (needs gh)
+  pulsar attest            print (and run) the provenance check for this image
 
   pulsar update            fetch and stage an update        (root)
                            through bootc, or through rpm-ostree if you have

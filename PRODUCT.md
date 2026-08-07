@@ -17,9 +17,8 @@ polished work"; installs are welcome but secondary.
 ## Product Purpose
 
 Pulsar is a personal immutable Fedora Silverblue spin (bootc image) tuned
-for gaming and development, built and signed entirely on GitHub CI and
-published to ghcr.io with provenance attestations. The site's job is to
-present it well.
+for gaming and development, built and signed entirely in CI and published to
+ghcr.io with provenance attestations. The site's job is to present it well.
 
 ## Positioning
 

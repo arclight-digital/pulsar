@@ -13,16 +13,10 @@
   <a href="https://pulsar.arclight.digital">pulsar.arclight.digital</a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/arclight-digital/pulsar/actions/workflows/build.yml"><img src="https://github.com/arclight-digital/pulsar/actions/workflows/build.yml/badge.svg" alt="images"></a>
-  <a href="https://github.com/arclight-digital/pulsar/actions/workflows/cli.yml"><img src="https://github.com/arclight-digital/pulsar/actions/workflows/cli.yml/badge.svg" alt="cli"></a>
-  <a href="https://github.com/arclight-digital/pulsar/actions/workflows/iso.yml"><img src="https://github.com/arclight-digital/pulsar/actions/workflows/iso.yml/badge.svg" alt="iso"></a>
-</p>
-
 Fedora Silverblue with the sharp edges filed off, shipped as a bootc image on
-the official Fedora base. GitHub builds, signs, and attests every image
-nightly; the machine that runs one never compiles anything, the system is the
-same every boot, and the last good version is always one reboot away.
+the official Fedora base. CI builds, signs, and attests every image nightly;
+the machine that runs one never compiles anything, the system is the same
+every boot, and the last good version is always one reboot away.
 
 ```bash
 sudo bootc switch ghcr.io/arclight-digital/pulsar:latest          # runs anywhere
@@ -42,7 +36,7 @@ display     gamescope · gamemode · mangohud
 wine        ntsync
 containers  distrobox · toolbox
 virt        libvirt · qemu-kvm
-tooling     gh · android-tools · gnome-tweaks
+tooling     android-tools · gnome-tweaks
 dev         mise · direnv · bpftrace · perf
 driver      nvidia-open, built + signed in CI
 apps        unfiltered Flathub, image-native
@@ -97,7 +91,7 @@ pulsar manifest      what is in this image, and what it is running on
 pulsar status        deployments: booted, staged, rollback, pins
 pulsar changelog     packages that moved in the latest published build
 pulsar sbom          this system's packages as SPDX 2.3
-pulsar attest        verify this image's build provenance (needs gh)
+pulsar attest        print (and run) the provenance check for this image
 pulsar update        fetch and stage an update      (root)
 pulsar rollback      boot the previous deployment   (root)
 pulsar pin | unpin   protect the booted deployment  (root)
@@ -252,6 +246,11 @@ for anything:
 gh attestation verify oci://ghcr.io/arclight-digital/pulsar-nvidia:latest \
   --owner arclight-digital
 ```
+
+That tool is not in the image, and does not need to be — checking provenance
+is something you do *to* an image, from whatever machine you already trust.
+`pulsar attest` prints the same line, filled in for the image you booted, and
+runs it if you happen to have the client.
 
 An SPDX SBOM ships attached to each image
 (`oras discover ghcr.io/arclight-digital/pulsar:latest`), and every nightly
