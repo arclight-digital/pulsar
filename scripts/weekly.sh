@@ -41,6 +41,11 @@ started="$(date -u +%s)"
 echo "pulsar weekly ISO build starting $(date -u -Iseconds)"
 echo "building from $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 
+# Same gate as the nightly: with no on-push CI, the entry points are where
+# lint and tests run, and an ISO signed and published from a repo state that
+# cannot pass its own checks is not a state this allows.
+"${REPO}/scripts/check.sh"
+
 for variant in vanilla nvidia; do
   case "${variant}" in
     vanilla) image="${IMAGE}" ;;

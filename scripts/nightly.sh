@@ -66,6 +66,12 @@ echo "pulsar nightly starting $(date -u -Iseconds)"
 # build something other than what was asked for. Just say what is being built.
 echo "building $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 
+# The old on-push CI, run here now that there is no on-push anything: lint
+# and tests gate the build, so a broken script on main is a failed nightly
+# the same evening rather than a latent surprise. Forty seconds against an
+# hour-long build.
+"${REPO}/scripts/check.sh"
+
 VERSION="$("${REPO}/scripts/next-version.sh" --fedora "${FEDORA_VERSION}" "${IMAGE}")"
 echo "this build is ${VERSION}"
 
