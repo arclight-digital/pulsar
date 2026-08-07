@@ -80,4 +80,36 @@ for file in "$@"; do
     echo "${file}: ${checked} RUN instruction(s) checked"
 done
 
+# ---------------------------------------------------------------------------
+# Invariants that must hold at EVERY site, not just the one a traceback named.
+#
+# This exists because of a specific miss: dracut is invoked twice in this repo
+# -- once in Containerfile, once again in Containerfile.nvidia because the
+# nvidia modprobe options live in the initramfs -- and a fix for the first one
+# shipped alone. The vanilla image went green and the nvidia image failed the
+# same way an hour later.
+#
+# The invariant: podman mounts a container rootfs with a single mount-wide
+# context=, so setxattr(security.selinux) answers EOPNOTSUPP, and dracut's
+# copy (dracut-init.sh gates it on DRACUT_NO_XATTR) exits 1 and gets logged as
+# dracut[E]: FAILED. Any dracut run in a container build needs the guard, so
+# assert it here rather than relying on whoever adds the third one knowing.
+# ---------------------------------------------------------------------------
+for file in "$@"; do
+    [ -f "$file" ] || continue
+    while IFS= read -r line; do
+        case "$line" in
+            *DRACUT_NO_XATTR*dracut\ *) ;;
+            *dracut\ -*|*dracut\ --*)
+                echo "FAIL ${file}: a dracut invocation without DRACUT_NO_XATTR=1:" >&2
+                printf '      %s\n' "$(printf '%s' "$line" | sed 's/^[[:space:]]*//' | cut -c1-120)" >&2
+                echo "      In a container the rootfs is mounted with one mount-wide SELinux" >&2
+                echo "      context, so copying security.selinux fails EOPNOTSUPP and dracut" >&2
+                echo "      logs dracut[E]: FAILED and exits 0 anyway. See Containerfile." >&2
+                status=1
+                ;;
+        esac
+    done < "$file"
+done
+
 exit "$status"
