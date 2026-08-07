@@ -30,7 +30,10 @@
 #   PULSAR_BUILD_WORK           OCI layouts; wants the big volume
 #   PULSAR_HEALTHCHECK_URL      pinged on success (optional)
 #   R2_BUCKET, R2_ACCOUNT_ID    where SBOMs and changelogs are published
-#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY    R2 credentials
+#   R2_CREDENTIALS_FILE         file setting AWS_ACCESS_KEY_ID/SECRET, or set
+#                               those directly. Required unless PULSAR_PUBLISH
+#                               is no -- see the note in publish.sh for why it
+#                               is not allowed to degrade quietly.
 #   PULSAR_GIT_TOKEN_FILE       token for the site commit
 #   PULSAR_PUBLISH_BRANCH       branch the site commit lands on (default main)
 #   PULSAR_PUBLISH              yes (default) | dry-run | no

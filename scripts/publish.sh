@@ -45,7 +45,8 @@
 # Environment:
 #   R2_BUCKET                  where SBOMs and changelogs go
 #   R2_ENDPOINT or R2_ACCOUNT_ID
-#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   R2 credentials
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   R2 credentials, or
+#   R2_CREDENTIALS_FILE        a file that sets them (the build host's idiom)
 #   REGISTRY_AUTH_FILE         optional; authenticates both podman and oras
 #
 # Requires: jq, podman, oras, aws, git. The aws CLI is the one dependency that
@@ -117,6 +118,20 @@ fi
 # REGISTRY_AUTH_FILE is the one variable that can point both at the same file.
 ORAS_AUTH=()
 [ -n "${REGISTRY_AUTH_FILE:-}" ] && ORAS_AUTH=(--registry-config "${REGISTRY_AUTH_FILE}")
+
+# The build host hands R2 credentials over as a FILE, matching the idiom the
+# signer token already uses: a secret in a root-owned 0600 file is not in the
+# environment of every child process this spawns, and there are a lot of them.
+# Sourced with `set -a` because that is the shape of the file -- systemd's
+# EnvironmentFile, same as /etc/pulsar/build.env itself. Anything already in
+# the environment wins, so a runner that exports the keys directly still works.
+if [ -n "${R2_CREDENTIALS_FILE:-}" ] && [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+  [ -r "${R2_CREDENTIALS_FILE}" ] || die "cannot read ${R2_CREDENTIALS_FILE}"
+  set -a
+  # shellcheck source=/dev/null  # a runtime credentials file, never in the repo
+  . "${R2_CREDENTIALS_FILE}"
+  set +a
+fi
 
 R2_ENDPOINT="${R2_ENDPOINT:-${R2_ACCOUNT_ID:+https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
@@ -249,12 +264,22 @@ build_changelog() {
     || echo "NOTE: no --prev-digest, so this changelog cannot name what it diffed against" >&2
 }
 
+# R2 is REQUIRED, not best-effort, and it must fail here rather than be
+# skipped. Without a baseline to fetch, build_changelog emits an all-zeros
+# baseline changelog -- and publish_site compares normalised content, so it
+# would happily commit that over a real one and blank the published changelog.
+# Dying at this point leaves the images pushed and the page untouched, which
+# is the recoverable half. To run a nightly that deliberately publishes
+# nothing, use PULSAR_PUBLISH=no; do not make this step optional.
 publish_r2() {
   if [ "${DRY_RUN}" = yes ]; then
     echo "dry run: would publish SBOMs and changelog for ${VERSION} to R2"
     return 0
   fi
-  have_r2 || die "R2 is not configured (R2_BUCKET, R2_ACCOUNT_ID/R2_ENDPOINT, AWS_ACCESS_KEY_ID)"
+  have_r2 || die "R2 is not configured: set R2_BUCKET, R2_ACCOUNT_ID (or
+R2_ENDPOINT), and either AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or
+R2_CREDENTIALS_FILE pointing at a file that sets them. To skip publishing
+entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
 
   say "publishing to R2"
   up() { aws s3 cp "${STAGE}/$1" "s3://${R2_BUCKET}/$2" --endpoint-url "${R2_ENDPOINT}"; }

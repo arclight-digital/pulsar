@@ -1,21 +1,24 @@
-# Everything is built here. The machine running Pulsar builds nothing and is
-# configured with nothing: it pulls a published image and stages it as a
-# normal update. Both variants are pushed to ghcr with provenance
-# attestations.
+# This is no longer where Pulsar is built. The nightly runs on a DigitalOcean
+# builder that helios spawns, and this file is kept dispatchable during the
+# migration -- until a host build has published a verified image, it is the
+# thing to fall back to. The machine running Pulsar is unaffected either way:
+# it builds nothing and is configured with nothing, it pulls a published image
+# and stages it as a normal update.
 #
-# This workflow no longer holds the Secure Boot signing key. It holds a
-# bearer token (PULSAR_SIGNER_TOKEN) for the signer host, which returns a
+# One thing does not fall back. This workflow does not hold the Secure Boot
+# signing key -- it holds a bearer token for the signer, which returns a
 # signature per module and never hands over the key. A stolen token buys
 # signatures until it is revoked; a stolen key costs a MOK re-enrolment at
-# boot, physically, on every machine running Pulsar. The two are not the
-# same kind of loss, which is the whole reason for the split.
+# boot, physically, on every machine running Pulsar. The two are not the same
+# kind of loss, which is the whole reason for the split.
 #
-# The signer must be reachable from wherever this runs. On the build host it
-# sits on a private VPC; from a hosted runner it is whatever
-# PULSAR_SIGNER_URL points at. If it is unset or unreachable the build fails
-# rather than shipping an unsigned kmod -- a fail-closed choice, because the
-# macro that drives module signing SKIPS SILENTLY when its inputs are
-# missing (see Containerfile.nvidia phase 3).
+# But the signer binds halo's PRIVATE VPC address, with every public port
+# refused, so a hosted runner cannot reach it and the nvidia variant cannot
+# build from here at all. That is not a gap to be closed: exposing the module
+# signer to the internet to keep a fallback alive would trade the thing the
+# split was for. The build fails closed instead, which it must, because the
+# macro that drives module signing SKIPS SILENTLY when its inputs are missing
+# (see Containerfile.nvidia phase 3).
 #
 # The committed public cert at system_files/etc/pki/pulsar/MOK.der must match
 # the signer's key. Phase 5 of Containerfile.nvidia fails the build if it does
@@ -31,25 +34,26 @@
 # Actions.
 name: build
 
+# Dispatch only. Neither of the triggers this used to have can stay.
+#
+# NO schedule: the nightly runs on the build host now, and the two must not
+# both fire. The image build could overlap harmlessly -- they race for :latest
+# and next-version.sh keeps the tags distinct -- but both would then write
+# pulsar/sbom/vanilla-latest.spdx.json, which is the key the NEXT night diffs
+# against. Whichever finished last silently becomes the baseline.
+#
+# NO push: a merge to main would fire this, and this cannot finish. The vanilla
+# step runs first and pushes :latest; the nvidia step then fails because the
+# signer is unreachable from a hosted runner, and publish.sh never runs. That
+# leaves vanilla advanced, nvidia stale, and nothing published saying so --
+# every nvidia machine quietly stops receiving updates. Half a release is the
+# one outcome this pipeline is built to refuse, so the trigger goes.
+#
+# What is left is a manual button, kept until a host build has published a
+# verified image. Pressing it still fails at nvidia, for the reason above; it
+# is useful for exercising the vanilla half of the pipeline on a runner and
+# for nothing else.
 on:
-  push:
-    branches: [main]
-    # the one-pager has its own pipeline (site.yml); docs and site edits
-    # must never cost a dual-image OS build
-    paths-ignore:
-      - 'site/**'
-      - '.github/workflows/site.yml'
-      # the og-card renderer is a site tool that happens to live in scripts/;
-      # the rest of that directory is genuinely image input and must trigger
-      - 'scripts/render-og.py'
-      # ISOs are built FROM a published image, never into one, so iso.yml
-      # cannot change what this workflow produces.
-      - '.github/workflows/iso.yml'
-      - '**.md'
-      - 'LICENSE'
-  schedule:
-    # Nightly, so a fresh build is waiting when the machine checks for updates.
-    - cron: '30 8 * * *'
   workflow_dispatch:
 
 # queue image builds instead of racing pushes to :latest from parallel runs
