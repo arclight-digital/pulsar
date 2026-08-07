@@ -39,7 +39,25 @@ LAYOUT="${2:?usage: diff-chunk-metadata.sh <source-image> <layout-dir> <tag>}"
 TAG="${3:?usage: diff-chunk-metadata.sh <source-image> <layout-dir> <tag>}"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+
+# The source listing runs in the background, so an early exit anywhere below
+# would otherwise leave an orphaned podman export and a stray container behind
+# on a build host that reuses its store between runs.
+# shellcheck disable=SC2329  # invoked by the EXIT trap below
+cleanup() {
+  [ -n "${source_pid:-}" ] && kill "${source_pid}" 2>/dev/null
+  [ -n "${cid:-}" ] && podman rm -f "${cid}" >/dev/null 2>&1
+  rm -rf "${WORK}"
+  return 0
+}
+trap cleanup EXIT
+
+# This step reads an 8.5GB rootfs and 200-odd compressed layers and used to
+# print nothing at all until both were done. On a build host backed by a
+# network volume that is several minutes of silence, which is indistinguishable
+# from hung -- and got reported as hung. Elapsed seconds on every phase.
+START="$(date +%s)"
+say() { printf '  [%4ds] %s\n' "$(( $(date +%s) - START ))" "$*"; }
 
 # GNU tar -tv prints: mode owner/group size date time name[ -> target]
 #   -rwxr-xr-x 0/0    1234 2026-08-06 12:00 usr/bin/foo
@@ -88,21 +106,31 @@ normalise() { awk -f "${WORK}/normalise.awk"; }
 # ---------------------------------------------------------------------------
 # Source side: the image podman just built, flattened by export. A created
 # container is never started, so nothing runs; export just streams its rootfs.
+#
+# Started in the BACKGROUND and collected after the chunked side. The two are
+# independent, and they contend for different things -- export is I/O against
+# the store, the chunked read is CPU on 201 gunzips -- so overlapping them is
+# most of a second speedup on top of reading the layers in parallel.
+#
+# Export cannot be made cheaper the way the chunked side could. It reads every
+# byte of an 8.5GB rootfs to produce headers this script then keeps and
+# content it throws away, and the obvious fix -- `find` on a mounted image --
+# is the one thing the design forbids: tar represents a hardlink as a link
+# entry, find represents it as another file, and the hardlink resolution below
+# depends on the difference. Both sides read by the same producer, always.
 # ---------------------------------------------------------------------------
 cid="$(podman create "${SOURCE_IMAGE}" /bin/true 2>/dev/null)"
 if [ -z "${cid}" ]; then
   echo "cannot create a container from ${SOURCE_IMAGE}" >&2
   exit 2
 fi
-podman export "${cid}" 2>/dev/null \
-  | tar -tv --numeric-owner -f - 2>/dev/null \
-  | normalise > "${WORK}/source.raw" 2>"${WORK}/source.wh"
-podman rm -f "${cid}" >/dev/null 2>&1
-
-if [ ! -s "${WORK}/source.raw" ]; then
-  echo "listed nothing from ${SOURCE_IMAGE}" >&2
-  exit 2
-fi
+say "listing the source image (${SOURCE_IMAGE})"
+(
+  podman export "${cid}" 2>/dev/null \
+    | tar -tv --numeric-owner -f - 2>/dev/null \
+    | normalise > "${WORK}/source.raw" 2>"${WORK}/source.wh"
+) &
+source_pid=$!
 
 # ---------------------------------------------------------------------------
 # Chunked side: every layer in manifest order, later layers winning, read
@@ -136,6 +164,7 @@ done <<< "${layers}"
 # and twenty. Order is not cosmetic -- the union below keeps the LAST writer
 # for each path, so a reordered concatenation silently compares the wrong
 # layer. Zero-padded indices make the glob restore manifest order exactly.
+say "reading ${count} chunked layers on $(nproc 2>/dev/null || echo 4) cpus"
 # shellcheck disable=SC2016  # $1..$3 are sh -c's positionals, not this shell's
 xargs -P "$(nproc 2>/dev/null || echo 4)" -L1 sh -c '
   tar -tv --numeric-owner -f "$3" 2>/dev/null \
@@ -145,6 +174,16 @@ xargs -P "$(nproc 2>/dev/null || echo 4)" -L1 sh -c '
 cat "${WORK}"/part.*.raw > "${WORK}/chunked.raw"
 cat "${WORK}"/part.*.wh  > "${WORK}/chunked.wh"
 rm -f "${WORK}"/part.*
+say "read ${count} chunked layers"
+
+# Collect the source listing started before the layers.
+wait "${source_pid}" || true
+podman rm -f "${cid}" >/dev/null 2>&1
+if [ ! -s "${WORK}/source.raw" ]; then
+  echo "listed nothing from ${SOURCE_IMAGE}" >&2
+  exit 2
+fi
+say "source image listed"
 echo "compared ${count} chunked layers against ${SOURCE_IMAGE}"
 
 if [ -s "${WORK}/chunked.wh" ]; then
