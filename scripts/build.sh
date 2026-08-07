@@ -32,6 +32,10 @@
 #   --image-nvidia NAME nvidia image name     (default: localhost/pulsar-nvidia)
 #   --signer-url URL    signing oracle, required for nvidia
 #   --signer-token-file PATH
+#   --signer-ca-file PATH
+#                       the signer's TLS certificate. Required when the URL is
+#                       https: it is self-signed on a VPC address, and the
+#                       build container's CA bundle has never heard of it.
 #   --work DIR          where OCI layouts go; needs several GB
 #   --no-wallpapers     skip the shader render (they are gitignored 4K PNGs,
 #                       so skipping means the image ships without them)
@@ -54,6 +58,7 @@ IMAGE="${IMAGE:-localhost/pulsar}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:-localhost/pulsar-nvidia}"
 SIGNER_URL="${PULSAR_SIGNER_URL:-}"
 SIGNER_TOKEN_FILE="${PULSAR_SIGNER_TOKEN_FILE:-}"
+SIGNER_CA_FILE="${PULSAR_SIGNER_CA_FILE:-}"
 WORK="${PULSAR_BUILD_WORK:-${XDG_CACHE_HOME:-${HOME}/.cache}/pulsar-build}"
 
 while [ $# -gt 0 ]; do
@@ -67,6 +72,7 @@ while [ $# -gt 0 ]; do
     --image-nvidia)      IMAGE_NVIDIA="${2:?}"; shift ;;
     --signer-url)        SIGNER_URL="${2:?}"; shift ;;
     --signer-token-file) SIGNER_TOKEN_FILE="${2:?}"; shift ;;
+    --signer-ca-file)    SIGNER_CA_FILE="${2:?}"; shift ;;
     --work)              WORK="${2:?}"; shift ;;
     --no-wallpapers)     DO_WALLPAPERS=no ;;
     vanilla|nvidia|all)  VARIANT="$1" ;;
@@ -150,6 +156,22 @@ build_nvidia() {
     echo "nvidia needs --signer-token-file pointing at a readable token" >&2
     exit 2
   fi
+
+  # Checked HERE, not at the curl in phase 3. The signer's certificate is
+  # self-signed on a VPC address and the build container carries the base
+  # image's CA bundle, so an https signer with no cert to pin fails with
+  # curl exit 60 -- roughly forty minutes in, after the kernel-devel fetch
+  # and the akmod download. Two seconds is a better place to find out.
+  case "${SIGNER_URL}" in
+    https://*)
+      if [ -z "${SIGNER_CA_FILE}" ] || [ ! -r "${SIGNER_CA_FILE}" ]; then
+        echo "an https signer needs --signer-ca-file pointing at its TLS certificate;" >&2
+        echo "it is self-signed, so no public CA vouches for it and the build" >&2
+        echo "container cannot verify it without being handed the cert." >&2
+        echo "(a plain-http test signer needs none)" >&2
+        exit 2
+      fi ;;
+  esac
   podman image exists "${IMAGE}:${FEDORA_VERSION}" \
     || { echo "no ${IMAGE}:${FEDORA_VERSION}; build vanilla first" >&2; exit 2; }
 
@@ -170,6 +192,14 @@ build_nvidia() {
   say "building ${IMAGE_NVIDIA}:${FEDORA_VERSION}"
   local -a tags=(-t "${IMAGE_NVIDIA}:${FEDORA_VERSION}" -t "${IMAGE_NVIDIA}:latest")
   [ -n "${VERSION}" ] && tags+=(-t "${IMAGE_NVIDIA}:${VERSION}")
+
+  # The CA is always mounted, empty when there is none, so the Containerfile
+  # tests one condition (is the file non-empty) rather than the build having
+  # two shapes. It is a public certificate; the secret mount is only how a
+  # host path gets in without joining the build context or a layer.
+  local ca_src="${SIGNER_CA_FILE}"
+  if [ -z "${ca_src}" ]; then ca_src="${WORK}/no-signer-ca"; : > "${ca_src}"; fi
+
   podman build \
     --file "${REPO}/Containerfile.nvidia" \
     --build-arg FEDORA_VERSION="${FEDORA_VERSION}" \
@@ -177,6 +207,7 @@ build_nvidia() {
     --build-arg PULSAR_VERSION="${VERSION}" \
     --build-arg PULSAR_SIGNER_URL="${SIGNER_URL}" \
     --secret id=signer_token,src="${SIGNER_TOKEN_FILE}" \
+    --secret id=signer_ca,src="${ca_src}" \
     "${tags[@]}" \
     "${REPO}"
 }

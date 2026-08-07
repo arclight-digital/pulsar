@@ -117,8 +117,24 @@ RUN dnf5 download --enablerepo=rpmfusion-nonfree-updates-testing \
 # nvidia-kmod (this kmod) -- the two only close as a pair. Phase 4 installs
 # the userspace half and heals this immediately; scriptlets stay ON here
 # because the kmod's %post runs depmod, which we want.
+#
+# TRANSPORT TRUST IS NOT AMBIENT HERE. The signer serves TLS with a private,
+# self-signed certificate -- it lives on a VPC address that no public CA will
+# ever issue for. The build HOST is given that certificate, but this RUN is a
+# container built from the Silverblue base with its own CA bundle, so nothing
+# in here has heard of it: curl exits 60, "self-signed certificate", forty
+# minutes into a build. The cert is mounted in and passed explicitly.
+#
+# It is a PUBLIC certificate, not a secret. It travels as a secret mount only
+# because that is the mechanism that takes an absolute host path without
+# dragging it into the build context or leaving it in a layer.
+#
+# Never -k. This connection carries the bearer token that buys kernel module
+# signatures; accepting any certificate on it is the one shortcut that turns a
+# private signer into an open one.
 ARG PULSAR_SIGNER_URL
 RUN --mount=type=secret,id=signer_token,target=/run/secrets/signer_token \
+    --mount=type=secret,id=signer_ca,target=/run/secrets/signer_ca \
     --mount=type=bind,source=scripts/sign-file-oracle,target=/run/sign-file-oracle \
     set -eu; \
     test -n "${PULSAR_SIGNER_URL}" || { echo "FATAL: PULSAR_SIGNER_URL is unset; the build cannot sign"; exit 1; }; \
@@ -127,10 +143,16 @@ RUN --mount=type=secret,id=signer_token,target=/run/secrets/signer_token \
     install -d -o akmods -g akmods /tmp/akmod-out; \
     install -o akmods -g akmods -m 0400 /run/secrets/signer_token \
         /etc/pki/akmods/signer-token; \
+    CA=; \
+    if [ -s /run/secrets/signer_ca ]; then \
+      install -o akmods -g akmods -m 0444 /run/secrets/signer_ca \
+          /etc/pki/akmods/signer-ca.pem; \
+      CA=/etc/pki/akmods/signer-ca.pem; \
+    fi; \
     printf 'placeholder: the private key lives on the signer host.\n' \
         > /etc/pki/akmods/private/private_key.priv; \
     chown akmods:akmods /etc/pki/akmods/private/private_key.priv; \
-    curl -fsS --max-time 60 \
+    curl -fsS --max-time 60 ${CA:+--cacert "${CA}"} \
         -H "Authorization: Bearer $(cat /run/secrets/signer_token)" \
         "${PULSAR_SIGNER_URL%/}/cert" \
         -o /etc/pki/akmods/certs/public_key.der; \
@@ -143,11 +165,13 @@ RUN --mount=type=secret,id=signer_token,target=/run/secrets/signer_token \
     runuser -s /bin/bash -c \
       "PULSAR_SIGNER_URL='${PULSAR_SIGNER_URL}' \
        PULSAR_SIGNER_TOKEN_FILE=/etc/pki/akmods/signer-token \
+       PULSAR_SIGNER_CA_FILE='${CA}' \
        akmodsbuild --kernels ${KV} --outputdir /tmp/akmod-out \
        /usr/src/akmods/nvidia-open-kmod-*.src.rpm" akmods; \
     rm -f /etc/pki/akmods/private/private_key.priv \
           /etc/pki/akmods/certs/public_key.der \
           /etc/pki/akmods/signer-token \
+          /etc/pki/akmods/signer-ca.pem \
           "/usr/src/kernels/${KV}/scripts/sign-file"; \
     mv "/usr/src/kernels/${KV}/scripts/sign-file.real" \
        "/usr/src/kernels/${KV}/scripts/sign-file"; \

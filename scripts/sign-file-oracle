@@ -39,6 +39,10 @@
 #                         https://10.116.0.3:8443 (halo, in arclight-infra)
 #   PULSAR_SIGNER_TOKEN   bearer token, or
 #   PULSAR_SIGNER_TOKEN_FILE  path to read it from (a build secret mount)
+#   PULSAR_SIGNER_CA_FILE the signer's TLS certificate. It is self-signed on a
+#                         VPC address, so no public CA vouches for it and the
+#                         build container's bundle has never heard of it.
+#                         Unset is fine for a plain-http test signer.
 #   PULSAR_SIGNER_TIMEOUT connect+total timeout in seconds (default 120)
 #   PULSAR_SIGN_FILE_REAL path to the real sign-file (default: alongside, .real)
 set -euo pipefail
@@ -71,6 +75,18 @@ if [ -z "${TOKEN}" ] && [ -n "${PULSAR_SIGNER_TOKEN_FILE:-}" ]; then
 fi
 [ -n "${TOKEN}" ] || die "no signer token (set PULSAR_SIGNER_TOKEN or _FILE)"
 
+# Pinned trust, never -k. This connection carries the token that buys module
+# signatures, so accepting whatever certificate answers would hand an attacker
+# on the path both the token and a signature oracle. Set but unreadable is a
+# configuration error and fails here rather than silently falling back to the
+# system bundle, which does not contain the signer's certificate either.
+CA_ARGS=()
+if [ -n "${PULSAR_SIGNER_CA_FILE:-}" ]; then
+  [ -r "${PULSAR_SIGNER_CA_FILE}" ] \
+    || die "PULSAR_SIGNER_CA_FILE is set but unreadable: ${PULSAR_SIGNER_CA_FILE}"
+  CA_ARGS=(--cacert "${PULSAR_SIGNER_CA_FILE}")
+fi
+
 SIG="$(mktemp)"; ERR="$(mktemp)"
 trap 'rm -f "${SIG}" "${ERR}"' EXIT
 
@@ -84,6 +100,7 @@ trap 'rm -f "${SIG}" "${ERR}"' EXIT
 if ! http_code="$(
   curl -sS --fail-with-body \
     --max-time "${TIMEOUT}" \
+    "${CA_ARGS[@]}" \
     -o "${SIG}" -w '%{http_code}' \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "X-Pulsar-Hash-Algo: ${HASH}" \

@@ -27,6 +27,11 @@
 #   IMAGE, IMAGE_NVIDIA         registry names
 #   PULSAR_SIGNER_URL           the signing oracle, on the private VPC
 #   PULSAR_SIGNER_TOKEN_FILE    bearer token, root-owned, 0400
+#   PULSAR_SIGNER_CA_FILE       the signer's TLS certificate. Public, not a
+#                               secret, and NOT the module-signing cert --
+#                               this one secures the channel, /cert returns
+#                               the other. Required: the build cannot verify
+#                               a self-signed VPC certificate without it.
 #   PULSAR_BUILD_WORK           OCI layouts; wants the big volume
 #   PULSAR_HEALTHCHECK_URL      pinged on success (optional)
 #   R2_BUCKET, R2_ACCOUNT_ID    where SBOMs and changelogs are published
@@ -79,6 +84,7 @@ echo "previous :latest digest: ${PREV_DIGEST:-<none, first build>}"
   --image-nvidia "${IMAGE_NVIDIA}" \
   --signer-url "${PULSAR_SIGNER_URL:?PULSAR_SIGNER_URL is not set}" \
   --signer-token-file "${PULSAR_SIGNER_TOKEN_FILE:?PULSAR_SIGNER_TOKEN_FILE is not set}" \
+  --signer-ca-file "${PULSAR_SIGNER_CA_FILE:?PULSAR_SIGNER_CA_FILE is not set}" \
   --work "${WORK}" \
   --push
 

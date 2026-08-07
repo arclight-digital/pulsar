@@ -68,6 +68,33 @@ itself and pass **even if halo held a completely different key**. Fetching the
 cert makes the check assert something real: that the key which signed belongs
 to the certificate users are told to enrol.
 
+### Transport trust
+
+Two certificates are in play and they are not related. `/cert` returns the
+**module-signing** certificate. Separately, halo serves the whole API over TLS
+using its own **transport** certificate — self-signed, with the VPC address as
+its SAN, because no public CA will ever issue for `10.x`.
+
+The builder must be handed that transport certificate explicitly. It arrives
+as `PULSAR_SIGNER_CA_FILE` (`/etc/pulsar/halo-ca.pem` on a build host), is
+passed to `scripts/build.sh` as `--signer-ca-file`, and reaches the one RUN
+that talks to halo as a secret mount. It is public; the secret mount is only
+how an absolute host path gets into a build without joining the build context
+or ending up in a layer.
+
+**Installing it on the build host is not enough.** `podman build` runs from
+the Silverblue base image with that image's CA bundle, so a host trust anchor
+is invisible inside it. The symptom is
+`curl: (60) ... self-signed certificate` roughly forty minutes into the build,
+at phase 3, after the kernel-devel fetch and the akmod download. `build.sh`
+therefore refuses at the outset when the URL is `https:` and no readable CA
+file was given.
+
+Never `curl -k`. That connection carries the bearer token that buys module
+signatures; accepting any certificate on it hands anyone on the path both the
+token and an oracle. A plain-http test signer needs no CA and is the supported
+way to exercise this locally.
+
 ### `POST /sign` and `GET /healthz`
 
 Image signing over a digest, and liveness. Specified by `arclight-infra`; the
