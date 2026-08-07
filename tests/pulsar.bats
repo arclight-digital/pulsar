@@ -7,8 +7,9 @@
 # crash or, worse, report health it cannot actually see.
 #
 # What is deliberately NOT tested here: that `pulsar update` upgrades anything.
-# It is one exec into bootc, and a test that mocked bootc would only assert
-# that the mock was called.
+# What IS tested is which tool it hands to, because that is a decision and not
+# a pass-through -- picking bootc on a system with layered packages stages a
+# deployment without them, and you find out at the next boot.
 
 setup() {
     PULSAR="${BATS_TEST_DIRNAME}/../cli/pulsar"
@@ -162,6 +163,116 @@ JSON
         [ "$status" -ne 0 ]
         [[ "$output" == *"root"* ]]
     done
+}
+
+# ---------------------------------------------------------------------------
+# Layering detection and the update path it chooses.
+#
+# CI has neither rpm-ostree nor bootc, so both are stubbed. The stub is not
+# asserting that a mock was called: `rpm-ostree status --json` is the input to
+# a real decision, and these pin what that decision does with each answer.
+# ---------------------------------------------------------------------------
+
+# $1 = the JSON `rpm-ostree status --json` should print. Both tools record the
+# argv they were handed, so a test can read back which one ran and with what.
+stub_ostree() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    printf '%s' "$1" > "${BATS_TEST_TMPDIR}/status.json"
+    cat > "${STUB}/rpm-ostree" <<EOF
+#!/bin/sh
+[ "\$1" = status ] && exec cat "${BATS_TEST_TMPDIR}/status.json"
+echo "rpm-ostree \$*"
+EOF
+    cat > "${STUB}/bootc" <<'EOF'
+#!/bin/sh
+echo "bootc $*"
+EOF
+    chmod +x "${STUB}/rpm-ostree" "${STUB}/bootc"
+    PATH="${STUB}:${PATH}"
+    export PATH
+}
+
+# `update` needs root, and CI is not root. An unprivileged user namespace is
+# enough -- nothing here touches the real system -- but Ubuntu can forbid one,
+# so the routing tests say so rather than quietly passing.
+as_root() {
+    unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"
+    run unshare -r env "PATH=${PATH}" "PULSAR_MANIFEST=${PULSAR_MANIFEST}" "$PULSAR" "$@"
+}
+
+CLEAN_STATUS='{"deployments":[{"booted":true,"version":"44.1","pinned":false}]}'
+# One of each shape the origin can carry: a repo layer, a local rpm, and an
+# override. A check that only looked at requested-packages would pass on the
+# first and lose the other two.
+LAYERED_STATUS='{"deployments":[{"booted":true,"version":"44.1",
+  "requested-packages":["1password"],
+  "requested-local-packages":["some-local-1.0.rpm"],
+  "requested-base-removals":["firefox"]}]}'
+
+@test "doctor reports layering on the booted deployment" {
+    stub_ostree "$LAYERED_STATUS"
+    run "$PULSAR" doctor --json
+    detail=$(echo "$output" | jq -r '.checks[] | select(.id=="updates") | .detail')
+    [[ "$detail" == *"3 layered"* ]]
+}
+
+@test "doctor does not invent layering on a clean deployment" {
+    stub_ostree "$CLEAN_STATUS"
+    run "$PULSAR" doctor --json
+    detail=$(echo "$output" | jq -r '.checks[] | select(.id=="updates") | .detail')
+    [[ "$detail" != *"layered"* ]]
+}
+
+@test "layering on a deployment that is not booted is not this system's" {
+    # A staged deployment's layers say nothing about what an upgrade of the
+    # booted one has to preserve.
+    stub_ostree '{"deployments":[{"booted":true,"version":"44.1"},
+                 {"staged":true,"version":"44.2","requested-packages":["x"]}]}'
+    run "$PULSAR" doctor --json
+    detail=$(echo "$output" | jq -r '.checks[] | select(.id=="updates") | .detail')
+    [[ "$detail" != *"layered"* ]]
+}
+
+@test "update goes through bootc when nothing is layered" {
+    stub_ostree "$CLEAN_STATUS"
+    as_root update
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"bootc upgrade"* ]]
+    [[ "$output" != *"rpm-ostree upgrade"* ]]
+}
+
+@test "update goes through rpm-ostree when packages are layered" {
+    stub_ostree "$LAYERED_STATUS"
+    as_root update
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rpm-ostree upgrade"* ]]
+    [[ "$output" != *"bootc upgrade"* ]]
+    # and says so, because the tool that ran is not the one the docs name
+    [[ "$output" == *"rpm-ostree"* ]]
+}
+
+@test "update translates --apply for the rpm-ostree path" {
+    stub_ostree "$LAYERED_STATUS"
+    as_root update --apply
+    [[ "$output" == *"rpm-ostree upgrade --reboot"* ]]
+}
+
+@test "update passes --check through unchanged either way" {
+    stub_ostree "$CLEAN_STATUS"
+    as_root update --check
+    [[ "$output" == *"bootc upgrade --check"* ]]
+    stub_ostree "$LAYERED_STATUS"
+    as_root update --check
+    [[ "$output" == *"rpm-ostree upgrade --check"* ]]
+}
+
+@test "update refuses rather than guess when status is unreadable" {
+    stub_ostree 'not json at all'
+    as_root update
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"bootc upgrade"* ]]
+    [[ "$output" != *"rpm-ostree upgrade"* ]]
 }
 
 @test "doctor produces valid json even off a Pulsar system" {

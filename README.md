@@ -233,7 +233,14 @@ it installs when you choose to restart. bootc's `fetch-apply-updates.timer`
 is left disabled deliberately — it reboots on its own.
 
 CI rebuilds nightly, so kernels, security updates, and driver bumps arrive as
-a normal update notification. Impatient: `sudo bootc upgrade`.
+a normal update notification. Impatient: `sudo pulsar update`.
+
+Use `pulsar update` rather than `bootc upgrade` directly if you have layered
+anything with `rpm-ostree install`. bootc's model is the container image alone
+— it does not know about your layer and will not carry it forward. `pulsar
+update` checks the booted deployment first and hands off to `rpm-ostree
+upgrade` when there is something to preserve; `pulsar doctor` tells you which
+side of that line you are on.
 
 ## Every image has a paper trail
 

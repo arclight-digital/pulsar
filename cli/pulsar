@@ -11,6 +11,10 @@
 # without sudo is one you will not run. `rpm-ostree status --json` reports the
 # same deployments unprivileged, so `pulsar status` and `pulsar doctor` work as
 # any user, and only the commands that actually mutate the system ask for root.
+#
+# The one write that does not always go through bootc is `update` -- bootc owns
+# the container image and nothing else, so on a system with layered packages it
+# is the wrong tool. See cmd_update.
 set -euo pipefail
 
 VERSION="1.0.0"
@@ -214,23 +218,41 @@ check_flathub() {
     fi
 }
 
+# What "locally modified" means, spelled once. These are the origin keys that
+# `rpm-ostree install` and `rpm-ostree override` write, counted on the BOOTED
+# deployment; a missing key is null and `null | length` is 0, so absent and
+# empty need no separate handling. Two readers depend on this answer -- doctor
+# reports it, update routes on it -- and two copies of the list would drift
+# into disagreeing about the same system.
+JQ_LAYERED='[ .deployments[]? | select(.booted == true) |
+   ( ."requested-packages", ."requested-local-packages",
+     ."requested-local-fileoverride-packages", ."requested-base-removals",
+     ."requested-base-local-replacements", ."requested-modules" ) ]
+ | map(length) | add // 0'
+
 check_updates() {
     have rpm-ostree || { record updates warn "rpm-ostree not available"; return; }
-    local js line staged pinned total ver
+    local js line staged pinned total ver lay
     js=$(rpm-ostree status --json 2>/dev/null || echo '{}')
-    # one jq pass for all four numbers, not four passes over the same JSON
+    # one jq pass for all five numbers, not five passes over the same JSON
     line=$(printf '%s' "$js" | jq -r '
       [ ([.deployments[]? | select(.staged == true)] | length),
         ([.deployments[]? | select(.pinned == true)] | length),
         (.deployments // [] | length),
-        ([.deployments[]? | select(.staged == true) | .version][0] // "?")
+        ([.deployments[]? | select(.staged == true) | .version][0] // "?"),
+        ('"$JQ_LAYERED"')
       ] | map(tostring) | join("\t")' 2>/dev/null) || line=''
-    [ -n "$line" ] || line=$(printf '0\t0\t0\t?')
-    IFS=$'\t' read -r staged pinned total ver <<<"$line"
+    [ -n "$line" ] || line=$(printf '0\t0\t0\t?\t0')
+    IFS=$'\t' read -r staged pinned total ver lay <<<"$line"
+    local detail="${total} deployment(s), ${pinned} pinned"
+    # Worth surfacing even when everything is healthy: it changes which tool
+    # `pulsar update` runs, and it is the reason an update takes minutes
+    # instead of seconds.
+    [ "${lay:-0}" -gt 0 ] && detail="${detail}, ${lay} layered -- updates go through rpm-ostree"
     if [ "${staged:-0}" -gt 0 ]; then
         record updates ok "update staged: ${ver}" "reboot to apply"
     else
-        record updates ok "no update staged" "${total} deployment(s), ${pinned} pinned"
+        record updates ok "no update staged" "$detail"
     fi
 }
 
@@ -684,9 +706,54 @@ swatches() {
 }
 
 # ---------------------------------------------------------------------------
-# Lifecycle. These mutate, so they need root and they hand straight to bootc.
+# Lifecycle. These mutate, so they need root. rollback, pin and unpin hand
+# straight to the tool that owns the deployment; update has to pick one.
 # ---------------------------------------------------------------------------
-cmd_update()   { need_root update;   need bootc; exec bootc upgrade "$@"; }
+# update -- the same intent, through whichever tool can actually honour it.
+#
+# bootc's model is the container image and nothing else. It does not know that
+# `rpm-ostree install 1password` added a layer on top of that image, so an
+# upgrade through bootc does not carry the layer forward: the packages you
+# installed are not in the deployment it stages. rpm-ostree does know, because
+# it wrote the origin, and its upgrade re-pulls the same container image and
+# re-applies the layer on top.
+#
+# So this asks the deployment which it is, rather than making the user
+# remember. An unlayered system -- the shipped default -- still goes through
+# bootc, which is the tool that owns it.
+#
+# Unreadable status is fatal rather than a guess. Guessing bootc on a layered
+# system throws the layer away, and you find out at the next boot.
+cmd_update() {
+    need_root update
+    local lay
+    if have rpm-ostree; then
+        lay=$(rpm-ostree status --json 2>/dev/null | jq -r "$JQ_LAYERED" 2>/dev/null) \
+            || die "could not read deployment status; refusing to guess which upgrade path is right"
+        [ -n "$lay" ] || die "could not read deployment status; refusing to guess which upgrade path is right"
+    else
+        lay=0   # nothing to layer with, so nothing can be layered
+    fi
+
+    if [ "$lay" -eq 0 ]; then
+        need bootc
+        exec bootc upgrade "$@"
+    fi
+
+    printf '%spulsar:%s %s local package modification(s) on this deployment -- upgrading through rpm-ostree so they survive\n' \
+        "$C_KEY" "$C_RESET" "$lay" >&2
+    need rpm-ostree
+    # The flags pulsar documents are bootc's, and --apply has an exact
+    # counterpart here. Everything else passes through verbatim and fails at
+    # rpm-ostree if it does not exist there, which is the honest outcome --
+    # better than a silently dropped flag.
+    local f; local -a a=()
+    for f in "$@"; do
+        case "$f" in --apply) a+=(--reboot) ;; *) a+=("$f") ;; esac
+    done
+    exec rpm-ostree upgrade ${a[@]+"${a[@]}"}
+}
+
 cmd_rollback() { need_root rollback; need bootc; exec bootc rollback "$@"; }
 
 cmd_pin() {
@@ -826,6 +893,8 @@ pulsar -- manage a Pulsar system
   pulsar attest            verify this image's build provenance (needs gh)
 
   pulsar update            fetch and stage an update        (root)
+                           through bootc, or through rpm-ostree if you have
+                           layered packages, which bootc would drop
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
 
@@ -867,8 +936,9 @@ main() {
     # jq is needed by nearly everything -- but not by help, which is how you
     # find out what this is on a box that lacks jq.
     case "$cmd" in help) ;; *) need jq ;; esac
-    # update/rollback pass their arguments through to bootc (which has flags
-    # worth passing, --check among them); setup hands them to its recipe.
+    # update/rollback pass their arguments through to the upgrade tool (which
+    # has flags worth passing, --check among them); setup hands them to its
+    # recipe.
     # Everything else takes none and says so.
     case "$cmd" in
         manifest)  no_args manifest "$@";  cmd_manifest ;;
