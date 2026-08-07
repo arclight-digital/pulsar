@@ -19,10 +19,10 @@ const { title, description, ogTitle } = Astro.props;
 // Absolute, always: crawlers resolve nothing relative, and the page is also
 // reachable at a github.io subpath, where split indexing helps neither.
 const canonical = new URL('/', Astro.site).href;
-// Rendered at build time by src/pages/og.png.ts, so the card is set from the
-// same lockup and faces as the page rather than being a JPEG someone
+// Rendered at build time by src/pages/og.jpg.ts, so the card is set from the
+// same lockup and faces as the page rather than being an image someone
 // remembered to regenerate.
-const ogImage = new URL('/og.png', Astro.site).href;
+const ogImage = new URL('/og.jpg', Astro.site).href;
 
 // Structured data, honest only: everything here is real and verifiable, and
 // softwareVersion names the build the nightly actually published.

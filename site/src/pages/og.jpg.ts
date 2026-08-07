@@ -8,7 +8,8 @@
 //
 // Now it is an Astro endpoint. Satori lays the card out with the same fonts the
 // page loads and the same tokens the page is styled from, resvg rasterises it,
-// and it is rebuilt on every deploy. There is nothing left to keep in sync.
+// sharp encodes it, and it is rebuilt on every deploy. There is nothing left
+// to keep in sync.
 //
 // The background is the committed silk still rather than a live shader render:
 // resvg cannot run WebGL, and the still is itself an output of that same
@@ -17,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import satori from 'satori';
+import sharp from 'sharp';
 
 export const prerender = true;
 
@@ -183,9 +185,19 @@ export const GET = async (): Promise<Response> => {
     fonts: [{ name: 'Host Grotesk', data: bold, weight: 700, style: 'normal' }],
   });
 
+  // resvg rasterises, sharp encodes. resvg only emits PNG, which is the wrong
+  // container for a photographic ground -- the same card costs ~541KB as a
+  // PNG and ~45KB as a JPEG, and quantising the PNG is not a way out of it
+  // (256 colours still runs 261KB and bands the nebula). Nothing is asked of
+  // sharp but the encode, so the pixels are still resvg's.
   const png = new Resvg(svg, { fitTo: { mode: 'width', value: W } }).render().asPng();
 
-  return new Response(new Uint8Array(png), {
-    headers: { 'content-type': 'image/png' },
+  const jpeg = await sharp(png)
+    .flatten({ background: INK }) // the card has no transparency to keep
+    .jpeg({ quality: 86, progressive: true, mozjpeg: true })
+    .toBuffer();
+
+  return new Response(new Uint8Array(jpeg), {
+    headers: { 'content-type': 'image/jpeg' },
   });
 };
