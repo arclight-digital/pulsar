@@ -100,7 +100,7 @@ for file in "$@"; do
     while IFS= read -r line; do
         case "$line" in
             *DRACUT_NO_XATTR*dracut\ *) ;;
-            *dracut\ -*|*dracut\ --*)
+            *dracut\ -*)
                 echo "FAIL ${file}: a dracut invocation without DRACUT_NO_XATTR=1:" >&2
                 printf '      %s\n' "$(printf '%s' "$line" | sed 's/^[[:space:]]*//' | cut -c1-120)" >&2
                 echo "      In a container the rootfs is mounted with one mount-wide SELinux" >&2
