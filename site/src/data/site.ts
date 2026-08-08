@@ -7,6 +7,13 @@ export const IMAGES = {
   nvidia: 'ghcr.io/arclight-digital/pulsar-nvidia',
 } as const;
 
+// buildd's public API on helios. The page renders from the committed manifest
+// and then asks this what the registry actually holds, so a nightly that ran
+// without a site publish is visible instead of invisible. CORS is locked to
+// one origin (BUILDD_SITE_ORIGIN on helios), so this fetch fails on a dev
+// server by design -- src/scripts/beacon.ts treats that as "say nothing".
+export const BEACON = 'https://beacon.arclight.digital';
+
 // The R2 bucket the weekly ISO build uploads to, behind its public custom
 // domain. The -latest names are stable keys the build rewrites weekly; the
 // dated originals stay in the bucket untouched.

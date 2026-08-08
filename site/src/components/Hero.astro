@@ -38,13 +38,23 @@ import { REPO } from '../data/site';
 
     {/* The one number that proves the nightly is real, worn in the hero. It
         comes from the manifest the build host committed, so the chip, the
-        manifest card and the changelog cannot name different builds. */}
+        manifest card and the changelog cannot name different builds.
+
+        Cannot, that is, until src/scripts/beacon.ts asks the build host what
+        it has shipped since this page was rendered. If a nightly succeeded
+        without a site publish, the chip takes that version and #build-note
+        says which build the rest of the page is describing -- because two
+        different numbers on one page need a sentence between them. */}
     <p class="buildline">
       <a class="build-chip" href="#changelog">
         <span class="build-dot" aria-hidden="true"></span>
-        latest build&ensp;<strong>{version}</strong>
+        latest build&ensp;<strong id="build-version">{version}</strong>
       </a>
     </p>
+
+    {/* Empty and hidden in the served HTML: with no beacon there is nothing
+        to add, and the page keeps the build it was rendered from. */}
+    <p class="buildnote" id="build-note" hidden></p>
 
     <p class="srclink"><a href={REPO}>Browse the source&nbsp;→</a></p>
 
@@ -215,6 +225,22 @@ import { REPO } from '../data/site';
   .build-chip:focus-visible {
     border-color: var(--accent);
     color: var(--text);
+  }
+
+  /* Set by beacon.ts when the pipeline is behind: the chip stops claiming
+     liveness it does not have, and the note below carries the reason. */
+  .build-chip[data-stale] .build-dot {
+    background: var(--muted);
+    animation: none;
+  }
+
+  .buildnote {
+    max-width: 34rem;
+    margin: 0.6rem auto 0;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--muted);
+    text-wrap: pretty;
   }
 
   /* a pulsar pulses; reduced motion gets a steady beacon */
