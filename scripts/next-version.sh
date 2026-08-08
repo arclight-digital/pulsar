@@ -38,20 +38,56 @@
 # answer, and two implementations of a version scheme is how you get two
 # builds claiming one tag.
 #
+# TWO SERIES, ONE PER CHANNEL. A build somebody kicked off by hand used to draw
+# from the published series, so a morning of debugging spent .1 through .6 of
+# numbers users see -- observed on 2026-08-08, where the timer took .0 and a
+# hand-run build took .1. The manual channel gets its own counted series with a
+# -dev suffix instead, and the two never see each other: the scheduled pattern
+# is anchored at both ends, so it cannot match a -dev tag, and the manual
+# pattern requires the suffix.
+#
+# The suffix is one variable used by BOTH the match and the extraction. That is
+# not a style choice -- extracting `3-dev` and handing it to $((n + 1)) dies
+# with "dev: unbound variable", and without set -u it evaluates to 3 and never
+# increments, which is the tag collision at the top of this file wearing a
+# third hat.
+#
+# The channel must be stated. There is no default, because both possible
+# defaults are wrong in a way that costs something: guessing scheduled hands a
+# debugging build the tags users pull, and guessing manual quietly stops the
+# nightly from publishing.
+#
 #   next-version.sh ghcr.io/arclight-digital/pulsar        -> 44.20260806.3
 #   next-version.sh --fedora 45 ghcr.io/...                -> 45.20260806.0
+#   next-version.sh --channel manual ghcr.io/...           -> 44.20260806.0-dev
 set -euo pipefail
 
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
+CHANNEL="${PULSAR_CHANNEL:-scheduled}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --fedora) FEDORA_VERSION="${2:?}"; shift ;;
-    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+    --channel) CHANNEL="${2:?}"; shift ;;
+    # Printed from the header rather than a hardcoded line range. The range was
+    # '2,34p', and the header had grown to 42 lines: --help truncated
+    # mid-sentence and showed neither example, which is exactly the rot a range
+    # invites every time the comment above it is edited.
+    -h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
     *) IMAGE="$1" ;;
   esac
   shift
 done
-: "${IMAGE:?usage: next-version.sh [--fedora N] <image>}"
+: "${IMAGE:?usage: next-version.sh [--fedora N] [--channel scheduled|manual] <image>}"
+
+# Unknown is a config error, not an occasion to pick one. Unset defaults to
+# scheduled only because this is also run by hand against the real registry to
+# answer "what would tonight be called"; nightly.sh always passes it through
+# explicitly and refuses to run without it.
+case "${CHANNEL}" in
+  scheduled) SUFFIX="" ;;
+  manual)    SUFFIX="-dev" ;;
+  *) echo "unknown channel: ${CHANNEL} (want scheduled or manual)" >&2; exit 2 ;;
+esac
 
 command -v oras >/dev/null || { echo "missing: oras" >&2; exit 2; }
 
@@ -74,10 +110,15 @@ else
 fi
 
 n=0
-existing="$(printf '%s\n' "${tags}" | grep -E "^${prefix}\.[0-9]+$" || true)"
+existing="$(printf '%s\n' "${tags}" | grep -E "^${prefix}\.[0-9]+${SUFFIX}$" || true)"
 if [ -n "${existing}" ]; then
-  n=$(printf '%s\n' "${existing}" | sed "s/^${prefix}\.//" | sort -n | tail -1)
+  # The capture drops the suffix as well as the prefix, so what reaches the
+  # arithmetic is a bare integer -- see the note on the suffix above.
+  n=$(printf '%s\n' "${existing}" | sed -E "s/^.*\.([0-9]+)${SUFFIX}\$/\1/" | sort -n | tail -1)
   n=$((n + 1))
 fi
 
-printf '%s.%s\n' "${prefix}" "${n}"
+# stderr, so a human can see which series answered while stdout stays the one
+# line nightly.sh captures.
+echo "channel ${CHANNEL}: counting ${prefix}.N${SUFFIX}" >&2
+printf '%s.%s%s\n' "${prefix}" "${n}" "${SUFFIX}"

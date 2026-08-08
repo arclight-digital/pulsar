@@ -39,6 +39,15 @@
 #   --work DIR          where OCI layouts go; needs several GB
 #   --no-wallpapers     skip the shader render (they are gitignored 4K PNGs,
 #                       so skipping means the image ships without them)
+#   --no-floating-tags  push the version tag ONLY: :latest and :<fedora> in the
+#                       REGISTRY stay where they are. What a manual build wants
+#                       -- a debugging image that moves :latest is what every
+#                       user pulls on their next bootc upgrade. Note this
+#                       governs the registry alone; the local podman tags below
+#                       still move, because the rechunk, the SBOM scan and the
+#                       manifest extraction all read :<fedora> out of local
+#                       storage. On a workstation that repoints the local
+#                       :latest this script's own closing hint names.
 #   --allow-existing-version
 #                       publish a version tag the guard would not clear. The
 #                       push refuses by default, because that tag is the one
@@ -63,6 +72,7 @@ DO_RECHUNK=no
 DO_VERIFY=no
 DO_PUSH=no
 DO_WALLPAPERS=yes
+NO_FLOATING_TAGS=no
 ALLOW_EXISTING_VERSION=no
 IMAGE="${IMAGE:-localhost/pulsar}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:-localhost/pulsar-nvidia}"
@@ -85,9 +95,12 @@ while [ $# -gt 0 ]; do
     --signer-ca-file)    SIGNER_CA_FILE="${2:?}"; shift ;;
     --work)              WORK="${2:?}"; shift ;;
     --no-wallpapers)     DO_WALLPAPERS=no ;;
+    --no-floating-tags)  NO_FLOATING_TAGS=yes ;;
     --allow-existing-version) ALLOW_EXISTING_VERSION=yes ;;
     vanilla|nvidia|all)  VARIANT="$1" ;;
-    -h|--help)           sed -n '2,50p' "$0"; exit 0 ;;
+    # From the header itself, not a line range: the range was '2,50p' and the
+    # header has grown since, which is how a --help quietly starts truncating.
+    -h|--help)           awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -97,6 +110,22 @@ case "${VARIANT}" in vanilla|nvidia|all) ;; *) echo "bad --variant" >&2; exit 2 
 if [ "${DO_PUSH}" = yes ] && [ -z "${VERSION}" ]; then
   echo "--push requires --version: the content assertion reads the stamp back" >&2
   exit 2
+fi
+
+# The belt for the split between this flag and the channel that sets it.
+# next-version.sh gives a manual build a -dev version, and nightly.sh passes
+# --no-floating-tags alongside it; two flags that must agree are two flags that
+# can disagree, and one direction of that disagreement puts a debugging image
+# on every user's next bootc upgrade. So the version string itself vetoes it.
+# Checked here rather than in push() so it costs nothing and fails before the
+# tool probe below -- an hour of building is a bad place to learn this.
+if [ "${DO_PUSH}" = yes ] && [ "${NO_FLOATING_TAGS}" = no ]; then
+  case "${VERSION}" in
+    *-dev)
+      echo "refusing to move :latest and :${FEDORA_VERSION} onto ${VERSION}" >&2
+      echo "a -dev version is a debugging build: pass --no-floating-tags" >&2
+      exit 2 ;;
+  esac
 fi
 
 for tool in podman skopeo jq tar; do
@@ -351,7 +380,13 @@ version_tag_is_free() {
 push() {
   local image="$1" layout="${WORK}/$2" t
   say "pushing ${image}"
-  local -a tags=("${FEDORA_VERSION}" latest)
+  # The version tag goes FIRST, and the floating pair is appended rather than
+  # seeded. Both matter: --no-floating-tags has to be able to leave them out,
+  # and pushing the immutable tag before the moving ones means a failure
+  # part-way through can no longer leave :latest advertising a build whose
+  # version tag never landed -- which is what the check below only half
+  # achieved while latest was written first.
+  local -a tags=()
   # Checked before ANY tag is written: aborting after latest has already moved
   # would leave the registry advertising a build that was refused.
   if [ -n "${VERSION}" ]; then
@@ -364,6 +399,11 @@ push() {
       exit 1
     fi
     tags+=("${VERSION}")
+  fi
+  if [ "${NO_FLOATING_TAGS}" = yes ]; then
+    say "--no-floating-tags: ${image}:${FEDORA_VERSION} and :latest stay where they are"
+  else
+    tags+=("${FEDORA_VERSION}" latest)
   fi
   # skopeo copies the already-compressed blobs verbatim; a podman pull/push
   # round trip recompressed ~200 layers for nothing. After the first copy the

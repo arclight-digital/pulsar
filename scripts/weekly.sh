@@ -28,6 +28,24 @@
 #   PULSAR_ISO_HEALTHCHECK_URL    pinged on success (optional)
 #   R2_BUCKET, R2_ACCOUNT_ID      where ISOs are published
 #   R2_CREDENTIALS_FILE           file setting AWS_ACCESS_KEY_ID/SECRET
+#   PULSAR_CHANNEL                scheduled | manual. REQUIRED -- see below.
+#
+# A MANUAL ISO RUN BUILDS AND PUBLISHES NOTHING, and the reason is sharper than
+# the nightly's. build-iso.sh names its artifacts from the version label on the
+# image it resolves, which is `:latest` -- and a manual IMAGE build deliberately
+# does not move :latest. So a manual ISO run resolves the already-released
+# image, recomputes the SAME version, and uploads over the released ISO, its
+# signed checksum manifest and its sidecar with fresh bytes. Anyone verifying a
+# copy they downloaded last week against the published manifest would then fail,
+# which is the one artifact set here where that is unrecoverable: the signature
+# covers the manifest, and the manifest would have been re-signed over.
+#
+# Dropping --push is the whole fix and it needs no changes in build-iso.sh,
+# where no-push is already the default. The honest cost is that the ISO dies
+# with the droplet -- a manual run proves the pipeline works and hands you
+# nothing to boot. Publishing debug ISOs under their own keys is a follow-up
+# (see the --keyless shape in build-iso.sh, which already does "dated keys
+# only, -latest untouched" for a different reason).
 set -euo pipefail
 
 # Same as nightly.sh: cloud-init's runcmd sets no $HOME, and the aws CLI
@@ -46,8 +64,23 @@ IMAGE="${IMAGE:?IMAGE is not set}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:?IMAGE_NVIDIA is not set}"
 WORK="${PULSAR_ISO_WORK:-/var/tmp/pulsar-iso}"
 
+# Same table as nightly.sh, and refusing for the same reason: publishing an ISO
+# is signing something, and nothing here may guess whether this run is entitled
+# to sign over what is already published.
+case "${PULSAR_CHANNEL:-}" in
+  scheduled|manual) CHANNEL="${PULSAR_CHANNEL}" ;;
+  "")
+    echo "PULSAR_CHANNEL is not set, so this run cannot say whether it is the" >&2
+    echo "weekly release or one somebody started by hand. Refusing to guess:" >&2
+    echo "set PULSAR_CHANNEL=scheduled|manual in /etc/pulsar/build.env." >&2
+    exit 2 ;;
+  *)
+    echo "PULSAR_CHANNEL=${PULSAR_CHANNEL} is not scheduled or manual" >&2
+    exit 2 ;;
+esac
+
 started="$(date -u +%s)"
-echo "pulsar weekly ISO build starting $(date -u -Iseconds)"
+echo "pulsar weekly ISO build starting $(date -u -Iseconds) (${CHANNEL})"
 echo "building from $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 
 # Same gate as the nightly: with no on-push CI, the entry points are where
@@ -61,14 +94,21 @@ for variant in vanilla nvidia; do
     nvidia)  image="${IMAGE_NVIDIA}" ;;
   esac
 
-  "${REPO}/scripts/build-iso.sh" \
-    --variant "${variant}" \
-    --image "${image}" \
-    --work "${WORK}" \
-    --signer-url "${PULSAR_SIGNER_URL:?PULSAR_SIGNER_URL is not set}" \
-    --signer-token-file "${PULSAR_SIGNER_TOKEN_FILE:?PULSAR_SIGNER_TOKEN_FILE is not set}" \
-    --signer-ca-file "${PULSAR_SIGNER_CA_FILE:?PULSAR_SIGNER_CA_FILE is not set}" \
-    --push
+  iso_args=(
+    --variant "${variant}"
+    --image "${image}"
+    --work "${WORK}"
+    --signer-url "${PULSAR_SIGNER_URL:?PULSAR_SIGNER_URL is not set}"
+    --signer-token-file "${PULSAR_SIGNER_TOKEN_FILE:?PULSAR_SIGNER_TOKEN_FILE is not set}"
+    --signer-ca-file "${PULSAR_SIGNER_CA_FILE:?PULSAR_SIGNER_CA_FILE is not set}"
+  )
+  # See the header: --push on a manual run would overwrite a signed release.
+  if [ "${CHANNEL}" = manual ]; then
+    echo "manual run: building ${variant} but publishing nothing" >&2
+  else
+    iso_args+=(--push)
+  fi
+  "${REPO}/scripts/build-iso.sh" "${iso_args[@]}"
 
   # Reclaim the disk before the next variant: the pulled OS image and the
   # osbuild store are the two multi-GB items, and neither is reusable across
@@ -82,7 +122,14 @@ done
 elapsed=$(( $(date -u +%s) - started ))
 echo "pulsar weekly ISO build finished in ${elapsed}s"
 
-if [ -n "${PULSAR_ISO_HEALTHCHECK_URL:-}" ]; then
+# Not pinged on a manual run, for the reason nightly.sh spells out: this alerts
+# by omission, so a hand-run build marking the week healthy would hide a weekly
+# that never fired.
+if [ "${CHANNEL}" = manual ]; then
+  echo "manual run: nothing published, so the ISO healthcheck is not pinged." >&2
+  echo "Both ISOs built and were then discarded -- the disk only holds one at a" >&2
+  echo "time, so the cleanup between variants takes the first one with it." >&2
+elif [ -n "${PULSAR_ISO_HEALTHCHECK_URL:-}" ]; then
   curl -fsS --max-time 20 --retry 3 \
     --data-binary "weekly isos ok in ${elapsed}s" \
     "${PULSAR_ISO_HEALTHCHECK_URL}" >/dev/null \

@@ -33,6 +33,13 @@
 #                        else the current branch; refused when detached)
 #   --git-token-file P   token for the site commit, if the checkout has no
 #                        credentials of its own
+#   --no-promote         this build is not the published one. Per-build R2 keys
+#                        are still written -- they describe a real image that
+#                        was really pushed -- but none of the moving pointers
+#                        are, and there is no site commit. What a manual build
+#                        wants: evidence, defining nothing. R2 also stops being
+#                        mandatory under this flag, because the one reason it is
+#                        mandatory is publish_site, which does not run.
 #   --dry-run            generate everything, publish nothing
 #
 # --prev-digest CANNOT BE RECOVERED HERE. It is `oras resolve ${IMAGE}:latest`
@@ -69,6 +76,7 @@ WORK="${PULSAR_BUILD_WORK:-${XDG_CACHE_HOME:-${HOME}/.cache}/pulsar-build}"
 BRANCH="${GITHUB_REF_NAME:-}"
 GIT_TOKEN_FILE="${PULSAR_GIT_TOKEN_FILE:-}"
 DRY_RUN=no
+NO_PROMOTE=no
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -82,7 +90,10 @@ while [ $# -gt 0 ]; do
     --branch)         BRANCH="${2:?}"; shift ;;
     --git-token-file) GIT_TOKEN_FILE="${2:?}"; shift ;;
     --dry-run)        DRY_RUN=yes ;;
-    -h|--help)        sed -n '2,55p' "$0"; exit 0 ;;
+    --no-promote)     NO_PROMOTE=yes ;;
+    # From the header rather than a line range: '2,55p' stopped one line short
+    # of the end, and every edit to the comment above moved the boundary again.
+    -h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -102,7 +113,14 @@ done
 # that has neither -- which is the point of having a dry run.
 if [ "${DRY_RUN}" != yes ]; then
   command -v oras >/dev/null || die "missing: oras (attaches the SBOMs to the images)"
-  command -v aws  >/dev/null || die "missing: aws (the R2 client; install awscli or pass --dry-run)"
+  # aws is required to PROMOTE, which is the only thing that must not half
+  # happen. Under --no-promote the uploads are already best-effort -- the
+  # credentials may legitimately be absent -- so demanding the client here would
+  # refuse a build for lack of a tool it may never need. publish_r2 checks again
+  # at the point of use and says what it skipped.
+  if [ "${NO_PROMOTE}" = no ]; then
+    command -v aws >/dev/null || die "missing: aws (the R2 client; install awscli or pass --dry-run)"
+  fi
 fi
 
 # build.sh writes these next to its OCI layouts. Reading them rather than
@@ -153,7 +171,12 @@ export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
 # AWS CLI v2 sends checksum headers R2 has historically rejected.
 export AWS_REQUEST_CHECKSUM_CALCULATION="${AWS_REQUEST_CHECKSUM_CALCULATION:-when_required}"
 
-have_r2() { [ -n "${R2_ENDPOINT}" ] && [ -n "${R2_BUCKET:-}" ] && [ -n "${AWS_ACCESS_KEY_ID:-}" ]; }
+# The client is part of "configured": without it every upload below would fail
+# one at a time with command-not-found rather than in one place with a reason.
+have_r2() {
+  command -v aws >/dev/null \
+    && [ -n "${R2_ENDPOINT}" ] && [ -n "${R2_BUCKET:-}" ] && [ -n "${AWS_ACCESS_KEY_ID:-}" ]
+}
 
 # Staging lives outside the repo on purpose: publish_site does a hard reset,
 # and generated inputs sitting in the worktree would be a reset away from
@@ -289,6 +312,12 @@ build_changelog() {
   jq '.summary' "${STAGE}/changelog.json"
   [ -n "${PREV_DIGEST}" ] || [ "${baseline}" = true ] \
     || echo "NOTE: no --prev-digest, so this changelog cannot name what it diffed against" >&2
+  # Worth saying out loud, because the file looks identical either way: the
+  # baseline read above is the PUBLISHED one, so on a build that is not being
+  # promoted this diff is "what this build changes relative to what users are
+  # running" -- useful, and not a release note.
+  [ "${NO_PROMOTE}" = no ] \
+    || echo "--no-promote: this diff is against the published build, not a release note"
 }
 
 # R2 is REQUIRED, not best-effort, and it must fail here rather than be
@@ -298,25 +327,51 @@ build_changelog() {
 # Dying at this point leaves the images pushed and the page untouched, which
 # is the recoverable half. To run a nightly that deliberately publishes
 # nothing, use PULSAR_PUBLISH=no; do not make this step optional.
+#
+# The requirement is conditional on exactly the reason above, not on the
+# channel: --no-promote does not run publish_site, so there is nothing an
+# all-zeros changelog could overwrite, and dying here would fail a manual build
+# on its last step, an hour in, with the image already pushed -- the
+# unrecoverable half of the same split. The SBOMs stay in the stage directory,
+# where the operator who started the build can read them.
 publish_r2() {
   if [ "${DRY_RUN}" = yes ]; then
     echo "dry run: would publish SBOMs and changelog for ${VERSION} to R2"
     return 0
   fi
-  have_r2 || die "R2 is not configured: set R2_BUCKET, R2_ACCOUNT_ID (or
+  if ! have_r2; then
+    [ "${NO_PROMOTE}" = yes ] || die "R2 is not configured: set R2_BUCKET, R2_ACCOUNT_ID (or
 R2_ENDPOINT), and either AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or
 R2_CREDENTIALS_FILE pointing at a file that sets them. To skip publishing
 entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
+    echo "no R2 credentials and --no-promote: the SBOMs and changelog for" >&2
+    echo "${VERSION} are in ${STAGE} and nothing was uploaded" >&2
+    return 0
+  fi
 
   say "publishing to R2"
   up() { aws s3 cp "${STAGE}/$1" "s3://${R2_BUCKET}/$2" --endpoint-url "${R2_ENDPOINT}"; }
   # Immutable, per-build copies first...
+  # The version already carries -dev on a manual build, so these keys are
+  # self-namespacing and need no separate prefix -- which also keeps them
+  # inside the three prefixes buildd's artifact ingest will accept when
+  # builders stop holding R2 credentials of their own.
   up sbom-vanilla.spdx.json "pulsar/sbom/${VERSION}-vanilla.spdx.json"
   up sbom-nvidia.spdx.json  "pulsar/sbom/${VERSION}-nvidia.spdx.json"
   up changelog.json         "pulsar/changelog/${VERSION}.json"
-  # ...then the moving pointers. vanilla-latest.spdx.json is the key the NEXT
-  # nightly diffs against, so it is written last: if anything above failed,
-  # the baseline still describes a real published image.
+
+  # ...then the moving pointers, which are what "published" means. A build that
+  # is not the published one stops here: vanilla-latest.spdx.json in particular
+  # is the baseline the next SCHEDULED build diffs against, and a debugging
+  # build defining it would silently rewrite tomorrow's changelog.
+  if [ "${NO_PROMOTE}" = yes ]; then
+    say "--no-promote: changelog/latest.json and both -latest SBOMs untouched"
+    return 0
+  fi
+
+  # vanilla-latest.spdx.json is the key the NEXT nightly diffs against, so it
+  # is written last: if anything above failed, the baseline still describes a
+  # real published image.
   up changelog.json         "pulsar/changelog/latest.json"
   up sbom-nvidia.spdx.json  "pulsar/sbom/nvidia-latest.spdx.json"
   up sbom-vanilla.spdx.json "pulsar/sbom/vanilla-latest.spdx.json"
@@ -459,14 +514,28 @@ site_preflight() {
 # function whole -- and the only top-level statement after them is this call,
 # by which point there is nothing left to re-read.
 main() {
-  site_preflight
+  # ONE predicate for the preflight and the thing it preflights. Every check in
+  # site_preflight exists for publish_site -- the dirty-worktree refusal, the
+  # branch resolution, the token -- so two independent conditions would be two
+  # places to drift, and the drift would show up as an hour-long build dying on
+  # a check for work it was never going to do.
+  local promote=yes
+  [ "${NO_PROMOTE}" = no ] || promote=no
+
+  [ "${promote}" = no ] || site_preflight
   generate_sboms
   attach_sboms
   build_changelog
   publish_r2
-  publish_site
-  echo
-  echo "published ${VERSION}"
+  if [ "${promote}" = no ]; then
+    echo
+    echo "--no-promote: no site commit, so nothing the page renders has moved"
+    echo "described ${VERSION}; it is not the published build"
+  else
+    publish_site
+    echo
+    echo "published ${VERSION}"
+  fi
 }
 
 main

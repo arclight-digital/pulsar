@@ -42,6 +42,25 @@
 #   PULSAR_GIT_TOKEN_FILE       token for the site commit
 #   PULSAR_PUBLISH_BRANCH       branch the site commit lands on (default main)
 #   PULSAR_PUBLISH              yes (default) | dry-run | no
+#   PULSAR_CHANNEL              scheduled | manual. REQUIRED -- see below.
+#
+# THE CHANNEL IS THE ONE THING THIS SCRIPT WILL NOT GUESS. A scheduled build is
+# the one users pull; a manual build is one a person kicked off while working.
+# Conflating them costs real things -- a hand-run build used to consume a number
+# in the published series, move :latest onto a debugging image, and overwrite
+# the SBOM baseline the next night diffs against.
+#
+# So an unset PULSAR_CHANNEL is a hard stop rather than a default. Both possible
+# defaults are wrong in a way somebody pays for: guessing scheduled hands a
+# debugging build every user's next bootc upgrade, and guessing manual leaves a
+# nightly that quietly publishes nothing while looking like it worked. This is
+# next-version.sh's "a version scheme that guesses when it does not know is not
+# a version scheme", one level up.
+#
+# A manual build still builds, signs, verifies and pushes -- it is a real image
+# anyone can pull, which is the point of running it. What it does not do is
+# define anything: no floating tags, no baseline, no site commit, and no
+# healthcheck ping.
 set -euo pipefail
 
 # cloud-init's runcmd is not a login shell: it runs as root with no $HOME.
@@ -71,13 +90,38 @@ WORK="${PULSAR_BUILD_WORK:-/var/mnt/pulsar-build}"
 # top-level statements, and there are none left after the call below.
 main() {
 
+# Before anything is built, and before the checks: an unrecognised value is a
+# config error, and an absent one is the build host failing to say what this is.
+# Either way nothing here may pick for it. See the note in the header.
+case "${PULSAR_CHANNEL:-}" in
+  scheduled|manual) CHANNEL="${PULSAR_CHANNEL}" ;;
+  "")
+    echo "PULSAR_CHANNEL is not set, so this build cannot say whether it is the" >&2
+    echo "one users pull or one somebody started by hand. Refusing to guess:" >&2
+    echo "set PULSAR_CHANNEL=scheduled|manual in /etc/pulsar/build.env." >&2
+    exit 2 ;;
+  *)
+    echo "PULSAR_CHANNEL=${PULSAR_CHANNEL} is not scheduled or manual" >&2
+    exit 2 ;;
+esac
+
 started="$(date -u +%s)"
-echo "pulsar nightly starting $(date -u -Iseconds)"
+echo "pulsar nightly starting $(date -u -Iseconds) (${CHANNEL})"
 
 # The checkout belongs to whatever spawned this: the builder's cloud-init
 # clones this repo at an explicit ref, so re-fetching here would silently
 # build something other than what was asked for. Just say what is being built.
 echo "building $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
+
+# A manual build is allowed to run from a dirty checkout -- publish.sh's
+# worktree refusal only guards the site commit, which a manual build skips, and
+# building what you just edited is usually the whole reason for starting one.
+# It is not allowed to be silent about it: the line above stops describing what
+# was built, and the version tag outlives that fact.
+if [ "${CHANNEL}" = manual ] && ! git diff --quiet HEAD 2>/dev/null; then
+  echo "WARNING: the worktree is dirty, so the commit above does not describe" >&2
+  echo "         what is in this image. The tag will outlive that." >&2
+fi
 
 # The old on-push CI, run here now that there is no on-push anything: lint
 # and tests gate the build, so a broken script on main is a failed nightly
@@ -85,27 +129,43 @@ echo "building $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 # hour-long build.
 "${REPO}/scripts/check.sh"
 
-VERSION="$("${REPO}/scripts/next-version.sh" --fedora "${FEDORA_VERSION}" "${IMAGE}")"
+VERSION="$("${REPO}/scripts/next-version.sh" \
+  --fedora "${FEDORA_VERSION}" --channel "${CHANNEL}" "${IMAGE}")"
+# The build host scrapes this line for the version, so its shape is a contract:
+# `grep -oP '^this build is \K.*'`. Keep the prefix exactly. The channel goes on
+# its own line rather than into this one for the same reason.
 echo "this build is ${VERSION}"
+echo "channel: ${CHANNEL}"
 
 # MUST happen before the build. This is the image tonight's changelog says it
 # came from, and the push below moves :latest onto the new one -- after that
 # the outgoing digest is only recoverable if someone wrote it down, and this
 # is the someone. Empty on the very first run, which is the baseline case and
 # not an error.
+#
+# On a manual build the push does NOT move :latest, so this resolves the last
+# scheduled build and stays true afterwards. That is what makes a manual
+# changelog worth reading: it diffs against what users are actually running.
 PREV_DIGEST="$(oras resolve "${IMAGE}:latest" 2>/dev/null || true)"
 echo "previous :latest digest: ${PREV_DIGEST:-<none, first build>}"
 
-"${REPO}/scripts/build.sh" \
-  --variant all \
-  --version "${VERSION}" \
-  --image "${IMAGE}" \
-  --image-nvidia "${IMAGE_NVIDIA}" \
-  --signer-url "${PULSAR_SIGNER_URL:?PULSAR_SIGNER_URL is not set}" \
-  --signer-token-file "${PULSAR_SIGNER_TOKEN_FILE:?PULSAR_SIGNER_TOKEN_FILE is not set}" \
-  --signer-ca-file "${PULSAR_SIGNER_CA_FILE:?PULSAR_SIGNER_CA_FILE is not set}" \
-  --work "${WORK}" \
+build_args=(
+  --variant all
+  --version "${VERSION}"
+  --image "${IMAGE}"
+  --image-nvidia "${IMAGE_NVIDIA}"
+  --signer-url "${PULSAR_SIGNER_URL:?PULSAR_SIGNER_URL is not set}"
+  --signer-token-file "${PULSAR_SIGNER_TOKEN_FILE:?PULSAR_SIGNER_TOKEN_FILE is not set}"
+  --signer-ca-file "${PULSAR_SIGNER_CA_FILE:?PULSAR_SIGNER_CA_FILE is not set}"
+  --work "${WORK}"
   --push
+)
+# :latest and :44 are what a machine follows on its next bootc upgrade. A
+# debugging build must not become that, so it publishes its version tag and
+# nothing else. build.sh also refuses to move the floating tags onto a -dev
+# version even if this line is ever dropped.
+[ "${CHANNEL}" = manual ] && build_args+=(--no-floating-tags)
+"${REPO}/scripts/build.sh" "${build_args[@]}"
 
 # Describe what was just published: SBOMs onto the images, the changelog
 # against last night, the page. Part of the nightly rather than a step after
@@ -123,6 +183,10 @@ case "${PULSAR_PUBLISH:-yes}" in
       --branch "${PULSAR_PUBLISH_BRANCH:-main}"
     )
     [ "${PULSAR_PUBLISH:-yes}" = dry-run ] && publish_args+=(--dry-run)
+    # Per-build SBOMs and a changelog, but none of the moving pointers and no
+    # site commit: a manual build describes itself without becoming the baseline
+    # the next scheduled build diffs against.
+    [ "${CHANNEL}" = manual ] && publish_args+=(--no-promote)
     [ -n "${PULSAR_GIT_TOKEN_FILE:-}" ] \
       && publish_args+=(--git-token-file "${PULSAR_GIT_TOKEN_FILE}")
     "${REPO}/scripts/publish.sh" "${publish_args[@]}"
@@ -132,7 +196,26 @@ esac
 elapsed=$(( $(date -u +%s) - started ))
 echo "pulsar nightly ${VERSION} finished in ${elapsed}s"
 
-if [ -n "${PULSAR_HEALTHCHECK_URL:-}" ]; then
+# What the operator who started this needs to know, in one place: it exists, it
+# is pullable, and it changed nothing about what anybody else gets.
+if [ "${CHANNEL}" = manual ]; then
+  echo
+  echo "manual build ${VERSION}:"
+  echo "  pushed        ${IMAGE}:${VERSION}"
+  echo "                ${IMAGE_NVIDIA}:${VERSION}"
+  echo "  not moved     :latest and :${FEDORA_VERSION} still point at the last scheduled build"
+  echo "  not written   the SBOM baseline, the published changelog, the site"
+  echo "  boot it       bootc switch ${IMAGE_NVIDIA}:${VERSION}"
+fi
+
+# NOT pinged on a manual build. This is a dead-man's switch on the TIMER: it
+# alerts by omission, so a hand-run build that pinged it would mark the night as
+# healthy and hide a scheduled run that never happened. The one case where doing
+# less is the whole feature.
+if [ "${CHANNEL}" = manual ]; then
+  echo "manual build: healthcheck not pinged -- it watches the timer, and a ping" >&2
+  echo "from here would hide a scheduled run that did not happen." >&2
+elif [ -n "${PULSAR_HEALTHCHECK_URL:-}" ]; then
   curl -fsS --max-time 20 --retry 3 \
     --data-binary "${VERSION} ok in ${elapsed}s" \
     "${PULSAR_HEALTHCHECK_URL}" >/dev/null \

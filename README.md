@@ -283,7 +283,15 @@ site/src/data/         written by the nightly — never edit by hand
 ```
 
 Push to `main` and the next nightly ships it — nothing builds off a push;
-the schedule lives on the build host as systemd timers. `build.sh` is only
+the schedule lives on the build host as systemd timers.
+
+Two channels run the same pipeline. The timer's build is the published one.
+A build somebody starts by hand is tagged `<version>-dev` out of its own
+series, and it deliberately defines nothing: `:latest` and `:44` do not move
+onto it, the SBOM baseline the next night diffs against is left alone, and no
+site commit lands. So a `-dev` tag in the registry is a debugging image that
+was never released, and a machine booted on one says so in its boot menu.
+The channel comes from `PULSAR_CHANNEL`, which `nightly.sh` refuses to guess. `build.sh` is only
 for checking a Containerfile edit before it gets there, and it needs root —
 the nvidia variant derives `FROM` the vanilla image, and rootless and
 rootful podman keep separate storage.
