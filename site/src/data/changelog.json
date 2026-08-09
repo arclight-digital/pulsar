@@ -1,21 +1,303 @@
 {
-  "generated": "2026-08-06T04:59:24Z",
+  "generated": "2026-08-09T02:47:24Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:9a31c952d3466d51d3d9129bc8eb3ecf321742f43160cb97add4a2c34216d721",
-    "digest": "sha256:9a31c952d3466d51d3d9129bc8eb3ecf321742f43160cb97add4a2c34216d721"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:0a2b946477295a31c855fbf16d583c094167a6388efe618bb50e20489f705788",
+    "digest": "sha256:0a2b946477295a31c855fbf16d583c094167a6388efe618bb50e20489f705788"
   },
   "to": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:2b19d924adb93c4c5315ba17827a45c9c72f41995702de5c0642ee462fdcda8d",
-    "digest": "sha256:2b19d924adb93c4c5315ba17827a45c9c72f41995702de5c0642ee462fdcda8d"
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:e2244e0495ddd97753548364b450cc62e60b8d6315e63326fa4e85f0cc962727",
+    "digest": "sha256:e2244e0495ddd97753548364b450cc62e60b8d6315e63326fa4e85f0cc962727"
   },
   "summary": {
     "added": 0,
-    "removed": 0,
-    "upgraded": 0,
+    "removed": 1,
+    "upgraded": 46,
     "downgraded": 0,
     "changed": 0
   },
   "added": [],
-  "removed": [],
-  "changed": []
+  "removed": [
+    {
+      "name": "gh",
+      "version": "2.97.0-2.fc44"
+    }
+  ],
+  "changed": [
+    {
+      "name": "SDL3",
+      "from": "3.4.12-1.fc44",
+      "to": "3.4.14-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "bootc",
+      "from": "1.16.6-1.fc44",
+      "to": "1.16.7-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "edk2-ovmf",
+      "from": "20260508-6.fc44",
+      "to": "20260508-8.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "edk2-shell-x64",
+      "from": "20260508-6.fc44",
+      "to": "20260508-8.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gdm",
+      "from": "1:50.1-1.fc44",
+      "to": "1:50.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gjs",
+      "from": "1.88.1-1.fc44",
+      "to": "1.88.1-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "glibc",
+      "from": "2.43-7.fc44",
+      "to": "2.43-8.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "glibc-all-langpacks",
+      "from": "2.43-7.fc44",
+      "to": "2.43-8.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "glibc-common",
+      "from": "2.43-7.fc44",
+      "to": "2.43-8.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "glibc-devel",
+      "from": "2.43-7.fc44",
+      "to": "2.43-8.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "glibc-gconv-extra",
+      "from": "2.43-7.fc44",
+      "to": "2.43-8.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gnome-shell",
+      "from": "50.3-1.fc44",
+      "to": "50.4-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gnome-shell-common",
+      "from": "50.3-1.fc44",
+      "to": "50.4-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gst-editing-services",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugin-libav",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugins-bad-free",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugins-bad-free-libs",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugins-base",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugins-good",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugins-good-qt",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugins-good-qt6",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gstreamer1-plugins-ugly-free",
+      "from": "1.28.5-1.fc44",
+      "to": "1.28.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-devel",
+      "from": "7.1.6-201.fc44",
+      "to": "7.1.7-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libXfont2",
+      "from": "2.0.8-1.fc44",
+      "to": "2.0.9-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libadwaita",
+      "from": "1.9.2-1.fc44",
+      "to": "1.9.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libldb",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libnvme",
+      "from": "1.16.1-2.fc44",
+      "to": "1.16.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "librados2",
+      "from": "2:20.2.2-1.fc44",
+      "to": "2:20.2.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "librbd1",
+      "from": "2:20.2.2-1.fc44",
+      "to": "2:20.2.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libsmbclient",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libwbclient",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mise",
+      "from": "2026.8.2-1",
+      "to": "2026.8.3-1",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mozjs140",
+      "from": "140.6.0-4.fc44",
+      "to": "140.13.0-3.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "perf",
+      "from": "7.1.6-201.fc44",
+      "to": "7.1.7-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-boto3",
+      "from": "1.43.52-1.fc44",
+      "to": "1.43.64-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-botocore",
+      "from": "1.43.52-1.fc44",
+      "to": "1.43.64-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-client",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-client-libs",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-common",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-core-libs",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-ndr-libs",
+      "from": "2:4.24.4-1.fc44",
+      "to": "2:4.24.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "swtpm",
+      "from": "0.10.1-3.fc44",
+      "to": "0.10.1-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "swtpm-libs",
+      "from": "0.10.1-3.fc44",
+      "to": "0.10.1-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "swtpm-selinux",
+      "from": "0.10.1-3.fc44",
+      "to": "0.10.1-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "swtpm-tools",
+      "from": "0.10.1-3.fc44",
+      "to": "0.10.1-4.fc44",
+      "direction": "upgraded"
+    }
+  ]
 }
