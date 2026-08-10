@@ -210,6 +210,56 @@ LAYERED_STATUS='{"deployments":[{"booted":true,"version":"44.1",
   "requested-local-packages":["some-local-1.0.rpm"],
   "requested-base-removals":["firefox"]}]}'
 
+# `update --check` asks a registry, so it needs one. The stub answers whatever
+# digest and version label the test wants the tag to resolve to.
+stub_skopeo() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    printf '{"Digest":"%s","Labels":{"org.opencontainers.image.version":"%s"}}' \
+        "$1" "$2" > "${BATS_TEST_TMPDIR}/inspect.json"
+    cat > "${STUB}/skopeo" <<EOF
+#!/bin/sh
+[ "\$1" = inspect ] && exec cat "${BATS_TEST_TMPDIR}/inspect.json"
+exit 1
+EOF
+    chmod +x "${STUB}/skopeo"
+    PATH="${STUB}:${PATH}"
+    export PATH
+}
+
+# Records every notification rather than showing one, so a test can count them.
+stub_notify() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    NOTIFY_LOG="${BATS_TEST_TMPDIR}/notify.log"
+    : > "$NOTIFY_LOG"
+    cat > "${STUB}/notify-send" <<EOF
+#!/bin/sh
+echo "\$*" >> "${NOTIFY_LOG}"
+EOF
+    chmod +x "${STUB}/notify-send"
+    PATH="${STUB}:${PATH}"
+    export PATH
+    export PULSAR_UPDATE_STATE="${BATS_TEST_TMPDIR}/state"
+}
+
+# A container-native deployment, which is what --check needs and what the
+# routing fixtures above deliberately are not.
+CHECK_STATUS='{"deployments":[{"booted":true,"version":"44.1",
+  "container-image-reference":"ostree-unverified-registry:ghcr.io/x/pulsar:latest",
+  "container-image-reference-digest":"sha256:aaa"}]}'
+# The same, carrying a layer. This is the shape rpm-ostree gets wrong.
+CHECK_LAYERED='{"deployments":[{"booted":true,"version":"44.1",
+  "requested-packages":["1password"],
+  "container-image-reference":"ostree-unverified-registry:ghcr.io/x/pulsar:latest",
+  "container-image-reference-digest":"sha256:aaa"}]}'
+# Update already fetched and waiting for a reboot.
+CHECK_STAGED='{"deployments":[
+  {"staged":true,"version":"44.2","container-image-reference-digest":"sha256:bbb"},
+  {"booted":true,"version":"44.1",
+   "container-image-reference":"ostree-unverified-registry:ghcr.io/x/pulsar:latest",
+   "container-image-reference-digest":"sha256:aaa"}]}'
+
 @test "doctor reports layering on the booted deployment" {
     stub_ostree "$LAYERED_STATUS"
     run "$PULSAR" doctor --json
@@ -258,13 +308,77 @@ LAYERED_STATUS='{"deployments":[{"booted":true,"version":"44.1",
     [[ "$output" == *"rpm-ostree upgrade --reboot"* ]]
 }
 
-@test "update passes --check through unchanged either way" {
+@test "update --check answers from the registry, not from rpm-ostree" {
+    # The regression this whole path exists for. `rpm-ostree upgrade --check`
+    # reports "No updates available" on a layered deployment whatever the
+    # registry holds -- its container query needs an ostree.manifest-digest the
+    # layering merge commit does not carry. Handing --check to it, or to bootc
+    # (which drops layers and demands root just to read), is the bug.
+    stub_ostree "$CHECK_LAYERED"
+    stub_skopeo "sha256:bbb" "44.2"
+    run "$PULSAR" update --check
+    [[ "$output" != *"rpm-ostree upgrade"* ]]
+    [[ "$output" != *"bootc upgrade"* ]]
+    [ "$status" -eq 10 ]
+}
+
+@test "update --check needs no root" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:aaa" "44.1"
+    run "$PULSAR" update --check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"up to date"* ]]
+}
+
+@test "update --check exits 10 and names both versions when one is published" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    run "$PULSAR" update --check
+    [ "$status" -eq 10 ]
+    [[ "$output" == *"44.1 -> 44.2"* ]]
+}
+
+@test "update --check calls an already-staged update staged, not available" {
+    stub_ostree "$CHECK_STAGED"
+    stub_skopeo "sha256:bbb" "44.2"
+    run "$PULSAR" update --check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"staged"* ]]
+    [[ "$output" != *"update available"* ]]
+}
+
+@test "update --notify notifies once per published digest, not once per check" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    run "$PULSAR" update --check --notify
+    [ "$status" -eq 10 ]
+    run "$PULSAR" update --check --notify
+    [ "$status" -eq 10 ]
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
+    # A different build is a different notification.
+    stub_skopeo "sha256:ccc" "44.3"
+    run "$PULSAR" update --check --notify
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 2 ]
+}
+
+@test "update --check refuses rather than guess when the deployment is not container-native" {
     stub_ostree "$CLEAN_STATUS"
-    as_root update --check
-    [[ "$output" == *"bootc upgrade --check"* ]]
-    stub_ostree "$LAYERED_STATUS"
-    as_root update --check
-    [[ "$output" == *"rpm-ostree upgrade --check"* ]]
+    stub_skopeo "sha256:bbb" "44.2"
+    run "$PULSAR" update --check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"container-native"* ]]
+}
+
+@test "update --check reports an unreachable registry rather than claiming up to date" {
+    stub_ostree "$CHECK_STATUS"
+    STUB="${BATS_TEST_TMPDIR}/stub"; mkdir -p "$STUB"
+    printf '#!/bin/sh\nexit 1\n' > "${STUB}/skopeo"
+    chmod +x "${STUB}/skopeo"
+    PATH="${STUB}:${PATH}"; export PATH
+    run "$PULSAR" update --check
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"up to date"* ]]
 }
 
 @test "update refuses rather than guess when status is unreadable" {

@@ -424,7 +424,12 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
         attestation:"gh attestation verify oci://ghcr.io/arclight-digital/pulsar --owner arclight-digital"}' \
       > /usr/share/pulsar/manifest.json && \
     jq -e '.version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \
-    pulsar --version
+    pulsar --version && \
+    for t in jq skopeo notify-send; do \
+      command -v "$t" >/dev/null || \
+        { echo "FATAL: ${t} is gone from the base image; pulsar-update-check.timer would fail every six hours and this system would go stale in silence, which is the exact failure it exists to prevent"; exit 1; }; \
+    done && \
+    echo "update check: jq / skopeo / notify-send present"
 
 # ---------------------------------------------------------------------------
 # Finalize. The initramfs carries the plymouth theme, so the dracut regen has
@@ -452,14 +457,32 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # running. The preset files mirror this list as POLICY, not symlinks -- see
 # their headers for why that does not recreate the problem -- and the
 # assertion below keeps them in lockstep with the calls here.
-# Nothing here touches update policy. Stock Silverblue behaviour is what we
-# want -- GNOME Software (its rpm-ostree plugin is installed) checks and
-# notifies, and the update installs when you choose. bootc's
-# fetch-apply-updates.timer is deliberately left DISABLED: it runs
-# `bootc upgrade --apply`, which reboots on its own. rpm-ostree-countme.timer
-# stays at its stock enablement too: an anonymous population count that keeps
-# the Fedora base this image rides on counted, and a fork that objects turns
-# off one timer.
+# pulsar-update-check.timer is enabled --global, for the same reason
+# podman-auto-update.timer is: it ends in a desktop notification and the
+# session bus lives in the user session. It only READS -- one rpm-ostree
+# status, one registry call -- and never stages or applies anything.
+#
+# It is here because this image cannot rely on GNOME Software for the job, and
+# that is worth stating plainly since the comment this replaces claimed the
+# opposite for months. GNOME Software's rpm-ostree plugin asks the daemon via
+# AutomaticUpdateTrigger and reads the answer back with
+# GetCachedUpdateRpmDiff. On a deployment carrying layered packages the
+# daemon's container query dies on a missing ostree.manifest-digest -- the
+# layering merge commit does not carry the key, only the base commit does --
+# reports the transaction successful regardless, and caches nothing. The UI
+# then shows no updates, indefinitely, on a system that is months stale. Any
+# user who layers a single package lands in this state, so "we ship no update
+# policy and let GNOME Software handle it" was not a policy, it was an outage.
+#
+# The fix is a comparison rpm-ostree already has both halves for, so the timer
+# stays small: see cmd_update_check in cli/pulsar.
+#
+# Still deliberately NOT enabled: bootc's fetch-apply-updates.timer, which
+# runs `bootc upgrade --apply` and reboots on its own, and would additionally
+# drop the layers on any system that has them. Notifying is the policy;
+# applying stays the user's call. rpm-ostree-countme.timer stays at its stock
+# enablement too: an anonymous population count that keeps the Fedora base
+# this image rides on counted, and a fork that objects turns off one timer.
 RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
       { echo "FATAL: greenboot no longer ships its bootupd grub fragment; without it GRUB never decrements boot_counter and automatic rollback silently never arms"; exit 1; }; \
     fc-cache -f && \
@@ -482,12 +505,13 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl enable pulsar-flatpaks.service && \
     systemctl --global enable podman-auto-update.timer && \
     systemctl --global enable gamescale-reconcile.service && \
+    systemctl --global enable pulsar-update-check.timer && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \
-    for u in podman-auto-update.timer gamescale-reconcile.service; do \
+    for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

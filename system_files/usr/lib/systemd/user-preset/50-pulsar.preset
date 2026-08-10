@@ -4,3 +4,4 @@
 # stay in lockstep.
 enable podman-auto-update.timer
 enable gamescale-reconcile.service
+enable pulsar-update-check.timer
