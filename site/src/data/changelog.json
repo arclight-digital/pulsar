@@ -1,17 +1,17 @@
 {
-  "generated": "2026-08-10T02:45:58Z",
+  "generated": "2026-08-11T02:48:08Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:e2244e0495ddd97753548364b450cc62e60b8d6315e63326fa4e85f0cc962727",
-    "digest": "sha256:e2244e0495ddd97753548364b450cc62e60b8d6315e63326fa4e85f0cc962727"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:b4b1dfaf5544de395a4037a4fb2d5c15b41ffc6c6ac39d7562d747eb4c58a491",
     "digest": "sha256:b4b1dfaf5544de395a4037a4fb2d5c15b41ffc6c6ac39d7562d747eb4c58a491"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:d4769bb8d5a29cf204d8db98be8a5f61f12383d76a1ef0946f0c9e2431dfdbff",
+    "digest": "sha256:d4769bb8d5a29cf204d8db98be8a5f61f12383d76a1ef0946f0c9e2431dfdbff"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 32,
+    "upgraded": 1,
     "downgraded": 0,
     "changed": 0
   },
@@ -19,195 +19,9 @@
   "removed": [],
   "changed": [
     {
-      "name": "android-tools",
-      "from": "1:35.0.2-17.fc44",
-      "to": "1:37.0.0-3.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "firefox",
-      "from": "153.0.1-1.fc44",
-      "to": "153.0.3-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "firefox-langpacks",
-      "from": "153.0.1-1.fc44",
-      "to": "153.0.3-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-core",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules-core",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules-extra",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-tools",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-tools-libs",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libgexiv2",
-      "from": "0.16.1-1.fc44",
-      "to": "0.16.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libnghttp2",
-      "from": "1.68.0-4.fc44",
-      "to": "1.68.0-5.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libudisks2",
-      "from": "2.11.1-2.fc44",
-      "to": "2.11.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mesa-dri-drivers",
-      "from": "26.1.5-1.fc44",
-      "to": "26.1.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mesa-filesystem",
-      "from": "26.1.5-1.fc44",
-      "to": "26.1.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mesa-libEGL",
-      "from": "26.1.5-1.fc44",
-      "to": "26.1.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mesa-libGL",
-      "from": "26.1.5-1.fc44",
-      "to": "26.1.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mesa-libgbm",
-      "from": "26.1.5-1.fc44",
-      "to": "26.1.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mesa-vulkan-drivers",
-      "from": "26.1.5-1.fc44",
-      "to": "26.1.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mutter",
-      "from": "50.3-3.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mutter-common",
-      "from": "50.3-3.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "openvpn",
-      "from": "2.7.5-1.fc44",
-      "to": "2.7.6-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "p11-kit",
-      "from": "0.26.4-1.fc44",
-      "to": "0.26.5-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "p11-kit-server",
-      "from": "0.26.4-1.fc44",
-      "to": "0.26.5-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "p11-kit-trust",
-      "from": "0.26.4-1.fc44",
-      "to": "0.26.5-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "python3-perf",
-      "from": "7.1.6-201.fc44",
-      "to": "7.1.7-200.fc44",
-      "direction": "upgraded"
-    },
-    {
       "name": "thermald",
-      "from": "2.5.9-3.fc44",
-      "to": "2.5.12-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "udisks2",
-      "from": "2.11.1-2.fc44",
-      "to": "2.11.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "unbound-anchor",
-      "from": "1.25.2-1.fc44",
-      "to": "1.26.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "unbound-libs",
-      "from": "1.25.2-1.fc44",
-      "to": "1.26.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "vim-data",
-      "from": "2:9.2.843-1.fc44",
-      "to": "2:9.2.920-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "vim-minimal",
-      "from": "2:9.2.843-1.fc44",
-      "to": "2:9.2.920-1.fc44",
+      "from": "2.5.12-1.fc44",
+      "to": "2.5.12-2.fc44",
       "direction": "upgraded"
     }
   ]
