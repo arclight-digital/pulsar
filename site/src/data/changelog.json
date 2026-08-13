@@ -1,17 +1,17 @@
 {
-  "generated": "2026-08-11T02:48:08Z",
+  "generated": "2026-08-13T02:51:57Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:b4b1dfaf5544de395a4037a4fb2d5c15b41ffc6c6ac39d7562d747eb4c58a491",
-    "digest": "sha256:b4b1dfaf5544de395a4037a4fb2d5c15b41ffc6c6ac39d7562d747eb4c58a491"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:d4769bb8d5a29cf204d8db98be8a5f61f12383d76a1ef0946f0c9e2431dfdbff",
     "digest": "sha256:d4769bb8d5a29cf204d8db98be8a5f61f12383d76a1ef0946f0c9e2431dfdbff"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:c488f0affde49e106f9054591e0eb6ec87ac5cfe810b2e6e00a0401504fa5925",
+    "digest": "sha256:c488f0affde49e106f9054591e0eb6ec87ac5cfe810b2e6e00a0401504fa5925"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 1,
+    "upgraded": 17,
     "downgraded": 0,
     "changed": 0
   },
@@ -19,9 +19,105 @@
   "removed": [],
   "changed": [
     {
-      "name": "thermald",
-      "from": "2.5.12-1.fc44",
-      "to": "2.5.12-2.fc44",
+      "name": "kernel",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-core",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-devel",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules-core",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules-extra",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-tools",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-tools-libs",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mise",
+      "from": "2026.8.3-1",
+      "to": "2026.8.5-1",
+      "direction": "upgraded"
+    },
+    {
+      "name": "pcp-conf",
+      "from": "7.2.0-1.fc44",
+      "to": "7.2.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "pcp-libs",
+      "from": "7.2.0-1.fc44",
+      "to": "7.2.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "pcp-selinux-import",
+      "from": "7.2.0-1.fc44",
+      "to": "7.2.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "perf",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-boto3",
+      "from": "1.43.64-1.fc44",
+      "to": "1.43.66-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-botocore",
+      "from": "1.43.64-1.fc44",
+      "to": "1.43.66-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-perf",
+      "from": "7.1.7-200.fc44",
+      "to": "7.1.8-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "scx-tools-git",
+      "from": "1.1.2.20260729.1.git.cda5deb-1.fc44",
+      "to": "1.1.2.20260811.2.git.d598921-1.fc44",
       "direction": "upgraded"
     }
   ]
