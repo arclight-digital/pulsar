@@ -43,6 +43,8 @@
 #   PULSAR_PUBLISH_BRANCH       branch the site commit lands on (default main)
 #   PULSAR_PUBLISH              yes (default) | dry-run | no
 #   PULSAR_CHANNEL              scheduled | manual. REQUIRED -- see below.
+#   PULSAR_FORCE_BUILD          yes to build even when the base image has not
+#                               moved -- see base_moved() below
 #
 # THE CHANNEL IS THE ONE THING THIS SCRIPT WILL NOT GUESS. A scheduled build is
 # the one users pull; a manual build is one a person kicked off while working.
@@ -83,12 +85,97 @@ IMAGE="${IMAGE:?IMAGE is not set}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:?IMAGE_NVIDIA is not set}"
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
 WORK="${PULSAR_BUILD_WORK:-/var/mnt/pulsar-build}"
+# Kept in step with build.sh, which records which digest of this a build used.
+BASE_IMAGE="${BASE_IMAGE:-quay.io/fedora-ostree-desktops/silverblue}"
 
 # All of it in one function, because publish.sh syncs the checkout to origin
 # before it commits and that rewrites this file underneath the running shell.
 # Bash parses a function whole; it re-reads the file by offset between
 # top-level statements, and there are none left after the call below.
 main() {
+
+# ---------------------------------------------------------------------------
+# Is there anything to build tonight?
+#
+# Neither Containerfile ever runs `dnf5 upgrade`. Every OS package in the image
+# comes from quay's silverblue:${FEDORA_VERSION}; this build only INSTALLS on
+# top of it. So when that tag has not moved since the last published build, the
+# image tonight would produce carries the same package set as the one users are
+# already running. That is not a hypothetical -- it is 2026-08-14, whose
+# changelog came out zero across the board.
+#
+# Shipping it anyway is not free. The version label and the os-release stamp
+# move on every build by construction, so the digest moves too, and `pulsar
+# update --check` compares digests: every machine gets a notification and a
+# multi-gigabyte pull for a package set it already has.
+#
+# WHAT THIS DOES NOT CATCH, deliberately, because catching it costs the build
+# hour it is trying to save: the packages installed ON TOP of the base can move
+# while the base is static -- scx-scheds from the copr, the rpmfusion bits,
+# mise, and the nvidia driver. A night where only those moved is skipped, and
+# picked up whenever the base next moves. To ship one without waiting, run with
+# PULSAR_FORCE_BUILD=yes.
+#
+# FAILS OPEN, everywhere. Every path that cannot get a straight answer builds.
+# A gate that skips when it cannot see would stop shipping updates in silence,
+# and silence is exactly what this pipeline reserves for "the timer did not
+# fire" -- a wasted build hour is the cheaper mistake by a wide margin.
+# ---------------------------------------------------------------------------
+base_moved() {
+  # A manual build is somebody asking for this exact tree to be built. It is
+  # never about the base, and refusing it because quay is quiet would be
+  # refusing the one build a person is standing there waiting for.
+  [ "${CHANNEL}" = scheduled ] || { echo "manual build: not gated on the base image"; return 0; }
+  if [ "${PULSAR_FORCE_BUILD:-no}" = yes ]; then
+    echo "PULSAR_FORCE_BUILD=yes: building regardless of the base"
+    return 0
+  fi
+  command -v skopeo >/dev/null || { echo "no skopeo; cannot check the base, so building" >&2; return 0; }
+
+  local now last
+  now="$(skopeo inspect --no-tags --format '{{.Digest}}' \
+           "docker://${BASE_IMAGE}:${FEDORA_VERSION}" 2>/dev/null || true)"
+  [ -n "${now}" ] || { echo "could not resolve ${BASE_IMAGE}:${FEDORA_VERSION}; building" >&2; return 0; }
+
+  # Absent on anything built before build.sh started writing this label, and on
+  # the first push of a new image name. Both mean there is no comparison to be
+  # made, which is not the same as the base being unchanged.
+  last="$(skopeo inspect --no-tags \
+            --format '{{index .Labels "digital.arclight.pulsar.base-digest"}}' \
+            "docker://${IMAGE}:latest" 2>/dev/null || true)"
+  case "${last}" in
+    ""|"<no value>")
+      echo "the published build records no base digest; building" >&2
+      return 0 ;;
+  esac
+
+  if [ "${now}" = "${last}" ]; then
+    echo "base ${BASE_IMAGE}:${FEDORA_VERSION} is still ${now}"
+    return 1
+  fi
+  echo "base moved: ${last} -> ${now}"
+  return 0
+}
+
+# One ping, two callers. The dead-man's switch watches the TIMER, so any night
+# the timer did its job has to ping -- including a night that looked at the
+# base and decided correctly that there was nothing to build. Omission means
+# "the nightly did not run", and "the nightly ran and shipped nothing" must not
+# borrow that meaning.
+ping_healthcheck() {
+  local what="$1"
+  if [ "${CHANNEL}" = manual ]; then
+    echo "manual build: healthcheck not pinged -- it watches the timer, and a ping" >&2
+    echo "from here would hide a scheduled run that did not happen." >&2
+  elif [ -n "${PULSAR_HEALTHCHECK_URL:-}" ]; then
+    curl -fsS --max-time 20 --retry 3 \
+      --data-binary "${what}" \
+      "${PULSAR_HEALTHCHECK_URL}" >/dev/null \
+      || echo "WARNING: healthcheck ping failed; the run itself succeeded" >&2
+  else
+    echo "NOTE: PULSAR_HEALTHCHECK_URL unset -- nothing is watching this timer." >&2
+  fi
+}
 
 # Before anything is built, and before the checks: an unrecognised value is a
 # config error, and an absent one is the build host failing to say what this is.
@@ -128,6 +215,22 @@ fi
 # the same evening rather than a latent surprise. Forty seconds against an
 # hour-long build.
 "${REPO}/scripts/check.sh"
+
+# AFTER check.sh, on purpose. Those forty seconds are what turns a broken
+# script on main into a failed nightly the same evening, and a quiet night is
+# still a night that should notice. Before next-version.sh, equally on purpose:
+# a build that does not happen must not consume a number in the published
+# series.
+if ! base_moved; then
+  elapsed=$(( $(date -u +%s) - started ))
+  echo
+  echo "nothing to build: no package in this image can have moved, so the"
+  echo "published build is still current. Skipping tonight."
+  echo "  published    $(oras resolve "${IMAGE}:latest" 2>/dev/null || echo '<unknown>')"
+  echo "  to override  PULSAR_FORCE_BUILD=yes"
+  ping_healthcheck "no build in ${elapsed}s: base unchanged"
+  exit 0
+fi
 
 VERSION="$("${REPO}/scripts/next-version.sh" \
   --fedora "${FEDORA_VERSION}" --channel "${CHANNEL}" "${IMAGE}")"
@@ -211,18 +314,8 @@ fi
 # NOT pinged on a manual build. This is a dead-man's switch on the TIMER: it
 # alerts by omission, so a hand-run build that pinged it would mark the night as
 # healthy and hide a scheduled run that never happened. The one case where doing
-# less is the whole feature.
-if [ "${CHANNEL}" = manual ]; then
-  echo "manual build: healthcheck not pinged -- it watches the timer, and a ping" >&2
-  echo "from here would hide a scheduled run that did not happen." >&2
-elif [ -n "${PULSAR_HEALTHCHECK_URL:-}" ]; then
-  curl -fsS --max-time 20 --retry 3 \
-    --data-binary "${VERSION} ok in ${elapsed}s" \
-    "${PULSAR_HEALTHCHECK_URL}" >/dev/null \
-    || echo "WARNING: healthcheck ping failed; the build itself succeeded" >&2
-else
-  echo "NOTE: PULSAR_HEALTHCHECK_URL unset -- nothing is watching this timer." >&2
-fi
+# less is the whole feature. ping_healthcheck holds that rule for both callers.
+ping_healthcheck "${VERSION} ok in ${elapsed}s"
 
 }
 
