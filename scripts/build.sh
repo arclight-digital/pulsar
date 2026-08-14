@@ -66,6 +66,12 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
 
+# The image the vanilla Containerfile derives from. Named here as well as
+# there because build_vanilla records which digest of it this build used, and
+# two spellings of the same registry path would be two things to keep in step.
+BASE_IMAGE="${BASE_IMAGE:-quay.io/fedora-ostree-desktops/silverblue}"
+BASE_DIGEST=""
+
 VARIANT=all
 VERSION=""
 DO_RECHUNK=no
@@ -187,6 +193,20 @@ build_vanilla() {
     --build-arg PULSAR_VERSION="${VERSION}" \
     "${tags[@]}" \
     "${REPO}"
+
+  # What this build was actually built FROM, recorded so the next night can
+  # ask whether there is anything to build at all -- see base_moved() in
+  # nightly.sh. Read out of LOCAL STORAGE here rather than resolved from the
+  # registry beforehand: --pull=newer may move the tag between the two, and
+  # the digest worth recording is the one this build used, not the one that
+  # was current a minute earlier.
+  #
+  # Best effort. It is metadata for an optimisation, so a podman that cannot
+  # answer costs a redundant build later, never a wrong image now.
+  BASE_DIGEST="$(podman image inspect "${BASE_IMAGE}:${FEDORA_VERSION}" \
+                   --format '{{.Digest}}' 2>/dev/null || true)"
+  [ -n "${BASE_DIGEST}" ] \
+    || echo "NOTE: could not read the base image digest; tomorrow will rebuild blind" >&2
 }
 
 build_nvidia() {
@@ -291,6 +311,12 @@ rechunk() {
     --output "oci:${WORK_TARGET}/$3:build"
   )
   [ -n "${VERSION}" ] && run+=(--label "org.opencontainers.image.version=${VERSION}")
+  # Vanilla only. The nvidia image derives from vanilla, not from silverblue,
+  # so this label would name the wrong base there -- and the gate that reads it
+  # reads it off the vanilla image anyway.
+  if [ "${name}" = vanilla ] && [ -n "${BASE_DIGEST}" ]; then
+    run+=(--label "digital.arclight.pulsar.base-digest=${BASE_DIGEST}")
+  fi
 
   # --previous-build pins the layer plan to what clients already run. The
   # first chunked build has no previous, and a registry that does not answer

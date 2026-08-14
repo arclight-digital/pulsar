@@ -724,7 +724,112 @@ swatches() {
 #
 # Unreadable status is fatal rather than a guess. Guessing bootc on a layered
 # system throws the layer away, and you find out at the next boot.
+# ---------------------------------------------------------------------------
+# `update --check` answers the question itself instead of handing it to bootc
+# or rpm-ostree, and that is the entire reason it lives here.
+#
+# On a deployment with layered packages, `rpm-ostree upgrade --check` reports
+# "No updates available" no matter what the registry holds. Its container
+# query reads ostree.manifest-digest off the deployment's own commit, and the
+# merge commit layering produces does not carry that key -- only the base
+# commit underneath it does. The query fails, the transaction still reports
+# success, and the result is a false negative. GNOME Software reaches the same
+# dead end through the same AutomaticUpdateTrigger call, which is why a
+# layered system can sit on a stale image for weeks with nothing on screen
+# ever saying so.
+#
+# Nothing about the comparison is hard, and rpm-ostree hands over both halves
+# unprivileged: container-image-reference-digest is the manifest the booted
+# deployment was built from, and it stays correct under layering. So ask the
+# registry what the tag resolves to now and compare. One HTTP round trip, no
+# root, no daemon.
+#
+# Exit status IS the answer, because a timer reads it: 0 up to date (or the
+# update is already staged), 10 an update is available, 1 the question could
+# not be answered. `bootc upgrade --check` needs root even to read and would
+# be wrong here anyway, so --check never routes there.
+# ---------------------------------------------------------------------------
+UPDATE_STATE=${PULSAR_UPDATE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pulsar}
+
+cmd_update_check() {
+    local notify=0 f
+    for f in "$@"; do
+        case "$f" in
+            --check)  ;;
+            --notify) notify=1 ;;
+            *) die "'update --check' takes no other flags (got: ${f})" ;;
+        esac
+    done
+
+    need rpm-ostree; need jq; need skopeo
+    local js; js=$(rpm-ostree status --json 2>/dev/null) \
+        || die "could not read deployment status"
+
+    local booted='[ .deployments[]? | select(.booted == true) ][0]'
+    local ref local_digest local_version
+    # Same whole-transport strip as `status`: a single sub() left "docker://"
+    # behind on "ostree-image-signed:docker://ghcr.io/...".
+    ref=$(printf '%s' "$js" | jq -r "${booted} | (.\"container-image-reference\" // \"\") | sub(\"^([a-z-]+:)+(//)?\"; \"\")")
+    local_digest=$(printf '%s' "$js" | jq -r "${booted} | .\"container-image-reference-digest\" // \"\"")
+    local_version=$(printf '%s' "$js" | jq -r "${booted} | .version // \"?\"")
+
+    [ -n "$ref" ] || die "the booted deployment is not container-native; there is no registry to ask"
+    [ -n "$local_digest" ] || die "rpm-ostree reports no image digest for the booted deployment"
+
+    local inspect
+    inspect=$(skopeo inspect --no-tags "docker://${ref}" 2>/dev/null) \
+        || die "could not reach ${ref} to ask what it points at now"
+    local remote_digest remote_version
+    remote_digest=$(printf '%s' "$inspect" | jq -r '.Digest // ""')
+    remote_version=$(printf '%s' "$inspect" | jq -r '.Labels["org.opencontainers.image.version"] // "?"')
+    [ -n "$remote_digest" ] || die "${ref} returned a manifest with no digest"
+
+    if [ "$remote_digest" = "$local_digest" ]; then
+        printf 'up to date: %s (%s)\n' "$local_version" "$ref"
+        return 0
+    fi
+
+    # An update already fetched is not an update to nag about. Without this the
+    # timer would keep announcing the thing sitting in slot 0 waiting to boot.
+    local staged_digest
+    staged_digest=$(printf '%s' "$js" | jq -r '[ .deployments[]? | select(.staged == true) ][0] | ."container-image-reference-digest" // ""')
+    if [ "$staged_digest" = "$remote_digest" ]; then
+        printf 'staged: %s -- reboot to apply\n' "$remote_version"
+        return 0
+    fi
+
+    printf 'update available: %s -> %s\n' "$local_version" "$remote_version"
+
+    if [ "$notify" = 1 ]; then
+        # Once per published digest, not once per check. The state file is the
+        # only thing that keeps a six-hourly timer from becoming six-hourly
+        # notifications about a build the user has already decided to skip.
+        local state_file="${UPDATE_STATE}/notified-digest" seen=""
+        if [ -r "$state_file" ]; then seen=$(cat "$state_file"); fi
+        if [ "$seen" != "$remote_digest" ]; then
+            if have notify-send; then
+                # Short enough to survive the shell's one-line body. The title
+                # already carries the new version, so the body only owes the
+                # user the old one and the command.
+                notify-send --app-name="Pulsar" --icon=software-update-available \
+                    "Pulsar ${remote_version} is available" \
+                    "You are on ${local_version} -- run 'sudo pulsar update'"
+            fi
+            mkdir -p "$UPDATE_STATE" && printf '%s\n' "$remote_digest" > "$state_file"
+        fi
+    fi
+    return 10
+}
+
 cmd_update() {
+    local arg
+    for arg in "$@"; do
+        if [ "$arg" = --check ]; then
+            cmd_update_check "$@" || return $?
+            return 0
+        fi
+    done
+
     need_root update
     local lay
     if have rpm-ostree; then
@@ -912,6 +1017,10 @@ pulsar -- manage a Pulsar system
   pulsar update            fetch and stage an update        (root)
                            through bootc, or through rpm-ostree if you have
                            layered packages, which bootc would drop
+  pulsar update --check    is a newer image published? no root needed.
+                           exit 0 up to date or already staged, 10 available,
+                           1 could not tell. add --notify for a desktop
+                           notification, once per published build
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
 

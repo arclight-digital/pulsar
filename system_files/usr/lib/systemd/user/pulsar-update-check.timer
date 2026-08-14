@@ -1,0 +1,17 @@
+[Unit]
+Description=Periodically check whether a newer Pulsar image has been published
+
+[Timer]
+# Ten minutes after the session comes up, then every six hours. The image is
+# built daily, so six hours is already more often than it can change; the
+# point of the short startup delay is that a laptop opened once a day still
+# gets an answer, which OnCalendar=daily on a machine that is asleep at the
+# appointed hour does not.
+OnStartupSec=10min
+OnUnitActiveSec=6h
+# Every Pulsar desktop checks the same tag on the same registry. Without this
+# they would all ask within seconds of each other, six hours apart.
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

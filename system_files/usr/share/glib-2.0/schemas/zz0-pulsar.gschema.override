@@ -73,10 +73,30 @@ two-finger-scrolling-enabled=true
 # GNOME Software's first-run splash introduces the store and offers to set up
 # repositories. The image already ships unfiltered Flathub in /etc, so the
 # splash has nothing left to offer -- on a branded OS it reads as setup left
-# undone. Update behaviour is NOT set here: download-updates and friends stay
-# at their Fedora defaults, per the update-policy note in the Containerfile.
+# undone.
+#
+# download-updates=false is the other half of a conclusion this image already
+# reached and only half-shipped. The update-policy note in the Containerfile
+# explains why GNOME Software cannot READ this image: on any deployment with a
+# layered package its rpm-ostree plugin dies on a missing
+# ostree.manifest-digest, reports success, and caches nothing. The unshipped
+# half is that a tool which cannot read the image has no business WRITING it.
+#
+# Left enabled it does not simply sit at the empty cache -- it escalates to a
+# real Upgrade transaction. On 2026-08-14 that pulled 946MB and froze the
+# desktop for ~90s, 40 seconds after a resume from suspend, with nothing in the
+# UI to say what was happening or any way to stop it. coreos/rpm-ostree#4470 is
+# the same trigger on the same filesystem and was closed as not planned, with a
+# worse ending than ours: btrfs corruption and a read-only remount.
+#
+# This is not "no update policy". pulsar-update-check.timer already does the
+# reading half honestly and ends in a notification, and `pulsar update` does
+# the applying half when the user asks. What this key removes is the third
+# actor that did the applying half unasked and could not do the reading half
+# at all.
 [org.gnome.software]
 first-run=false
+download-updates=false
 
 # GDM greeter logo. Fedora sets this same key in
 # org.gnome.login-screen.gschema.override, pointing at

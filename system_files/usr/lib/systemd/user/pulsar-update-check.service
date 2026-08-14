@@ -1,0 +1,28 @@
+[Unit]
+# Asks the registry whether a newer Pulsar image has been published, and
+# notifies once per published build if so.
+#
+# This exists because GNOME Software cannot answer the question on this image.
+# Its rpm-ostree plugin fires AutomaticUpdateTrigger and reads the result back
+# through GetCachedUpdateRpmDiff; on a deployment with layered packages the
+# daemon's container query fails on a missing ostree.manifest-digest, reports
+# the transaction successful anyway, and leaves the cache empty. The UI shows
+# nothing and is not lying -- it was told nothing. See cmd_update_check in
+# /usr/bin/pulsar for the detail.
+#
+# A USER unit, not a system one, for one reason: it ends in a desktop
+# notification, and the session bus is here. It also needs no privilege --
+# `pulsar update --check` reads rpm-ostree status unprivileged and makes one
+# registry call, so nothing here wants root.
+Description=Check whether a newer Pulsar image has been published
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pulsar update --check --notify
+# 10 is "an update is available". That is the answer, not a failure, and
+# without this line every successful check would mark the unit failed.
+SuccessExitStatus=10
+# Exit 1 -- an unreachable registry, most often a laptop that is simply
+# offline -- is left to fail honestly and show up in `systemctl --user
+# --failed`. The next tick clears it. Better a visible "could not tell" than a
+# silent one, which is the failure mode this whole unit exists to correct.

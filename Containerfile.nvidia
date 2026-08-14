@@ -51,8 +51,10 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
         gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' || \
       { echo "kernel-devel ${KV} not on mirrors yet; fetching from koji directly" && \
         KOJI="https://kojipkgs.fedoraproject.org/packages/kernel/${VER}/${REL}/x86_64" && \
-        curl -fL -o /tmp/kernel-devel.rpm "${KOJI}/kernel-devel-${KV}.rpm" && \
-        curl -fL -o /tmp/kernel-devel-matched.rpm "${KOJI}/kernel-devel-matched-${KV}.rpm" && \
+        curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
+          -o /tmp/kernel-devel.rpm "${KOJI}/kernel-devel-${KV}.rpm" && \
+        curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
+          -o /tmp/kernel-devel-matched.rpm "${KOJI}/kernel-devel-matched-${KV}.rpm" && \
         dnf5 install -y /tmp/kernel-devel.rpm /tmp/kernel-devel-matched.rpm akmods \
           gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' && \
         rm -f /tmp/kernel-devel*.rpm; }; } && \
@@ -85,8 +87,20 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
 # repo that actually carries the akmod; if this download ever resolves an
 # -open the kernel cannot compile again, the repo has moved again -- chase
 # the akmod, not the userspace, which travels separately.
-RUN dnf5 download --enablerepo=rpmfusion-nonfree-nvidia-driver \
-      --destdir /tmp/akmod-rpm akmod-nvidia-open && \
+#
+# Retried, and this is the step where that matters most: it is rpmfusion again
+# -- the same small mirror pool that took the whole build down on 2026-08-12 --
+# except by the time the build reaches here it is forty minutes in, past the
+# kernel-devel fetch. A flake at the rpmfusion step at the top of the vanilla
+# image costs three minutes; a flake here costs the night.
+RUN for attempt in 1 2 3; do \
+      dnf5 download --enablerepo=rpmfusion-nonfree-nvidia-driver \
+        --destdir /tmp/akmod-rpm akmod-nvidia-open && break; \
+      [ "${attempt}" -lt 3 ] || { echo "akmod-nvidia-open unreachable after 3 attempts" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (rpmfusion nvidia); retrying" >&2; \
+      rm -rf /tmp/akmod-rpm; \
+      sleep $((attempt * 15)); \
+    done && \
     rpm -Uvh --nodeps --noscripts /tmp/akmod-rpm/akmod-nvidia-open-*.rpm && \
     rm -rf /tmp/akmod-rpm
 
