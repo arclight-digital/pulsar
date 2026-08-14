@@ -18,11 +18,31 @@ ARG FEDORA_VERSION
 # the nvidia variant needs it to resolve kernel-devel for this image's exact
 # kernel, and enabling it once here keeps the two images on identical repo
 # state.
+#
+# Retried, because this is the first thing in the build that touches a mirror
+# and a slow one kills the whole night three minutes in. On 2026-08-12
+# mirrors.rpmfusion.org handed the release RPM to mirror.fcix.net, which then
+# trickled under librepo's floor -- "Operation too slow. Less than 1000 bytes/
+# sec transferred the last 30 seconds", curl error 28 -- and STEP 3 took the
+# build down with it. Nothing was wrong with the build or with rpmfusion; one
+# mirror out of the redirector's pool was having an evening.
+#
+# A retry rather than a raised timeout or a pinned mirror. dnf5 re-resolves the
+# mirrorlist on each attempt, so attempt two usually lands somewhere else
+# entirely, which is the actual fix -- waiting longer on the same bad mirror
+# just fails slower. Pinning a mirror trades a transient failure for a
+# permanent dependency on someone else's uptime.
 # ---------------------------------------------------------------------------
-RUN dnf5 install -y \
-      https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm \
-      https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm \
-      fedora-repos-archive && \
+RUN for attempt in 1 2 3; do \
+      dnf5 install -y \
+        https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm \
+        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm \
+        fedora-repos-archive && break; \
+      [ "${attempt}" -lt 3 ] || { echo "rpmfusion release RPMs unreachable after 3 attempts" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (mirror); retrying" >&2; \
+      dnf5 clean all >/dev/null 2>&1 || true; \
+      sleep $((attempt * 15)); \
+    done && \
     dnf5 swap -y ffmpeg-free ffmpeg --allowerasing
 
 # ---------------------------------------------------------------------------
@@ -42,9 +62,20 @@ RUN dnf5 install -y \
 # "enabled" -- which is why greenboot check 20-scx-scheduler.sh reads exactly
 # that file.
 # ---------------------------------------------------------------------------
-RUN dnf5 install -y 'dnf5-command(copr)' && \
-    dnf5 copr enable -y bieszczaders/kernel-cachyos-addons && \
-    dnf5 install -y scx-scheds
+#
+# Retried for the reason given at the rpmfusion step, and more sharply: a COPR
+# is ONE host. Fedora's own repos have a mirror pool librepo fails over across
+# -- the 2026-08-12 log shows it walking eleven of them -- but
+# copr.fedorainfracloud.org has no alternate to fail over to, so a bad minute
+# there is a failed build unless something waits and asks again.
+RUN for attempt in 1 2 3; do \
+      dnf5 install -y 'dnf5-command(copr)' && \
+      dnf5 copr enable -y bieszczaders/kernel-cachyos-addons && \
+      dnf5 install -y scx-scheds && break; \
+      [ "${attempt}" -lt 3 ] || { echo "copr kernel-cachyos-addons unreachable after 3 attempts" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (copr); retrying" >&2; \
+      sleep $((attempt * 15)); \
+    done
 
 # ---------------------------------------------------------------------------
 # System-level capability, not applications.
@@ -205,13 +236,30 @@ RUN chmod 0755 /usr/libexec/pulsar/check-scx-btf.sh && \
 # installing whatever the new key signed. Precedent already set by rpmfusion
 # and the cachyos COPR above -- this is the same trade, stated out loud.
 # ---------------------------------------------------------------------------
-RUN rpm --import https://mise.jdx.dev/gpg-key.pub && \
+#
+# The two network reaches are retried; the fingerprint assertion between them
+# is NOT, and that separation is the point. mise.jdx.dev is a single host with
+# no mirror, so a transient fetch failure deserves another go -- but a key that
+# imported cleanly and turned out to be the WRONG key is a supply-chain answer,
+# not a flake, and retrying it three times would only spend more time arriving
+# at the same refusal.
+RUN for attempt in 1 2 3; do \
+      rpm --import https://mise.jdx.dev/gpg-key.pub && break; \
+      [ "${attempt}" -lt 3 ] || { echo "FATAL: could not fetch the mise signing key" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (mise key); retrying" >&2; \
+      sleep $((attempt * 15)); \
+    done; \
     if ! rpm -qa 'gpg-pubkey*' | grep -qi '^gpg-pubkey-24853ec9f655ce80b48e6c3a8b81c9d17413a06d-'; then \
       echo "FATAL: mise signing key is not 24853EC9F655CE80B48E6C3A8B81C9D17413A06D"; exit 1; \
     fi && \
     printf '[mise]\nname=mise\nbaseurl=https://mise.jdx.dev/rpm/\nenabled=1\ngpgcheck=1\ngpgkey=https://mise.jdx.dev/gpg-key.pub\n' \
       > /etc/yum.repos.d/mise.repo && \
-    dnf5 install -y mise
+    for attempt in 1 2 3; do \
+      dnf5 install -y mise && break; \
+      [ "${attempt}" -lt 3 ] || { echo "mise.jdx.dev unreachable after 3 attempts" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (mise repo); retrying" >&2; \
+      sleep $((attempt * 15)); \
+    done
 
 # ---------------------------------------------------------------------------
 # gamescale -- run a game at 1x monitor scale so XWayland is handed the panel's
@@ -250,6 +298,12 @@ RUN rpm --import https://mise.jdx.dev/gpg-key.pub && \
 # `pulsar setup gamescale` can be a thin wrapper over upstream's own logic
 # rather than a reimplementation of its flatpak grants that drifts.
 # ---------------------------------------------------------------------------
+#
+# Every fetch goes through get(), which is curl with retries. github.com and
+# raw.githubusercontent.com are single origins with no mirror, and there are
+# seven round trips here -- seven chances for one blip to cost the build. The
+# sha256sum block below is unchanged and still decides what is acceptable, so
+# retrying can only affect whether bytes arrive, never which bytes count.
 ARG GAMESCALE_VERSION=v2.0.0
 ARG GAMESCALE_UUID=gamescale@arclight.digital
 RUN set -eux; \
@@ -258,13 +312,14 @@ RUN set -eux; \
     SRC="/usr/share/pulsar/gamescale"; \
     EXT="/usr/share/gnome-shell/extensions/${GAMESCALE_UUID}"; \
     mkdir -p "${SRC}/extension/icons" "${EXT}/icons"; \
-    curl -fsSL "${REL}/gamescale.sh" -o "${SRC}/gamescale.sh"; \
-    curl -fsSL "${REL}/install.sh"   -o "${SRC}/install.sh"; \
-    curl -fsSL "${RAW}/extension.js"                 -o "${SRC}/extension/extension.js"; \
-    curl -fsSL "${RAW}/metadata.json"                -o "${SRC}/extension/metadata.json"; \
-    curl -fsSL "${RAW}/stylesheet.css"               -o "${SRC}/extension/stylesheet.css"; \
-    curl -fsSL "${RAW}/icons/gamescale-symbolic.svg" -o "${SRC}/extension/icons/gamescale-symbolic.svg"; \
-    curl -fsSL "${RAW}/icons/gamescale.svg"          -o "${SRC}/extension/icons/gamescale.svg"; \
+    get() { curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors "$1" -o "$2"; }; \
+    get "${REL}/gamescale.sh" "${SRC}/gamescale.sh"; \
+    get "${REL}/install.sh"   "${SRC}/install.sh"; \
+    get "${RAW}/extension.js"                 "${SRC}/extension/extension.js"; \
+    get "${RAW}/metadata.json"                "${SRC}/extension/metadata.json"; \
+    get "${RAW}/stylesheet.css"               "${SRC}/extension/stylesheet.css"; \
+    get "${RAW}/icons/gamescale-symbolic.svg" "${SRC}/extension/icons/gamescale-symbolic.svg"; \
+    get "${RAW}/icons/gamescale.svg"          "${SRC}/extension/icons/gamescale.svg"; \
     ( cd "${SRC}" && printf '%s\n' \
       "5f0ef1f338ea915fb6f5f141e625b813ac57fdbc4a7333b7b7d0094518dc5f91  gamescale.sh" \
       "6a2bafdde0e3589c8e0d3a8ffcde41181fdfef18ce5f487d36ec0ef62410775f  install.sh" \
