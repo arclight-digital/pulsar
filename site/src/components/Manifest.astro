@@ -93,7 +93,11 @@ const gutter = Math.max(...rows.map(([key]) => key.length)) + 2;
     font-size: 0.68rem;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: rgba(233, 237, 247, 0.55);
+    /* --on-chip, not a hand-mixed alpha: the chip stays dark in both themes,
+       so text on it needs the token that was measured against it. The 0.55
+       this used to carry cleared 4.5:1 on the dark ground and missed it on
+       the pale one, where the chip sits over a lighter page. */
+    color: var(--on-chip);
   }
 
   @media (max-width: 26rem) {
