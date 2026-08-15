@@ -26,7 +26,10 @@ const MODES = [
   </p>
 
   <p class="lede">
-    Under GNOME fractional scaling, XWayland is handed an integer multiple of your
+    {/* Both explicit spaces are load-bearing: Astro trims the whitespace at a
+        line break next to an inline element, and without them this renders as
+        "of yourlogical resolution". */}
+    Under GNOME fractional scaling, XWayland is handed an integer multiple of your{' '}
     <em>logical</em>{' '}
     resolution, never the panel&rsquo;s real&nbsp;mode. At 133% on a 2560&times;1600 display no
     factor lands on the hardware, and a borderless-fullscreen game takes whatever the desktop&nbsp;reports.
