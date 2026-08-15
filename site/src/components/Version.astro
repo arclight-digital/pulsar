@@ -1,0 +1,58 @@
+---
+// A version transition, with everything the two sides share pushed back so the
+// eye lands on the part that moved.
+//
+// `1.16.1-2.fc44 -> 1.16.2-1.fc44` is two long strings the reader has to diff
+// character by character, on every row of the ledger, and RPM versions are all
+// prefix and all suffix: an epoch, a dist tag, a release that usually resets
+// to 1. Dimming the shared head and tail leaves `1.16.[1-2].fc44 ->
+// 1.16.[2-1].fc44` reading as one glance instead of two.
+//
+// Both versions are printed IN FULL. An earlier cut factored the shared parts
+// out and printed them once -- `1.16.` `1-2`->`2-1` `.fc44` -- which is
+// gorgeous at display size and unreadable at 0.82rem, because nothing marks
+// where the moving part begins when it spans a hyphen. Emphasis can guide the
+// eye; it should not ask it to reassemble a version number.
+//
+// Hidden from assistive tech by the caller, which supplies a spoken form
+// instead: this is a typographic device, and read aloud it is noise.
+import type { VersionDelta } from '../data/digest';
+
+interface Props {
+  delta: VersionDelta;
+  from: string;
+  to: string;
+}
+
+const { delta } = Astro.props;
+---
+
+{/* prettier-ignore */}
+<span class="vx"><span class="v-fixed">{delta.head}</span><span class="v-from">{delta.fromMid}</span><span class="v-fixed">{delta.tail}</span> <span class="v-arrow">&rarr;</span> <span class="v-fixed">{delta.head}</span><span class="v-to">{delta.toMid}</span><span class="v-fixed">{delta.tail}</span></span>
+
+<style>
+  .vx {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  /* The parts both sides share: still legible, deliberately not the subject. */
+  .v-fixed {
+    color: var(--dim);
+  }
+
+  .v-from {
+    color: var(--muted);
+  }
+
+  /* Where the night actually went. */
+  .v-to {
+    color: var(--accent);
+  }
+
+  .v-arrow {
+    color: var(--dim);
+    padding: 0 0.12em;
+  }
+</style>

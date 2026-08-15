@@ -9,33 +9,79 @@
 // hand-rolled either -- package names reach this from RPM metadata, and Astro
 // escapes every interpolated value, which is the right default for input that
 // is machine-generated but not a trust boundary.
-import { CHANGELOG_LIMIT, changelog } from '../data/build';
+//
+// It also replaces the flat list that stood here: one row per package name,
+// capped at twenty-five, under a line of counts. That was the diff's shape,
+// not a reader's. A kernel bump printed seventeen near-identical rows, a night
+// of Fedora rebuilds printed thirty-two rows that all said the same nothing,
+// and a night where nothing moved printed a heading over a void. The section
+// now leads with the night's one fact, groups packages that made the identical
+// move, separates rebuilds from real version changes, and folds the volume
+// away instead of either flooding the page or truncating it. Every one of
+// those rules lives in src/data/digest.ts and runs over the committed JSON;
+// /changelog.json still serves that JSON untouched.
+import DiffRow from './DiffRow.astro';
+import Version from './Version.astro';
+import { FOLD_LIMIT, digest } from '../data/digest';
+import { changelog } from '../data/build';
 
-const { summary } = changelog;
+const plural = (count: number, one: string, many = `${one}s`) => (count === 1 ? one : many);
 
-// Upgrades and downgrades are the same shape from the diff's side; they are
-// split here because "upgraded" and "downgraded" are not the same news.
-const upgraded = changelog.changed.filter((entry) => entry.direction !== 'downgraded');
-const downgraded = changelog.changed.filter((entry) => entry.direction === 'downgraded');
+// The arithmetic of the night, as a sentence rather than a row of figures.
+// The counts that matter are how many packages moved, how few distinct moves
+// that really was, and how much of it was Fedora rebuilding something at a
+// version it was already at.
+function arithmetic(): string {
+  const parts: string[] = [];
 
-const sections = [
-  { title: 'Upgraded', rows: upgraded.map((p) => ({ name: p.name, version: `${p.from} → ${p.to}` })) },
-  { title: 'Downgraded', rows: downgraded.map((p) => ({ name: p.name, version: `${p.from} → ${p.to}` })) },
-  { title: 'Added', rows: changelog.added.map((p) => ({ name: p.name, version: p.version })) },
-  { title: 'Removed', rows: changelog.removed.map((p) => ({ name: p.name, version: p.version })) },
-].filter((section) => section.rows.length > 0);
+  if (digest.packages > 0) {
+    const upstream = digest.packages - digest.rebuiltPackages;
+    let sentence = `${digest.packages} ${plural(digest.packages, 'package')} moved`;
+    // Saying "in 17 distinct transitions" when 17 packages moved is noise.
+    if (digest.transitions !== digest.packages) {
+      sentence += `, in ${digest.transitions} distinct ${plural(digest.transitions, 'transition')}`;
+    }
+    if (digest.rebuiltPackages > 0) {
+      sentence +=
+        upstream === 0
+          ? digest.packages === 1
+            ? ' — a rebuild at the same upstream version'
+            : ' — all of them rebuilds at the same upstream version'
+          : ` — ${upstream} to a new upstream version, ${digest.rebuiltPackages} rebuilt at the same one`;
+    }
+    parts.push(`${sentence}.`);
+  }
 
-// The counts line. On the first build there is nothing on the other side of
-// the diff, and saying "0 upgraded" would read as "nothing changed".
-const counts = changelog.baseline
-  ? 'first build, nothing to compare against yet'
-  : [
-      `${summary.upgraded} upgraded`,
-      `${summary.added} added`,
-      `${summary.removed} removed`,
-      ...(summary.downgraded > 0 ? [`${summary.downgraded} downgraded`] : []),
-      ...(summary.changed > 0 ? [`${summary.changed} changed`] : []),
-    ].join(' · ');
+  const joined = digest.added.length;
+  const left = digest.removed.length;
+  if (joined > 0 && left > 0) {
+    parts.push(
+      `${joined} ${plural(joined, 'package')} joined the image and ${left} left it.`,
+    );
+  } else if (joined > 0) {
+    parts.push(`${joined} ${plural(joined, 'package')} joined the image.`);
+  } else if (left > 0) {
+    parts.push(`${left} ${plural(left, 'package')} left the image.`);
+  }
+
+  return parts.join(' ');
+}
+
+// The nightly stamps ISO-8601 UTC. Rendered as-is it was a machine string in
+// the middle of a sentence; the <time> element keeps the machine one where
+// machines read it.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const stamp = new Date(changelog.generated);
+const generatedText = Number.isNaN(stamp.valueOf())
+  ? changelog.generated
+  : `${stamp.getUTCDate()} ${MONTHS[stamp.getUTCMonth()]} ${stamp.getUTCFullYear()}, ` +
+    `${String(stamp.getUTCHours()).padStart(2, '0')}:${String(stamp.getUTCMinutes()).padStart(2, '0')} UTC`;
+
+const lead = digest.lead;
+const presence = [
+  { id: 'added', title: 'Added', note: 'in this image, not the one before it', rows: digest.added },
+  { id: 'removed', title: 'Removed', note: 'in the previous image, not this one', rows: digest.removed },
+].filter((band) => band.rows.length > 0);
 ---
 
 <section class="changelog" id="changelog">
@@ -46,45 +92,136 @@ const counts = changelog.baseline
     the images themselves. <span class="sent">Nothing here is written by&nbsp;hand.</span>
   </p>
 
-  <div class="cl-body">
-    <p class="cl-meta">Generated {changelog.generated} · {counts}</p>
-
+  {/* The night in one line. On a quiet night that line is the news. */}
+  <div class="lead">
     {
-      sections.map((section) => (
-        <Fragment>
-          <h3 class="cl-h">{section.title}</h3>
-          <ul class="cl-list">
-            {section.rows.slice(0, CHANGELOG_LIMIT).map((row) => (
-              <li>
-                <span class="cl-pkg">{row.name}</span>
-                <span class="cl-ver">{row.version}</span>
-              </li>
-            ))}
-            {/* The remainder is COUNTED, never dropped silently -- a truncated
-                list that looks complete is how a changelog starts lying about
-                what shipped. */}
-            {section.rows.length > CHANGELOG_LIMIT && (
-              <li class="cl-more">and {section.rows.length - CHANGELOG_LIMIT} more</li>
-            )}
-          </ul>
-        </Fragment>
-      ))
+      digest.baseline ? (
+        <p class="lead-say">First build.</p>
+      ) : digest.quiet ? (
+        <p class="lead-say">Nothing moved.</p>
+      ) : (
+        lead && (
+          <p class="lead-tx">
+            <span class="lead-pkg">{lead.label}</span>
+            <span class="lead-ver" aria-hidden="true">
+              <Version delta={lead.delta} from={lead.from} to={lead.to} />
+            </span>
+            <span class="sr-only">
+              {lead.label}, {lead.from} to {lead.to}
+            </span>
+          </p>
+        )
+      )
+    }
+
+    <p class="lead-sub">
+      {
+        digest.baseline
+          ? 'There is nothing on the other side of the diff yet — tomorrow night this image becomes the thing the next one is measured against.'
+          : digest.quiet
+            ? 'Every package in tonight’s image is the version it was in last night’s. The two digests differ; the contents, package for package, do not.'
+            : arithmetic()
+      }
+    </p>
+
+    {/* What was actually compared. Short digests, because the full pair is
+        already in the JSON and two sha256 strings in a row read as neither. */}
+    {
+      digest.fromDigest && digest.toDigest && (
+        <p class="lead-prov">
+          <span>{digest.fromDigest}</span>
+          <span aria-hidden="true">&rarr;</span>
+          <span>{digest.toDigest}</span>
+          <span class="prov-sep" aria-hidden="true">&middot;</span>
+          <time datetime={changelog.generated}>{generatedText}</time>
+        </p>
+      )
     }
   </div>
 
+  {
+    digest.bands.map((band) => (
+      <div class="band">
+        <h3 class="band-h">
+          {band.title}
+          {band.note && <span class="band-note">{band.note}</span>}
+        </h3>
+        <ul class="ledger">
+          {band.groups.slice(0, FOLD_LIMIT).map((group) => (
+            <DiffRow group={group} />
+          ))}
+          {band.groups.length > FOLD_LIMIT && (
+            <li class="rest">
+              and {band.groups.length - FOLD_LIMIT} more, in{' '}
+              <a href="/changelog.json">the full diff</a>
+            </li>
+          )}
+        </ul>
+      </div>
+    ))
+  }
+
+  {
+    presence.map((band) => (
+      <div class="band">
+        <h3 class="band-h">
+          {band.title}
+          <span class="band-note">{band.note}</span>
+        </h3>
+        <ul class="ledger">
+          {band.rows.slice(0, FOLD_LIMIT).map((row) => (
+            <li class="prow">
+              <span class="prow-name">{row.name}</span>
+              <span class="prow-ver">{row.version}</span>
+            </li>
+          ))}
+          {band.rows.length > FOLD_LIMIT && (
+            <li class="rest">
+              and {band.rows.length - FOLD_LIMIT} more, in{' '}
+              <a href="/changelog.json">the full diff</a>
+            </li>
+          )}
+        </ul>
+      </div>
+    ))
+  }
+
+  {/* Rebuilds are real and are published, and they are not what anyone came to
+      read. Folded, counted in the sentence above, and one click away. */}
+  {
+    digest.rebuilds.length > 0 && (
+      <details class="fold">
+        <summary>
+          <span class="fold-count">
+            {digest.rebuiltPackages} {plural(digest.rebuiltPackages, 'package')}
+          </span>
+          rebuilt at the same upstream version
+        </summary>
+        <ul class="ledger">
+          {digest.rebuilds.slice(0, FOLD_LIMIT).map((group) => (
+            <DiffRow group={group} />
+          ))}
+          {digest.rebuilds.length > FOLD_LIMIT && (
+            <li class="rest">
+              and {digest.rebuilds.length - FOLD_LIMIT} more, in{' '}
+              <a href="/changelog.json">the full diff</a>
+            </li>
+          )}
+        </ul>
+      </details>
+    )
+  }
+
   <p class="hint">
-    The full diff is <a href="/changelog.json">changelog.json</a>, and the SBOM ships attached to
-    the image:{' '}
+    The full diff is <a href="/changelog.json">changelog.json</a> &mdash; one row per package, the
+    way the build wrote it. The SBOM ships attached to the&nbsp;image:{' '}
     <code>oras discover ghcr.io/<wbr />arclight-digital/<wbr />pulsar:latest</code>
   </p>
 </section>
 
 <style>
-  /* Deliberately a plain list, not a card grid: this is a diff, and a diff
-     that reads like a diff is more convincing than one dressed up as a
-     feature. */
   .changelog {
-    margin-top: 4.5rem;
+    margin-top: 5.5rem;
   }
 
   .lede {
@@ -92,58 +229,215 @@ const counts = changelog.baseline
     max-width: 40rem;
   }
 
-  .cl-meta {
-    color: var(--muted);
-    font-size: 0.82rem;
-    margin-top: 1.4rem;
+  /* ---- the lead -------------------------------------------------------- */
+
+  /* Hairline over the night's one fact. The section's own rule, not a card:
+     this is a ledger, and a ledger opens with a line. */
+  .lead {
+    margin-top: 2.2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
   }
 
-  .cl-h {
+  /* The version numbers ARE the headline, so they get the type. Mono because
+     they are versions, not because technical things wear monospace. */
+  .lead-tx,
+  .lead-say {
+    font-family: var(--font-mono);
+    font-size: clamp(1.5rem, 1rem + 2.4vw, 2.5rem);
+    line-height: 1.15;
+    letter-spacing: -0.035em;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.2em 0.55em;
+  }
+
+  /* A night with nothing in it is the good outcome for an image nobody
+     recompiles, and it gets stated rather than left as a gap. */
+  .lead-say {
+    color: var(--text);
+  }
+
+  .lead-pkg {
+    color: var(--text);
+  }
+
+  .lead-ver {
+    min-width: 0;
+  }
+
+  .lead-sub {
+    color: var(--muted);
+    max-width: 42rem;
+    margin-top: 0.9rem;
+    text-wrap: pretty;
+  }
+
+  .lead-prov {
+    margin-top: 0.9rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--dim);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.1rem 0.15rem;
+  }
+
+  .prov-sep {
+    padding: 0 0.5em;
+  }
+
+  /* ---- bands ----------------------------------------------------------- */
+
+  .band {
+    margin-top: 2.4rem;
+  }
+
+  .band-h {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.8rem;
     font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--muted);
-    margin: 1.8rem 0 0.5rem;
+    color: var(--text);
+    margin-bottom: 0.4rem;
   }
 
-  .cl-list {
+  .band-note {
+    font-weight: 400;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: var(--muted);
+  }
+
+  .ledger {
     list-style: none;
     margin: 0;
     padding: 0;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
+    border-top: 1px solid var(--line);
   }
 
-  .cl-list li {
-    display: flex;
-    justify-content: space-between;
+  /* Added and removed carry one version, not a transition, so they get a
+     simpler row than DiffRow's -- same rhythm, no arrow to draw. */
+  .prow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: baseline;
-    gap: 0.6rem 1.2rem;
-    /* version strings are long and phones are narrow: wrap to a second line
-       rather than forcing a horizontal scrollbar onto the page */
-    flex-wrap: wrap;
-    padding: 0.32rem 0;
-    border-bottom: 1px solid var(--line);
+    gap: 0.3rem 1.4rem;
+    padding: 0.5rem 0 0.5rem 1.15rem;
+    position: relative;
+    border-bottom: 1px solid var(--chip-line);
   }
 
-  .cl-pkg {
+  .prow::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 1.05em;
+    width: 6px;
+    height: 1px;
+    background: var(--line);
+  }
+
+  .prow-name {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .prow-ver {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.82rem;
+    color: var(--muted);
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .rest {
+    padding: 0.55rem 0 0.55rem 1.15rem;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  /* ---- the fold -------------------------------------------------------- */
+
+  .fold {
+    margin-top: 2.4rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .fold > summary {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    padding: 0.85rem 0 0.85rem 1.15rem;
+    position: relative;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--muted);
+    list-style: none;
+  }
+
+  .fold > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .fold > summary::before {
+    content: "";
+    position: absolute;
+    left: 1px;
+    top: 1.25em;
+    width: 5px;
+    height: 5px;
+    border-right: 1.5px solid var(--accent-soft);
+    border-bottom: 1.5px solid var(--accent-soft);
+    transform: rotate(-45deg);
+    transition: transform 0.18s var(--ease-out);
+  }
+
+  .fold[open] > summary::before {
+    transform: rotate(45deg);
+  }
+
+  .fold > summary:hover,
+  .fold > summary:focus-visible {
     color: var(--text);
   }
 
-  .cl-ver {
-    color: var(--muted);
-    margin-left: auto;
+  .fold > summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    border-radius: 3px;
   }
 
-  .cl-list .cl-more {
-    color: var(--muted);
-    font-style: italic;
-    border-bottom: 0;
+  .fold-count {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+
+  .fold .ledger {
+    border-top: 0;
+    margin-bottom: 1rem;
   }
 
   .changelog > .hint {
-    margin-top: 1.6rem;
-    max-width: 40rem;
+    margin-top: 1.8rem;
+    max-width: 42rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fold > summary::before {
+      transition: none;
+    }
   }
 </style>

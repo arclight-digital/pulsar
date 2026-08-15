@@ -73,8 +73,3 @@ export const manifest = manifestJson as Manifest;
 
 /** The build the whole page names: the hero chip, the manifest card, the diff. */
 export const version = manifest.version || 'nightly';
-
-// Rows shown per changelog list. The remainder is COUNTED in the page, never
-// dropped silently -- a truncated list that looks complete is how a changelog
-// starts lying about what shipped.
-export const CHANGELOG_LIMIT = 25;
