@@ -32,24 +32,31 @@ const STAGES = [
     }
   </ol>
 
-  <Term ariaLabel="Verify the provenance attestation">
-    <Fragment slot="caption">
-      don't take the page's word for&nbsp;it
-      <CopyButton text={VERIFY} label="Copy the attestation verify command" />
-    </Fragment>
-    <pre><code><span class="cmd">gh attestation verify \
+  {/* The session and the caveat sit side by side, the way the scaling section
+      pairs its command with its prose. Stacked, the command left a third of
+      the page empty beside it and the caveat read as a footnote to the whole
+      section rather than as the answer to the command's "Verification
+      succeeded!". */}
+  <div class="pipe-tail">
+    <Term ariaLabel="Verify the provenance attestation" class="pipe-term">
+      <Fragment slot="caption">
+        don't take the page's word for&nbsp;it
+        <CopyButton text={VERIFY} label="Copy the attestation verify command" />
+      </Fragment>
+      <pre><code><span class="cmd">gh attestation verify \
   oci://{IMAGES.nvidia}:latest \
   --owner arclight-digital</span>
 <span class="out">Loaded digest sha256:&hellip; for oci://&hellip;/pulsar-nvidia:latest</span>
 <span class="ok">&#10003; Verification succeeded!</span></code></pre>
-  </Term>
+    </Term>
 
-  <p class="hint">
-    <span class="sent">One person's laptop OS, over-engineered on purpose, MIT-licensed.</span>{' '}
-    Running someone else's signed images is a trust decision &mdash;{' '}
-    <a href={`${REPO}#two-variants-one-key`}>fork it and use your own key</a> if that's not a
-    relationship you want.
-  </p>
+    <p class="hint">
+      <span class="sent">One person's laptop OS, over-engineered on purpose, MIT-licensed.</span>{' '}
+      Running someone else's signed images is a trust decision &mdash;{' '}
+      <a href={`${REPO}#two-variants-one-key`}>fork it and use your own key</a> if that's not a
+      relationship you want.
+    </p>
+  </div>
 </section>
 
 <style>
@@ -81,8 +88,12 @@ const STAGES = [
     background: var(--line);
   }
 
+  /* The rail is the line BETWEEN stages, so the last stage has nothing to draw
+     to. It used to run on to the edge of the grid cell, which read as a
+     pipeline that carries on past `boot` -- the narrow layout below already
+     hid it for the same reason. */
   .rail li:last-child::before {
-    right: 0;
+    display: none;
   }
 
   .rail li::after {
@@ -111,11 +122,29 @@ const STAGES = [
     margin-top: 0.15rem;
   }
 
-  .pipeline > .hint {
-    max-width: 40rem;
+  .pipe-tail {
+    display: grid;
+    grid-template-columns: minmax(0, 36rem) minmax(0, 1fr);
+    gap: 2.2rem;
+    align-items: start;
+    margin-top: 2.4rem;
+  }
+
+  /* Reaching into Term's own chrome, which carries Term's scope and not this
+     component's -- hence :global, kept narrow by the .pipe-term key. */
+  :global(.pipe-term) {
+    margin-top: 0;
+  }
+
+  .pipe-tail .hint {
+    margin-top: 0;
   }
 
   @media (max-width: 46rem) {
+    .pipe-tail {
+      grid-template-columns: 1fr;
+      gap: 1.4rem;
+    }
     .rail {
       grid-template-columns: 1fr;
       gap: 1.1rem;
