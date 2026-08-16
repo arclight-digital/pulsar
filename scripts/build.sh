@@ -201,6 +201,13 @@ build_vanilla() {
   # the digest worth recording is the one this build used, not the one that
   # was current a minute earlier.
   #
+  # THIS IS THE PER-ARCH MANIFEST DIGEST, not the digest of the multi-arch
+  # index the tag points at -- podman keeps the manifest of the image it
+  # actually pulled, and `skopeo inspect` on the same tag reports the index
+  # instead. Whatever reads this label has to resolve the index before it
+  # compares; nightly.sh does, and the two nights before it learned to were
+  # published for nothing.
+  #
   # Best effort. It is metadata for an optimisation, so a podman that cannot
   # answer costs a redundant build later, never a wrong image now.
   BASE_DIGEST="$(podman image inspect "${BASE_IMAGE}:${FEDORA_VERSION}" \

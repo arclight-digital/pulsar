@@ -46,6 +46,9 @@
 #   PULSAR_FORCE_BUILD          yes to build even when the base image has not
 #                               moved -- see base_moved() below
 #
+# One argument, optional: --base-check answers the base_moved() question and
+# exits without building anything. 0 it would build, 3 it would skip.
+#
 # THE CHANNEL IS THE ONE THING THIS SCRIPT WILL NOT GUESS. A scheduled build is
 # the one users pull; a manual build is one a person kicked off while working.
 # Conflating them costs real things -- a hand-run build used to consume a number
@@ -85,6 +88,11 @@ IMAGE="${IMAGE:?IMAGE is not set}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:?IMAGE_NVIDIA is not set}"
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
 WORK="${PULSAR_BUILD_WORK:-/var/mnt/pulsar-build}"
+# Scratch for this script itself, which is a manifest or two -- not ${WORK},
+# which is OCI layouts and wants the big volume, and which the gate below runs
+# before anything has created.
+WORK_TMP="$(mktemp -d -t pulsar-nightly-XXXXXX)"
+trap 'rm -rf "${WORK_TMP}"' EXIT
 # Kept in step with build.sh, which records which digest of this a build used.
 BASE_IMAGE="${BASE_IMAGE:-quay.io/fedora-ostree-desktops/silverblue}"
 
@@ -121,6 +129,49 @@ main() {
 # and silence is exactly what this pipeline reserves for "the timer did not
 # fire" -- a wasted build hour is the cheaper mistake by a wide margin.
 # ---------------------------------------------------------------------------
+# THE TAG HAS TWO DIGESTS AND THE GATE HAS TO ASK FOR THE RIGHT ONE.
+# silverblue:44 is a multi-arch index. `skopeo inspect` reports the digest of
+# that INDEX; the `.Digest` podman keeps for the image it pulled -- which is
+# what build.sh reads out of local storage and writes into the label -- is the
+# per-arch MANIFEST inside it. Neither tool is wrong and the two are never
+# equal, so the comparison below was false on every night the gate has ever
+# run: 2026-08-15 and 2026-08-16 both recorded base 78399a1d and shipped
+# anyway, a full changelog of zeros and a multi-gigabyte pull for everyone.
+#
+# So resolve the index here rather than take its digest. That is also the more
+# precise question: an arm64-only respin moves the index without changing a
+# byte of what this build pulls, and comparing instances sits that night out.
+#
+# Prints one digest per line, the arch instance first and the index second --
+# either is a legitimate answer to "which digest is this tag", and a label
+# carrying either one means the base is where it was. No output means the
+# question could not be answered, which the caller reads as "build".
+base_tag_digests() {
+  local raw arch
+  raw="${WORK_TMP}/base-manifest.json"
+  skopeo inspect --raw "docker://${BASE_IMAGE}:${FEDORA_VERSION}" > "${raw}" 2>/dev/null || return 0
+  [ -s "${raw}" ] || return 0
+
+  # An index is a document with manifests in it. Asking that rather than
+  # matching mediaType, which OCI allows an index to omit entirely -- and the
+  # cost of misreading an index as a manifest here is this whole bug again.
+  if jq -e '.manifests | type == "array"' "${raw}" >/dev/null 2>&1; then
+    # podman's Host.Arch is already GOARCH, which is what OCI platforms use.
+    arch="$(podman info --format '{{.Host.Arch}}' 2>/dev/null || true)"
+    jq -r --arg a "${arch:-amd64}" '
+      .manifests[]
+      | select(.platform.architecture == $a)
+      | select((.platform.os // "linux") == "linux")
+      | select((.platform.variant // "") == "")
+      | .digest' "${raw}" 2>/dev/null
+  fi
+
+  # A registry digest is the sha256 of the manifest bytes exactly as served, so
+  # this is the index's own digest without asking the network twice -- and the
+  # tag's whole answer when it is not an index at all.
+  echo "sha256:$(sha256sum < "${raw}" | cut -d' ' -f1)"
+}
+
 base_moved() {
   # A manual build is somebody asking for this exact tree to be built. It is
   # never about the base, and refusing it because quay is quiet would be
@@ -131,12 +182,9 @@ base_moved() {
     return 0
   fi
   command -v skopeo >/dev/null || { echo "no skopeo; cannot check the base, so building" >&2; return 0; }
+  command -v jq >/dev/null || { echo "no jq; cannot read the base index, so building" >&2; return 0; }
 
-  local now last
-  now="$(skopeo inspect --no-tags --format '{{.Digest}}' \
-           "docker://${BASE_IMAGE}:${FEDORA_VERSION}" 2>/dev/null || true)"
-  [ -n "${now}" ] || { echo "could not resolve ${BASE_IMAGE}:${FEDORA_VERSION}; building" >&2; return 0; }
-
+  local last
   # Absent on anything built before build.sh started writing this label, and on
   # the first push of a new image name. Both mean there is no comparison to be
   # made, which is not the same as the base being unchanged.
@@ -149,11 +197,24 @@ base_moved() {
       return 0 ;;
   esac
 
-  if [ "${now}" = "${last}" ]; then
-    echo "base ${BASE_IMAGE}:${FEDORA_VERSION} is still ${now}"
-    return 1
-  fi
-  echo "base moved: ${last} -> ${now}"
+  local -a now=()
+  local d
+  while IFS= read -r d; do
+    [ -n "${d}" ] || continue
+    now+=("${d}")
+  done < <(base_tag_digests)
+  [ "${#now[@]}" -gt 0 ] \
+    || { echo "could not resolve ${BASE_IMAGE}:${FEDORA_VERSION}; building" >&2; return 0; }
+
+  for d in "${now[@]}"; do
+    if [ "${d}" = "${last}" ]; then
+      echo "base ${BASE_IMAGE}:${FEDORA_VERSION} is still ${d}"
+      return 1
+    fi
+  done
+  # Both digests, always: the pair is what makes a wrong answer here legible
+  # the next time somebody reads this log wondering why the night was noisy.
+  echo "base moved: ${last} -> ${now[*]}"
   return 0
 }
 
@@ -191,6 +252,17 @@ case "${PULSAR_CHANNEL:-}" in
     echo "PULSAR_CHANNEL=${PULSAR_CHANNEL} is not scheduled or manual" >&2
     exit 2 ;;
 esac
+
+# Ask the gate and stop, building nothing. For the operator wondering why last
+# night was quiet or noisy, and for tests/nightly-base-gate.bats, which is the
+# reason the mismatch above is now a thing that can fail out loud. 3 rather
+# than 1 for "would skip": 1 is a broken run and 2 is a config error, and this
+# is neither.
+if [ "${1:-}" = --base-check ]; then
+  if base_moved; then echo "would build"; exit 0; fi
+  echo "would skip"
+  exit 3
+fi
 
 started="$(date -u +%s)"
 echo "pulsar nightly starting $(date -u -Iseconds) (${CHANNEL})"
@@ -319,4 +391,4 @@ ping_healthcheck "${VERSION} ok in ${elapsed}s"
 
 }
 
-main
+main "$@"
