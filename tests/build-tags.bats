@@ -11,6 +11,13 @@
 # the floating tags may move -- is the guard below.
 
 setup() {
+  # Same reason as next-version.bats: the builder exports PULSAR_* into the
+  # environment a hand-run build inherits, and build.sh reads four of them
+  # (BUILD_WORK, SIGNER_URL, SIGNER_TOKEN_FILE, SIGNER_CA_FILE). Nothing here
+  # sets those, so without this the guards below are tested against whatever the
+  # operator's shell happens to hold.
+  for v in "${!PULSAR_@}"; do unset "${v}"; done
+
   BUILD="${BATS_TEST_DIRNAME}/../scripts/build.sh"
   BIN="${BATS_TEST_TMPDIR}/bin"
   mkdir -p "${BIN}"

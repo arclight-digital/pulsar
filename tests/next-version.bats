@@ -14,6 +14,13 @@
 bats_require_minimum_version 1.5.0
 
 setup() {
+  # The builder exports PULSAR_* into /etc/pulsar/build.env, so a hand-run build
+  # inherits them: PULSAR_CHANNEL=manual made the scheduled-channel tests below
+  # assert scheduled output against the manual series, failing on the build host
+  # and passing everywhere else. Clear the namespace -- the one test that wants a
+  # channel sets it per-invocation.
+  for v in "${!PULSAR_@}"; do unset "${v}"; done
+
   NV="${BATS_TEST_DIRNAME}/../scripts/next-version.sh"
   BIN="${BATS_TEST_TMPDIR}/bin"
   mkdir -p "${BIN}"
