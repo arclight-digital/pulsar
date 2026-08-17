@@ -1,21 +1,58 @@
 {
-  "generated": "2026-08-16T02:45:50Z",
+  "generated": "2026-08-17T02:46:19Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:dc4866131de01fa4822b95c0061a7879d6ba0b79cd36ed82d3b6be27f10345ca",
-    "digest": "sha256:dc4866131de01fa4822b95c0061a7879d6ba0b79cd36ed82d3b6be27f10345ca"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:0f50bb9d57507587455a9009127a6f7e1575ca0344a3497662c1a0e8f453bb8f",
     "digest": "sha256:0f50bb9d57507587455a9009127a6f7e1575ca0344a3497662c1a0e8f453bb8f"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:f3f3aa7acb345a535225c0de3f6e508747864ce97a56cce914b003fb3647d9f5",
+    "digest": "sha256:f3f3aa7acb345a535225c0de3f6e508747864ce97a56cce914b003fb3647d9f5"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 0,
+    "upgraded": 6,
     "downgraded": 0,
     "changed": 0
   },
   "added": [],
   "removed": [],
-  "changed": []
+  "changed": [
+    {
+      "name": "kf6-filesystem",
+      "from": "6.28.0-1.fc44",
+      "to": "6.29.0-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kf6-karchive",
+      "from": "6.28.0-1.fc44",
+      "to": "6.29.0-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kf6-kimageformats",
+      "from": "6.28.1-1.fc44",
+      "to": "6.29.0-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libsoup3",
+      "from": "3.6.6-8.fc44",
+      "to": "3.6.6-9.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-boto3",
+      "from": "1.43.66-1.fc44",
+      "to": "1.43.71-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-botocore",
+      "from": "1.43.66-1.fc44",
+      "to": "1.43.71-1.fc44",
+      "direction": "upgraded"
+    }
+  ]
 }
