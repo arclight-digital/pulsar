@@ -113,6 +113,18 @@ if [ "${KEYLESS}" = no ] && [ ! -r "${PUBKEY}" ]; then
   exit 2
 fi
 
+# Not optional, and checked before anything expensive for the same reason the
+# signer arguments are. Without a config, bib writes a kickstart that runs
+# `clearpart --all` and `autopart` against every disk the installer can see --
+# see iso-config.toml for the whole story. A missing file has to stop the build
+# here rather than quietly produce that ISO a second time.
+ISO_CONFIG="${REPO}/iso-config.toml"
+if [ ! -r "${ISO_CONFIG}" ]; then
+  echo "missing ${ISO_CONFIG}: without it bib builds an installer that" >&2
+  echo "erases every attached disk without asking. refusing to build." >&2
+  exit 2
+fi
+
 # See the header: a relocated graphroot is the one storage layout bib cannot
 # use, and finding out from bib's nested podman mid-build is a worse error
 # message than this one.
@@ -154,17 +166,26 @@ podman pull --retry 5 "${IMAGE}@${DIGEST}"
 # mounted :ro it dies on `mkdir .../l: read-only file system` before it does
 # any work. /store and /rpmmd are mounted for space, not correctness -- left
 # unmounted they land in the container's overlay on the root disk.
+#
+# The config lands at /config.toml because bib picks its decoder off the file
+# EXTENSION -- mounted under any other name it is parsed as JSON and the build
+# dies on the first line. It is passed explicitly rather than relying on bib's
+# "/config.json will be used if present" fallback, so that a mount that failed
+# to land is a bib error about a missing file rather than a silent return to
+# the unattended kickstart.
 # ---------------------------------------------------------------------------
 say "running bootc-image-builder"
 podman run --rm --privileged \
   --security-opt label=type:unconfined_t \
   -v "${WORK}/iso:/output" \
+  -v "${ISO_CONFIG}:/config.toml:ro" \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
   -v "${WORK}/store:/store" \
   -v "${WORK}/rpmmd:/rpmmd" \
   "${BIB}" \
     build \
     --type anaconda-iso \
+    --config /config.toml \
     --rootfs "${ROOTFS}" \
     --progress verbose \
     "${IMAGE}@${DIGEST}"

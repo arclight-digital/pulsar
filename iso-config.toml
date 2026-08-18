@@ -1,0 +1,86 @@
+# What the installer asks before it touches a disk.
+#
+# Passed to bootc-image-builder by scripts/build-iso.sh as --config. This file
+# exists because of what bib does WITHOUT it. For a bootc container payload,
+# osbuild/images never consults installer.unattended at all -- it branches only
+# on whether a config supplies kickstart contents, and finding none it writes a
+# fully automated kickstart:
+#
+#   pkg/manifest/anaconda_installer_iso_tree.go, bootcInstallerKickstartStages()
+#
+# The ISOs published on 2026-08-10 carry the result. Read out of one of them:
+#
+#   clearpart --all
+#   autopart --nohome --type=btrfs
+#   reboot --eject
+#
+# clearpart --all with no --drives= is every disk the installer can see. Under
+# Ventoy that includes the stick it booted from, because Ventoy loop-mounts the
+# ISO and so Anaconda never recognises the USB as its own install source and
+# never protects it. No boot menu prompt, no disk picker, and reboot --eject
+# before there is anything on screen to read.
+#
+# So the contents below are not a customisation. They are the off switch for
+# that block, and supplying ANY contents is what throws it. Everything bib
+# writes AROUND them is untouched and is the part that makes the install work:
+# ostreecontainer pointing at the payload on the ISO, and the %post that runs
+# `bootc switch` onto the pinned digest.
+#
+# Two things that bite when editing this file. bib decodes it with
+# BurntSushi/toml and rejects unknown keys outright, so a mistyped key is a
+# failed build rather than a line that quietly does nothing. And kickstart
+# contents cannot be combined with installer.unattended,
+# installer.sudo-nopasswd, or blueprint users/groups -- GetInstaller() and
+# kickstart.Options.Validate() both refuse the pairing.
+[customizations.installer.kickstart]
+contents = """
+# Anaconda fills in whatever this file leaves out by ASKING, which is the whole
+# point, so the destructive directives are conspicuous by their absence:
+#
+#   clearpart  omitted, so the disk picker appears
+#   autopart   omitted, so partitioning is the operator's decision
+#   reboot     omitted, so the install ends on a screen you can read
+#   rootpw     omitted, so Anaconda runs its accounts step
+#
+# The three below are kept only to match what the ISOs already did, and each is
+# a spoke Anaconda will ask for if you delete it. UTC in particular is a
+# build-host default rather than a desktop one, so removing that line is
+# defensible; it is left in so this change alters exactly one behaviour.
+lang en_US.UTF-8
+keyboard us
+timezone UTC
+
+# Carried over deliberately rather than inherited. bib does set this, from
+# Kickstart.NetworkOnBoot in scripts/build-iso.sh's image definition, but that
+# assignment sits INSIDE the unattended branch we are switching off. It would
+# otherwise vanish silently. NetworkManager would DHCP a wired link on its own
+# anyway; this keeps the installed system byte-identical to what shipped.
+network --device=link --bootproto=dhcp --onboot=on --activate
+"""
+
+# The ISO volume label, which is not cosmetic. osbuild writes it into the ISO's
+# GRUB config twice, as `search --set=root -l` and as inst.stage2=hd:LABEL=, so
+# the label and the boot path are generated together and cannot drift apart.
+#
+# Worth owning because the default is derived from os-release ID, which
+# Containerfile deliberately keeps at "fedora" so third-party version
+# comparisons keep working. bib's labelForISO() turns that into
+# "Fedora-S-dvd-x86_64-44", which is both the most Fedora-branded string on the
+# ISO and the only piece of that branding bib gives us a hook for -- the
+# installer's logos and backgrounds come from fedora-logos in the Anaconda
+# runtime, which --type anaconda-iso offers no way to replace.
+#
+# Unversioned on purpose: this is an identifier the boot path resolves, not a
+# second place to restate a version that the filename and the .json sidecar
+# already carry. Both variants can share it because only one ISO is ever
+# loop-mounted at a time.
+#
+# publisher and application_id are NOT set here despite existing in the
+# schema. The legacy ISO path reads only VolumeID off this section, so they
+# would decode cleanly and then be dropped on the floor.
+#
+# validateVolumeID() allows letters, digits, - and _ only, and it runs
+# unconditionally once this section exists -- so volume_id is mandatory here,
+# an empty string fails its regex.
+[customizations.iso]
+volume_id = "PULSAR-X86_64"

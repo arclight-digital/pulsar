@@ -273,6 +273,8 @@ scripts/nightly.sh     the nightly: version, build, push, publish — run by
 scripts/weekly.sh      weekly installer ISOs, Saturday night — checksummed,
                        manifest signed with the release key (keys/cosign.pub)
 scripts/build-iso.sh   the ISO pipeline weekly.sh drives, one variant at a time
+iso-config.toml        what the installer asks before it partitions — without
+                       it bootc-image-builder writes an unattended kickstart
 assets/                source of truth for art — edit these
 system_files/          overlay for vanilla (branding here is GENERATED)
 system_files.nvidia/   overlay for nvidia only
