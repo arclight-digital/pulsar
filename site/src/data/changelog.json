@@ -1,17 +1,17 @@
 {
-  "generated": "2026-08-17T02:46:19Z",
+  "generated": "2026-08-18T02:48:28Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:0f50bb9d57507587455a9009127a6f7e1575ca0344a3497662c1a0e8f453bb8f",
-    "digest": "sha256:0f50bb9d57507587455a9009127a6f7e1575ca0344a3497662c1a0e8f453bb8f"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:f3f3aa7acb345a535225c0de3f6e508747864ce97a56cce914b003fb3647d9f5",
     "digest": "sha256:f3f3aa7acb345a535225c0de3f6e508747864ce97a56cce914b003fb3647d9f5"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:765ef7d91df26ad09b4c7b6f8125db0ed44a4c6e5f8adb5eb0186292d36884cf",
+    "digest": "sha256:765ef7d91df26ad09b4c7b6f8125db0ed44a4c6e5f8adb5eb0186292d36884cf"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 6,
+    "upgraded": 22,
     "downgraded": 0,
     "changed": 0
   },
@@ -19,39 +19,135 @@
   "removed": [],
   "changed": [
     {
-      "name": "kf6-filesystem",
-      "from": "6.28.0-1.fc44",
-      "to": "6.29.0-1.fc44",
+      "name": "epiphany-runtime",
+      "from": "1:50.4-1.fc44",
+      "to": "1:50.6-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "kf6-karchive",
-      "from": "6.28.0-1.fc44",
-      "to": "6.29.0-1.fc44",
+      "name": "exfatprogs",
+      "from": "1.4.2-2.fc44",
+      "to": "1.4.3-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "kf6-kimageformats",
-      "from": "6.28.1-1.fc44",
-      "to": "6.29.0-1.fc44",
+      "name": "grub2-common",
+      "from": "1:2.12-60.fc44",
+      "to": "1:2.12-64.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libsoup3",
-      "from": "3.6.6-8.fc44",
-      "to": "3.6.6-9.fc44",
+      "name": "grub2-efi-ia32",
+      "from": "1:2.12-60.fc44",
+      "to": "1:2.12-64.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "python3-boto3",
-      "from": "1.43.66-1.fc44",
-      "to": "1.43.71-1.fc44",
+      "name": "grub2-efi-x64",
+      "from": "1:2.12-60.fc44",
+      "to": "1:2.12-64.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "python3-botocore",
-      "from": "1.43.66-1.fc44",
-      "to": "1.43.71-1.fc44",
+      "name": "grub2-pc",
+      "from": "1:2.12-60.fc44",
+      "to": "1:2.12-64.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "grub2-pc-modules",
+      "from": "1:2.12-60.fc44",
+      "to": "1:2.12-64.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "grub2-tools",
+      "from": "1:2.12-60.fc44",
+      "to": "1:2.12-64.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "grub2-tools-minimal",
+      "from": "1:2.12-60.fc44",
+      "to": "1:2.12-64.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libnfsidmap",
+      "from": "1:2.8.7-6.fc44",
+      "to": "1:2.8.7-7.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mise",
+      "from": "2026.8.6-1",
+      "to": "2026.8.8-1",
+      "direction": "upgraded"
+    },
+    {
+      "name": "nfs-client-utils",
+      "from": "1:2.8.7-6.fc44",
+      "to": "1:2.8.7-7.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "nfs-common-utils",
+      "from": "1:2.8.7-6.fc44",
+      "to": "1:2.8.7-7.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "nfs-utils",
+      "from": "1:2.8.7-6.fc44",
+      "to": "1:2.8.7-7.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "nfsv3-client-utils",
+      "from": "1:2.8.7-6.fc44",
+      "to": "1:2.8.7-7.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "nfsv4-client-utils",
+      "from": "1:2.8.7-6.fc44",
+      "to": "1:2.8.7-7.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "ostree",
+      "from": "2026.2-1.fc44",
+      "to": "2026.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "ostree-libs",
+      "from": "2026.2-1.fc44",
+      "to": "2026.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "selinux-policy",
+      "from": "44.5-1.fc44",
+      "to": "44.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "selinux-policy-targeted",
+      "from": "44.5-1.fc44",
+      "to": "44.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "yelp",
+      "from": "2:49.1-1.fc44",
+      "to": "2:49.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "yelp-libs",
+      "from": "2:49.1-1.fc44",
+      "to": "2:49.2-1.fc44",
       "direction": "upgraded"
     }
   ]
