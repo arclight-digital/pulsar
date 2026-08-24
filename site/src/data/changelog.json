@@ -1,128 +1,231 @@
 {
-  "generated": "2026-08-23T02:45:21Z",
+  "generated": "2026-08-24T03:03:46Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:0aec16778e99d7741e53528083e2342f1d8977a01f9327a63c813cea55f9e3c9",
-    "digest": "sha256:0aec16778e99d7741e53528083e2342f1d8977a01f9327a63c813cea55f9e3c9"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:b191e6fd77ca1f1e2a25f909094f8d9fe61a6d76e091b2172bc3cc7665d4cd83",
     "digest": "sha256:b191e6fd77ca1f1e2a25f909094f8d9fe61a6d76e091b2172bc3cc7665d4cd83"
   },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:5ce306c5ff311ec61d02a3d2c20bf873f019e4b4f5f43e876810d846217a255c",
+    "digest": "sha256:5ce306c5ff311ec61d02a3d2c20bf873f019e4b4f5f43e876810d846217a255c"
+  },
   "summary": {
-    "added": 1,
+    "added": 0,
     "removed": 0,
-    "upgraded": 17,
+    "upgraded": 35,
     "downgraded": 0,
     "changed": 0
   },
-  "added": [
-    {
-      "name": "perl-Unicode-Normalize",
-      "version": "1.32-521.fc44"
-    }
-  ],
+  "added": [],
   "removed": [],
   "changed": [
     {
-      "name": "kernel-devel",
+      "name": "bluez",
+      "from": "5.87-3.fc44",
+      "to": "5.87-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "bluez-cups",
+      "from": "5.87-3.fc44",
+      "to": "5.87-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "bluez-libs",
+      "from": "5.87-3.fc44",
+      "to": "5.87-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "bluez-obexd",
+      "from": "5.87-3.fc44",
+      "to": "5.87-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "bootc",
+      "from": "1.16.7-1.fc44",
+      "to": "1.16.9-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "cpp",
+      "from": "16.1.1-2.fc44",
+      "to": "16.2.1-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "dnf5",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "dnf5-plugins",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "dnf5daemon-server",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "dnf5daemon-server-polkit",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gcc",
+      "from": "16.1.1-2.fc44",
+      "to": "16.2.1-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel",
       "from": "7.1.8-200.fc44",
       "to": "7.1.9-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "less",
-      "from": "704-2.fc44",
-      "to": "704-4.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "librados2",
-      "from": "2:20.2.3-1.fc44",
-      "to": "2:20.2.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "librbd1",
-      "from": "2:20.2.3-1.fc44",
-      "to": "2:20.2.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "nvme-cli",
-      "from": "2.16-2.fc44",
-      "to": "2.16-3.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "openssh",
-      "from": "10.2p1-13.fc44",
-      "to": "10.2p1-14.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "openssh-clients",
-      "from": "10.2p1-13.fc44",
-      "to": "10.2p1-14.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "openssh-server",
-      "from": "10.2p1-13.fc44",
-      "to": "10.2p1-14.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "perf",
+      "name": "kernel-core",
       "from": "7.1.8-200.fc44",
       "to": "7.1.9-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "perl-Socket",
-      "from": "4:2.041-1.fc44",
-      "to": "4:2.043-1.fc44",
+      "name": "kernel-modules",
+      "from": "7.1.8-200.fc44",
+      "to": "7.1.9-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "perl-URI",
-      "from": "5.35-1.fc44",
-      "to": "5.36-1.fc44",
+      "name": "kernel-modules-core",
+      "from": "7.1.8-200.fc44",
+      "to": "7.1.9-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "swtpm",
-      "from": "0.10.1-4.fc44",
-      "to": "0.10.2-1.fc44",
+      "name": "kernel-modules-extra",
+      "from": "7.1.8-200.fc44",
+      "to": "7.1.9-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "swtpm-libs",
-      "from": "0.10.1-4.fc44",
-      "to": "0.10.2-1.fc44",
+      "name": "kernel-tools",
+      "from": "7.1.8-200.fc44",
+      "to": "7.1.9-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "swtpm-selinux",
-      "from": "0.10.1-4.fc44",
-      "to": "0.10.2-1.fc44",
+      "name": "kernel-tools-libs",
+      "from": "7.1.8-200.fc44",
+      "to": "7.1.9-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "swtpm-tools",
-      "from": "0.10.1-4.fc44",
-      "to": "0.10.2-1.fc44",
+      "name": "libatomic",
+      "from": "16.1.1-2.fc44",
+      "to": "16.2.1-2.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "vim-data",
-      "from": "2:9.2.920-1.fc44",
-      "to": "2:9.2.967-1.fc44",
+      "name": "libcap-ng",
+      "from": "0.9.3-1.fc44",
+      "to": "0.9.5-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "vim-minimal",
-      "from": "2:9.2.920-1.fc44",
-      "to": "2:9.2.967-1.fc44",
+      "name": "libcap-ng-python3",
+      "from": "0.9.3-1.fc44",
+      "to": "0.9.5-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libdnf5",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libdnf5-cli",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libdnf5-plugin-appstream",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libdnf5-plugin-expired-pgp-keys",
+      "from": "5.4.2.1-1.fc44",
+      "to": "5.4.3.0-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libgcc",
+      "from": "16.1.1-2.fc44",
+      "to": "16.2.1-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libgomp",
+      "from": "16.1.1-2.fc44",
+      "to": "16.2.1-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libstdc++",
+      "from": "16.1.1-2.fc44",
+      "to": "16.2.1-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mise",
+      "from": "2026.8.10-1",
+      "to": "2026.8.11-1",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-boto3",
+      "from": "1.43.72-1.fc44",
+      "to": "1.43.77-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-botocore",
+      "from": "1.43.72-1.fc44",
+      "to": "1.43.77-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-perf",
+      "from": "7.1.8-200.fc44",
+      "to": "7.1.9-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "qt-settings",
+      "from": "43.101-3.fc44",
+      "to": "44.0-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "rsync",
+      "from": "3.4.4-1.fc44",
+      "to": "3.5.0-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "thermald",
+      "from": "2.5.12-2.fc44",
+      "to": "2.5.12-3.fc44",
       "direction": "upgraded"
     }
   ]
