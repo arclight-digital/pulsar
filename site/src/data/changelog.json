@@ -1,17 +1,17 @@
 {
-  "generated": "2026-08-26T02:48:32Z",
+  "generated": "2026-08-29T02:55:37Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:511e70467647e761e11b25e21f8063eb4b42d2aacb2e2a7acf98c2a5f0197e38",
-    "digest": "sha256:511e70467647e761e11b25e21f8063eb4b42d2aacb2e2a7acf98c2a5f0197e38"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:7963c336d42a13b8899229e3d74d5b9149deba156c197b2db722a8f7ea2f259c",
     "digest": "sha256:7963c336d42a13b8899229e3d74d5b9149deba156c197b2db722a8f7ea2f259c"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:7ef666b164b642bae3517e19bfe20261af868017b8d66443214cc3ac34f0f544",
+    "digest": "sha256:7ef666b164b642bae3517e19bfe20261af868017b8d66443214cc3ac34f0f544"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 3,
+    "upgraded": 45,
     "downgraded": 0,
     "changed": 0
   },
@@ -19,21 +19,273 @@
   "removed": [],
   "changed": [
     {
-      "name": "kernel-devel",
+      "name": "android-tools",
+      "from": "1:37.0.0-3.fc44",
+      "to": "1:37.0.0-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "curl",
+      "from": "8.18.0-8.fc44",
+      "to": "8.18.0-9.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "elfutils-debuginfod-client",
+      "from": "0.195-1.fc44",
+      "to": "0.196-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "elfutils-default-yama-scope",
+      "from": "0.195-1.fc44",
+      "to": "0.196-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "elfutils-libelf",
+      "from": "0.195-1.fc44",
+      "to": "0.196-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "elfutils-libelf-devel",
+      "from": "0.195-1.fc44",
+      "to": "0.196-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "elfutils-libs",
+      "from": "0.195-1.fc44",
+      "to": "0.196-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "fedora-gpg-keys",
+      "from": "44-1",
+      "to": "44-2",
+      "direction": "upgraded"
+    },
+    {
+      "name": "fedora-repos",
+      "from": "44-1",
+      "to": "44-2",
+      "direction": "upgraded"
+    },
+    {
+      "name": "fedora-repos-archive",
+      "from": "44-1",
+      "to": "44-2",
+      "direction": "upgraded"
+    },
+    {
+      "name": "firefox",
+      "from": "154.0-3.fc44",
+      "to": "154.0-5.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "firefox-langpacks",
+      "from": "154.0-3.fc44",
+      "to": "154.0-5.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "greenboot",
+      "from": "0.16.3-0.fc44",
+      "to": "0.16.4-0.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "greenboot-default-health-checks",
+      "from": "0.16.3-0.fc44",
+      "to": "0.16.4-0.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel",
       "from": "7.1.9-200.fc44",
       "to": "7.1.10-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "mise",
-      "from": "2026.8.12-1",
-      "to": "2026.8.14-1",
+      "name": "kernel-core",
+      "from": "7.1.9-200.fc44",
+      "to": "7.1.10-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "perf",
+      "name": "kernel-modules",
       "from": "7.1.9-200.fc44",
       "to": "7.1.10-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules-core",
+      "from": "7.1.9-200.fc44",
+      "to": "7.1.10-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules-extra",
+      "from": "7.1.9-200.fc44",
+      "to": "7.1.10-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-tools",
+      "from": "7.1.9-200.fc44",
+      "to": "7.1.10-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-tools-libs",
+      "from": "7.1.9-200.fc44",
+      "to": "7.1.10-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libcurl-minimal",
+      "from": "8.18.0-8.fc44",
+      "to": "8.18.0-9.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libdeflate",
+      "from": "1.25-3.fc44",
+      "to": "1.26-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libldb",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libopenmpt",
+      "from": "0.8.7-1.fc44",
+      "to": "0.8.9-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libsmbclient",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libwbclient",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mesa-dri-drivers",
+      "from": "26.1.7-1.fc44",
+      "to": "26.1.8-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mesa-filesystem",
+      "from": "26.1.7-1.fc44",
+      "to": "26.1.8-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mesa-libEGL",
+      "from": "26.1.7-1.fc44",
+      "to": "26.1.8-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mesa-libGL",
+      "from": "26.1.7-1.fc44",
+      "to": "26.1.8-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mesa-libgbm",
+      "from": "26.1.7-1.fc44",
+      "to": "26.1.8-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "mesa-vulkan-drivers",
+      "from": "26.1.7-1.fc44",
+      "to": "26.1.8-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "pcp-conf",
+      "from": "7.2.0-2.fc44",
+      "to": "7.2.1-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "pcp-libs",
+      "from": "7.2.0-2.fc44",
+      "to": "7.2.1-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "pcp-selinux-import",
+      "from": "7.2.0-2.fc44",
+      "to": "7.2.1-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-cryptography",
+      "from": "49.0.0-1.fc44",
+      "to": "50.0.0-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-perf",
+      "from": "7.1.9-200.fc44",
+      "to": "7.1.10-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-client",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-client-libs",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-common",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-core-libs",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "samba-ndr-libs",
+      "from": "2:4.24.5-1.fc44",
+      "to": "2:4.24.6-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "selinux-policy",
+      "from": "44.6-1.fc44",
+      "to": "44.7-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "selinux-policy-targeted",
+      "from": "44.6-1.fc44",
+      "to": "44.7-1.fc44",
       "direction": "upgraded"
     }
   ]

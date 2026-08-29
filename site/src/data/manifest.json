@@ -1,17 +1,17 @@
 {
   "image": "pulsar-nvidia",
   "variant": "nvidia-open",
-  "version": "44.20260826.0",
+  "version": "44.20260829.0",
   "base": "fedora-silverblue:44",
-  "built": "2026-08-26T02:10:14Z",
-  "kernel": "7.1.9-200.fc44.x86_64",
+  "built": "2026-08-29T02:12:38Z",
+  "kernel": "7.1.10-200.fc44.x86_64",
   "components": {
     "scheduler": "scx_bpfland",
     "scheduler_btf": "malformed",
     "gamescope": "3.16.25-1.fc44",
     "gamemode": "1.8.2-4.fc44",
     "mangohud": "0.8.3~rc1-2.fc44",
-    "mesa": "26.1.7-1.fc44",
+    "mesa": "26.1.8-1.fc44",
     "gamescale": "v2.0.0"
   },
   "changelog_url": "https://pulsar.arclight.digital/changelog.json",
