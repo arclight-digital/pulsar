@@ -452,20 +452,104 @@ JSON
     [ "$status" -ne 0 ]
 }
 
+LOGO_ART="system_files/usr/share/pulsar/logo.ansi"
+
 @test "every line of the shipped logo has the same visible width" {
     # The info column is pasted at a fixed offset, so one short line shears
     # the whole readout. The art is generated, so this guards the generator.
-    art="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/logo.ansi"
+    art="${BATS_TEST_DIRNAME}/../${LOGO_ART}"
     [ -r "$art" ]
     widths=$(sed $'s/\033\\[[0-9;]*m//g' "$art" | awk '{ print length($0) }' | sort -u | wc -l)
     [ "$widths" -eq 1 ]
 }
 
 @test "the logo is 7-bit ASCII, as a logo called ASCII should be" {
-    art="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/logo.ansi"
+    art="${BATS_TEST_DIRNAME}/../${LOGO_ART}"
     # strip the colour escapes, then assert nothing outside printable ASCII
     run bash -c "sed \$'s/\033\\[[0-9;]*m//g' '$art' | LC_ALL=C grep -qP '[^\\x20-\\x7e]'"
     [ "$status" -ne 0 ]
+}
+
+@test "the logo carries no blank margin, in either direction" {
+    # The SVG pads generously for the glow. In a terminal that padding is not
+    # neutral: the art is drawn at a fixed width and the readout pasted at
+    # that offset, so a blank column on the right is gap nobody chose and one
+    # on the left is indent. This is the invariant behind the trim -- at least
+    # one row must reach the first column and at least one must reach the
+    # last, and the same for the top and bottom rows.
+    art="${BATS_TEST_DIRNAME}/../${LOGO_ART}"
+    plain=$(sed $'s/\033\\[[0-9;]*m//g' "$art")
+    lead=$(awk '{ n = match($0, /[^ ]/); print (n ? n - 1 : 999) }' <<<"$plain" | sort -n | head -1)
+    trail=$(awk '{ s = $0; sub(/ +$/, "", s); print (length(s) ? length($0) - length(s) : 999) }' <<<"$plain" | sort -n | head -1)
+    [ "$lead" -eq 0 ]  || fail "${lead} blank columns on the left"
+    [ "$trail" -eq 0 ] || fail "${trail} blank columns on the right"
+    [ -n "$(head -1 <<<"$plain" | tr -d ' ')" ] || fail "blank first row"
+    [ -n "$(tail -1 <<<"$plain" | tr -d ' ')" ] || fail "blank last row"
+}
+
+@test "the logo is as tall as a readout, so the two end together" {
+    # 19 rows is the point of the 56-column rasterisation: a typical readout is
+    # five header rows, six or seven host rows and seven components, and the
+    # art stopping six rows short of that is what this size exists to fix.
+    [ "$(wc -l < "${BATS_TEST_DIRNAME}/../${LOGO_ART}")" -eq 19 ]
+}
+
+# `pulsar manifest` picks the art size from the REAL terminal width, and a
+# pipe reports none -- so the only way to test the choice is to give it a
+# terminal of a known width. python3 is already a check.sh requirement.
+# Prints the first output line with the colour escapes and the CR stripped.
+manifest_first_line() {
+    # LOGO_DIR pinned at the repo's art: on a machine that has Pulsar
+    # installed the CLI would otherwise read /usr/share/pulsar and test the
+    # art of whatever image is booted rather than the art in this tree.
+    TERM=xterm-256color \
+    PULSAR_LOGO_DIR="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar" \
+    python3 - "$1" "$PULSAR" <<'PYEOF' | sed -e $'s/\033\[[0-9;]*m//g' -e $'s/\r$//' | head -1
+import os, pty, sys, fcntl, termios, struct, select
+cols, pulsar = int(sys.argv[1]), sys.argv[2]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(pulsar, [pulsar, "manifest"])
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 60, cols, 0, 0))
+buf = b""
+while True:
+    try:
+        r, _, _ = select.select([fd], [], [], 20)
+        if not r:
+            break
+        d = os.read(fd, 65536)
+        if not d:
+            break
+        buf += d
+    except OSError:
+        break
+os.waitpid(pid, 0)
+sys.stdout.write(buf.decode("utf-8", "replace"))
+PYEOF
+}
+
+@test "the art is pasted at its own width, with no margin in between" {
+    # 36 columns of art, then the two spaces paste_logo adds, then the first
+    # key. Written as an exact width because the whole point of the trim is
+    # that the offset IS the mark: a regression that reinstates the glow
+    # padding shows up here as a wider prefix, not as a vaguer one.
+    line=$(manifest_first_line 200)
+    [[ "$line" =~ ^.{36}[[:space:]][[:space:]]image ]] || fail "not 36 columns of art: ${line}"
+}
+
+@test "a terminal too narrow for the art gets the readout alone" {
+    # The fit rule keeps art only while it leaves the values 24 columns, so
+    # with this manifest's 9-character key column the mark needs 73.
+    line=$(manifest_first_line 40)
+    [[ "$line" =~ ^image[[:space:]] ]] || fail "art drawn at 40 columns: ${line}"
+}
+
+@test "the trimmed mark is drawn on terminals the untrimmed one lost" {
+    # 80 columns is the case that made the trim worth doing rather than
+    # shipping a second, smaller file: the old 38-wide art needed 79 and the
+    # untrimmed 56-wide one would have needed 97.
+    line=$(manifest_first_line 80)
+    [[ "$line" =~ ^.{36}[[:space:]][[:space:]]image ]] || fail "no art at 80 columns: ${line}"
 }
 
 @test "manifest draws the logo when asked and omits it when told not to" {

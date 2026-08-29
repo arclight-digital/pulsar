@@ -673,7 +673,7 @@ format_rows() {
 # Every line carries exactly the same number of visible characters, so pasting
 # a second column beside it needs no width arithmetic -- and because the ramp
 # is 7-bit, one character is one byte and `${#s}` is honest in any locale.
-LOGO_FILE=${PULSAR_LOGO:-/usr/share/pulsar/logo.ansi}
+LOGO_FILE=${PULSAR_LOGO:-${PULSAR_LOGO_DIR:-/usr/share/pulsar}/logo.ansi}
 
 # fastfetch's shape: art on the left, readout on the right, and whichever
 # column is shorter simply runs out. Suppressed when there is no terminal to

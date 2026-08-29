@@ -116,8 +116,21 @@ echo "  ${S}/pulsar/pulsar-gdm-logo.png (${GDM_LOGO_W}px wide)"
 # The terminal mark for `pulsar manifest`, from the same SVG as everything
 # else. Generated here so it cannot drift from the artwork: a hand-drawn copy
 # was wrong about the shape within a day of being written.
+#
+# --cols is the RASTER width, not the width of the art that comes out: the
+# renderer trims the SVG's blank margin in both directions, so 56 rasterised
+# lands on 19 rows by 36 columns. 19 rows is the point -- that is the height
+# of a typical readout (5 header rows, 6 or 7 host rows, 7 components), so the
+# art and the information end together instead of the mark stopping six rows
+# short of the values beside it.
+#
+# The trim is why this could grow at all. Untrimmed, 56 raster columns meant
+# 56 columns of art, of which 20 were the glow's empty margin -- ten columns
+# of indent on the left and ten of gap before the readout on the right. Cut,
+# the taller mark is NARROWER than the 38 this used to ship, so it is drawn on
+# more terminals than the old one was, not fewer.
 python3 "${REPO}/scripts/render-ascii-logo.py" "${A}/brand/pulsar-mark.svg" \
-        --cols 38 -o "${S}/pulsar/logo.ansi"
+        --cols 56 -o "${S}/pulsar/logo.ansi"
 
 # Plymouth watermark is generated in the lockup section below -- it needs the
 # wordmark font variables, which are defined there.

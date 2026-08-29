@@ -78,29 +78,50 @@ def main():
     if args.cols % 2:
         sys.exit("--cols must be even")
 
+    # Kept as a grid of CELLS rather than joined strings until the trimming is
+    # done. A cell is one coloured character, so a cell is blank iff it is
+    # exactly " " -- which makes "is this column empty" a question that can be
+    # asked at all. On joined lines it cannot: the escapes make column N of the
+    # string and column N of the art different things.
     px = rasterise(args.svg, args.cols)
-    lines = []
-    for row in range(args.cols // 2):
-        line = "".join(cell(px.get((x, row), (0, 0, 0, 0))) for x in range(args.cols))
-        # NOT rstripped: every line keeps exactly `cols` visible characters,
-        # so the column beside it needs no width arithmetic at all
-        lines.append(line + "\033[0m")
+    grid = [[cell(px.get((x, row), (0, 0, 0, 0))) for x in range(args.cols)]
+            for row in range(args.cols // 2)]
 
-    # Drop fully blank leading/trailing rows: the SVG has generous padding for
-    # the glow, and in a terminal that padding is just the readout pushed down.
-    def blank(ln):
-        return not re.sub(r"\033\[[0-9;]*m", "", ln).strip()
+    # Drop fully blank rows AND fully blank columns. The SVG has generous
+    # padding for the glow, and in a terminal that padding is dead space in
+    # both directions: above and below it is the readout pushed down, left and
+    # right it is a margin the mark does not use and a gap between the art and
+    # the values that reads as a layout mistake.
+    #
+    # Columns matter more than rows here. The art is padded to a fixed width
+    # and the readout is pasted at that offset, so every blank column on the
+    # right is a column of gap nobody chose, and every blank column on the
+    # left is indent. Trimming them also makes the art genuinely narrower,
+    # which is what decides whether it is drawn at all on a small terminal.
+    blank_row = lambda r: all(c == " " for c in r)
+    while grid and blank_row(grid[0]):
+        grid.pop(0)
+    while grid and blank_row(grid[-1]):
+        grid.pop()
 
-    while lines and blank(lines[0]):
-        lines.pop(0)
-    while lines and blank(lines[-1]):
-        lines.pop()
+    used = [x for x in range(args.cols) if any(row[x] != " " for row in grid)]
+    if used:
+        # One slice for every row, so the lines stay exactly as wide as each
+        # other -- the invariant the paste depends on survives the trim.
+        lo, hi = used[0], used[-1] + 1
+        grid = [row[lo:hi] for row in grid]
+
+    # NOT rstripped: every line keeps the same number of visible characters,
+    # so the column beside it needs no width arithmetic at all.
+    lines = ["".join(row) + "\033[0m" for row in grid]
 
     text = "\n".join(lines) + "\n"
     if args.out:
         with open(args.out, "w") as fh:
             fh.write(text)
-        print(f"{args.out}: {len(lines)} rows x {args.cols} columns", file=sys.stderr)
+        width = len(grid[0]) if grid else 0
+        print(f"{args.out}: {len(lines)} rows x {width} columns "
+              f"(from --cols {args.cols})", file=sys.stderr)
     else:
         sys.stdout.write(text)
 
