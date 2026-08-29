@@ -29,6 +29,16 @@
 # failed half-install (network died mid-download) converges on the next
 # attempt instead of wedging on "already installed".
 #
+# TWO REMOTES, CHOSEN PER APP. The list's second column names the remote and
+# defaults to flathub when omitted, because the two halves of the list come
+# from different places: the stock Silverblue desktop from Fedora's `fedora`
+# OCI remote, Pulsar's own additions from flathub. Installing the Silverblue
+# set from flathub instead would work and would be wrong -- different builds,
+# a different runtime, and a machine that rebased from Silverblue would then
+# hold two provenances for one app set. The remote is passed through to
+# `flatpak install` and is otherwise not this script's business; both remotes
+# ship as /etc/flatpak/remotes.d files, so neither is added here.
+#
 # The stamp is deliberately success-only, and SUCCESS IS MEASURED, not
 # inferred: every listed app has to be present when the loop finishes, which
 # is not the same as every install command having exited 0. A failed run
@@ -47,23 +57,37 @@ STAMP=${STAMP_DIR}/flatpaks-installed
 # Strip comments and blank lines. An empty result is a broken list, not a
 # quiet no-op: the build asserts the shipped list is non-empty, so hitting
 # this at runtime means someone edited it down to nothing.
-mapfile -t apps < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$LIST")
-[ ${#apps[@]} -gt 0 ] || { echo "flatpak-defaults: ${LIST} lists no apps" >&2; exit 1; }
+mapfile -t specs < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$LIST")
+[ ${#specs[@]} -gt 0 ] || { echo "flatpak-defaults: ${LIST} lists no apps" >&2; exit 1; }
+
+# Split each "<app-id> [remote]" line into the two parallel arrays the loops
+# below walk by index. The trailing `_` swallows anything after the second
+# column rather than folding it into the remote name, so a stray third field
+# is ignored instead of becoming a remote that cannot exist.
+apps=()
+remotes=()
+for spec in "${specs[@]}"; do
+  read -r app remote _ <<<"${spec}"
+  apps+=("${app}")
+  remotes+=("${remote:-flathub}")
+done
 
 # --system scope on both sides, because that is the only scope this installs
 # into. A user-scope copy of the same app is not a conflict and must not be
 # read as one -- it would skip a system-wide default on the strength of one
 # user having it, and stamp as though the default had landed.
 #
-# Snapshotted rather than queried per app: eight apps twice over is sixteen
-# `flatpak list` invocations for one string that changes only when we change
-# it.
+# Snapshotted rather than queried per app: the list is a couple of dozen apps
+# and each is checked twice, which is fifty-odd `flatpak list` invocations for
+# one string that changes only when we change it.
 snapshot=""
 refresh() { snapshot="$(flatpak list --system --app --columns=application 2>/dev/null || true)"; }
 present() { printf '%s\n' "${snapshot}" | grep -Fxq -- "$1"; }
 
 refresh
-for app in "${apps[@]}"; do
+for i in "${!apps[@]}"; do
+  app="${apps[$i]}"
+  remote="${remotes[$i]}"
   if present "${app}"; then
     echo "flatpak-defaults: ${app} is already installed; leaving it alone"
     continue
@@ -71,10 +95,10 @@ for app in "${apps[@]}"; do
   # Not fatal on its own. The verdict is the presence check below, which is
   # the honest question -- an install that failed because something else
   # already provides the app is not a failure of this script.
-  if flatpak install --system --noninteractive --or-update flathub "${app}"; then
-    echo "flatpak-defaults: installed ${app}"
+  if flatpak install --system --noninteractive --or-update "${remote}" "${app}"; then
+    echo "flatpak-defaults: installed ${app} from ${remote}"
   else
-    echo "flatpak-defaults: could not install ${app}" >&2
+    echo "flatpak-defaults: could not install ${app} from ${remote}" >&2
   fi
 done
 

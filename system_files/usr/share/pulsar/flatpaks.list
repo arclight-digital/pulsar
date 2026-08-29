@@ -1,12 +1,59 @@
-# The default Flatpaks. Installed system-wide from the flathub remote, once:
-# by pulsar-flatpaks.service on the first boot that has a network, or by
+# The default Flatpaks. Installed system-wide, once: by
+# pulsar-flatpaks.service on the first boot that has a network, or by
 # `sudo pulsar setup apps` if you would rather watch it happen. After that
 # first success the service never runs again, so removing an app on a
 # running system sticks -- this list is a starting set, not enforced state.
 #
-# One application ID per line; '#' starts a comment. Curation rules: the
-# launchers and daily drivers a fresh install is actually missing, nothing
-# Microsoft-owned, nothing an average boot does not use.
+# FORMAT: one application ID per line, optionally followed by the remote to
+# install it from. The remote defaults to `flathub` when the column is
+# omitted, so every line that predates the second column still means what it
+# always did. Both remotes are shipped as /etc/flatpak/remotes.d files.
+#
+# ORDER MATTERS on a bad network. The script installs top to bottom and a run
+# that dies halfway leaves no stamp and retries, so the set that makes the
+# desktop usable at all is listed FIRST and the gaming stack second. A user
+# staring at a half-installed first boot should be looking at a machine that
+# has a text editor.
+
+# ---------------------------------------------------------------------------
+# The stock Silverblue desktop.
+#
+# Pulsar is Silverblue+, so this is the + being honest about the base it
+# claims. These are the 18 applications a Fedora Silverblue ISO installs by
+# default, from the same `fedora` remote it uses.
+#
+# They are listed rather than inherited because they CANNOT be inherited: the
+# Silverblue container ships /var empty and configures no remotes, so Fedora's
+# defaults exist only in the Anaconda payload of Fedora's own ISO. See
+# etc/flatpak/remotes.d/fedora.flatpakrepo for the whole story. Nothing here
+# is a Pulsar opinion -- it is the base, restored.
+#
+# Nautilus, Firefox and Software are absent on purpose: those three are RPMs
+# in the Silverblue image and are already installed.
+org.gnome.TextEditor            fedora
+org.gnome.Calculator            fedora
+org.gnome.Loupe                 fedora
+org.gnome.Papers                fedora
+org.gnome.NautilusPreviewer     fedora
+org.gnome.Calendar              fedora
+org.gnome.Contacts              fedora
+org.gnome.clocks                fedora
+org.gnome.Weather               fedora
+org.gnome.Maps                  fedora
+org.gnome.Snapshot              fedora
+org.gnome.Characters            fedora
+org.gnome.font-viewer           fedora
+org.gnome.baobab                fedora
+org.gnome.Logs                  fedora
+org.gnome.Connections           fedora
+org.gnome.Extensions            fedora
+org.fedoraproject.MediaWriter   fedora
+
+# ---------------------------------------------------------------------------
+# The + .
+#
+# Curation rules: the launchers and daily drivers a fresh install is actually
+# missing, nothing Microsoft-owned, nothing an average boot does not use.
 
 # launchers -- the out-of-box gap between a fresh image and a playable one
 com.valvesoftware.Steam

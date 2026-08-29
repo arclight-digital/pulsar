@@ -14,6 +14,12 @@
 # decisions: an app that is already present is skipped rather than attempted,
 # one app failing does not stop the others, and the stamp is written only when
 # every listed app is genuinely present afterwards.
+#
+# Since the list grew a second column -- the remote, defaulting to flathub --
+# the stub records the remote it was actually handed rather than assuming one,
+# so "installed from the right remote" is a thing a test can fail on. That
+# matters more than it looks: the Silverblue set has to come from `fedora`,
+# and installing it from flathub would succeed while being wrong.
 
 setup() {
     SCRIPT="${BATS_TEST_DIRNAME}/../scripts/flatpak-defaults.sh"
@@ -28,6 +34,7 @@ setup() {
 com.example.One
 com.example.Two
 com.github.wwmm.easyeffects
+org.example.FromFedora  fedora
 LIST
 }
 
@@ -55,18 +62,21 @@ if [ "$1" = list ]; then
     awk '{print $1}' "$FLATPAK_STATE"
     exit 0
 fi
-# install: the application id is the last argument
-for a in "$@"; do app="$a"; done
+# install: the application id is the last argument, the remote the one
+# before it -- `flatpak install --system ... <remote> <app>`
+prev=; app=
+for a in "$@"; do prev="$app"; app="$a"; done
+remote="$prev"
 if [ -n "$FLATPAK_FAIL_APP" ] && [ "$app" = "$FLATPAK_FAIL_APP" ]; then
-    echo "error: ${app} not found in remote flathub" >&2
+    echo "error: ${app} not found in remote ${remote}" >&2
     exit 1
 fi
 origin=$(awk -v a="$app" '$1 == a {print $2}' "$FLATPAK_STATE")
-if [ -n "$origin" ] && [ "$origin" != flathub ]; then
+if [ -n "$origin" ] && [ "$origin" != "$remote" ]; then
     echo "error: ${app}/x86_64/stable is already installed from remote ${origin}" >&2
     exit 1
 fi
-grep -q "^${app} " "$FLATPAK_STATE" || printf '%s flathub\n' "$app" >> "$FLATPAK_STATE"
+grep -q "^${app} " "$FLATPAK_STATE" || printf '%s %s\n' "$app" "$remote" >> "$FLATPAK_STATE"
 EOF
     chmod +x "${STUB}/flatpak"
     PATH="${STUB}:${PATH}"
@@ -126,7 +136,7 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     run "$SCRIPT"
     [ "$status" -eq 0 ]
     [ -f "$STAMP" ]
-    [[ "$output" == *"3 apps present"* ]]
+    [[ "$output" == *"4 apps present"* ]]
 }
 
 @test "a second run is a no-op that still stamps" {
@@ -138,6 +148,35 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     # Nothing was reinstalled: every line reports the app as already there.
     [[ "$output" == *"com.example.One is already installed"* ]]
     [ -f "$STAMP" ]
+}
+
+@test "an app carrying a remote is installed from that remote, not flathub" {
+    stub_flatpak
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"installed org.example.FromFedora from fedora"* ]]
+    run grep '^org.example.FromFedora ' "$FLATPAK_STATE"
+    [[ "$output" == *"fedora"* ]]
+}
+
+@test "a bare line still means flathub, so old list lines are unchanged" {
+    stub_flatpak
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"installed com.example.One from flathub"* ]]
+    run grep '^com.example.One ' "$FLATPAK_STATE"
+    [[ "$output" == *"flathub"* ]]
+}
+
+@test "the shipped list names only remotes the image actually configures" {
+    remotes=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' \
+        "${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/flatpaks.list" \
+        | awk '{print ($2 == "" ? "flathub" : $2)}' | sort -u)
+    for r in $remotes; do
+        # A remote that is not shipped as a remotes.d file cannot resolve on a
+        # fresh install, and the service would then retry every 120s forever.
+        [ -f "${BATS_TEST_DIRNAME}/../system_files/etc/flatpak/remotes.d/${r}.flatpakrepo" ]
+    done
 }
 
 @test "an empty list is a broken list, not a quiet success" {

@@ -218,6 +218,29 @@ check_flathub() {
     fi
 }
 
+# The other half of the app set. /usr/share/pulsar/flatpaks.list installs the
+# stock Silverblue desktop from Fedora's `fedora` OCI remote, so a system
+# without that remote cannot finish first-boot app setup at all:
+# pulsar-flatpaks.service fails every fedora-remote app, the success-only
+# stamp never lands, and Restart=on-failure retries every 120s indefinitely --
+# the same shape as the cherenkov batch failure, minus anything on screen that
+# says so. Worth a check precisely because the symptom is silence.
+#
+# Matched on the name alone rather than by rebuilding the options column the
+# way check_flathub does. `fedora-testing` is a real remote on some systems
+# and an exact match is the only thing that does not read it as this one.
+check_fedora() {
+    # flatpak's absence is check_flathub's finding to report; saying it twice
+    # in one run is noise, not two findings.
+    have flatpak || return 0
+    if flatpak remotes --columns=name 2>/dev/null | grep -Fxq fedora; then
+        record fedora ok "fedora remote present"
+    else
+        record fedora warn "fedora remote is not configured" \
+               "the stock Silverblue apps cannot install; it ships at /etc/flatpak/remotes.d/fedora.flatpakrepo"
+    fi
+}
+
 # What "locally modified" means, spelled once. These are the origin keys that
 # `rpm-ostree install` and `rpm-ostree override` write, counted on the BOOTED
 # deployment; a missing key is null and `null | length` is 0, so absent and
@@ -281,6 +304,7 @@ cmd_doctor() {
     check_greenboot
     check_nvidia
     check_flathub
+    check_fedora
     check_updates
     check_disk
     if [ "${JSON:-0}" = 1 ]; then

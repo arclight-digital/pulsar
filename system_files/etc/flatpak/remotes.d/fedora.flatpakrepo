@@ -1,0 +1,39 @@
+# The Fedora Flatpak remote, shipped for exactly the reason flathub.flatpakrepo
+# is: a remote added with `flatpak remote-add` lives in /var/lib/flatpak/repo/
+# config, and /var content seeds first boot only, so it never survives a
+# rebase. A remotes.d file lives in /etc, which ostree merges into existing
+# systems too.
+#
+# Why this file exists at all, which is not obvious: the Silverblue CONTAINER
+# does not ship Fedora's default applications, and never did. Read out of
+# quay.io/fedora-ostree-desktops/silverblue:44 directly:
+#
+#   $ ls -A /var/                     -> tmp
+#   $ ls -A /etc/flatpak/remotes.d/   -> (empty)
+#
+# No /var/lib/flatpak, no `fedora` remote, no apps. On a stock Silverblue the
+# whole default app set arrives from ANACONDA's payload during an ISO install,
+# not from the image -- so a machine that rebased onto Pulsar keeps the apps it
+# was installed with and looks fine, while a machine installed from a Pulsar
+# ISO comes up with no calculator, no text editor, no image viewer and no way
+# to get them: the remote they come from is not configured either. That is why
+# this went unnoticed for as long as it did -- every test machine was a rebase.
+#
+# NO GPGKey, deliberately, and it costs nothing. Flatpak marks an oci+https://
+# remote `no-gpg-verify` when no key is supplied, where a stock install's
+# `fedora` remote reads gpg-verify=true. That difference is cosmetic: there is
+# no fedora.trustedkeys.gpg in /var/lib/flatpak/repo on a stock system either
+# -- only flathub's -- so a GPG check on this remote has never had a key to
+# check against, and installs from it demonstrably work. OCI remotes are pinned
+# by manifest digest out of an index fetched over TLS; GPG is not in the path.
+#
+# On a machine that ALREADY has this remote (any rebase), this file changes
+# nothing -- the settings stored in the repo config keep winning, which is the
+# same coexistence flathub.flatpakrepo has had with a stock flathub remote all
+# along.
+[Flatpak Repo]
+Title=Fedora Flatpaks
+Url=oci+https://registry.fedoraproject.org
+Homepage=https://fedoraproject.org/
+Comment=Flatpaks built and signed by the Fedora Project
+Description=The applications a stock Fedora Silverblue installs by default.
