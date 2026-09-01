@@ -96,6 +96,9 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
 RUN for attempt in 1 2 3; do \
       dnf5 download --enablerepo=rpmfusion-nonfree-nvidia-driver \
         --destdir /tmp/akmod-rpm akmod-nvidia-open && break; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
       [ "${attempt}" -lt 3 ] || { echo "akmod-nvidia-open unreachable after 3 attempts" >&2; exit 1; }; \
       echo "attempt ${attempt} failed (rpmfusion nvidia); retrying" >&2; \
       rm -rf /tmp/akmod-rpm; \
