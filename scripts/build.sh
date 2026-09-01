@@ -36,7 +36,10 @@
 #                       the signer's TLS certificate. Required when the URL is
 #                       https: it is self-signed on a VPC address, and the
 #                       build container's CA bundle has never heard of it.
-#   --work DIR          where OCI layouts go; needs several GB
+#   --work DIR          where OCI layouts go; needs several GB. Both this and
+#                       the podman store are checked for free space before the
+#                       build starts; PULSAR_MIN_FREE_GB moves the floor (GB,
+#                       default 10) and 0 turns the check off.
 #   --no-wallpapers     skip the shader render (they are gitignored 4K PNGs,
 #                       so skipping means the image ships without them)
 #   --no-floating-tags  push the version tag ONLY: :latest and :<fedora> in the
@@ -162,6 +165,72 @@ printf '[storage]\ndriver = "%s"\ngraphroot = "%s"\nrunroot = "%s"\n' \
   "${DRIVER}" "${GRAPHROOT}" "${RUNROOT}" > "${STORAGE_CONF}"
 
 say() { printf '\n==> %s\n' "$*"; }
+
+# ---------------------------------------------------------------------------
+# Does the store have anywhere to put an image?
+#
+# Asked here because of how it reads when nobody asks. On 2026-09-01 the build
+# cache volume was at zero free before the build started -- the builder's own
+# log said `(0 free)` at mount -- and the night died three minutes later at
+# STEP 3 with "rpmfusion release RPMs unreachable after 3 attempts". Nothing
+# was wrong with rpmfusion. rpm had said so plainly two lines above, "needs
+# 60KB more space on the / filesystem", inside a retry loop written for slow
+# mirrors and unable to tell one from a full disk. An hour of a maintainer's
+# morning went to the wrong question.
+#
+# The floor is deliberately a floor and not an estimate of what a build needs.
+# Guessing the working set wrong in the other direction refuses builds that
+# would have finished, which is a worse failure than the one being fixed; a
+# filesystem with less than ten gigabytes on it cannot install a package set,
+# let alone rechunk one, so a refusal here is never wrong about that. What
+# runs out mid-build instead is caught by the Containerfile's retry loops,
+# which now name the disk rather than the mirror.
+#
+# Both filesystems, because they are two on a workstation -- the store under
+# $HOME and ${WORK} wherever --work pointed -- and one on a builder, where the
+# cache volume carries both.
+# ---------------------------------------------------------------------------
+MIN_FREE_GB="${PULSAR_MIN_FREE_GB:-10}"
+# A floor that is not a number would fail the comparison below rather than the
+# build, and `[: integer expression expected` is not a thing anyone should have
+# to debug on a build host at three in the morning.
+case "${MIN_FREE_GB}" in
+  *[!0-9]*|"") echo "PULSAR_MIN_FREE_GB is not a whole number of GB: ${MIN_FREE_GB}" >&2; exit 2 ;;
+esac
+
+free_gb()  { df -Pk "$1" 2>/dev/null | awk 'NR==2 { print int($4 / 1048576) }'; }
+mount_of() { df -Pk "$1" 2>/dev/null | awk 'NR==2 { print $NF }'; }
+
+check_space() {
+  [ "${MIN_FREE_GB}" -gt 0 ] || { echo "PULSAR_MIN_FREE_GB=0: not checking free space" >&2; return 0; }
+
+  say "free space"
+  local path free short=no
+  for path in "${GRAPHROOT}" "${WORK}"; do
+    # The second path when both are on one filesystem: reporting the same
+    # number twice under two names reads like two answers agreeing.
+    [ "${path}" = "${WORK}" ] && [ "$(mount_of "${WORK}")" = "$(mount_of "${GRAPHROOT}")" ] && continue
+
+    free="$(free_gb "${path}")"
+    if [ -z "${free}" ]; then
+      # A df that cannot answer is not a full disk, and must not be reported
+      # as one. Say so and carry on: the build's own failure will be honest.
+      echo "  ${path}: cannot read free space; not checking it" >&2
+      continue
+    fi
+    echo "  ${path}: ${free} GB free ($(mount_of "${path}"))"
+    [ "${free}" -lt "${MIN_FREE_GB}" ] && short=yes
+  done
+
+  [ "${short}" = no ] && return 0
+
+  echo "refusing to start a build with less than ${MIN_FREE_GB} GB free." >&2
+  echo "This build cannot finish, and a build that runs out of disk reports it" >&2
+  echo "as whichever mirror it was talking to at the time." >&2
+  echo "Reclaim the store -- podman image prune --all -- or pass a different" >&2
+  echo "floor in PULSAR_MIN_FREE_GB (0 disables the check entirely)." >&2
+  exit 2
+}
 
 # ---------------------------------------------------------------------------
 # Wallpapers are rendered from assets/shaders/pulsar.frag rather than
@@ -462,6 +531,7 @@ process() {
   return 0
 }
 
+check_space
 render_wallpapers
 if [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; then
   build_vanilla

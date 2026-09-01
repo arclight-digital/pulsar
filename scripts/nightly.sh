@@ -45,6 +45,10 @@
 #   PULSAR_CHANNEL              scheduled | manual. REQUIRED -- see below.
 #   PULSAR_FORCE_BUILD          yes to build even when the base image has not
 #                               moved -- see base_moved() below
+#   PULSAR_MIN_FREE_GB          floor build.sh refuses to start under, in GB
+#                               (default 10, 0 disables). A full build cache
+#                               reports itself as whichever mirror the build
+#                               was talking to when the disk ran out.
 #
 # One argument, optional: --base-check answers the base_moved() question and
 # exits without building anything. 0 it would build, 3 it would skip.

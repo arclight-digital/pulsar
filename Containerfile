@@ -32,12 +32,26 @@ ARG FEDORA_VERSION
 # entirely, which is the actual fix -- waiting longer on the same bad mirror
 # just fails slower. Pinning a mirror trades a transient failure for a
 # permanent dependency on someone else's uptime.
+#
+# THE DISK IS CHECKED BEFORE THE MIRROR IS BLAMED, because on 2026-09-01 it
+# was not. The build cache volume had reached zero free -- the builder's log
+# said `(0 free)` at mount, before anything ran -- and rpm said exactly that,
+# "needs 60KB more space on the / filesystem", three times, each time under a
+# line from this loop reading "attempt N failed (mirror)" and then
+# "rpmfusion release RPMs unreachable after 3 attempts". rpmfusion was fine.
+# No retry can add disk, so a full one stops here rather than being reported
+# as somebody else's outage. Every retry loop in both Containerfiles carries
+# the same check for the same reason, and scripts/build.sh refuses to start a
+# build on a filesystem that is already this short.
 # ---------------------------------------------------------------------------
 RUN for attempt in 1 2 3; do \
       dnf5 install -y \
         https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm \
         https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm \
         fedora-repos-archive && break; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
       [ "${attempt}" -lt 3 ] || { echo "rpmfusion release RPMs unreachable after 3 attempts" >&2; exit 1; }; \
       echo "attempt ${attempt} failed (mirror); retrying" >&2; \
       dnf5 clean all >/dev/null 2>&1 || true; \
@@ -72,6 +86,9 @@ RUN for attempt in 1 2 3; do \
       dnf5 install -y 'dnf5-command(copr)' && \
       dnf5 copr enable -y bieszczaders/kernel-cachyos-addons && \
       dnf5 install -y scx-scheds && break; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
       [ "${attempt}" -lt 3 ] || { echo "copr kernel-cachyos-addons unreachable after 3 attempts" >&2; exit 1; }; \
       echo "attempt ${attempt} failed (copr); retrying" >&2; \
       sleep $((attempt * 15)); \
@@ -245,6 +262,9 @@ RUN chmod 0755 /usr/libexec/pulsar/check-scx-btf.sh && \
 # at the same refusal.
 RUN for attempt in 1 2 3; do \
       rpm --import https://mise.jdx.dev/gpg-key.pub && break; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
       [ "${attempt}" -lt 3 ] || { echo "FATAL: could not fetch the mise signing key" >&2; exit 1; }; \
       echo "attempt ${attempt} failed (mise key); retrying" >&2; \
       sleep $((attempt * 15)); \
@@ -256,6 +276,9 @@ RUN for attempt in 1 2 3; do \
       > /etc/yum.repos.d/mise.repo && \
     for attempt in 1 2 3; do \
       dnf5 install -y mise && break; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
       [ "${attempt}" -lt 3 ] || { echo "mise.jdx.dev unreachable after 3 attempts" >&2; exit 1; }; \
       echo "attempt ${attempt} failed (mise repo); retrying" >&2; \
       sleep $((attempt * 15)); \
