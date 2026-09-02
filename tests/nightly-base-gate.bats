@@ -354,3 +354,77 @@ EOF
   check
   [ "$status" -eq 0 ]
 }
+
+
+# ---------------------------------------------------------------------------
+# The argument surface, which until 2026-09-02 discarded anything it did not
+# recognise and carried on as if nothing had been typed.
+#
+# This lives here because --base-check is the only argument there is, and the
+# harness above is already the one that can run nightly.sh without it building
+# anything. The stubs are irrelevant to every test below -- each one must fail
+# before the gate is ever consulted, and asserting that is half the point.
+# ---------------------------------------------------------------------------
+
+# Like check(), for an argument that should never reach the gate.
+refuse() {
+  run --separate-stderr "${NIGHTLY}" "$@"
+}
+
+@test "--manual is refused rather than swallowed into a scheduled build" {
+  # The one that would have published. The channel comes from PULSAR_CHANNEL,
+  # so a discarded --manual leaves CHANNEL=scheduled: a build somebody kicked
+  # off while working takes a number in the published series, moves :latest,
+  # and overwrites the SBOM baseline.
+  export PULSAR_CHANNEL=scheduled
+  refuse --manual
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"there is no --manual flag"* ]]
+  [[ "$stderr" == *"PULSAR_CHANNEL"* ]]
+}
+
+@test "the refusal says where the channel actually comes from" {
+  # Reaching for --manual is reasonable. Being told it does not exist and
+  # nothing else is not.
+  export PULSAR_CHANNEL=scheduled
+  refuse --manual
+  [[ "$stderr" == *"PULSAR_CHANNEL=manual"* ]]
+  [[ "$stderr" == *"spawn-builder.sh --manual"* ]]
+}
+
+@test "a typo of --base-check does not become a full build" {
+  # The nastiest shape of the old behaviour: --base-check is the read-only
+  # question, and one wrong letter turned it into a release.
+  export PULSAR_CHANNEL=scheduled
+  refuse --base-heck
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"unknown argument: --base-heck"* ]]
+  [[ "$stderr" == *"--base-check"* ]]
+}
+
+@test "a second argument is refused even when the first one is good" {
+  export PULSAR_CHANNEL=scheduled
+  refuse --base-check --manual
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"at most one argument"* ]]
+}
+
+@test "the argument it does take still works" {
+  # The guard must not have eaten the only flag there is.
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  check
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"would skip"* ]]
+}
+
+@test "no argument at all is not an error" {
+  # Where the nightly itself lives. It must reach the channel guard rather
+  # than the argument one -- asserted through PULSAR_CHANNEL being unset,
+  # which is the next thing that stops it.
+  unset PULSAR_CHANNEL
+  refuse
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"PULSAR_CHANNEL"* ]]
+  [[ "$stderr" != *"unknown argument"* ]]
+}
