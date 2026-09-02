@@ -110,3 +110,35 @@ build() { run "${BUILD}" --work "${WORK}" "$@"; }
   [[ "$output" == *"not checking free space"* ]]
   [[ "$output" == *"reached build"* ]]
 }
+
+# The ext4 root reserve, which is most of why 2026-08-31 read as a mirror
+# outage rather than a full disk.
+#
+# The build cache volume is ext4 with the default 5% reserve -- about 12 GB on
+# 250 GB -- and that reserve is writable by root and by nobody else. podman
+# runs as root and pulled the whole ~2 GB base image into it quite happily at
+# 02:49, three minutes before rpm, inside the build, checked the number it is
+# actually allowed to use and refused over 124 KB. So df has two answers about
+# this filesystem and only one of them is the one a package manager will act
+# on.
+#
+# In the table below, 1024-blocks minus Used is 12.5 GB of reserve while
+# Available is 0. A check reading the first passes that night; a check reading
+# the second refuses it. That is the entire difference, and it is one awk
+# column wide, so it is asserted rather than left to review.
+stub_df() {
+  cat > "${BIN}/df" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'Filesystem 1024-blocks      Used Available Capacity Mounted on'
+printf '%s\n' '/dev/sda     262144000 249036800         0     100% /var/mnt'
+EOF
+  chmod +x "${BIN}/df"
+}
+
+@test "free space is what a package manager may use, not what the reserve holds" {
+  stub_df
+  PULSAR_MIN_FREE_GB=10 build --no-wallpapers
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"0 GB free"* ]]
+  [[ "$output" == *"refusing to start a build"* ]]
+}
