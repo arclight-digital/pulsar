@@ -44,7 +44,7 @@
 #   PULSAR_PUBLISH              yes (default) | dry-run | no
 #   PULSAR_CHANNEL              scheduled | manual. REQUIRED -- see below.
 #   PULSAR_FORCE_BUILD          yes to build even when the base image has not
-#                               moved -- see base_moved() below
+#                               changed -- see base_moved() below
 #   PULSAR_MIN_FREE_GB          floor build.sh refuses to start under, in GB
 #                               (default 10, 0 disables). A full build cache
 #                               reports itself as whichever mirror the build
@@ -121,6 +121,13 @@ main() {
 # update --check` compares digests: every machine gets a notification and a
 # multi-gigabyte pull for a package set it already has.
 #
+# "That tag has not moved" is the question this asks second, because it is
+# free. It is not the question it means. quay rebuilds and re-pushes
+# silverblue:${FEDORA_VERSION} nightly whether or not a package in it moved,
+# so the tag's digest is new most mornings, its ostree commit is new with it,
+# and a handful of its layers are new around an otherwise identical package
+# set. See base_moved() for what is asked instead.
+#
 # WHAT THIS DOES NOT CATCH, deliberately, because catching it costs the build
 # hour it is trying to save: the packages installed ON TOP of the base can move
 # while the base is static -- scx-scheds from the copr, the rpmfusion bits,
@@ -176,6 +183,20 @@ base_tag_digests() {
   echo "sha256:$(sha256sum < "${raw}" | cut -d' ' -f1)"
 }
 
+# The labels on a registry reference, as JSON. One fetch answers every label
+# on it, which is what the published image is asked for below -- and jq reads
+# a label that is not there as null, where a Go template prints the string
+# `<no value>` and every caller has to know that.
+image_labels() {
+  skopeo inspect --no-tags "docker://$1" 2>/dev/null || true
+}
+
+# One label out of that JSON, empty when it is absent or the fetch failed.
+label_of() {
+  [ -n "$1" ] || return 0
+  jq -r --arg k "$2" '.Labels[$k] // ""' <<<"$1" 2>/dev/null || true
+}
+
 base_moved() {
   # A manual build is somebody asking for this exact tree to be built. It is
   # never about the base, and refusing it because quay is quiet would be
@@ -188,18 +209,15 @@ base_moved() {
   command -v skopeo >/dev/null || { echo "no skopeo; cannot check the base, so building" >&2; return 0; }
   command -v jq >/dev/null || { echo "no jq; cannot read the base index, so building" >&2; return 0; }
 
-  local last
-  # Absent on anything built before build.sh started writing this label, and on
-  # the first push of a new image name. Both mean there is no comparison to be
-  # made, which is not the same as the base being unchanged.
-  last="$(skopeo inspect --no-tags \
-            --format '{{index .Labels "digital.arclight.pulsar.base-digest"}}' \
-            "docker://${IMAGE}:latest" 2>/dev/null || true)"
-  case "${last}" in
-    ""|"<no value>")
-      echo "the published build records no base digest; building" >&2
-      return 0 ;;
-  esac
+  local published last last_input
+  # Absent on anything built before build.sh started writing these labels, and
+  # on the first push of a new image name. Both mean there is no comparison to
+  # be made, which is not the same as the base being unchanged.
+  published="$(image_labels "${IMAGE}:latest")"
+  last="$(label_of "${published}" digital.arclight.pulsar.base-digest)"
+  last_input="$(label_of "${published}" digital.arclight.pulsar.base-inputhash)"
+  [ -n "${last}" ] \
+    || { echo "the published build records no base digest; building" >&2; return 0; }
 
   local -a now=()
   local d
@@ -216,9 +234,45 @@ base_moved() {
       return 1
     fi
   done
-  # Both digests, always: the pair is what makes a wrong answer here legible
-  # the next time somebody reads this log wondering why the night was noisy.
+  # THE DIGEST MOVED. THAT IS STILL NOT A REASON TO BUILD.
+  #
+  # quay rebuilds this tag every night at about 02:10 UTC and pushes the
+  # result whether or not the compose resolved a single different package. A
+  # rebuild of an unchanged package set is a new manifest, a new config, a new
+  # ostree commit and seven new layers out of two hundred and fifty-seven, so
+  # nothing hashed above can tell it apart from a real one. 2026-08-18 and
+  # 2026-08-19 were exactly that pair, and the second was built and published
+  # with a changelog of zeros -- the failure the gate exists to stop, arrived
+  # at through a comparison that was working correctly.
+  #
+  # rpm-ostree writes what the digest cannot say: rpmostree.inputhash is a
+  # hash of the compose's INPUTS, the treefile and the resolved NEVRAs. Two
+  # base images with one input hash have one package set, however far apart
+  # their digests are. Read off the arch instance resolved above, which is the
+  # image this build would pull, and compared against what build.sh recorded
+  # off the image the published build did pull.
+  #
+  # Second, not first, because it costs a fetch the digest comparison does not
+  # -- and only reached on the nights the digest moved, which is most of them.
+  # Fails open with the rest of this function: no recorded hash, no readable
+  # hash, or two hashes that differ all build.
+  local now_input=""
+  if [ -n "${last_input}" ]; then
+    now_input="$(label_of "$(image_labels "${BASE_IMAGE}@${now[0]}")" rpmostree.inputhash)"
+    if [ -n "${now_input}" ] && [ "${now_input}" = "${last_input}" ]; then
+      echo "base ${BASE_IMAGE}:${FEDORA_VERSION} was rebuilt, ${last} -> ${now[0]},"
+      echo "and composed the same packages: rpmostree.inputhash ${now_input}"
+      return 1
+    fi
+  fi
+
+  # Both digests, always, and the input hashes under them: the pairs are what
+  # make a wrong answer here legible the next time somebody reads this log
+  # wondering why the night was noisy.
   echo "base moved: ${last} -> ${now[*]}"
+  if [ -n "${last_input}" ] || [ -n "${now_input}" ]; then
+    echo "  inputhash: ${last_input:-<none recorded>} -> ${now_input:-<unreadable>}"
+  fi
   return 0
 }
 
