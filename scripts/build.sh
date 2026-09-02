@@ -74,6 +74,7 @@ FEDORA_VERSION="${FEDORA_VERSION:-44}"
 # two spellings of the same registry path would be two things to keep in step.
 BASE_IMAGE="${BASE_IMAGE:-quay.io/fedora-ostree-desktops/silverblue}"
 BASE_DIGEST=""
+BASE_INPUTHASH=""
 
 VARIANT=all
 VERSION=""
@@ -283,6 +284,32 @@ build_vanilla() {
                    --format '{{.Digest}}' 2>/dev/null || true)"
   [ -n "${BASE_DIGEST}" ] \
     || echo "NOTE: could not read the base image digest; tomorrow will rebuild blind" >&2
+
+  # AND WHAT THAT DIGEST DOES NOT SAY: whether anything in it changed. quay
+  # rebuilds silverblue:${FEDORA_VERSION} every night and pushes it whether or
+  # not a package moved, so the digest above is a new one most mornings while
+  # the package set inside is byte for byte the one users already run --
+  # 2026-08-18 and 2026-08-19 were two such images, and the second shipped a
+  # changelog of zeros.
+  #
+  # rpm-ostree's input hash is the compose's inputs, the treefile and the
+  # resolved NEVRAs. Equal input hashes mean an identical package set however
+  # far the digest travelled, which is the question the gate is actually
+  # asking. Recorded under our own name rather than read back off the
+  # inherited `rpmostree.inputhash`: that one rides along by accident of the
+  # chunker and describes whatever composed last, and a gate that SKIPS on a
+  # label it does not own is a missed update nobody sees.
+  BASE_INPUTHASH="$(podman image inspect "${BASE_IMAGE}:${FEDORA_VERSION}" \
+                      --format '{{index .Labels "rpmostree.inputhash"}}' 2>/dev/null || true)"
+  # What a Go template prints for a key that is not there. The gate reads an
+  # empty string as "nothing recorded" and builds; it must not read the words
+  # `<no value>` as a hash that simply never matches, which is the same night
+  # spelled less legibly.
+  [ "${BASE_INPUTHASH}" = "<no value>" ] && BASE_INPUTHASH=""
+  if [ -z "${BASE_INPUTHASH}" ]; then
+    echo "NOTE: the base carries no rpmostree.inputhash, so tomorrow's gate has" >&2
+    echo "      only the digest to go on and a rebuilt base will rebuild us" >&2
+  fi
 }
 
 build_nvidia() {
@@ -390,8 +417,13 @@ rechunk() {
   # Vanilla only. The nvidia image derives from vanilla, not from silverblue,
   # so this label would name the wrong base there -- and the gate that reads it
   # reads it off the vanilla image anyway.
-  if [ "${name}" = vanilla ] && [ -n "${BASE_DIGEST}" ]; then
-    run+=(--label "digital.arclight.pulsar.base-digest=${BASE_DIGEST}")
+  if [ "${name}" = vanilla ]; then
+    # Both or either: the gate compares the digest first because it is free,
+    # and the input hash second because it is the one that answers.
+    [ -n "${BASE_DIGEST}" ] \
+      && run+=(--label "digital.arclight.pulsar.base-digest=${BASE_DIGEST}")
+    [ -n "${BASE_INPUTHASH}" ] \
+      && run+=(--label "digital.arclight.pulsar.base-inputhash=${BASE_INPUTHASH}")
   fi
 
   # --previous-build pins the layer plan to what clients already run. The
