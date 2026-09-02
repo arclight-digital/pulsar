@@ -181,11 +181,31 @@ say() { printf '\n==> %s\n' "$*"; }
 #
 # The floor is deliberately a floor and not an estimate of what a build needs.
 # Guessing the working set wrong in the other direction refuses builds that
-# would have finished, which is a worse failure than the one being fixed; a
-# filesystem with less than ten gigabytes on it cannot install a package set,
-# let alone rechunk one, so a refusal here is never wrong about that. What
+# would have finished, which is a worse failure than the one being fixed. What
 # runs out mid-build instead is caught by the Containerfile's retry loops,
 # which now name the disk rather than the mirror.
+#
+# TEN IS KNOWN TO BE TOO LOW, and is held here anyway on purpose, so that the
+# next person to read this does not "fix" it blind. The two images are about
+# 17 GB before intermediates, the OCI layouts and the base, so a volume that
+# was going to run out cannot be caught by a floor of ten -- it catches only a
+# disk with nothing at all left, which is what 2026-08-31 was and is not the
+# general case.
+#
+# It stays until there is a number to move it to. Nothing has ever measured
+# what a build of this actually uses: the builder's reclaim targets 60 GB
+# before it starts, this refuses under 10, and both figures were reasoned to
+# rather than read off anything. Raising it to a guess in between would refuse
+# nights that would have finished -- the failure this file already argues is
+# worse than the one being fixed -- and would refuse them before the low-water
+# line below could report the figure that settles the argument. First
+# completed build, then the number.
+#
+# When it moves it should move in one place. run-build.sh on the builder
+# prints its own message about the cache being full; that message and this
+# refusal describe the same filesystem, and reading them both out of
+# PULSAR_MIN_FREE_GB in /etc/pulsar/build.env is how they stay from drifting
+# into claiming different things about it.
 #
 # Both filesystems, because they are two on a workstation -- the store under
 # $HOME and ${WORK} wherever --work pointed -- and one on a builder, where the
@@ -231,6 +251,50 @@ check_space() {
   echo "Reclaim the store -- podman image prune --all -- or pass a different" >&2
   echo "floor in PULSAR_MIN_FREE_GB (0 disables the check entirely)." >&2
   exit 2
+}
+
+# ---------------------------------------------------------------------------
+# What the build actually used, so the floor above can stop being a number
+# somebody picked.
+#
+# Until this existed there was nothing in any log to pick one FROM. The build
+# reported what it started with and never mentioned disk again, so every
+# argument about the floor was an argument about estimates -- 10 GB because it
+# was safe, 30 GB because 10 was useless, 60 GB because that is what the
+# reclaim targets. The figure that settles it is the LEAST free space the
+# build ever had, and that moment is somewhere in the middle of a rechunk and
+# gone by the time anything prints.
+#
+# Sampled at the phase boundaries rather than continuously: df costs nothing,
+# but sampling inside `podman build` would mean wrapping podman build. The
+# boundaries bracket every expensive step, so the true trough is at worst one
+# phase deeper than what this reports and a floor read off it errs high, which
+# is the direction a floor should err.
+#
+# Measured even when the check is disabled. PULSAR_MIN_FREE_GB=0 turns off the
+# refusal; it is not a request to stop looking.
+# ---------------------------------------------------------------------------
+SPACE_LOW=""
+SPACE_LOW_AT=""
+
+note_space() {
+  local path free
+  for path in "${GRAPHROOT}" "${WORK}"; do
+    free="$(free_gb "${path}")"
+    [ -n "${free}" ] || continue
+    if [ -z "${SPACE_LOW}" ] || [ "${free}" -lt "${SPACE_LOW}" ]; then
+      SPACE_LOW="${free}"
+      SPACE_LOW_AT="$1"
+    fi
+  done
+}
+
+report_space() {
+  [ -n "${SPACE_LOW}" ] || return 0
+  echo
+  echo "disk low-water: ${SPACE_LOW} GB free, after ${SPACE_LOW_AT}"
+  [ "${MIN_FREE_GB}" -gt 0 ] && echo "  floor is ${MIN_FREE_GB} GB (PULSAR_MIN_FREE_GB)"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -564,15 +628,21 @@ process() {
 }
 
 check_space
+note_space "start"
 render_wallpapers
 if [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; then
   build_vanilla
+  note_space "the vanilla build"
   process vanilla "${IMAGE}" vanilla
+  note_space "the vanilla rechunk"
 fi
 if [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; then
   build_nvidia
+  note_space "the nvidia build"
   process nvidia "${IMAGE_NVIDIA}" nvidia
+  note_space "the nvidia rechunk"
 fi
+report_space
 
 echo
 echo "built:"
