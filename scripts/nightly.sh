@@ -51,7 +51,10 @@
 #                               was talking to when the disk ran out.
 #
 # One argument, optional: --base-check answers the base_moved() question and
-# exits without building anything. 0 it would build, 3 it would skip.
+# exits without building anything. 0 it would build, 3 it would skip. Anything
+# else is refused with 2 rather than ignored -- a swallowed --manual builds and
+# publishes as scheduled, which is the one outcome this script is written to
+# prevent.
 #
 # THE CHANNEL IS THE ONE THING THIS SCRIPT WILL NOT GUESS. A scheduled build is
 # the one users pull; a manual build is one a person kicked off while working.
@@ -308,6 +311,49 @@ case "${PULSAR_CHANNEL:-}" in
     exit 2 ;;
   *)
     echo "PULSAR_CHANNEL=${PULSAR_CHANNEL} is not scheduled or manual" >&2
+    exit 2 ;;
+esac
+
+# AN ARGUMENT THIS DOES NOT KNOW IS A STOP, not a shrug. Until it was, every
+# one of them was silently discarded and the run continued as if the operator
+# had typed nothing -- which is the worst available reading of what they meant:
+#
+#   nightly.sh --manual      builds SCHEDULED, because the channel comes from
+#                            PULSAR_CHANNEL and the flag went nowhere. Consumes
+#                            a number in the published series, moves :latest
+#                            and :${FEDORA_VERSION} onto a build somebody
+#                            kicked off while working, and overwrites the SBOM
+#                            baseline the next night diffs against -- the exact
+#                            three things the channel exists to keep apart.
+#   nightly.sh --base-heck   RUNS A FULL BUILD AND PUBLISHES IT, because the
+#                            typo is not --base-check. A misspelled read-only
+#                            question became a release.
+#
+# The header above says the channel is the one thing this script will not
+# guess, and an unset PULSAR_CHANNEL is a hard stop for that reason. Swallowing
+# an argument is the same guess made one layer out, so it gets the same answer.
+# 2, matching the channel guards: a config error rather than a broken run.
+#
+# 2026-09-02: spawn-builder.sh had this bug in its loud form, dying on "unknown
+# argument: --manual", and a manual build could not be triggered at all until
+# it was fixed. This is the quiet form of it, which is worse -- it would have
+# published.
+if [ "$#" -gt 1 ]; then
+  echo "nightly.sh takes at most one argument and got $#: $*" >&2
+  exit 2
+fi
+case "${1:-}" in
+  ""|--base-check) ;;
+  --manual|--scheduled|--channel*)
+    # The flag a person reaches for, named here because reaching for it is
+    # reasonable and the answer is one line away.
+    echo "there is no ${1} flag: the channel is PULSAR_CHANNEL." >&2
+    echo "  a build on this host:  PULSAR_CHANNEL=manual ${0##*/}" >&2
+    echo "  a build on a builder:  spawn-builder.sh --manual, on helios" >&2
+    exit 2 ;;
+  *)
+    echo "unknown argument: ${1}" >&2
+    echo "nightly.sh takes --base-check, or no argument at all." >&2
     exit 2 ;;
 esac
 
