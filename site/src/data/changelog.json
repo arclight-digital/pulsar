@@ -1,17 +1,17 @@
 {
-  "generated": "2026-09-03T02:53:43Z",
+  "generated": "2026-09-04T02:50:24Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:7ef666b164b642bae3517e19bfe20261af868017b8d66443214cc3ac34f0f544",
-    "digest": "sha256:7ef666b164b642bae3517e19bfe20261af868017b8d66443214cc3ac34f0f544"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:c80d3233cc9ef9cd80cba1969dbbfbaf742744a41a721346d3b7395e01fc6498",
     "digest": "sha256:c80d3233cc9ef9cd80cba1969dbbfbaf742744a41a721346d3b7395e01fc6498"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:137e00d1976aae331e52371a1fe61ed11fe6ca128e7f40e96632dadfb8765dd0",
+    "digest": "sha256:137e00d1976aae331e52371a1fe61ed11fe6ca128e7f40e96632dadfb8765dd0"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 48,
+    "upgraded": 29,
     "downgraded": 0,
     "changed": 0
   },
@@ -19,291 +19,177 @@
   "removed": [],
   "changed": [
     {
-      "name": "bind-libs",
-      "from": "32:9.18.50-1.fc44",
-      "to": "32:9.18.50-2.fc44",
+      "name": "exiv2",
+      "from": "0.28.6-3.fc44",
+      "to": "0.28.9-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "bind-utils",
-      "from": "32:9.18.50-1.fc44",
-      "to": "32:9.18.50-2.fc44",
+      "name": "exiv2-libs",
+      "from": "0.28.6-3.fc44",
+      "to": "0.28.9-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "bluez",
-      "from": "5.87-4.fc44",
-      "to": "5.87-6.fc44",
+      "name": "flatpak",
+      "from": "1.18.1-1.fc44",
+      "to": "1.18.2-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "bluez-cups",
-      "from": "5.87-4.fc44",
-      "to": "5.87-6.fc44",
+      "name": "flatpak-libs",
+      "from": "1.18.1-1.fc44",
+      "to": "1.18.2-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "bluez-libs",
-      "from": "5.87-4.fc44",
-      "to": "5.87-6.fc44",
+      "name": "flatpak-selinux",
+      "from": "1.18.1-1.fc44",
+      "to": "1.18.2-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "bluez-obexd",
-      "from": "5.87-4.fc44",
-      "to": "5.87-6.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "bootc",
-      "from": "1.16.9-1.fc44",
-      "to": "1.16.10-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "bubblewrap",
-      "from": "0.11.0-4.fc44",
-      "to": "0.12.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "chrony",
-      "from": "4.8-5.fc44",
-      "to": "4.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "cifs-utils",
-      "from": "7.6-2.fc44",
-      "to": "7.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "cifs-utils-info",
-      "from": "7.6-2.fc44",
-      "to": "7.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "edk2-ovmf",
-      "from": "20260508-8.fc44",
-      "to": "20260812-4.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "edk2-shell-x64",
-      "from": "20260508-8.fc44",
-      "to": "20260812-4.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "expat",
-      "from": "2.8.1-1.fc44",
-      "to": "2.8.3-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "freerdp-libs",
-      "from": "2:3.30.0-1.fc44",
-      "to": "2:3.31.0-1.fc44",
+      "name": "flatpak-session-helper",
+      "from": "1.18.1-1.fc44",
+      "to": "1.18.2-1.fc44",
       "direction": "upgraded"
     },
     {
       "name": "gdk-pixbuf2",
-      "from": "2.44.4-2.fc44",
-      "to": "2.44.6^really2.44.4-2.fc44",
+      "from": "2.44.6^really2.44.4-2.fc44",
+      "to": "2.44.6^really2.44.4-3.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "gtk4",
-      "from": "4.22.4-1.fc44",
-      "to": "4.22.4-2.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "ibus-typing-booster",
-      "from": "2.30.11-1.fc44",
-      "to": "2.31.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kbd",
-      "from": "2.9.0-3.fc44",
-      "to": "2.9.0-4.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kbd-legacy",
-      "from": "2.9.0-3.fc44",
-      "to": "2.9.0-4.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kbd-misc",
-      "from": "2.9.0-3.fc44",
-      "to": "2.9.0-4.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-core",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
+      "name": "gdm",
+      "from": "1:50.2-1.fc44",
+      "to": "1:50.2-2.fc44",
       "direction": "upgraded"
     },
     {
       "name": "kernel-devel",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
+      "from": "7.1.12-200.fc44",
+      "to": "7.1.13-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "kernel-modules",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules-core",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-modules-extra",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-tools",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "kernel-tools-libs",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libwinpr",
-      "from": "2:3.30.0-1.fc44",
-      "to": "2:3.31.0-1.fc44",
+      "name": "libcloudproviders",
+      "from": "0.4.0-1.fc44",
+      "to": "0.4.1-1.fc44",
       "direction": "upgraded"
     },
     {
       "name": "mise",
-      "from": "2026.8.14-1",
-      "to": "2026.9.0-1",
+      "from": "2026.9.0-1",
+      "to": "2026.9.1-1",
       "direction": "upgraded"
     },
     {
-      "name": "nbdkit",
-      "from": "1.48.0-1.fc44",
-      "to": "1.48.1-1.fc44",
+      "name": "nautilus",
+      "from": "50.2.2-2.fc44",
+      "to": "50.3-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "nbdkit-basic-filters",
-      "from": "1.48.0-1.fc44",
-      "to": "1.48.1-1.fc44",
+      "name": "nautilus-extensions",
+      "from": "50.2.2-2.fc44",
+      "to": "50.3-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "nbdkit-basic-plugins",
-      "from": "1.48.0-1.fc44",
-      "to": "1.48.1-1.fc44",
+      "name": "openssl",
+      "from": "1:3.5.7-2.fc44",
+      "to": "1:3.5.8-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "nbdkit-curl-plugin",
-      "from": "1.48.0-1.fc44",
-      "to": "1.48.1-1.fc44",
+      "name": "openssl-devel",
+      "from": "1:3.5.7-2.fc44",
+      "to": "1:3.5.8-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "nbdkit-selinux",
-      "from": "1.48.0-1.fc44",
-      "to": "1.48.1-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "nbdkit-server",
-      "from": "1.48.0-1.fc44",
-      "to": "1.48.1-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "nbdkit-ssh-plugin",
-      "from": "1.48.0-1.fc44",
-      "to": "1.48.1-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "ostree",
-      "from": "2026.3-1.fc44",
-      "to": "2026.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "ostree-libs",
-      "from": "2026.3-1.fc44",
-      "to": "2026.4-1.fc44",
+      "name": "openssl-libs",
+      "from": "1:3.5.7-2.fc44",
+      "to": "1:3.5.8-1.fc44",
       "direction": "upgraded"
     },
     {
       "name": "perf",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "python-pip-wheel",
-      "from": "26.0.1-2.fc44",
-      "to": "26.0.1-3.fc44",
+      "from": "7.1.12-200.fc44",
+      "to": "7.1.13-200.fc44",
       "direction": "upgraded"
     },
     {
       "name": "python3-boto3",
-      "from": "1.43.77-1.fc44",
-      "to": "1.43.79-1.fc44",
+      "from": "1.43.79-1.fc44",
+      "to": "1.43.83-1.fc44",
       "direction": "upgraded"
     },
     {
       "name": "python3-botocore",
-      "from": "1.43.77-1.fc44",
-      "to": "1.43.79-1.fc44",
+      "from": "1.43.79-1.fc44",
+      "to": "1.43.83-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "python3-perf",
-      "from": "7.1.10-200.fc44",
-      "to": "7.1.12-200.fc44",
+      "name": "qt6-filesystem",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "selinux-policy",
-      "from": "44.7-1.fc44",
-      "to": "44.8-1.fc44",
+      "name": "qt6-qtbase",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-2.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "selinux-policy-targeted",
-      "from": "44.7-1.fc44",
-      "to": "44.8-1.fc44",
+      "name": "qt6-qtbase-common",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-2.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "srt-libs",
-      "from": "1.5.6-1.fc44",
-      "to": "1.5.7-1.fc44",
+      "name": "qt6-qtbase-gui",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "qt6-qtdeclarative",
+      "from": "6.11.1-3.fc44",
+      "to": "6.11.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "qt6-qtsvg",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "qt6-qttranslations",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "qt6-qtwayland",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "qt6-qtwayland-adwaita-decoration",
+      "from": "6.11.1-1.fc44",
+      "to": "6.11.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "virtualbox-guest-additions",
+      "from": "7.2.14-1.fc44",
+      "to": "7.2.16-1.fc44",
       "direction": "upgraded"
     }
   ]
