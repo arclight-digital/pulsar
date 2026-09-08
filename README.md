@@ -309,6 +309,10 @@ rootful podman keep separate storage.
 - The nvidia build pulls its akmod from `updates-testing`. Stable's `-open`
   doesn't compile against kernel 7.1 yet; drop the `--enablerepo` once 610
   lands in stable.
+- The nvidia module carries one patch of ours: open-gpu-kernel-modules
+  PR #1286, for the DIFR prefetch deadlock (NVIDIA bug 6696638) that freezes
+  the desktop after resume. `Containerfile.nvidia` phase 2b explains it and
+  says when to drop it; the diff lives in `patches/nvidia-open/`, verbatim.
 - Governor stays `powersave`. On `intel_pstate` with HWP that's correct, not
   slow — use `tuned` profiles to shift behaviour.
 

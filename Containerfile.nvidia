@@ -107,6 +107,85 @@ RUN for attempt in 1 2 3; do \
     rpm -Uvh --nodeps --noscripts /tmp/akmod-rpm/akmod-nvidia-open-*.rpm && \
     rm -rf /tmp/akmod-rpm
 
+# Phase 2b: carry the DIFR deadlock fix into the akmod's source package.
+#
+# The recurring desktop freeze -- gnome-shell in state D forever, GPU idle at
+# P8, no Xid, nothing in the journal -- is a deadlock inside nvidia-modeset
+# (NVIDIA bug 6696638, forum thread 380482). The DIFR prefetch worker
+# (Display Idle Frame Refresh, the laptop feature that prefetches scanout
+# into L2) spins in nvWriteGpEntry waiting for a GPFIFO entry that never
+# frees, holding the nvkms lock, while the compositor's next ADDFB2 ioctl
+# waits on that lock. Every capture so far has been post-resume. 610.57.04
+# is the newest driver and its DIFR and push code is byte-identical back to
+# 595, so no version on either side is a fix, and there is no module
+# parameter or registry key that turns DIFR off. Caught live on 2026-09-08
+# by the shell-hang watchdog, both stacks.
+#
+# The fix is open-gpu-kernel-modules PR #1286: bound the spin with the short
+# notifier timeout and yield, and reallocate the DIFR push channel after a
+# copy-engine fault instead of leaking its GPFIFO entries. Vendored verbatim
+# at patches/nvidia-open/; diff it against
+# https://patch-diff.githubusercontent.com/raw/NVIDIA/open-gpu-kernel-modules/pull/1286.diff
+# to confirm it has not been touched. DROP THIS PHASE once a driver release
+# contains the fix. The assertion below says when the patch stops applying,
+# but a release that merged the same change under different text fails the
+# same way, so read the release notes before rebasing the patch.
+#
+# Mechanically: the spec already carries one patch (Patch0, rpmfusion's
+# driver defaults) applied in %prep against the %setup -c directory
+# open-gpu-kernel-modules-%{version}. Ours goes in as Patch1 in the same
+# shape, right after the %endif that closes Patch0's %if -- outside it, so it
+# applies whether or not the build asks for stock defaults -- and the src.rpm
+# is rebuilt in place. akmodsbuild in phase 3 applies it in %prep, and
+# rpmbuild refuses a patch that no longer applies, so a driver bump that
+# moves the code fails the build in its first minute rather than shipping an
+# unpatched module.
+#
+# Both patches are applied to the extracted tree here first, exactly as
+# %prep will -- -F0 included, because rpm's %patch runs with fuzz 0 while
+# bare patch tolerates two mismatched context lines, and a precheck looser
+# than the real thing is worse than none -- so the failure names the patch
+# and what to do about it instead of leaving that to a Hunk FAILED forty
+# lines into kmodtool's output. The spec is grepped for the exact Patch0 line
+# the sed anchors on, so a spec that changed shape stops the build rather
+# than getting a Patch1 that is declared and never applied.
+#
+# A bind mount, not COPY: the diff ends up inside the src.rpm, and nothing
+# else needs to end up in a layer.
+RUN --mount=type=bind,source=patches/nvidia-open,target=/run/nvidia-patches \
+    set -eu; \
+    P=pr1286-difr-gpfifo-timeout.diff; \
+    SRPM=$(readlink -f /usr/src/akmods/nvidia-open-kmod.latest); \
+    test -f "${SRPM}" || { echo "FATAL: nothing behind /usr/src/akmods/nvidia-open-kmod.latest"; exit 1; }; \
+    V=$(rpm -qp --qf '%{VERSION}' "${SRPM}"); \
+    W=/tmp/akmod-srpm; rm -rf "${W}"; mkdir -p "${W}/out" "${W}/rpmbuild"; cd "${W}"; \
+    rpm2cpio "${SRPM}" | cpio -idm --quiet; \
+    grep -qx '%patch -P0 -p1 -d open-gpu-kernel-modules-%{version}' nvidia-open-kmod.spec || \
+      { echo "FATAL: nvidia-open-kmod.spec no longer applies Patch0 the way phase 2b anchors on; re-read the spec"; exit 1; }; \
+    tar xzf "open-gpu-kernel-modules-${V}.tar.gz"; \
+    patch -s -F0 -p1 -d "open-gpu-kernel-modules-${V}" < set_driver_defaults.patch; \
+    patch -s -F0 -p1 -d "open-gpu-kernel-modules-${V}" < "/run/nvidia-patches/${P}" || \
+      { echo "FATAL: ${P} (PR 1286, NVIDIA bug 6696638) no longer applies to nvidia-open ${V}."; \
+        echo "       Either this release contains the fix -- drop phase 2b -- or the code moved and"; \
+        echo "       the patch needs rebasing. Refusing to ship an unpatched module by accident."; exit 1; }; \
+    rm -rf "open-gpu-kernel-modules-${V}"; \
+    install -m 0644 "/run/nvidia-patches/${P}" .; \
+    sed -i -e "/^Patch0:/a Patch1:        ${P}" \
+           -e '/^%patch -P0 /,/^%endif/{/^%endif/a %patch -P1 -p1 -d open-gpu-kernel-modules-%{version}' \
+           -e '}' nvidia-open-kmod.spec; \
+    [ "$(grep -c '^Patch1:' nvidia-open-kmod.spec)" = 1 ] && \
+    [ "$(grep -c '^%patch -P1 ' nvidia-open-kmod.spec)" = 1 ] || \
+      { echo "FATAL: Patch1 did not land in the spec exactly once:"; grep -n 'Patch\|%patch' nvidia-open-kmod.spec; exit 1; }; \
+    rpmbuild -bs --define "_topdir ${W}/rpmbuild" --define "_sourcedir ${W}" \
+                 --define "_srcrpmdir ${W}/out" nvidia-open-kmod.spec; \
+    NEW=$(ls "${W}"/out/nvidia-open-kmod-*.src.rpm); \
+    rpm -qpl "${NEW}" | grep -qx "${P}" || { echo "FATAL: rebuilt src.rpm does not contain ${P}"; exit 1; }; \
+    rm -f /usr/src/akmods/nvidia-open-kmod-*.src.rpm; \
+    install -m 0644 "${NEW}" /usr/src/akmods/; \
+    ln -sfn "$(basename "${NEW}")" /usr/src/akmods/nvidia-open-kmod.latest; \
+    cd /; rm -rf "${W}"; \
+    echo "akmod src.rpm rebuilt with ${P} as Patch1"
+
 # Phase 3: build and sign, as the akmods user.
 #
 # The private key is NOT here. It stays on the signer host; this build sends
