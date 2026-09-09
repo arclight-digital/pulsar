@@ -33,6 +33,20 @@ ARG FEDORA_VERSION
 # just fails slower. Pinning a mirror trades a transient failure for a
 # permanent dependency on someone else's uptime.
 #
+# THE LAST ATTEMPT GOES TO THE ORIGIN, because on 2026-09-09 the redirector
+# never landed anywhere else. All three attempts were handed the same two
+# hosts -- mirror.fcix.net timing out, repos.eggycrew.com not resolving --
+# while Fedora's own repos, stalled on the same fcix box, walked their
+# metalink and recovered. The difference is structural: the repo files
+# rpmfusion ships locate packages through a metalink that librepo fails over
+# across, but the release RPM itself is a bare URL, and mirrors.rpmfusion.org
+# answers a bare URL with ONE GeoIP redirect. There is no pool to re-resolve
+# into; a retry through the redirector is the same bad mirror with a pause.
+# download1.rpmfusion.org is not a mirror in that pool but the origin the pool
+# syncs from -- the host rpmfusion's own repo file names as its baseurl -- so
+# it is the documented alternative, reached last so that a nightly build does
+# not lean on the origin when the pool is fine.
+#
 # THE DISK IS CHECKED BEFORE THE MIRROR IS BLAMED, because on 2026-09-01 it
 # was not. The build cache volume had reached zero free -- the builder's log
 # said `(0 free)` at mount, before anything ran -- and rpm said exactly that,
@@ -45,15 +59,17 @@ ARG FEDORA_VERSION
 # build on a filesystem that is already this short.
 # ---------------------------------------------------------------------------
 RUN for attempt in 1 2 3; do \
+      host=mirrors.rpmfusion.org; \
+      [ "${attempt}" -lt 3 ] || host=download1.rpmfusion.org; \
       dnf5 install -y \
-        https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm \
-        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm \
+        "https://${host}/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
+        "https://${host}/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm" \
         fedora-repos-archive && break; \
       free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
       [ "${free_kb:-0}" -gt 262144 ] || \
         { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
-      [ "${attempt}" -lt 3 ] || { echo "rpmfusion release RPMs unreachable after 3 attempts" >&2; exit 1; }; \
-      echo "attempt ${attempt} failed (mirror); retrying" >&2; \
+      [ "${attempt}" -lt 3 ] || { echo "rpmfusion release RPMs unreachable after 3 attempts, the last at the origin ${host}" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (${host}); retrying" >&2; \
       dnf5 clean all >/dev/null 2>&1 || true; \
       sleep $((attempt * 15)); \
     done && \
