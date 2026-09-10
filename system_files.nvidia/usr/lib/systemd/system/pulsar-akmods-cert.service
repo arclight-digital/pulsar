@@ -1,0 +1,23 @@
+# Puts the cert that signed the nvidia module where GNOME Software's Secure
+# Boot prompt looks for it. The whole story is in the script's header; the
+# short version is that the prompt enrols /etc/pki/akmods/certs/public_key.der,
+# and on a host that predates this unit that file is a decoy akmods-keygen
+# generated, so the prompt enrols a key nothing was signed with and reports
+# success. Every boot, not just once, because the ostree /etc merge keeps a
+# locally created file over the image's copy.
+#
+# Before the akmods key generator, so the placeholder private key is in place
+# before it looks for one, and before the display manager, so the file is
+# right by the time GNOME Software runs its test.
+[Unit]
+Description=Hand the Pulsar signing cert to GNOME Software's MOK prompt
+Documentation=file:///usr/libexec/pulsar/akmods-cert.sh
+ConditionPathExists=/etc/pki/pulsar/MOK.der
+Before=akmods-keygen@akmods-keygen.service akmods-keygen.target display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/akmods-cert.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -200,7 +200,7 @@ sudo bootc switch ghcr.io/arclight-digital/pulsar:latest
 sudo systemctl reboot
 ```
 
-Enroll the key. `mokutil` asks for a password you'll retype at the firmware
+Enrol the key. `mokutil` asks for a password you'll retype at the firmware
 screen on the next boot — used once, then never again:
 
 ```bash
@@ -221,8 +221,16 @@ sudo systemctl reboot
 
 Check it: `modinfo -F signer nvidia` and `nvidia-smi`.
 
-Miss the MokManager prompt and nothing breaks — the enrollment just doesn't
+Miss the MokManager prompt and nothing breaks — the enrolment just doesn't
 happen. Run `mokutil --import` again.
+
+**Lost the key later?** A BIOS update can clear the whole MOK list (a Lenovo
+one did, on 2026-09-10). On the nvidia image the recovery is GNOME Software's
+own Secure Boot prompt: it enrols `/etc/pki/akmods/certs/public_key.der`, and
+`pulsar-akmods-cert.service` keeps that file equal to `MOK.der` on every boot,
+so the prompt enrols the right key. Before that unit existed the path held a
+key akmods-keygen had generated locally, nothing was signed with it, and the
+prompt enrolled it, reported success, and left the driver rejected.
 
 ## Updates
 

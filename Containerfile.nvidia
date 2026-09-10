@@ -402,6 +402,30 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     lsinitrd /usr/lib/modules/${KV}/initramfs.img | grep -q ostree-prepare-root || \
       { echo "FATAL: initramfs is missing ostree-prepare-root; the image cannot switch root"; exit 1; }
 
+# Phase 6: the cert GNOME Software enrols.
+#
+# GNOME Software's Secure Boot prompt (gnome-software-dkms-helper) tests and
+# enrols exactly one file, /etc/pki/akmods/certs/public_key.der. Phase 3
+# deleted that file after signing, so on a booted host akmods-keygen fills
+# the gap with a key nothing ever signs with, and the prompt enrols THAT. It
+# reported success on 2026-09-10 after a BIOS update cleared the MOK list,
+# and the driver stayed rejected. The script puts MOK.der at that path with
+# a placeholder private key beside it; the unit repeats it every boot,
+# because the ostree /etc merge keeps a locally created file over the
+# image's copy, and every host older than this phase has the decoy.
+#
+# After the overlay, because the unit it enables ships in system_files.nvidia.
+# Phase 5 already proved MOK.der matches the module's signer, so the cmp is
+# the whole verification: the helper's path now holds the cert phase 5 checked.
+COPY scripts/akmods-cert.sh /usr/libexec/pulsar/akmods-cert.sh
+RUN chmod 0755 /usr/libexec/pulsar/akmods-cert.sh && \
+    /usr/libexec/pulsar/akmods-cert.sh && \
+    { cmp -s /etc/pki/pulsar/MOK.der /etc/pki/akmods/certs/public_key.der || \
+      { echo "FATAL: /etc/pki/akmods/certs/public_key.der is not MOK.der; GNOME Software would enrol the wrong cert"; exit 1; }; } && \
+    systemctl enable pulsar-akmods-cert.service && \
+    { grep -qx "enable pulsar-akmods-cert.service" /usr/lib/systemd/system-preset/50-pulsar-nvidia.preset || \
+      { echo "FATAL: pulsar-akmods-cert.service is enabled here but missing from the nvidia preset; a full preset-all would disable it"; exit 1; }; }
+
 # Same rule as the base image: /var is machine-local, ship it empty (plus
 # the same sticky /var/tmp the base restores -- see Containerfile).
 RUN dnf5 clean all && \

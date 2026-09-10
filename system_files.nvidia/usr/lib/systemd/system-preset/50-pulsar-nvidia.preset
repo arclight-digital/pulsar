@@ -1,0 +1,5 @@
+# The nvidia variant's counterpart of 50-pulsar.preset, under the same rules:
+# presets are policy, not symlinks. The enablement itself is written by the
+# finalize step in Containerfile.nvidia, which asserts this list agrees with
+# it, so a full `systemctl preset-all` cannot quietly disarm the unit.
+enable pulsar-akmods-cert.service
