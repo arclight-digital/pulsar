@@ -1,149 +1,211 @@
 {
-  "generated": "2026-09-09T22:22:35Z",
+  "generated": "2026-09-11T02:54:16Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:5dab9bcb5b7e1ab8eebd600f0484af5a9a7ea1746852ad4369e27df903509175",
-    "digest": "sha256:5dab9bcb5b7e1ab8eebd600f0484af5a9a7ea1746852ad4369e27df903509175"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:61e9301c627b84c26661976610e949eccba2ff70f86cb17d8bc74175caf46b0c",
     "digest": "sha256:61e9301c627b84c26661976610e949eccba2ff70f86cb17d8bc74175caf46b0c"
   },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:1f07b933637b282cbba3831cfecc2c47876a97ba850b9f444d23a1f718dba994",
+    "digest": "sha256:1f07b933637b282cbba3831cfecc2c47876a97ba850b9f444d23a1f718dba994"
+  },
   "summary": {
-    "added": 2,
+    "added": 1,
     "removed": 1,
-    "upgraded": 19,
+    "upgraded": 30,
     "downgraded": 0,
     "changed": 0
   },
   "added": [
     {
-      "name": "libdnf5-plugin-systemd-inhibit",
-      "version": "5.4.4.0-1.fc44"
-    },
-    {
-      "name": "wlroots",
-      "version": "0.20.2-1.fc44"
+      "name": "libbabeltrace2",
+      "version": "2.1.2-5.fc44"
     }
   ],
   "removed": [
     {
-      "name": "wlroots0.19",
-      "version": "0.19.3-1.fc44"
+      "name": "libbabeltrace",
+      "version": "1.5.11-17.fc44"
     }
   ],
   "changed": [
     {
-      "name": "dnf5",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "dracut",
+      "from": "108-7.fc44",
+      "to": "108-8.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "dnf5-plugins",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "edk2-ovmf",
+      "from": "20260812-4.fc44",
+      "to": "20260812-8.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "dnf5daemon-server",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "edk2-shell-x64",
+      "from": "20260812-4.fc44",
+      "to": "20260812-8.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "dnf5daemon-server-polkit",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "hwdata",
+      "from": "0.410-1.fc44",
+      "to": "0.411-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "gamescope",
-      "from": "3.16.25-1.fc44",
-      "to": "3.16.28-1.fc44",
+      "name": "kernel",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libdnf5",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "kernel-core",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libdnf5-cli",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "kernel-devel",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libdnf5-plugin-appstream",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "kernel-headers",
+      "from": "7.1.3-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libdnf5-plugin-expired-pgp-keys",
-      "from": "5.4.3.0-2.fc44",
-      "to": "5.4.4.0-1.fc44",
+      "name": "kernel-modules",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "librepo",
-      "from": "1.21.0-1.fc44",
-      "to": "1.21.0-2.fc44",
+      "name": "kernel-modules-core",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libsoup3",
-      "from": "3.6.6-9.fc44",
-      "to": "3.6.6-10.fc44",
+      "name": "kernel-modules-extra",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libtirpc",
-      "from": "1.3.7-2.fc44",
-      "to": "1.3.7-2.rc1.fc44",
+      "name": "kernel-tools",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libwmf-lite",
-      "from": "0.2.13-9.fc44",
-      "to": "0.2.16-1.fc44",
+      "name": "kernel-tools-libs",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libchewing",
+      "from": "0.13.1-1.fc44",
+      "to": "0.13.1-4.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libevent",
+      "from": "2.1.12-17.fc44",
+      "to": "2.1.13-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libibverbs",
+      "from": "61.0-2.fc44",
+      "to": "61.1^20260812git975bdaf-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "librdmacm",
+      "from": "61.0-2.fc44",
+      "to": "61.1^20260812git975bdaf-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libselinux",
+      "from": "3.11-1.fc44",
+      "to": "3.11-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libselinux-utils",
+      "from": "3.11-1.fc44",
+      "to": "3.11-2.fc44",
       "direction": "upgraded"
     },
     {
       "name": "mise",
-      "from": "2026.9.1-1",
-      "to": "2026.9.3-1",
+      "from": "2026.9.3-1",
+      "to": "2026.9.5-1",
       "direction": "upgraded"
     },
     {
-      "name": "python3-boto3",
-      "from": "1.43.83-1.fc44",
-      "to": "1.43.88-1.fc44",
+      "name": "msgraph",
+      "from": "0.3.4-5.fc44",
+      "to": "0.3.5-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "python3-botocore",
-      "from": "1.43.83-1.fc44",
-      "to": "1.43.88-1.fc44",
+      "name": "openvpn",
+      "from": "2.7.6-1.fc44",
+      "to": "2.7.7-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "qatlib",
-      "from": "26.02.0-2.fc44",
-      "to": "26.08.0-1.fc44",
+      "name": "perf",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "qatlib-service",
-      "from": "26.02.0-2.fc44",
-      "to": "26.08.0-1.fc44",
+      "name": "python3-libselinux",
+      "from": "3.11-1.fc44",
+      "to": "3.11-2.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-perf",
+      "from": "7.1.13-200.fc44",
+      "to": "7.2.4-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "rdma-core-common",
+      "from": "61.0-2.fc44",
+      "to": "61.1^20260812git975bdaf-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "rpm-sequoia",
+      "from": "1.10.2-4.fc44",
+      "to": "1.10.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "rsync",
+      "from": "3.5.0-1.fc44",
+      "to": "3.5.0-2.fc44",
       "direction": "upgraded"
     },
     {
       "name": "scx-tools-git",
-      "from": "1.1.2.20260819.1.git.368845e-1.fc44",
-      "to": "1.1.3.20260905.1.git.368845e-1.fc44",
+      "from": "1.1.3.20260905.1.git.368845e-1.fc44",
+      "to": "1.1.3.20260909.1.git.30e64eb-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "tar",
+      "from": "2:1.35-8.fc44",
+      "to": "2:1.35-9.fc44",
       "direction": "upgraded"
     }
   ]
