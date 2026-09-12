@@ -1,5 +1,6 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import sitemap from '@astrojs/sitemap';
 import arcDsd from './integrations/arc-dsd.mjs';
 
 // Static output. The deploy target is an assets-only Cloudflare Worker (see
@@ -13,8 +14,27 @@ import arcDsd from './integrations/arc-dsd.mjs';
 export default defineConfig({
   site: 'https://pulsar.arclight.digital',
   output: 'static',
-  integrations: [arcDsd()],
+  // Slash-less URLs, everywhere they appear: the nav, the canonical tags, the
+  // sitemap, and what the CDN serves. `format: 'file'` writes install.html
+  // rather than install/index.html, and the Worker's auto-trailing-slash
+  // then serves /install and redirects /install/ to it -- instead of the
+  // reverse, which had every canonical pointing at a redirect.
+  trailingSlash: 'never',
+  integrations: [
+    arcDsd(),
+    sitemap({
+      // the home page and the changelog change every night; the rest when
+      // the repo does
+      serialize: (item) => {
+        const path = new URL(item.url).pathname;
+        item.changefreq = path === '/' || path === '/changelog' ? 'daily' : 'weekly';
+        item.priority = path === '/' ? 1 : path === '/install' ? 0.9 : 0.7;
+        return item;
+      },
+    }),
+  ],
   build: {
+    format: 'file',
     // One site that is mostly CSS. Inlining the small sheets would scatter the
     // brand tokens across <style> tags and lose the cache on every deploy.
     inlineStylesheets: 'never',

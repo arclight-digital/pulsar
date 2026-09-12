@@ -22,9 +22,11 @@ interface Props {
   path?: string;
   /** the home page opens on the shader; its bar is transparent until scrolled */
   immersive?: boolean;
+  /** extra JSON-LD objects for this page, merged into the graph */
+  jsonLd?: Record<string, unknown>[];
 }
 
-const { title, description, ogTitle = title, path = '/', immersive = false } = Astro.props;
+const { title, description, ogTitle = title, path = '/', immersive = false, jsonLd = [] } = Astro.props;
 
 // Absolute, always: crawlers resolve nothing relative.
 const canonical = new URL(path, Astro.site).href;
@@ -35,22 +37,51 @@ const ogImage = new URL('/og.jpg', Astro.site).href;
 
 // Structured data, honest only: everything here is real and verifiable, and
 // softwareVersion names the build the nightly actually published.
-const structuredData = {
-  '@context': 'https://schema.org',
+const home = new URL('/', Astro.site).href;
+const app = {
   '@type': 'SoftwareApplication',
+  '@id': `${home}#pulsar`,
   name: 'Pulsar',
   applicationCategory: 'OperatingSystem',
   operatingSystem: 'Linux',
   softwareVersion: version,
   description:
     'An immutable Fedora spin tuned for gaming and development, built and signed in CI, published nightly with SBOMs and provenance attestations.',
-  url: new URL('/', Astro.site).href,
+  url: home,
   image: ogImage,
   downloadUrl: 'https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso',
   license: 'https://github.com/arclight-digital/pulsar/blob/main/LICENSE',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
   author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
   sameAs: ['https://github.com/arclight-digital/pulsar'],
+};
+
+const site = {
+  '@type': 'WebSite',
+  '@id': `${home}#site`,
+  name: 'Pulsar',
+  url: home,
+  publisher: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+};
+
+// Inner pages get a breadcrumb back to the home page, which is also how the
+// result snippet learns the site's structure.
+const breadcrumbs =
+  path === '/'
+    ? []
+    : [
+        {
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'Pulsar', item: home },
+            { '@type': 'ListItem', position: 2, name: title.split(' — ')[0], item: canonical },
+          ],
+        },
+      ];
+
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [site, app, ...breadcrumbs, ...jsonLd],
 };
 ---
 
@@ -64,6 +95,7 @@ const structuredData = {
     <link rel="canonical" href={canonical} />
 
     <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:site_name" content="Pulsar" />
     <meta property="og:title" content={ogTitle} />
     <meta property="og:description" content={description} />
@@ -76,6 +108,9 @@ const structuredData = {
       content="The Pulsar mark and wordmark over the silk wallpaper: your lighthouse in the sky."
     />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={ogTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
 
     <meta name="theme-color" content="#0B0E1A" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#E9EDF7" media="(prefers-color-scheme: light)" />

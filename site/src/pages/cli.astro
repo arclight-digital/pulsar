@@ -38,17 +38,25 @@ const USAGE = [
 
 const usage = USAGE.join('\n');
 
+const JSONLD = [
+  {
+    '@type': 'TechArticle',
+    headline: 'The pulsar command',
+    description: DESCRIPTION,
+    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
+    author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+  },
+];
 const DEVBOX = 'pulsar setup devbox    # distrobox assemble from /usr/share/pulsar/distrobox.ini';
 ---
 
-<Base title="The pulsar command" description={DESCRIPTION} path="/cli">
+<Base title="The pulsar command — Pulsar’s CLI, explained" description={DESCRIPTION} path="/cli" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
-      <arc-page-header
-        border
-        heading="The pulsar command"
-        description="One command for the questions you actually ask an immutable system: what is this, is it healthy, what changed, and can I prove it."
-      ></arc-page-header>
+      <arc-page-header border>
+        <h1 slot="heading">The pulsar command</h1>
+        <p slot="description">One command for the questions you actually ask an immutable system: what is this, is it healthy, what changed, and can I prove it.</p>
+      </arc-page-header>
 
       <section class="chapter">
         <arc-code-block class="theme-fixed-dark usage" filename="pulsar --help" code={usage}></arc-code-block>

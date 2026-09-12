@@ -6,17 +6,25 @@ import { IMAGES, REPO } from '../data/site';
 const DESCRIPTION =
   'Every Pulsar image carries SLSA provenance and an SPDX SBOM. The builder never holds the signing keys. Verify any image from any machine you already trust.';
 
+const JSONLD = [
+  {
+    '@type': 'TechArticle',
+    headline: 'Every Pulsar image has a paper trail',
+    description: DESCRIPTION,
+    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
+    author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+  },
+];
 const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
 ---
 
-<Base title="Provenance — every Pulsar image has a paper trail" description={DESCRIPTION} path="/provenance">
+<Base title="Provenance — every Pulsar image has a paper trail" description={DESCRIPTION} path="/provenance" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
-      <arc-page-header
-        border
-        heading="Every image has a paper trail"
-        description="The machine that runs Pulsar never compiles anything. An ephemeral build host builds, signs, and attests every image nightly, and the keys that matter never touch it."
-      ></arc-page-header>
+      <arc-page-header border>
+        <h1 slot="heading">Every image has a paper trail</h1>
+        <p slot="description">The machine that runs Pulsar never compiles anything. An ephemeral build host builds, signs, and attests every image nightly, and the keys that matter never touch it.</p>
+      </arc-page-header>
 
       <section class="chapter">
         <Pipeline />

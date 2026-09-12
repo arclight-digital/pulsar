@@ -11,12 +11,25 @@ const DESCRIPTION =
 
 const lead = digest.lead;
 const extra = lead ? lead.members.length - 1 : 0;
+
+// The one page whose freshness is a fact the build knows: the diff's own stamp.
+const JSONLD = [
+  {
+    '@type': 'WebPage',
+    name: `What changed in Pulsar ${version}`,
+    description: DESCRIPTION,
+    dateModified: changelog.generated,
+    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
+  },
+];
 ---
 
-<Base title={`Changelog — Pulsar ${version}`} description={DESCRIPTION} path="/changelog">
+<Base title={`Changelog — what changed in Pulsar ${version}`} description={DESCRIPTION} path="/changelog" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
-      <arc-page-header border heading="What changed last night" description="Every build is diffed against the one before it, package by package, from the SBOMs attached to the images themselves.">
+      <arc-page-header border>
+        <h1 slot="heading">What changed last night</h1>
+        <p slot="description">Every build is diffed against the one before it, package by package, from the SBOMs attached to the images themselves.</p>
         <arc-badge slot="aside" variant="primary" class="mono">{version}</arc-badge>
       </arc-page-header>
 

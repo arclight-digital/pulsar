@@ -7,14 +7,25 @@ const DESCRIPTION =
 
 const FLATPAK_ERR =
   '$ flatpak run --command=sh --filesystem=/usr/bin/gamescale:ro com.valvesoftware.Steam\nF: Not sharing "/usr/bin/gamescale" with sandbox: Path "/usr" is reserved by Flatpak';
+const JSONLD = [
+  {
+    '@type': 'TechArticle',
+    headline: 'gamescale',
+    description: DESCRIPTION,
+    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
+    author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+  },
+];
 const SETUP = 'pulsar setup gamescale --platform steam';
 ---
 
-<Base title="gamescale — the panel’s real resolution, for one game at a time" description={DESCRIPTION} path="/gamescale">
+<Base title="gamescale — the panel’s real resolution for one game" description={DESCRIPTION} path="/gamescale" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
-      <arc-page-header border heading="gamescale" description="The panel’s real resolution, for one game at a time.">
+      <arc-page-header border>
         <img slot="above" class="gs-icon" src="/assets/gamescale.svg" alt="" width="48" height="48" />
+        <h1 slot="heading">gamescale</h1>
+        <p slot="description">The panel’s real resolution, for one game at a time.</p>
       </arc-page-header>
 
       <section class="chapter">

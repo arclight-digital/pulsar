@@ -10,17 +10,25 @@ const DESCRIPTION =
 const ENROL = 'sudo mokutil --import /etc/pki/pulsar/MOK.der\nsudo systemctl reboot';
 const TAKE = `mokutil --test-key /etc/pki/pulsar/MOK.der   # ...is already enrolled\nsudo bootc switch ${IMAGES.nvidia}:latest\nsudo systemctl reboot`;
 const CHECK = 'modinfo -F signer nvidia\nnvidia-smi';
+const JSONLD = [
+  {
+    '@type': 'TechArticle',
+    headline: 'Install Pulsar',
+    description: DESCRIPTION,
+    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
+    author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+  },
+];
 const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'];
 ---
 
-<Base title="Install Pulsar" description={DESCRIPTION} path="/install">
+<Base title="Install Pulsar — one bootc switch, or the weekly ISO" description={DESCRIPTION} path="/install" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
-      <arc-page-header
-        border
-        heading="Install"
-        description="One command if you are already on Silverblue; one download if you are not. Either way the machine never compiles anything."
-      ></arc-page-header>
+      <arc-page-header border>
+        <h1 slot="heading">Install</h1>
+        <p slot="description">One command if you are already on Silverblue; one download if you are not. Either way the machine never compiles anything.</p>
+      </arc-page-header>
 
       <section class="chapter">
         <Install />

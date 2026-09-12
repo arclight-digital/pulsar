@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://pulsar.arclight.digital/sitemap.xml
+Sitemap: https://pulsar.arclight.digital/sitemap-index.xml
