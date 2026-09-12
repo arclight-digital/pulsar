@@ -1,0 +1,125 @@
+---
+import Ledger from '../components/Ledger.astro';
+import Version from '../components/Version.astro';
+import Base from '../layouts/Base.astro';
+import { changelog, version } from '../data/build';
+import { arithmetic, digest } from '../data/digest';
+import { IMAGES } from '../data/site';
+
+const DESCRIPTION =
+  'What changed in the latest Pulsar build: every package that moved, diffed from the SBOMs attached to the images themselves. Nothing here is written by hand.';
+
+const lead = digest.lead;
+const extra = lead ? lead.members.length - 1 : 0;
+---
+
+<Base title={`Changelog — Pulsar ${version}`} description={DESCRIPTION} path="/changelog">
+  <main id="main" class="page">
+    <arc-container size="lg">
+      <arc-page-header border heading="What changed last night" description="Every build is diffed against the one before it, package by package, from the SBOMs attached to the images themselves.">
+        <arc-badge slot="aside" variant="primary" class="mono">{version}</arc-badge>
+      </arc-page-header>
+
+      <section class="chapter lead-ch">
+        <div class="lead">
+          {
+            digest.baseline ? (
+              <p class="lead-say">First build.</p>
+            ) : digest.quiet ? (
+              <p class="lead-say">Nothing moved.</p>
+            ) : (
+              lead && (
+                <p class="lead-tx">
+                  <span class="lead-pkg">
+                    {lead.label}
+                    {extra > 0 && <span class="lead-with">+{extra}</span>}
+                  </span>
+                  <span class="lead-ver" aria-hidden="true">
+                    <Version delta={lead.delta} from={lead.from} to={lead.to} />
+                  </span>
+                  <span class="sr-only">
+                    {lead.label}, {lead.from} to {lead.to}
+                  </span>
+                </p>
+              )
+            )
+          }
+          <p class="lede">{arithmetic()}</p>
+          <p class="prov mono">
+            {
+              digest.fromDigest && digest.toDigest && (
+                <>
+                  <span>{digest.fromDigest}</span>
+                  <span class="dim" aria-hidden="true">→</span>
+                  <span>{digest.toDigest}</span>
+                  <span class="dim" aria-hidden="true">·</span>
+                </>
+              )
+            }
+            <time datetime={changelog.generated}>{changelog.generated}</time>
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter">
+        <Ledger />
+        <p class="hint">
+          The full diff is <a href="/changelog.json">changelog.json</a> — one row per package, the
+          way the build wrote it. The SBOM ships attached to the&nbsp;image:{' '}
+          <code>oras discover {IMAGES.vanilla}:latest</code>. On the machine, it is{' '}
+          <code>pulsar changelog</code>.
+        </p>
+      </section>
+    </arc-container>
+  </main>
+</Base>
+
+<style>
+  .lead-ch {
+    padding-top: var(--space-xl);
+  }
+  .lead-say,
+  .lead-pkg {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: clamp(2.2rem, 5vw, 4rem);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+  }
+  .lead-say {
+    margin: 0 0 var(--space-md);
+  }
+  .lead-tx {
+    display: grid;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-md);
+  }
+  .lead-with {
+    display: inline-block;
+    vertical-align: 0.9em;
+    margin-left: var(--space-sm);
+    font-family: var(--font-mono);
+    font-weight: var(--font-mono-weight);
+    font-size: var(--text-sm);
+    letter-spacing: 0;
+    color: var(--accent-primary);
+  }
+  .lead-ver {
+    font-size: var(--text-lg);
+  }
+  .prov {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    margin: 0;
+  }
+  .dim {
+    color: var(--text-ghost);
+  }
+  .hint {
+    margin-top: var(--space-xl);
+  }
+</style>

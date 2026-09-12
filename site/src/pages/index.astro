@@ -1,12 +1,17 @@
 ---
-import Changelog from '../components/Changelog.astro';
 import Gamescale from '../components/Gamescale.astro';
 import Hero from '../components/Hero.astro';
 import Inside from '../components/Inside.astro';
-import Iso from '../components/Iso.astro';
+import Ledger from '../components/Ledger.astro';
+import Version from '../components/Version.astro';
 import Pipeline from '../components/Pipeline.astro';
-import SiteFooter from '../components/SiteFooter.astro';
 import Base from '../layouts/Base.astro';
+import { changelog } from '../data/build';
+import { arithmetic, digest } from '../data/digest';
+
+const lead = digest.lead;
+const extra = lead ? lead.members.length - 1 : 0;
+const headline = digest.baseline ? 'First build.' : digest.quiet ? 'Nothing moved.' : lead?.label;
 
 const DESCRIPTION =
   'Pulsar: an immutable Fedora spin tuned for gaming and development. Rebuilt nightly; the last good version is always one reboot away.';
@@ -16,14 +21,156 @@ const DESCRIPTION =
   title="Pulsar — an immutable Fedora for gaming & development"
   ogTitle="Pulsar — your lighthouse in the sky"
   description={DESCRIPTION}
+  path="/"
+  immersive
 >
   <Hero />
-  <main>
-    <Gamescale />
-    <Inside />
-    <Pipeline />
-    <Iso />
-    <Changelog />
+  <main id="main">
+    <arc-container size="lg">
+      <section class="chapter" id="changelog">
+        <h2>What changed last night</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <p class="lede">
+          Every build is diffed against the one before it, package by package, from the SBOMs
+          attached to the images themselves. <span class="sent">Nothing here is written by&nbsp;hand.</span>
+        </p>
+        {/* The night in one line. On a quiet night that line is the news. */}
+        <div class="lead">
+          <p class="lead-tx">
+            <span class="lead-pkg">{headline}</span>
+            {
+              lead && !digest.baseline && !digest.quiet && (
+                <>
+                  {extra > 0 && <arc-badge size="sm" class="mono">+{extra} {extra === 1 ? 'package' : 'packages'}</arc-badge>}
+                  <span class="lead-ver" aria-hidden="true">
+                    <Version delta={lead.delta} from={lead.from} to={lead.to} />
+                  </span>
+                  <span class="sr-only">{lead.label}, {lead.from} to {lead.to}</span>
+                </>
+              )
+            }
+          </p>
+          <p class="lead-sub">{arithmetic()}</p>
+          <p class="prov mono">
+            {
+              digest.fromDigest && digest.toDigest && (
+                <>
+                  <span>{digest.fromDigest}</span>
+                  <span class="dim" aria-hidden="true">→</span>
+                  <span>{digest.toDigest}</span>
+                </>
+              )
+            }
+            <arc-time-ago datetime={changelog.generated}></arc-time-ago>
+          </p>
+        </div>
+        <Ledger />
+        <p class="hint">
+          The full diff is <a href="/changelog.json">changelog.json</a> — one row per package, the
+          way the build wrote it. On the machine it is <code>pulsar changelog</code>.
+        </p>
+      </section>
+
+      <section class="chapter" id="provenance">
+        <h2>Every image has a paper trail</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <p class="lede">
+          That diff was not written. It was computed from the SBOMs attached to two images the
+          build host signed and attested, and you can run the same check on any of them.
+        </p>
+        <Pipeline compact />
+        <p class="more"><a href="/provenance">How the pipeline works →</a></p>
+      </section>
+
+      <section class="chapter" id="gamescale">
+        <h2 class="gs-h">
+          <img class="gs-icon" src="/assets/gamescale.svg" alt="" width="40" height="40" />
+          <span>gamescale</span>
+        </h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <Gamescale compact />
+      </section>
+
+      <section class="chapter" id="inside">
+        <h2>What's inside</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <Inside />
+      </section>
+
+    </arc-container>
+
+    <arc-cta-banner headline="Your lighthouse in the sky." class="close">
+      One command on Silverblue or Kinoite, one download on a fresh machine, the Secure Boot key
+      enrolled once. The machine that runs it never compiles anything.
+      <arc-button slot="actions" href="/install" variant="primary" size="md">The whole install</arc-button>
+      <arc-button slot="actions" href="https://github.com/arclight-digital/pulsar" variant="secondary" size="md">Browse the source</arc-button>
+    </arc-cta-banner>
   </main>
-  <SiteFooter />
 </Base>
+
+<style>
+  /* full-bleed, so the banner's radial glow fades out on its own instead of
+     being cut at the content edge */
+  .close {
+    display: block;
+    margin-top: var(--space-2xl);
+  }
+  .lead {
+    margin: var(--space-lg) 0 var(--space-xl);
+  }
+  .lead-tx {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-md);
+  }
+  .lead-pkg {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: clamp(2.2rem, 5vw, 4rem);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
+  }
+  .lead-ver {
+    font-size: var(--text-lg);
+  }
+  .lead-sub {
+    max-width: 62ch;
+    font-size: var(--text-lg);
+    margin: 0 0 var(--space-sm);
+  }
+  .prov {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-md);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    margin: 0;
+  }
+  .dim {
+    color: var(--text-ghost);
+  }
+  .gs-h {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+  }
+  .gs-icon {
+    display: block;
+    width: 40px;
+    height: 40px;
+  }
+  .more {
+    margin: var(--space-lg) 0 0;
+  }
+  .more a {
+    text-decoration: none;
+  }
+  .more a:hover {
+    text-decoration: underline;
+  }
+</style>

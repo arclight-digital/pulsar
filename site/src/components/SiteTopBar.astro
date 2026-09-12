@@ -1,0 +1,104 @@
+---
+// The one site bar. Anchors live in light DOM inside the nav items so the bar
+// is a working link list with JS disabled and before the menu upgrades;
+// arc-navigation-menu reads the href off the child anchor.
+//
+// The home page opens on the shader and gets the immersive bar -- transparent
+// until scrolled, following the page theme. Inner pages open on prose and
+// pin the bar dark, which on the pale theme lifts to a deep colour derived
+// from the accent rather than sitting there as a black slab.
+import { version } from '../data/build';
+import { REPO } from '../data/site';
+
+interface Props {
+  path: string;
+  immersive: boolean;
+}
+
+const { path, immersive } = Astro.props;
+
+const ITEMS = [
+  { href: '/install', label: 'Install' },
+  { href: '/gamescale', label: 'gamescale' },
+  { href: '/provenance', label: 'Provenance' },
+  { href: '/changelog', label: 'Changelog' },
+  { href: '/cli', label: 'CLI' },
+];
+
+const active = (href: string) => path === href || path.startsWith(`${href}/`);
+---
+
+<arc-top-bar
+  fixed
+  contained="xl"
+  immersive={immersive || undefined}
+  nav-align="left"
+  mobile-menu="nav"
+  home-href="/"
+  class:list={['bar', { 'theme-fixed-dark': !immersive }]}
+>
+  <a slot="logo" class="lockup" href="/" aria-label="Pulsar home">
+    <img data-mark src="/assets/pulsar-animated.svg" alt="" width="28" height="28" />
+    <span class="word">PULSAR</span>
+  </a>
+  {/* The build names the product; it is not something you can do, so it sits
+      with the wordmark and the actions cluster stays purely interactive. The
+      beacon may rewrite it -- see src/scripts/beacon.ts. */}
+  <arc-badge slot="subtitle" variant="primary" size="sm" class="bar-build">
+    <span data-build-version>{version}</span>
+  </arc-badge>
+  <arc-navigation-menu slot="center" label="Site">
+    {
+      ITEMS.map((item) => (
+        <arc-nav-item active={active(item.href) || undefined}>
+          <a href={item.href}>{item.label}</a>
+        </arc-nav-item>
+      ))
+    }
+  </arc-navigation-menu>
+  <div slot="actions" class="actions">
+    <arc-theme-toggle icon-only size="md"></arc-theme-toggle>
+    <arc-icon-button
+      href={REPO}
+      name="github-logo"
+      label="Source on GitHub"
+      variant="ghost"
+      size="md"
+    ></arc-icon-button>
+  </div>
+</arc-top-bar>
+
+<style>
+  .lockup {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    color: inherit;
+    text-decoration: none;
+  }
+  .lockup img {
+    display: block;
+  }
+  .word {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    letter-spacing: 0.3em;
+    margin-right: -0.3em;
+    font-size: var(--text-sm);
+    line-height: var(--glyph-lh);
+  }
+  .bar-build {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  @media (max-width: 48rem) {
+    .bar-build {
+      display: none;
+    }
+  }
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+</style>

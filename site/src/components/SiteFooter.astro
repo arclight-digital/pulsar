@@ -1,124 +1,140 @@
 ---
+// The close. Pinned dark in both themes, the way the terminals are: the page
+// ends on ink, under a spectrum line that is the palette read left to right.
 import ByArclight from './ByArclight.astro';
 import { REPO } from '../data/site';
 
-const LINKS = [
+const SITE = [
+  { label: 'Install', href: '/install' },
+  { label: 'gamescale', href: '/gamescale' },
+  { label: 'Provenance', href: '/provenance' },
+  { label: 'Changelog', href: '/changelog' },
+  { label: 'The pulsar command', href: '/cli' },
+];
+
+const MACHINE = [
   { label: 'Source', href: REPO },
   { label: 'The shader', href: `${REPO}/blob/main/assets/shaders/pulsar.frag` },
+  { label: 'changelog.json', href: '/changelog.json' },
+  { label: 'manifest.json', href: '/manifest.json' },
   { label: 'MIT License', href: `${REPO}/blob/main/LICENSE` },
 ];
 ---
 
-<footer>
+<div class="foot theme-fixed-dark">
   <div class="spectrum" aria-hidden="true"></div>
-
-  <div class="foot-inner">
-    <div class="foot-brand">
-      <img data-mark class="foot-mark" src="/assets/pulsar-mark.svg" alt="" width="44" height="44" />
+  <arc-footer contained="xl" no-border>
+    <div slot="logo" class="brand">
+      <img data-mark src="/assets/pulsar-animated.svg" alt="" width="44" height="44" />
       <div>
-        <p class="foot-word">PULSAR</p>
-        <p class="brandline">AN IMMUTABLE FEDORA SPIN</p>
+        <p class="word">PULSAR</p>
+        <p class="brandline">An immutable Fedora spin</p>
       </div>
     </div>
 
-    <nav aria-label="Project links">
-      {LINKS.map((link) => <a href={link.href}>{link.label}</a>)}
-    </nav>
-  </div>
+    <div>
+      <p class="col-title">Site</p>
+      <ul class="col">
+        {SITE.map((link) => <li><a href={link.href}>{link.label}</a></li>)}
+      </ul>
+    </div>
+    <div>
+      <p class="col-title">Machine</p>
+      <ul class="col">
+        {MACHINE.map((link) => <li><a href={link.href}>{link.label}</a></li>)}
+      </ul>
+    </div>
+    <div>
+      <p class="col-title">Arclight</p>
+      <ul class="col">
+        <li><a href="https://arclight.build">arclight.build</a></li>
+        <li><a href="https://arcui.dev">ARC UI</a></li>
+        <li><a href="https://github.com/arclight-digital">GitHub</a></li>
+      </ul>
+    </div>
 
-  <div class="foot-base">
-    <p class="colophon">
-      Set in Host&nbsp;Grotesk and JetBrains&nbsp;Mono. One fragment shader renders this background
-      live and the OS wallpapers in&nbsp;CI. No analytics, no&nbsp;cookies.
-    </p>
-    <ByArclight />
-  </div>
-</footer>
+    <div slot="legal" class="legal">
+      <p class="colophon">
+        Set in Host&nbsp;Grotesk and JetBrains&nbsp;Mono, on ARC&nbsp;UI. One fragment shader
+        renders the home page's sky live and the OS wallpapers in&nbsp;CI. No analytics,
+        no&nbsp;cookies.
+      </p>
+      <ByArclight />
+    </div>
+  </arc-footer>
+</div>
 
 <style>
-  footer {
-    padding: 0 0 3rem;
+  .foot {
+    background: var(--bg-deep);
+    color: var(--text-primary);
   }
-
   .spectrum {
     height: 2px;
     background: linear-gradient(90deg, var(--cyan), var(--peri), var(--violet));
   }
-
-  .foot-inner {
-    max-width: 62rem;
-    margin: 0 auto;
-    padding: 2.4rem 1.5rem 0;
+  .brand {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    flex-wrap: wrap;
+    gap: var(--space-md);
   }
-
-  .foot-brand {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
+  .brand img {
+    display: block;
   }
-
-  .foot-mark {
-    width: 44px;
-    height: 44px;
+  .word {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-lg);
+    letter-spacing: 0.3em;
+    line-height: var(--glyph-lh);
+    margin: 0;
   }
-
-  .foot-word {
-    font-weight: 700;
-    font-size: 0.9rem;
-    letter-spacing: 0.2em; /* the same lockup tracking as the hero wordmark */
-  }
-
   .brandline {
-    letter-spacing: 0.22em;
-    font-size: 0.68rem;
-    color: var(--muted);
-    margin-top: 0.2rem;
+    margin: var(--space-xs) 0 0;
+    color: var(--text-secondary);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-spacing);
+    text-transform: uppercase;
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
   }
-
-  nav {
-    display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
+  .col-title {
+    margin: 0 0 var(--space-sm);
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-spacing);
+    text-transform: uppercase;
+    color: var(--text-secondary);
   }
-
-  a {
+  .col {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+  }
+  .col a {
+    display: inline-block;
+    padding-block: var(--space-xs);
+    color: var(--text-primary);
     text-decoration: none;
-    font-size: 0.9rem;
   }
-
-  a:hover,
-  a:focus-visible {
-    text-decoration: underline;
+  .col a:hover {
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
   }
-
-  /* the colophon on the left, the by-arclight badge on the right; wraps to two
-     rows when the colophon needs the width */
-  .foot-base {
-    max-width: 62rem;
-    margin: 2rem auto 0;
-    padding: 0 1.5rem;
+  .legal {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem 2rem;
+    gap: var(--space-lg);
     flex-wrap: wrap;
   }
-
   .colophon {
-    flex: 1 1 30rem;
-    color: var(--muted);
-    font-size: 0.8rem;
-  }
-
-  @media (max-width: 26rem) {
-    .foot-inner {
-      flex-direction: column;
-      align-items: flex-start;
-    }
+    margin: 0;
+    max-width: 44rem;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    line-height: var(--body-lh);
   }
 </style>

@@ -4,9 +4,8 @@
 import Manifest from './Manifest.astro';
 ---
 
-<section class="inside">
-  <div class="inside-copy">
-    <h2>What's inside</h2>
+<div class="inside">
+  <div class="copy">
     <p>
       <strong>Gamescope</strong>, gamemode, and MangoHud are in the image; split-lock mitigation is
       off and the map count is raised because games want both. <strong>ntsync</strong> is loaded and
@@ -18,6 +17,11 @@ import Manifest from './Manifest.astro';
       running, the machine rolls itself back to the previous deployment without being&nbsp;asked.
     </p>
     <p>
+      <strong>scx_bpfland</strong> takes over scheduling, because 8P+16E with no SMT is exactly where
+      stock EEVDF places threads badly — and it is gated on the kernel actually being able to load
+      it, checked at build and again at&nbsp;boot.
+    </p>
+    <p>
       For work: distrobox for any userland, libvirt/KVM for real&nbsp;machines. Apps are
       Flatpaks; <span class="ns">the image is the&nbsp;OS.</span>
     </p>
@@ -26,34 +30,26 @@ import Manifest from './Manifest.astro';
       Secure&nbsp;Boot stays&nbsp;on.
     </p>
   </div>
-
   <Manifest />
-</section>
+</div>
 
 <style>
   .inside {
     display: grid;
-    grid-template-columns: 1.1fr 1fr;
-    gap: 2.6rem;
+    grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
+    gap: var(--space-xl);
     align-items: start;
   }
-
-  .inside-copy p {
-    color: var(--muted);
-    max-width: 32rem;
+  .copy {
+    max-width: 58ch;
   }
-
-  .inside-copy p + p {
-    margin-top: 0.9rem;
+  .copy p:last-child {
+    margin-bottom: 0;
   }
-
-  .inside-copy strong {
-    color: var(--text);
-  }
-
-  @media (max-width: 46rem) {
+  @media (max-width: 56rem) {
     .inside {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-xl);
     }
   }
 </style>

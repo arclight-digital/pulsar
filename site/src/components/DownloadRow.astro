@@ -1,8 +1,8 @@
 ---
 // One ISO download: the variant label, the filename as a link, and its
-// verification sidecars. Worn by both the install card's iso tab and the
-// bare-metal section, which differ only in whether they offer the metadata
-// sidecar alongside the manifest and its signature.
+// verification sidecars. Worn by the install card and the bare-metal section,
+// which differ only in whether they offer the metadata sidecar alongside the
+// manifest and its signature.
 import { ISO_BASE } from '../data/site';
 
 interface Props {
@@ -16,10 +16,62 @@ interface Props {
 const { which, file, sums = ['sha256', 'sha256.sig'] } = Astro.props;
 ---
 
-<div class="row">
+<li class="row">
   <span class="which">{which}</span>
-  <code><a href={`${ISO_BASE}/${file}`}>{file}</a></code>
-  <span class="sums">
-    {sums.map((ext) => <a href={`${ISO_BASE}/${file}.${ext}`}>{ext}</a>)}
+  <span class="file">
+    <a href={`${ISO_BASE}/${file}`} download>{file}</a>
+    <span class="sums">
+      {sums.map((ext) => <a href={`${ISO_BASE}/${file}.${ext}`}>.{ext}</a>)}
+    </span>
   </span>
-</div>
+</li>
+
+<style>
+  .row {
+    display: grid;
+    grid-template-columns: 6.5em minmax(0, 1fr);
+    gap: var(--space-md);
+    align-items: baseline;
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .row:last-child {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .which {
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
+    font-size: var(--label-inline-size);
+    letter-spacing: var(--label-spacing);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .file {
+    display: grid;
+    gap: var(--space-xs);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    overflow-wrap: anywhere;
+  }
+  .file > a {
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+  .file > a:hover {
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
+  }
+  .sums {
+    display: flex;
+    gap: var(--space-md);
+    font-size: var(--text-xs);
+  }
+  .sums a {
+    display: inline-block;
+    padding-block: var(--space-xs);
+    color: var(--text-secondary);
+  }
+  .sums a:hover {
+    color: var(--accent-primary);
+  }
+</style>

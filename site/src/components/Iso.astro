@@ -1,10 +1,6 @@
 ---
-// Starting from bare metal. Reuses the install card's chrome -- same terminal
-// family, same labelled rows -- but the filename is a link rather than a
-// command to copy.
-import CopyButton from './CopyButton.astro';
+// Starting from bare metal: the weekly installers and how to check one.
 import DownloadRow from './DownloadRow.astro';
-import Term from './Term.astro';
 import { COSIGN_PUB, ISOS } from '../data/site';
 
 const SUMS = ['sha256', 'sha256.sig', 'json'];
@@ -22,58 +18,86 @@ const VERIFY = [
   '--insecure-ignore-tlog=true',
   `&& sha256sum -c ${ISOS.vanilla}.sha256`,
 ].join(' ');
+
+const shown = [
+  `cosign verify-blob ${ISOS.vanilla}.sha256 \\`,
+  `  --key ${COSIGN_PUB} \\`,
+  `  --signature ${ISOS.vanilla}.sha256.sig \\`,
+  '  --insecure-ignore-tlog=true \\',
+  `&& sha256sum -c ${ISOS.vanilla}.sha256`,
+].join('\n');
 ---
 
-<section class="iso" id="iso">
-  <h2>Starting from bare metal</h2>
-
+<div class="iso" id="iso">
   <p class="lede">
-    A weekly installer ISO for each variant, built from the published image itself &mdash; the same
+    A weekly installer ISO for each variant, built from the published image itself — the same
     Anaconda installer stock Silverblue uses, landing directly in Pulsar.{' '}
     <span class="sent">Checksummed, and signed with Pulsar's release&nbsp;key.</span>
   </p>
 
-  <Term ariaLabel="ISO downloads" class="install iso-card">
-    <Fragment slot="caption">weekly &middot; x86_64 &middot; 5&ndash;6&nbsp;GB</Fragment>
-    <DownloadRow which="standard" file={ISOS.vanilla} sums={SUMS} />
-    <DownloadRow which="nvidia" file={ISOS.nvidia} sums={SUMS} />
-    <p class="hint">
-      Write it to a USB&nbsp;stick with GNOME&nbsp;Disks or <code>dd</code>, boot,&nbsp;install.{' '}
-      The <code>.json</code> sidecar records exactly which image digest the installer carries.
-      Verify the manifest's signature, then the ISO against the&nbsp;manifest:
-    </p>
-  </Term>
+  <div class="grid">
+    <div>
+      <ul class="isos">
+        <DownloadRow which="standard" file={ISOS.vanilla} sums={SUMS} />
+        <DownloadRow which="nvidia" file={ISOS.nvidia} sums={SUMS} />
+      </ul>
+      <p class="hint">
+        Write it to a USB&nbsp;stick with GNOME&nbsp;Disks or <code>dd</code>, boot,&nbsp;install.
+        The <code>.json</code> sidecar records exactly which image digest the installer carries.
+      </p>
+    </div>
 
-  <Term ariaLabel="Verify the ISO signature">
-    <Fragment slot="caption">
-      signed with the release key &mdash; it never leaves the signing&nbsp;host
-      <CopyButton text={VERIFY} label="Copy the ISO verify command" />
-    </Fragment>
-    <pre><code><span class="cmd">cosign verify-blob {ISOS.vanilla}.sha256 \
-  --key {COSIGN_PUB} \
-  --signature {ISOS.vanilla}.sha256.sig \
-  --insecure-ignore-tlog=true</span>
-<span class="ok">Verified OK</span>
-<span class="cmd">sha256sum -c {ISOS.vanilla}.sha256</span>
-<span class="ok">{ISOS.vanilla}: OK</span></code></pre>
-  </Term>
-</section>
+    <div>
+      <p class="cap">
+        <span>signed with the release key — it never leaves the signing&nbsp;host</span>
+      </p>
+      <arc-code-block
+        class="theme-fixed-dark"
+       
+        language="bash"
+        filename="verify"
+        code={shown}
+        data-copy={VERIFY}
+      ></arc-code-block>
+      <p class="hint">
+        The public half of that key is published beside the ISOs and committed to the repo as{' '}
+        <code>keys/cosign.pub</code>; the build verifies every signature against the committed copy
+        before publishing.
+      </p>
+    </div>
+  </div>
+</div>
 
 <style>
-  .iso {
-    margin-top: 5.5rem;
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--space-xl);
+    align-items: start;
   }
-
-  .lede {
-    color: var(--muted);
-    max-width: 40rem;
+  .isos {
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
-
-  /* the download card is wider than the terminal default -- filenames plus
-     three sidecar links need the room. :global because the element carries
-     Term's scope, not this component's. */
-  :global(.iso-card) {
-    margin: 1.8rem 0 0;
-    max-width: 46rem;
+  .cap {
+    margin: 0 0 var(--space-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+  }
+  arc-code-block {
+    display: block;
+  }
+  .hint {
+    margin-top: var(--space-md);
+    margin-bottom: 0;
+  }
+  @media (max-width: 56rem) {
+    .grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-xl);
+    }
   }
 </style>

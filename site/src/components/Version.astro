@@ -8,11 +8,11 @@
 // to 1. Dimming the shared head and tail leaves `1.16.[1-2].fc44 ->
 // 1.16.[2-1].fc44` reading as one glance instead of two.
 //
-// Both versions are printed IN FULL. An earlier cut factored the shared parts
-// out and printed them once -- `1.16.` `1-2`->`2-1` `.fc44` -- which is
-// gorgeous at display size and unreadable at 0.82rem, because nothing marks
-// where the moving part begins when it spans a hyphen. Emphasis can guide the
-// eye; it should not ask it to reassemble a version number.
+// Both versions are printed IN FULL. Factoring the shared parts out and
+// printing them once is gorgeous at display size and unreadable at ledger
+// size, because nothing marks where the moving part begins when it spans a
+// hyphen. Emphasis can guide the eye; it should not ask it to reassemble a
+// version number.
 //
 // Hidden from assistive tech by the caller, which supplies a spoken form
 // instead: this is a typographic device, and read aloud it is noise.
@@ -33,26 +33,24 @@ const { delta } = Astro.props;
 <style>
   .vx {
     font-family: var(--font-mono);
+    font-weight: var(--font-mono-weight);
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
-
   /* The parts both sides share: still legible, deliberately not the subject. */
-  .v-fixed {
-    color: var(--dim);
+  .v-fixed,
+  .v-arrow {
+    color: var(--text-ghost);
   }
-
   .v-from {
-    color: var(--muted);
+    color: var(--text-secondary);
   }
-
   /* Where the night actually went. */
   .v-to {
-    color: var(--accent);
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
   }
-
   .v-arrow {
-    color: var(--dim);
     padding: 0 0.12em;
   }
 </style>

@@ -1,0 +1,153 @@
+---
+import Base from '../layouts/Base.astro';
+
+const DESCRIPTION =
+  'The pulsar command: doctor, manifest, status, changelog, sbom, attest, update, rollback, pin, and setup recipes. Reads work unprivileged; only the commands that change the system ask for root.';
+
+// The CLI's own usage text, verbatim from cli/pulsar. A transcript, not a
+// retyping: if the help changes, this is the place that has to change with it.
+const USAGE = [
+  'pulsar -- manage a Pulsar system',
+  '',
+  '  pulsar manifest          what is in this image, and what it is running on',
+  '  pulsar doctor            health snapshot (exit 1 if a check fails);',
+  '                           the default when no command is given',
+  '  pulsar status            deployments: booted, staged, rollback, pins',
+  '  pulsar changelog         packages that moved in the latest published build',
+  '  pulsar sbom              this system\'s packages as SPDX 2.3',
+  '  pulsar attest            print (and run) the provenance check for this image',
+  '',
+  '  pulsar update            fetch and stage an update        (root)',
+  '                           through bootc, or through rpm-ostree if you have',
+  '                           layered packages, which bootc would drop',
+  '  pulsar update --check    is a newer image published? no root needed.',
+  '                           exit 0 up to date or already staged, 10 available,',
+  '                           1 could not tell. add --notify for a desktop',
+  '                           notification, once per published build',
+  '  pulsar rollback          boot the previous deployment     (root)',
+  '  pulsar pin | unpin       protect the booted deployment    (root)',
+  '',
+  '  pulsar setup <recipe>    apps | devbox | quadlet | gamescale',
+  '',
+  'Options',
+  '  --logo, --no-logo        force or suppress the mark in `manifest`',
+  '  --json                   machine-readable output (doctor, status, manifest,',
+  '                           changelog); everything else ignores it.',
+  '  --version, --help',
+];
+
+const usage = USAGE.join('\n');
+
+const DEVBOX = 'pulsar setup devbox    # distrobox assemble from /usr/share/pulsar/distrobox.ini';
+---
+
+<Base title="The pulsar command" description={DESCRIPTION} path="/cli">
+  <main id="main" class="page">
+    <arc-container size="lg">
+      <arc-page-header
+        border
+        heading="The pulsar command"
+        description="One command for the questions you actually ask an immutable system: what is this, is it healthy, what changed, and can I prove it."
+      ></arc-page-header>
+
+      <section class="chapter">
+        <arc-code-block class="theme-fixed-dark usage" filename="pulsar --help" code={usage}></arc-code-block>
+      </section>
+
+      <section class="chapter" id="doctor">
+        <h2>Why doctor exists</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <p>
+            <code>systemctl is-active scx.service</code> reported active for minutes at a stretch
+            while no scheduler was attached and the machine ran stock EEVDF — unit state is not
+            system state. So <code>doctor</code> reads <code>/sys/kernel/sched_ext/state</code> and
+            the other places where the truth actually lives, and <code>--json</code> makes it
+            scriptable. Only a <em>fail</em> sets a nonzero exit; a scheduler that did not attach
+            merely warns, because the machine is entirely usable without one.
+          </p>
+          <p>
+            Reads go through <code>rpm-ostree</code>, which works unprivileged; only the commands
+            that change the system ask for root. <code>bootc status</code> needs root even to read,
+            and a health check you need sudo for is one you will not run.{' '}
+            <code>pulsar sbom</code> is generated, never baked — a file inside the image cannot
+            describe the image containing it, so it reads the live rpm database, through the same
+            script the nightly uses.
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="update">
+        <h2>update, not upgrade</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <p>
+            Use <code>pulsar update</code> rather than <code>bootc upgrade</code> directly if you
+            have layered anything with <code>rpm-ostree install</code>. bootc's model is the
+            container image alone — it does not know about your layer and will not carry it forward.
+          </p>
+          <p>
+            <code>pulsar update</code> checks the booted deployment first and hands off to{' '}
+            <code>rpm-ostree upgrade</code> when there is something to preserve;{' '}
+            <code>pulsar doctor</code> tells you which side of that line you are on.{' '}
+            <code>pulsar update --check</code> answers "is there a newer image" without root, and{' '}
+            <code>--notify</code> turns that into a desktop notification, once per published build.
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="setup">
+        <h2>For development</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <div>
+            <p>
+              <code>bpftrace</code>, <code>bcc-tools</code>, <code>sysstat</code> and{' '}
+              <code>perf</code> are on the host because a container cannot attach probes to the
+              host kernel. <code>mise</code> and <code>direnv</code> handle toolchains, so compilers
+              and SDKs are pinned per project instead of layered into the image. A default dev box
+              is one command away:
+            </p>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="devbox" code={DEVBOX}></arc-code-block>
+          </div>
+          <div>
+            <p>
+              <code>podman-auto-update.timer</code> is enabled for user sessions, and a commented
+              quadlet template lives at <code>/usr/share/pulsar/templates/example.container</code>{' '}
+              — containers as systemd units, rootless, in a file you can version
+              (<code>pulsar setup quadlet</code>).
+            </p>
+            <p>
+              <code>pulsar setup gamescale</code> runs the installer copy staged in the image for
+              Flatpak launchers — <a href="/gamescale#flatpak">why that step exists</a>.
+            </p>
+          </div>
+        </div>
+      </section>
+    </arc-container>
+  </main>
+</Base>
+
+<style>
+  .usage {
+    display: block;
+    max-width: 62rem;
+  }
+  .two {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-xl);
+    max-width: 72rem;
+    align-items: start;
+  }
+  .two arc-code-block {
+    display: block;
+    margin: var(--space-sm) 0 var(--space-md);
+  }
+  @media (max-width: 56rem) {
+    .two {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-md);
+    }
+  }
+</style>

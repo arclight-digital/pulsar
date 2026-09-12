@@ -1,9 +1,15 @@
 ---
 // The document shell: what search and share cards read, the pre-paint theme
-// restore, and the one script tag the page ships.
+// restore, the direction contract, and the one script tag the site ships.
+//
+// Styles load in a fixed order that IS the theming mechanism: ARC UI's base
+// (tokens and the FOUC guard), then Pulsar's tokens.css, which restates the
+// accent and surface inputs at equal specificity and wins on cascade order.
+import '@arclux/arc-ui/base.css';
 import '../styles/tokens.css';
 import '../styles/base.css';
-import '../styles/terminal.css';
+import SiteFooter from '../components/SiteFooter.astro';
+import SiteTopBar from '../components/SiteTopBar.astro';
 import { version } from '../data/build';
 
 interface Props {
@@ -11,14 +17,17 @@ interface Props {
   title: string;
   description: string;
   /** og:title keeps the tagline, where there is room for a voice */
-  ogTitle: string;
+  ogTitle?: string;
+  /** the route, for canonical and the top bar's active item */
+  path?: string;
+  /** the home page opens on the shader; its bar is transparent until scrolled */
+  immersive?: boolean;
 }
 
-const { title, description, ogTitle } = Astro.props;
+const { title, description, ogTitle = title, path = '/', immersive = false } = Astro.props;
 
-// Absolute, always: crawlers resolve nothing relative, and the page is also
-// reachable at a github.io subpath, where split indexing helps neither.
-const canonical = new URL('/', Astro.site).href;
+// Absolute, always: crawlers resolve nothing relative.
+const canonical = new URL(path, Astro.site).href;
 // Rendered at build time by src/pages/og.jpg.ts, so the card is set from the
 // same lockup and faces as the page rather than being an image someone
 // remembered to regenerate.
@@ -35,7 +44,7 @@ const structuredData = {
   softwareVersion: version,
   description:
     'An immutable Fedora spin tuned for gaming and development, built and signed in CI, published nightly with SBOMs and provenance attestations.',
-  url: canonical,
+  url: new URL('/', Astro.site).href,
   image: ogImage,
   downloadUrl: 'https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso',
   license: 'https://github.com/arclight-digital/pulsar/blob/main/LICENSE',
@@ -46,7 +55,7 @@ const structuredData = {
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="auto">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -76,54 +85,115 @@ const structuredData = {
         first paint from waiting on discovery. Fonts need crossorigin even
         same-origin -- font fetches are CORS-mode, and a preload that does not
         match is a double download. */}
-    <link
-      rel="preload"
-      as="image"
-      href="/assets/silk-still-dark.jpg"
-      media="(prefers-color-scheme: dark)"
-    />
-    <link
-      rel="preload"
-      as="image"
-      href="/assets/silk-still-light.jpg"
-      media="(prefers-color-scheme: light)"
-    />
+    {
+      immersive && (
+        <>
+          <link
+            rel="preload"
+            as="image"
+            href="/assets/silk-still-dark.jpg"
+            media="(prefers-color-scheme: dark)"
+          />
+          <link
+            rel="preload"
+            as="image"
+            href="/assets/silk-still-light.jpg"
+            media="(prefers-color-scheme: light)"
+          />
+        </>
+      )
+    }
     <link rel="preload" as="font" type="font/ttf" href="/assets/HostGrotesk-Regular.ttf" crossorigin />
     <link rel="preload" as="font" type="font/ttf" href="/assets/HostGrotesk-Bold.ttf" crossorigin />
 
     <script is:inline type="application/ld+json" set:html={JSON.stringify(structuredData)} />
 
-    {/* is:inline and before the stylesheet: a stored theme choice must not
-        flash the system theme, so this cannot be bundled and deferred. */}
+    {/* is:inline and before the stylesheets: a stored theme choice must not
+        flash the system theme, so this cannot be bundled and deferred. The key
+        and the attribute are ARC UI's -- arc-theme-toggle reads and writes the
+        same ones, so the two never disagree. */}
     <script is:inline>
       try {
-        const t = localStorage.getItem('pulsar-theme');
-        if (t) document.documentElement.dataset.theme = t;
+        const t = localStorage.getItem('arc-theme');
+        if (t === 'dark' || t === 'light' || t === 'auto') document.documentElement.dataset.theme = t;
       } catch {}
     </script>
 
     <noscript>
       <style>
-        .deck,
-        .copy,
-        .tabs {
+        /* the backdrop picker drives a shader; without JS it drives nothing */
+        .deck {
           display: none;
-        }
-        /* without JS both install paths stack; nothing hides behind a dead tab */
-        .tabpanel[hidden] {
-          display: block;
         }
       </style>
     </noscript>
   </head>
 
   <body>
+    <!--
+      THESIS: The nightly is the pitch, and the mark is the brand. The first
+      viewport is the identity hero over the live shader with the install
+      command in it; the first chapter under it is last night's real package
+      diff, live-checked against the build host. (User decision 2026-09-12:
+      the diff-first hero was built, seen, and rejected.)
+      OWN-WORLD: Ink ground; cyan and periwinkle through ARC UI's two-color
+      contract, violet on the pale theme. Host Grotesk for words, JetBrains
+      Mono for anything a machine wrote. The wallpaper shader is the only
+      image. Terminals stay dark in both themes. Glow over outline; no coloured
+      left borders; tokens, never literals.
+      STORY: this OS changed last night, the change is inspectable, the
+      pipeline that made it is verifiable, and one command installs it.
+      FIRST VIEWPORT: shader full-bleed, everything centred: the 180px
+      animated mark (flick it), PULSAR with ARC's bloom twin behind it, the
+      tagline, one sentence, the live build chip, the two bootc switch
+      commands, then Install and What changed last night. Look picker
+      bottom-left.
+      FORM: identity hero over a diff-first body; candidate 4 of 7, seed
+      a91dc502, revised by the user after the first build.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with
+      the finish review, the verdict, and DESIGN.md.
+    -->
+    <arc-skip-link target="#main">Skip to content</arc-skip-link>
+    <SiteTopBar path={path} immersive={immersive} />
     <slot />
+    <SiteFooter />
+    <arc-scroll-to-top threshold="900"></arc-scroll-to-top>
 
-    {/* narrates the copy buttons' two outcomes */}
-    <span id="live" class="sr-only" aria-live="polite"></span>
-
+    {/* One script block, and hydrate first inside it: Lit must adopt the
+        server-rendered shadow roots rather than render over them, and the
+        chunking rule in astro.config.mjs is what makes "first" true. Then the
+        icon pack, then only the elements this site uses -- the full registry
+        is 185 components and this site wears about twenty. */}
     <script>
+      import '@arclux/arc-ui/hydrate';
+      import '@arclux/arc-ui/icon';
+      import '@arclux/arc-ui-icons/phosphor';
+      import '@arclux/arc-ui/skip-link';
+      import '@arclux/arc-ui/top-bar';
+      import '@arclux/arc-ui/navigation-menu';
+      import '@arclux/arc-ui/nav-item';
+      import '@arclux/arc-ui/theme-toggle';
+      import '@arclux/arc-ui/icon-button';
+      import '@arclux/arc-ui/badge';
+      import '@arclux/arc-ui/button';
+      import '@arclux/arc-ui/link';
+      import '@arclux/arc-ui/footer';
+      import '@arclux/arc-ui/section';
+      import '@arclux/arc-ui/container';
+      import '@arclux/arc-ui/page-header';
+      import '@arclux/arc-ui/code-block';
+      import '@arclux/arc-ui/stepper';
+      import '@arclux/arc-ui/step';
+      import '@arclux/arc-ui/description-list';
+      import '@arclux/arc-ui/description-item';
+      import '@arclux/arc-ui/divider';
+      import '@arclux/arc-ui/alert';
+      import '@arclux/arc-ui/kbd';
+      import '@arclux/arc-ui/time-ago';
+      import '@arclux/arc-ui/scroll-to-top';
+      import '@arclux/arc-ui/timeline';
+      import '@arclux/arc-ui/timeline-item';
+      import '@arclux/arc-ui/cta-banner';
       import '../scripts/main';
     </script>
   </body>

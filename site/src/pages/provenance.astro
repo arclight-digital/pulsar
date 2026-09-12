@@ -1,0 +1,128 @@
+---
+import Pipeline from '../components/Pipeline.astro';
+import Base from '../layouts/Base.astro';
+import { IMAGES, REPO } from '../data/site';
+
+const DESCRIPTION =
+  'Every Pulsar image carries SLSA provenance and an SPDX SBOM. The builder never holds the signing keys. Verify any image from any machine you already trust.';
+
+const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
+---
+
+<Base title="Provenance — every Pulsar image has a paper trail" description={DESCRIPTION} path="/provenance">
+  <main id="main" class="page">
+    <arc-container size="lg">
+      <arc-page-header
+        border
+        heading="Every image has a paper trail"
+        description="The machine that runs Pulsar never compiles anything. An ephemeral build host builds, signs, and attests every image nightly, and the keys that matter never touch it."
+      ></arc-page-header>
+
+      <section class="chapter">
+        <Pipeline />
+      </section>
+
+      <section class="chapter" id="verify">
+        <h2>Don't take this page's word for it</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <div>
+            <p>
+              Every published image carries SLSA provenance. The verifying tool is not in the image
+              and does not need to be — checking provenance is something you do <em>to</em> an
+              image, from whatever machine you already trust. On a Pulsar machine,{' '}
+              <code>pulsar attest</code> prints the same line filled in for the image you booted,
+              and runs it if you happen to have the client.
+            </p>
+            <p>
+              An SPDX SBOM ships attached to each image, and every nightly is diffed against the one
+              before it, package by package, from those SBOMs. The diff is rendered on the{' '}
+              <a href="/changelog">changelog</a>, served raw as{' '}
+              <a href="/changelog.json">changelog.json</a>, and readable on the machine as{' '}
+              <code>pulsar changelog</code>. Nothing in it is written by hand.
+            </p>
+          </div>
+          <div>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="sbom" code={SBOM}></arc-code-block>
+            <arc-description-list class="endpoints" layout="horizontal">
+              <arc-description-item term="changelog.json"><a href="/changelog.json">the night's diff, as the build wrote it</a></arc-description-item>
+              <arc-description-item term="manifest.json"><a href="/manifest.json">the image's baked manifest</a></arc-description-item>
+              <arc-description-item term="cosign.pub"><a href={`${REPO}/blob/main/keys/cosign.pub`}>the release key's public half</a></arc-description-item>
+            </arc-description-list>
+          </div>
+        </div>
+      </section>
+
+      <section class="chapter" id="keys">
+        <h2>Two variants, one key</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <div>
+            <p>
+              The nvidia variant builds <code>nvidia-open</code> against the image's exact kernel and
+              signs it. Blackwell has no closed-driver option, which is fine — the open module is the
+              better one now anyway.
+            </p>
+            <p>
+              <code>Containerfile</code> declares no build secrets, so it is safe to build anywhere.{' '}
+              <code>Containerfile.nvidia</code> needs the Secure&nbsp;Boot signing key — which it
+              never holds. The key lives on the signing host; the build carries a bearer token, sends
+              each module's bytes, and attaches the detached signature that comes back. Neither key
+              nor token reaches an image layer.
+            </p>
+            <p>
+              The public half ships in <strong>both</strong> images so the key can be enrolled before
+              the driver is in play. The nvidia build fails if the module's signer doesn't match that
+              cert — a stale cert becomes a failed build instead of a black screen at boot.
+            </p>
+          </div>
+          <div>
+            <p>
+              <strong>Running this yourself?</strong> Fork it and use your own key. Enrolling this
+              cert means your machine permanently trusts modules its owner signs, which is not a
+              relationship you want with a stranger's laptop. The standard image needs no keys at
+              all.
+            </p>
+            <p>
+              <strong>A build somebody starts by hand defines nothing.</strong> The scheduled
+              nightly is the published one. A hand-started build is tagged <code>-dev</code> out of
+              its own series: <code>:latest</code> does not move onto it, the SBOM baseline the next
+              night diffs against is left alone, and no site commit lands. A <code>-dev</code> tag in
+              the registry is a debugging image that was never released, and a machine booted on one
+              says so in its boot menu.
+            </p>
+            <p class="hint">
+              <span class="sent">One person's laptop OS, over-engineered on purpose, MIT-licensed.</span>{' '}
+              <a href={REPO}>The whole thing is public.</a>
+            </p>
+          </div>
+        </div>
+      </section>
+    </arc-container>
+  </main>
+</Base>
+
+<style>
+  .two {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-xl);
+    max-width: 72rem;
+    align-items: start;
+  }
+  .two arc-code-block {
+    display: block;
+    margin-bottom: var(--space-md);
+  }
+  .endpoints {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+  @media (max-width: 56rem) {
+    .two {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-md);
+    }
+  }
+</style>

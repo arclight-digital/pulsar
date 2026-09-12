@@ -40,6 +40,8 @@ export async function initBeacon(): Promise<void> {
   const chip = document.getElementById('build-version');
   const note = document.getElementById('build-note');
   if (!chip || !note) return;
+  // the top bar's badge names the same build; it follows the chip
+  const echoes = document.querySelectorAll<HTMLElement>('[data-build-version]');
 
   // What the build host committed. Read before anything can overwrite it,
   // because the note may need to name it.
@@ -64,7 +66,7 @@ export async function initBeacon(): Promise<void> {
   const success = nightly.last_success;
 
   if (success?.version) {
-    chip.textContent = success.version;
+    for (const el of echoes) el.textContent = success.version;
 
     // The chip now names a newer build than the manifest card and the
     // changelog do. Saying so is the whole point -- an unexplained mismatch
@@ -95,7 +97,7 @@ export async function initBeacon(): Promise<void> {
   // A stale chip stops pulsing. The dot is the page's liveness cue, and a
   // beacon still sweeping over a pipeline that has not shipped in days is the
   // one thing on this page that would be decorative rather than true.
-  if (stale) chip.closest('.build-chip')?.setAttribute('data-stale', '');
+  if (stale) chip.closest('#build-chip')?.setAttribute('data-stale', '');
 
   if (!lines.length) return;
   note.textContent = lines.join(' ');

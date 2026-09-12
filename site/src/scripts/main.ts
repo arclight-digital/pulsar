@@ -1,15 +1,13 @@
-// Everything the page runs, in the order it has to run in: the theme state
-// first, because the shader reads it, then the controls, then the shader.
+// Everything of Pulsar's own the page runs, in the order it has to run in:
+// the theme state first, because the shader reads it, then the easter egg,
+// then the shader. Copy buttons, tabs and the theme toggle are ARC UI's now
+// and register from the layout's script block before this module runs.
 import { initBeacon } from './beacon';
-import { initCopy } from './copy';
 import { initSky } from './sky';
 import { initSpin } from './spin';
-import { initTabs } from './tabs';
 import { initTheme } from './theme';
 
 initTheme();
-initTabs();
-initCopy();
 initSpin();
 initSky();
 

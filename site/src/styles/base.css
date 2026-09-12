@@ -1,59 +1,104 @@
 /* Page ground rules and the handful of utilities that cross every component
  * boundary. Anything that belongs to one section lives in that component's
- * scoped <style> block instead. */
+ * scoped <style> block instead. Every value is an ARC UI token or one of
+ * Pulsar's own from tokens.css -- a literal here is a colour no theme can
+ * reach. */
 
 * {
-  margin: 0;
   box-sizing: border-box;
 }
 
 html {
-  scrollbar-color: var(--line) transparent;
+  scrollbar-color: var(--border-bright) transparent;
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 body {
-  background: var(--ground);
-  color: var(--text);
-  font: 400 17px/1.65 var(--font-ui);
-  caret-color: var(--accent);
+  margin: 0;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-weight: var(--body-weight);
+  font-size: var(--body-size);
+  line-height: var(--body-lh);
+  caret-color: var(--accent-primary);
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--ground);
+  background: var(--accent-primary);
+  color: var(--bg-deep);
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-primary);
   text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
+  box-shadow: var(--focus-glow);
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+  font-weight: var(--font-mono-weight);
 }
 
 code {
-  font-family: var(--font-mono);
+  font-size: 0.92em;
+  /* a long path in running text has no break opportunity of its own */
+  overflow-wrap: anywhere;
 }
 
+/* the fixed bar's height, so a page that opens on prose starts under it */
 main {
-  max-width: 62rem;
-  margin: 0 auto;
-  padding: 5rem 1.5rem 4rem;
+  display: block;
+}
+
+.page {
+  padding-top: var(--space-4xl);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: var(--font-display-weight);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  margin: 0;
 }
 
 h2 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  text-wrap: balance;
-  margin-bottom: 1.1rem;
+  font-size: var(--text-2xl);
+  line-height: var(--heading-lh);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--space-md);
+}
+
+h3 {
+  font-size: var(--text-lg);
+  line-height: var(--heading-lh);
+  margin-bottom: var(--space-sm);
+}
+
+p {
+  margin: 0 0 var(--space-md);
 }
 
 /* pretty does the paragraph-level work -- no orphans, a calmer rag; balance
-   stays on the display lines that want symmetric halves (headings, tagline,
-   decks), where the component rule's specificity outranks this. */
+   stays on the display lines that want symmetric halves (headings, decks). */
 p,
 li,
 figcaption {
@@ -72,10 +117,21 @@ figcaption {
   display: inline-block;
 }
 
+.lede {
+  font-size: var(--text-lg);
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
 .hint {
-  color: var(--muted);
-  font-size: 0.9rem;
-  margin-top: 0.9rem;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  max-width: 62ch;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .sr-only {
@@ -87,8 +143,32 @@ figcaption {
   white-space: nowrap;
 }
 
-@media (max-width: 26rem) {
-  main {
-    padding: 3.5rem 1.1rem 3rem;
-  }
+/* A code block or terminal is a grid or flex item almost everywhere it
+   appears; its unwrapped line must scroll inside it, never widen the page. */
+arc-code-block {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Section rhythm: one scale, more air above a heading than below it. The
+   line between chapters is ARC's glow hairline, not a border. */
+.chapter {
+  position: relative;
+  padding-block: var(--space-2xl) var(--space-xl);
+}
+.chapter + .chapter::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--glow-line-gradient);
+  opacity: 0.6;
+}
+
+/* The house heading: a short gradient rule under every h2, the way
+   arcui.dev's own pages do it. */
+.h-rule {
+  display: block;
+  max-width: 48px;
+  margin: calc(-1 * var(--space-sm)) 0 var(--space-lg);
 }

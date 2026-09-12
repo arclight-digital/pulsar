@@ -348,3 +348,46 @@ export function buildDigest(source: Changelog = changelog): Digest {
 export const FOLD_LIMIT = 40;
 
 export const digest = buildDigest();
+
+// The arithmetic of the night, as a sentence rather than a row of figures. The
+// counts that matter are how many packages moved, how few distinct moves that
+// really was, and how much of it was Fedora rebuilding something at a version
+// it was already at. Shared by the hero and /changelog so the two cannot
+// phrase the same night differently.
+const plural = (count: number, one: string, many = `${one}s`) => (count === 1 ? one : many);
+
+export function arithmetic(d: Digest = digest): string {
+  if (d.baseline) {
+    return 'There is nothing on the other side of the diff yet — tomorrow night this image becomes the thing the next one is measured against.';
+  }
+  if (d.quiet) {
+    return 'Every package in last night’s image is the version it was in the night before. The two digests differ; the contents, package for package, do not.';
+  }
+  const parts: string[] = [];
+  if (d.packages > 0) {
+    const upstream = d.packages - d.rebuiltPackages;
+    let sentence = `${d.packages} ${plural(d.packages, 'package')} moved`;
+    if (d.transitions !== d.packages) {
+      sentence += `, in ${d.transitions} distinct ${plural(d.transitions, 'transition')}`;
+    }
+    if (d.rebuiltPackages > 0) {
+      sentence +=
+        upstream === 0
+          ? d.packages === 1
+            ? ' — a rebuild at the same upstream version'
+            : ' — all of them rebuilds at the same upstream version'
+          : ` — ${upstream} to a new upstream version, ${d.rebuiltPackages} rebuilt at the same one`;
+    }
+    parts.push(`${sentence}.`);
+  }
+  const joined = d.added.length;
+  const left = d.removed.length;
+  if (joined > 0 && left > 0) {
+    parts.push(`${joined} ${plural(joined, 'package')} joined the image and ${left} left it.`);
+  } else if (joined > 0) {
+    parts.push(`${joined} ${plural(joined, 'package')} joined the image.`);
+  } else if (left > 0) {
+    parts.push(`${left} ${plural(left, 'package')} left the image.`);
+  }
+  return parts.join(' ');
+}

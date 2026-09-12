@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-12T14:30:00-07:00",
+  "title": "Design System: Pulsar",
+  "extensions": {
+    "colorMeta": {
+      "cyan": { "role": "primary", "displayName": "Cyan (dark accent)", "canonical": "#3ecbff", "tonalRamp": ["oklch(15% 0.06 225)", "oklch(27% 0.09 225)", "oklch(40% 0.11 225)", "oklch(52% 0.13 225)", "oklch(64% 0.14 225)", "oklch(79% 0.13 225)", "oklch(88% 0.08 225)", "oklch(95% 0.03 225)"] },
+      "violet": { "role": "primary", "displayName": "Violet (light accent)", "canonical": "#4b3fd4", "tonalRamp": ["oklch(15% 0.08 275)", "oklch(27% 0.15 275)", "oklch(40% 0.2 275)", "oklch(48% 0.22 275)", "oklch(60% 0.2 275)", "oklch(74% 0.14 275)", "oklch(86% 0.08 275)", "oklch(95% 0.03 275)"] },
+      "peri": { "role": "secondary", "displayName": "Periwinkle", "canonical": "#8fa8ff", "tonalRamp": ["oklch(15% 0.06 270)", "oklch(28% 0.1 270)", "oklch(42% 0.14 270)", "oklch(55% 0.16 270)", "oklch(66% 0.15 270)", "oklch(74% 0.12 270)", "oklch(86% 0.07 270)", "oklch(95% 0.03 270)"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#0b0e1a", "tonalRamp": ["oklch(13% 0.03 275)", "oklch(20% 0.035 275)", "oklch(28% 0.035 275)", "oklch(40% 0.03 275)", "oklch(55% 0.03 275)", "oklch(70% 0.025 275)", "oklch(85% 0.015 275)", "oklch(95% 0.008 275)"] },
+      "deep": { "role": "neutral", "displayName": "Deep (light text)", "canonical": "#241f3d", "tonalRamp": ["oklch(15% 0.04 290)", "oklch(24% 0.05 290)", "oklch(35% 0.05 290)", "oklch(48% 0.05 290)", "oklch(60% 0.04 290)", "oklch(74% 0.03 290)", "oklch(86% 0.02 290)", "oklch(95% 0.01 290)"] },
+      "star": { "role": "neutral", "displayName": "Star", "canonical": "#e9edf7", "tonalRamp": ["oklch(15% 0.02 265)", "oklch(28% 0.02 265)", "oklch(42% 0.02 265)", "oklch(56% 0.02 265)", "oklch(70% 0.02 265)", "oklch(82% 0.015 265)", "oklch(90% 0.012 265)", "oklch(95% 0.01 265)"] },
+      "surface-dark": { "role": "neutral", "displayName": "Surface (dark)", "canonical": "#0f1222" },
+      "card-dark": { "role": "neutral", "displayName": "Card (dark)", "canonical": "#141830" },
+      "elevated-dark": { "role": "neutral", "displayName": "Elevated (dark)", "canonical": "#1a1e38" },
+      "surface-light": { "role": "neutral", "displayName": "Surface (light)", "canonical": "#f1f3fa" },
+      "card-light": { "role": "neutral", "displayName": "Card (light)", "canonical": "#ffffff" },
+      "chip": { "role": "neutral", "displayName": "Chip (translucent ink, both themes)", "canonical": "rgba(11, 14, 26, 0.78)" },
+      "on-chip": { "role": "neutral", "displayName": "On chip", "canonical": "rgba(233, 237, 247, 0.7)" },
+      "chip-line": { "role": "neutral", "displayName": "Chip hairline", "canonical": "rgba(143, 168, 255, 0.14)" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The hero lead line only: a package name, or 'Nothing moved.' / 'First build.'" },
+      "headline": { "displayName": "Headline", "purpose": "Chapter h2 and arc-page-header headings." },
+      "title": { "displayName": "Title", "purpose": "Ledger band h3 headings." },
+      "lede": { "displayName": "Lede", "purpose": "The paragraph under a chapter heading; 62ch measure." },
+      "body": { "displayName": "Body", "purpose": "Prose." },
+      "hint": { "displayName": "Hint", "purpose": "Muted note under a terminal, list or section; 62ch." },
+      "label": { "displayName": "Label", "purpose": "Uppercase tracked label: footer column titles, brandline, install path headings, look-picker buttons." },
+      "label-inline": { "displayName": "Label inline", "purpose": "Tiny tag inside a row: +N packages, downgraded, standard/nvidia, table heads." },
+      "wordmark": { "displayName": "Wordmark", "purpose": "PULSAR at 0.3em tracking in the bar and footer." },
+      "mono": { "displayName": "Mono", "purpose": "Anything a machine wrote: names, versions, digests, filenames, commands, timeline stages." },
+      "mono-caption": { "displayName": "Mono caption", "purpose": "The muted line above or below a terminal; the hero digest pair." }
+    },
+    "shadows": [
+      { "name": "glow-xs", "value": "0 0 6px rgba(var(--accent-primary-rgb), 0.42)", "purpose": "text-shadow lift on the target version, major-bump names, gamescale answer, link hover; box-shadow on the build chip hover." },
+      { "name": "glow-sm", "value": "0 0 8px rgba(var(--accent-primary-rgb), 0.42)", "purpose": "The live build dot and the pressed look-picker pill." },
+      { "name": "glow-hover", "value": "0 0 12px rgba(var(--accent-primary-rgb), 0.22)", "purpose": "Fold summary hover, with border-bright." },
+      { "name": "focus-glow", "value": "0 0 0 1px rgba(var(--accent-primary-rgb),0.3), 0 0 6px rgba(var(--accent-primary-rgb),0.5), 0 0 16px rgba(var(--accent-primary-rgb),0.3), 0 0 40px rgba(var(--accent-secondary-rgb),0.18)", "purpose": "Every :focus-visible, alongside a 2px accent outline offset 2px." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "The one easing for every authored transition and animation." },
+      { "name": "state-transition", "value": "0.2s", "purpose": "Colour, border-color and box-shadow changes." },
+      { "name": "caret-rotate", "value": "0.25s", "purpose": "The diff-row caret turning 180deg on open." },
+      { "name": "picker-transition", "value": "0.3s", "purpose": "Look-picker colour, background and glow." },
+      { "name": "pulse", "value": "2.4s infinite, opacity 1 to 0.35", "purpose": "The live build dot; stops when the beacon marks the chip stale and under prefers-reduced-motion." }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "40rem" },
+      { "name": "bar-badge", "value": "48rem" },
+      { "name": "two-column", "value": "56rem" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Build Chip",
+      "kind": "chip",
+      "refersTo": "build-chip",
+      "description": "The live build version, pulsing while the registry agrees with the page; stale when it does not.",
+      "html": "<a class=\"ds-build-chip\" href=\"#\"><span class=\"ds-build-dot\"></span>build <strong>44.20260909.0</strong></a>",
+      "css": ".ds-build-chip { display: inline-flex; align-items: center; gap: var(--space-sm, 8px); padding: var(--space-xs, 4px) var(--space-md, 16px) var(--space-xs, 4px) var(--space-sm, 8px); border-radius: 9999px; background: var(--chip, rgba(11,14,26,.78)); border: 1px solid var(--chip-line, rgba(143,168,255,.14)); color: var(--star, #e9edf7); text-decoration: none; font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 12px; letter-spacing: 0.02em; transition: border-color 0.2s cubic-bezier(0.16,1,0.3,1), box-shadow 0.2s cubic-bezier(0.16,1,0.3,1); } .ds-build-chip strong { font-weight: 400; color: var(--cyan, #3ecbff); } .ds-build-chip:hover { border-color: var(--cyan, #3ecbff); box-shadow: 0 0 6px rgba(62,203,255,0.42); } .ds-build-chip:focus-visible { outline: 2px solid var(--accent-primary, #3ecbff); outline-offset: 2px; } .ds-build-dot { width: 8px; height: 8px; border-radius: 9999px; background: var(--cyan, #3ecbff); box-shadow: 0 0 8px rgba(62,203,255,0.42); animation: ds-pulse 2.4s cubic-bezier(0.16,1,0.3,1) infinite; } @keyframes ds-pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } } @media (prefers-reduced-motion: reduce) { .ds-build-dot { animation: none } }"
+    },
+    {
+      "name": "Look Picker",
+      "kind": "chip",
+      "refersTo": "look-picker",
+      "description": "Pill tray of the four shipped wallpaper looks; the pressed one is ink on cyan with a glow.",
+      "html": "<div class=\"ds-picker\" role=\"group\" aria-label=\"Backdrop\"><button type=\"button\" aria-pressed=\"true\">Silk</button><button type=\"button\" aria-pressed=\"false\">Leak</button><button type=\"button\" aria-pressed=\"false\">Satin</button><button type=\"button\" aria-pressed=\"false\">Holo</button></div>",
+      "css": ".ds-picker { display: inline-flex; padding: var(--space-xs, 4px); gap: var(--space-xs, 4px); border-radius: 9999px; background: var(--chip, rgba(11,14,26,.78)); border: 1px solid var(--chip-line, rgba(143,168,255,.14)); backdrop-filter: blur(12px); } .ds-picker button { appearance: none; border: 0; background: transparent; color: var(--on-chip, rgba(233,237,247,.7)); font-family: var(--font-label, 'Host Grotesk', system-ui, sans-serif); font-weight: 700; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; padding: var(--space-sm, 8px) var(--space-md, 16px); border-radius: 9999px; cursor: pointer; transition: color 0.3s cubic-bezier(0.16,1,0.3,1), background-color 0.3s cubic-bezier(0.16,1,0.3,1), box-shadow 0.3s cubic-bezier(0.16,1,0.3,1); } .ds-picker button:hover { color: var(--star, #e9edf7); } .ds-picker button[aria-pressed='true'] { color: var(--ink, #0b0e1a); background: var(--cyan, #3ecbff); box-shadow: 0 0 8px rgba(62,203,255,0.42); } .ds-picker button:focus-visible { outline: 2px solid var(--cyan, #3ecbff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Diff Row",
+      "kind": "custom",
+      "refersTo": "diff-row",
+      "description": "One version transition in the ledger: mono name, label-inline tag, and the whole-version device with shared parts dimmed and the moving target lit.",
+      "html": "<ul class=\"ds-rows\"><li class=\"ds-drow ds-is-major\"><span class=\"ds-head\"><span class=\"ds-name\">libdnf5</span><span class=\"ds-with\">+7 packages</span></span><span class=\"ds-vx\"><span class=\"ds-v-fixed\">5.4.</span><span class=\"ds-v-from\">3.0-2</span><span class=\"ds-v-fixed\">.fc44</span> <span class=\"ds-v-fixed\">&rarr;</span> <span class=\"ds-v-fixed\">5.4.</span><span class=\"ds-v-to\">4.0-1</span><span class=\"ds-v-fixed\">.fc44</span></span></li><li class=\"ds-drow\"><span class=\"ds-head\"><span class=\"ds-name\">mise</span></span><span class=\"ds-vx\"><span class=\"ds-v-fixed\">2026.9.</span><span class=\"ds-v-from\">1-1</span> <span class=\"ds-v-fixed\">&rarr;</span> <span class=\"ds-v-fixed\">2026.9.</span><span class=\"ds-v-to\">3-1</span></span></li></ul>",
+      "css": ".ds-rows { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--border-subtle, rgba(143,168,255,.12)); min-width: 28rem; } .ds-drow { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-md, 16px); flex-wrap: wrap; padding: var(--space-sm, 8px) 0; border-top: 1px solid var(--border-subtle, rgba(143,168,255,.12)); } .ds-head { display: inline-flex; align-items: baseline; gap: var(--space-sm, 8px); } .ds-name { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-weight: 400; color: var(--text-primary, #e9edf7); transition: color 0.2s cubic-bezier(0.16,1,0.3,1); } .ds-is-major .ds-name { color: var(--accent-primary, #3ecbff); text-shadow: 0 0 6px rgba(62,203,255,0.42); } .ds-with { font-family: var(--font-label, 'Host Grotesk', system-ui, sans-serif); font-weight: 700; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted, rgba(233,237,247,.66)); } .ds-vx { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 16px; font-variant-numeric: tabular-nums; } .ds-v-fixed { color: var(--text-ghost, rgba(233,237,247,.6)); } .ds-v-from { color: var(--text-secondary, rgba(233,237,247,.76)); } .ds-v-to { color: var(--accent-primary, #3ecbff); text-shadow: 0 0 6px rgba(62,203,255,0.42); }"
+    },
+    {
+      "name": "Fold Summary",
+      "kind": "card",
+      "refersTo": "fold-summary",
+      "description": "The pill that folds rebuilds away: card fill, subtle hairline, bright border and glow on hover.",
+      "html": "<details class=\"ds-fold\"><summary><span class=\"ds-fold-count\">3 packages</span>rebuilt at the same upstream version</summary><p class=\"ds-fold-body\">glibc, kernel-core, mesa</p></details>",
+      "css": ".ds-fold summary { cursor: pointer; list-style: none; display: inline-flex; align-items: baseline; gap: var(--space-sm, 8px); padding: var(--space-sm, 8px) var(--space-md, 16px); border-radius: 9999px; background: var(--bg-card, #141830); border: 1px solid var(--border-subtle, rgba(143,168,255,.12)); color: var(--text-secondary, rgba(233,237,247,.76)); font-family: var(--font-body, 'Host Grotesk', system-ui, sans-serif); font-size: 16px; transition: border-color 0.2s cubic-bezier(0.16,1,0.3,1), box-shadow 0.2s cubic-bezier(0.16,1,0.3,1); } .ds-fold summary::-webkit-details-marker { display: none; } .ds-fold summary:hover { border-color: var(--border-bright, rgba(143,168,255,.3)); box-shadow: 0 0 12px rgba(62,203,255,0.22); } .ds-fold summary:focus-visible { outline: 2px solid var(--accent-primary, #3ecbff); outline-offset: 2px; } .ds-fold-count { font-family: var(--font-mono, 'JetBrains Mono', monospace); color: var(--text-primary, #e9edf7); } .ds-fold-body { margin: var(--space-md, 16px) 0 0; font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 12px; color: var(--text-secondary, rgba(233,237,247,.76)); }"
+    },
+    {
+      "name": "Download Row",
+      "kind": "custom",
+      "refersTo": "download-row",
+      "description": "One ISO: label-inline variant column, mono filename that lifts to accent on hover, sidecar links beneath.",
+      "html": "<ul class=\"ds-isos\"><li class=\"ds-row\"><span class=\"ds-which\">standard</span><span class=\"ds-file\"><a href=\"#\">pulsar-latest-x86_64.iso</a><span class=\"ds-sums\"><a href=\"#\">.sha256</a><a href=\"#\">.sha256.sig</a></span></span></li><li class=\"ds-row\"><span class=\"ds-which\">nvidia</span><span class=\"ds-file\"><a href=\"#\">pulsar-nvidia-latest-x86_64.iso</a><span class=\"ds-sums\"><a href=\"#\">.sha256</a><a href=\"#\">.sha256.sig</a></span></span></li></ul>",
+      "css": ".ds-isos { list-style: none; margin: 0; padding: 0; min-width: 24rem; } .ds-row { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: var(--space-md, 16px); align-items: baseline; padding: var(--space-md, 16px) 0; border-top: 1px solid var(--border-subtle, rgba(143,168,255,.12)); } .ds-row:last-child { border-bottom: 1px solid var(--border-subtle, rgba(143,168,255,.12)); } .ds-which { font-family: var(--font-label, 'Host Grotesk', system-ui, sans-serif); font-weight: 700; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted, rgba(233,237,247,.66)); } .ds-file { display: grid; gap: var(--space-xs, 4px); font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 16px; } .ds-file > a { color: var(--text-primary, #e9edf7); text-decoration: none; transition: color 0.2s cubic-bezier(0.16,1,0.3,1); } .ds-file > a:hover { color: var(--accent-primary, #3ecbff); text-shadow: 0 0 6px rgba(62,203,255,0.42); } .ds-sums { display: flex; gap: var(--space-md, 16px); font-size: 12px; } .ds-sums a { color: var(--text-secondary, rgba(233,237,247,.76)); } .ds-sums a:hover { color: var(--accent-primary, #3ecbff); } .ds-file a:focus-visible { outline: 2px solid var(--accent-primary, #3ecbff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Label",
+      "kind": "custom",
+      "refersTo": "label",
+      "description": "The uppercase tracked label in Host Grotesk Bold, as worn by footer column titles and install path headings.",
+      "html": "<p class=\"ds-label\">Already on Fedora Silverblue or Kinoite 44+</p>",
+      "css": ".ds-label { margin: 0; font-family: var(--font-label, 'Host Grotesk', system-ui, sans-serif); font-weight: 700; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-secondary, rgba(233,237,247,.76)); }"
+    },
+    {
+      "name": "Wordmark Lockup",
+      "kind": "nav",
+      "refersTo": "wordmark",
+      "description": "The bar lockup: 28px mark beside PULSAR at 0.3em tracking, negative right margin swallowing the trailing track.",
+      "html": "<a class=\"ds-lockup\" href=\"#\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 28 28\" aria-hidden=\"true\"><circle cx=\"14\" cy=\"14\" r=\"4\" fill=\"var(--cyan, #3ecbff)\"/><circle cx=\"14\" cy=\"14\" r=\"11\" fill=\"none\" stroke=\"var(--peri, #8fa8ff)\" stroke-width=\"2\" stroke-dasharray=\"20 49\"/></svg><span class=\"ds-word\">PULSAR</span></a>",
+      "css": ".ds-lockup { display: inline-flex; align-items: center; gap: var(--space-sm, 8px); color: var(--text-primary, #e9edf7); text-decoration: none; } .ds-word { font-family: var(--font-display, 'Host Grotesk', system-ui, sans-serif); font-weight: 700; font-size: 16px; line-height: 1; letter-spacing: 0.3em; margin-right: -0.3em; } .ds-lockup:focus-visible { outline: 2px solid var(--accent-primary, #3ecbff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Mono Caption",
+      "kind": "custom",
+      "refersTo": "mono-caption",
+      "description": "The muted mono line that sits above or below every terminal and code block.",
+      "html": "<p class=\"ds-cap\">the image's own manifest &mdash; rendered, not written</p>",
+      "css": ".ds-cap { margin: 0; font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 12px; letter-spacing: 0.02em; color: var(--text-muted, rgba(233,237,247,.66)); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lighthouse Ledger",
+    "overview": "Pulsar's site is a nightly build log wearing the OS's own wallpaper. The world is ARC UI's (Arclight's Lit component library, v4.2.2), handed Pulsar's palette through ARC's two-color contract and its two typefaces through ARC's font roles; everything else, from the glow vocabulary to the spacing scale to the type contexts, is inherited from ARC and not restated here. What is Pulsar's own is the ink ground, the shader sky, the terminal chip family that stays dark in both themes, and the diff typography that makes a version transition readable at a glance.\n\nThe mood is dry and inspectable. The hero is not a tagline but a package name at display size; proof is shown as terminals and code blocks rendering real commands and real outputs; the ledger is a ruled list of monospace rows, not cards. Emphasis is light rather than weight: the moving part of a version number glows in the accent, the one row that is the answer lifts to primary and then to accent, and everything shared or secondary is thinned toward ghost. Depth is tonal and luminous (ARC's --glow-*), never a drop shadow.\n\nConfirmed rejections, carried from the direction contract and the ARC rulebook that binds this site: no wordmark-tagline-two-buttons hero; no images other than the shader and its still; no coloured left borders for state; no literal colours, sizes or typeface names in stylesheets; no motion without a state change to explain it.",
+    "keyCharacteristics": [
+      "Ink-blue-black ground with cyan and periwinkle accents on dark; violet as the single accent on light, chosen for contrast, not taste.",
+      "One display face at two weights (Host Grotesk 400/700) and one mono (JetBrains Mono 400); labels are Host Grotesk Bold tracked, not ARC's default Tomorrow.",
+      "The wallpaper shader is the only image; its CI-rendered still is the CSS ground and the no-WebGL fallback.",
+      "Terminals, code blocks, the top bar on inner pages, and the footer are pinned dark in both themes (theme-fixed-dark).",
+      "Glow over outline: hover and emphasis are --glow-xs / --glow-sm / --glow-hover text-shadows and box-shadows on accent colour, never thicker borders.",
+      "Hairline-ruled lists (1px solid var(--border-subtle)) are the house container; cards are rare and pill-shaped when they appear."
+    ],
+    "rules": [
+      { "name": "The Two-Color Rule", "body": "Brand enters ARC through --accent-primary / --accent-secondary and their -rgb twins, restated per theme in tokens.css, which loads after ARC's base.css and wins on cascade order. Nothing spells a channel triplet outside that file.", "section": "colors" },
+      { "name": "The Lift-Then-Hue Rule", "body": "Hierarchy is built by lifting to --text-primary and then to the accent, never by stepping down the grey ramp: the gamescale answer row goes muted → primary → accent with --glow-xs; the version transition goes ghost (shared parts) → secondary (from) → accent (to).", "section": "colors" },
+      { "name": "The Contrast-Not-Taste Rule", "body": "The accent changes per theme (cyan on ink, violet on star) because of contrast alone. A new accent role must clear 4.5:1 on both grounds or it uses the contract's slot, not a hand-picked colour.", "section": "colors" },
+      { "name": "The Machine-Wrote-It Rule", "body": "Anything a build, a shell or a package manager produced is set in --font-mono: names, versions, digests, filenames, commands, timeline stage names. Prose about it is Host Grotesk.", "section": "typography" },
+      { "name": "The Type-Context Rule", "body": "Text picks an ARC context (--label-*, --label-inline-*, --heading-lh, --glyph-lh, --body-*) or a --text-* step; no literal font-size, font-weight, letter-spacing or family name in a stylesheet. The one clamp outside the scale is the hero display size.", "section": "typography" },
+      { "name": "The Whole-Version Rule", "body": "A version transition prints both versions in full; shared head and tail are dimmed to ghost, the moving part of the target is lifted to accent. Never factor out the shared parts.", "section": "typography" },
+      { "name": "The Glow-Over-Outline Rule", "body": "Emphasis and hover are expressed with --glow-* on the accent, never with a thicker or darker border. A border may change colour on hover (subtle → bright, chip-line → cyan) only alongside a glow.", "section": "elevation" },
+      { "name": "The Dark-Frame Rule", "body": "Terminals, code blocks, the inner-page bar and the footer are theme-fixed-dark in both themes: a terminal is a terminal, not a card. ARC's macOS orbs are hidden on arc-terminal and arc-code-block (::part(orbs) { display: none }); the hairline title bar stays and titles ellipsise inside it.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do set every colour, size, radius and face as a var(--*) from ARC or tokens.css; a literal is a colour no theme can reach.",
+      "Do put anything a machine wrote in --font-mono with font-variant-numeric: tabular-nums where figures align.",
+      "Do build emphasis by lifting muted → primary → accent with text-shadow: var(--glow-xs), and hover by glow (--glow-xs / --glow-hover) with at most a border colour shift.",
+      "Do contain lists with 1px solid var(--border-subtle) hairlines (row top, list bottom) and no fill; reserve --radius-full pills for controls that sit on top of content.",
+      "Do add class=\"theme-fixed-dark\" to every arc-terminal and arc-code-block, and pair it with a mono caption at --text-xs.",
+      "Do open a chapter with h2 → .lede (62ch) → content → .hint or .more, inside <section class=\"chapter\">; the hairline between chapters comes from .chapter + .chapter.",
+      "Do declare light-theme overrides twice, under [data-theme='light'] and @media (prefers-color-scheme: light) [data-theme='auto'], mirroring ARC's structure.",
+      "Do guard motion with prefers-reduced-motion and use --ease-out for every transition."
+    ],
+    "donts": [
+      "Don't mark state with a coloured left border, an active-edge bar or a side stripe on an alert. ARC's hardest ban; no exceptions.",
+      "Don't introduce a second image. The shader (and its still) is the only picture; the mark and gamescale icon are authored SVG, not imagery.",
+      "Don't write a typeface name or a literal font-size / font-weight / letter-spacing into a stylesheet; use the roles and contexts.",
+      "Don't use drop shadows (--shadow-*) for depth; the system is glow and tonal steps.",
+      "Don't let a terminal or code block follow the light theme, or show ARC's macOS orbs on one.",
+      "Don't step hierarchy down the grey ramp (secondary → muted → ghost are within 17 RGB points of each other); lift instead.",
+      "Don't factor the shared parts out of a version transition or truncate a package name; dim and wrap.",
+      "Don't hard-code an accent for a region's contrast; if cyan fails on a ground, that ground takes the theme's accent slot (violet on light) or the chip family.",
+      "Don't treat the two open cosmetic items as house style: nav pills and the secondary button render outline-first where ARC prefers glow, and the ledger caret icon has not been verified in a screenshot. Both are ARC-default renderings awaiting a decision, not rules to inherit."
+    ]
+  }
+}

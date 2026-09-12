@@ -1,0 +1,184 @@
+---
+import Install from '../components/Install.astro';
+import Iso from '../components/Iso.astro';
+import Base from '../layouts/Base.astro';
+import { IMAGES } from '../data/site';
+
+const DESCRIPTION =
+  'Install Pulsar: one bootc switch on Fedora Silverblue or Kinoite, or the weekly signed ISO on a fresh machine. Enrol the Secure Boot key once and keep Secure Boot on.';
+
+const ENROL = 'sudo mokutil --import /etc/pki/pulsar/MOK.der\nsudo systemctl reboot';
+const TAKE = `mokutil --test-key /etc/pki/pulsar/MOK.der   # ...is already enrolled\nsudo bootc switch ${IMAGES.nvidia}:latest\nsudo systemctl reboot`;
+const CHECK = 'modinfo -F signer nvidia\nnvidia-smi';
+const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'];
+---
+
+<Base title="Install Pulsar" description={DESCRIPTION} path="/install">
+  <main id="main" class="page">
+    <arc-container size="lg">
+      <arc-page-header
+        border
+        heading="Install"
+        description="One command if you are already on Silverblue; one download if you are not. Either way the machine never compiles anything."
+      ></arc-page-header>
+
+      <section class="chapter">
+        <Install />
+      </section>
+
+      <section class="chapter" id="secure-boot">
+        <h2>Enrol the key, once</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <p class="lede">
+          The nvidia variant's kernel module is signed with Pulsar's key so Secure&nbsp;Boot can
+          stay on. Your firmware has to be told to trust that key, and that is a one-time
+          conversation with MokManager.
+        </p>
+        <ol class="steps">
+          <li>
+            <div class="step-body">
+            <h3>Import the certificate</h3>
+            <p>
+              <code>mokutil</code> asks for a password you will retype at the firmware screen on the
+              next boot — used once, then never again.
+            </p>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="enrol" code={ENROL}></arc-code-block>
+            </div>
+          </li>
+          <li>
+            <div class="step-body">
+            <h3>Answer MokManager</h3>
+            <p>The next boot stops in a blue firmware screen. The sequence is:</p>
+            <p class="mok">
+              {MOK.map((step, index) => (
+                <>
+                  <arc-kbd>{step}</arc-kbd>
+                  {index < MOK.length - 1 && <span class="arrow" aria-hidden="true">→</span>}
+                </>
+              ))}
+            </p>
+            <p class="hint">
+              Miss the prompt and nothing breaks — the enrolment just doesn't happen. Run the import
+              again.
+            </p>
+            </div>
+          </li>
+          <li>
+            <div class="step-body">
+            <h3>Take the driver</h3>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="switch" code={TAKE}></arc-code-block>
+            </div>
+          </li>
+          <li>
+            <div class="step-body">
+            <h3>Check it</h3>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="check" code={CHECK}></arc-code-block>
+            </div>
+          </li>
+        </ol>
+
+        <arc-alert variant="warning" heading="Lost the key later?">
+          A BIOS update can clear the whole MOK list. On the nvidia image the recovery is GNOME
+          Software's own Secure Boot prompt: it enrols <code>/etc/pki/akmods/certs/public_key.der</code>,
+          and a boot-time unit keeps that file equal to <code>MOK.der</code>, so the prompt enrols the
+          right key. If you would rather not trust a stranger's key at all, the standard image needs
+          none — and the repo is MIT-licensed to fork with your own.
+        </arc-alert>
+      </section>
+
+      <section class="chapter" id="updates">
+        <h2>Updates</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <div>
+            <p>
+              Stock Silverblue behaviour, on purpose. GNOME Software notices and tells you; it
+              installs when you choose to restart. bootc's own auto-update timer is left disabled
+              deliberately — it reboots on its own.
+            </p>
+            <p>
+              Pulsar rebuilds nightly, so kernels, security updates, and driver bumps arrive as a
+              normal update notification. Impatient: <code>sudo pulsar update</code>.
+            </p>
+          </div>
+          <div>
+            <p>
+              Layered anything with <code>rpm-ostree install</code>? Use <code>pulsar update</code>{' '}
+              rather than <code>bootc upgrade</code> — <a href="/cli#update">why, on the CLI page</a>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="chapter" id="bare-metal">
+        <h2>Starting from bare metal</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <Iso />
+      </section>
+    </arc-container>
+  </main>
+</Base>
+
+<style>
+  .steps {
+    list-style: none;
+    margin: var(--space-lg) 0 var(--space-xl);
+    padding: 0;
+    display: grid;
+    gap: var(--space-xl);
+    counter-reset: step;
+  }
+  .steps > li {
+    display: grid;
+    grid-template-columns: 3rem minmax(0, 1fr);
+    gap: var(--space-md);
+    max-width: 52rem;
+  }
+  .steps > li::before {
+    counter-increment: step;
+    content: counter(step);
+    font-family: var(--font-mono);
+    font-size: var(--text-xl);
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
+    line-height: var(--heading-lh);
+  }
+  .step-body {
+    min-width: 0;
+  }
+  .steps h3 {
+    margin-bottom: var(--space-sm);
+  }
+  .steps arc-code-block {
+    display: block;
+    margin-top: var(--space-sm);
+  }
+  .mok {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+  .arrow {
+    color: var(--text-ghost);
+  }
+  arc-alert {
+    display: block;
+    max-width: 52rem;
+  }
+  .two {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-xl);
+    max-width: 72rem;
+  }
+  @media (max-width: 56rem) {
+    .two {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-md);
+    }
+    .steps > li {
+      grid-template-columns: 2rem minmax(0, 1fr);
+    }
+  }
+</style>

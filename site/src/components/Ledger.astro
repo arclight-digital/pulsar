@@ -1,0 +1,183 @@
+---
+// The night's ledger: every transition the SBOM diff found, grouped by the
+// move it made, rendered at build time from the JSON the nightly committed.
+// The claim the rest of the site makes, shown rather than asserted: the image
+// is inspectable, and this cannot drift from what was built because it is
+// built from it.
+//
+// It leads with the night's one fact, groups packages that made the identical
+// move, separates rebuilds from real version changes, and folds the volume
+// away instead of either flooding the page or truncating it. Every one of
+// those rules lives in src/data/digest.ts; /changelog.json still serves the
+// diff untouched.
+import DiffRow from './DiffRow.astro';
+import { FOLD_LIMIT, digest } from '../data/digest';
+
+const plural = (count: number, one: string, many = `${one}s`) => (count === 1 ? one : many);
+
+const presence = [
+  { id: 'added', title: 'Added', note: 'in this image, not the one before it', rows: digest.added },
+  { id: 'removed', title: 'Removed', note: 'in the previous image, not this one', rows: digest.removed },
+].filter((band) => band.rows.length > 0);
+
+const empty = digest.bands.length === 0 && presence.length === 0 && digest.rebuilds.length === 0;
+---
+
+<div class="ledger">
+  {
+    empty && (
+      <p class="lede">
+        {digest.baseline
+          ? 'The first build has nothing to be diffed against. Tomorrow night, this is where the difference will be.'
+          : 'A real diff that found nothing. Every package is the version it was.'}
+      </p>
+    )
+  }
+
+  {
+    digest.bands.map((band) => (
+      <section class="band">
+        <h3 class="band-h">
+          {band.title}
+          {band.note && <span class="band-note">{band.note}</span>}
+        </h3>
+        <ul class="rows">
+          {band.groups.slice(0, FOLD_LIMIT).map((group) => (
+            <DiffRow group={group} />
+          ))}
+          {band.groups.length > FOLD_LIMIT && (
+            <li class="rest">
+              and {band.groups.length - FOLD_LIMIT} more, in <a href="/changelog.json">the full diff</a>
+            </li>
+          )}
+        </ul>
+      </section>
+    ))
+  }
+
+  {
+    presence.map((band) => (
+      <section class="band">
+        <h3 class="band-h">
+          {band.title}
+          <span class="band-note">{band.note}</span>
+        </h3>
+        <ul class="rows">
+          {band.rows.slice(0, FOLD_LIMIT).map((row) => (
+            <li class="prow">
+              <span class="prow-name">{row.name}</span>
+              <span class="prow-ver">{row.version}</span>
+            </li>
+          ))}
+          {band.rows.length > FOLD_LIMIT && (
+            <li class="rest">
+              and {band.rows.length - FOLD_LIMIT} more, in <a href="/changelog.json">the full diff</a>
+            </li>
+          )}
+        </ul>
+      </section>
+    ))
+  }
+
+  {/* Rebuilds are real and are published, and they are not what anyone came
+      to read. Folded, counted in the sentence above, and one click away. */}
+  {
+    digest.rebuilds.length > 0 && (
+      <details class="fold">
+        <summary>
+          <span class="fold-count">
+            {digest.rebuiltPackages} {plural(digest.rebuiltPackages, 'package')}
+          </span>
+          rebuilt at the same upstream version
+        </summary>
+        <ul class="rows">
+          {digest.rebuilds.slice(0, FOLD_LIMIT).map((group) => (
+            <DiffRow group={group} />
+          ))}
+          {digest.rebuilds.length > FOLD_LIMIT && (
+            <li class="rest">
+              and {digest.rebuilds.length - FOLD_LIMIT} more, in <a href="/changelog.json">the full diff</a>
+            </li>
+          )}
+        </ul>
+      </details>
+    )
+  }
+</div>
+
+<style>
+  .ledger {
+    display: grid;
+    gap: var(--space-xl);
+  }
+  .band-h {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-sm);
+  }
+  .band-note {
+    font-family: var(--font-body);
+    font-weight: var(--body-weight);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    letter-spacing: 0;
+  }
+  .rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .prow {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    padding: var(--space-sm) 0;
+    border-top: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+  .prow-ver {
+    color: var(--text-secondary);
+  }
+  .rest {
+    padding: var(--space-sm) 0;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .fold summary {
+    cursor: pointer;
+    list-style: none;
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-full);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    transition:
+      border-color 0.2s var(--ease-out),
+      box-shadow 0.2s var(--ease-out);
+  }
+  .fold summary::-webkit-details-marker {
+    display: none;
+  }
+  .fold summary:hover {
+    border-color: var(--border-bright);
+    box-shadow: var(--glow-hover);
+  }
+  .fold-count {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+  }
+  .fold[open] summary {
+    margin-bottom: var(--space-md);
+  }
+</style>

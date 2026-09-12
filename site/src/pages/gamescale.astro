@@ -1,0 +1,104 @@
+---
+import Gamescale from '../components/Gamescale.astro';
+import Base from '../layouts/Base.astro';
+
+const DESCRIPTION =
+  'gamescale runs a game at 1× so XWayland hands it the panel’s real mode, then puts the desktop back when it exits — including when it doesn’t exit cleanly.';
+
+const FLATPAK_ERR =
+  '$ flatpak run --command=sh --filesystem=/usr/bin/gamescale:ro com.valvesoftware.Steam\nF: Not sharing "/usr/bin/gamescale" with sandbox: Path "/usr" is reserved by Flatpak';
+const SETUP = 'pulsar setup gamescale --platform steam';
+---
+
+<Base title="gamescale — the panel’s real resolution, for one game at a time" description={DESCRIPTION} path="/gamescale">
+  <main id="main" class="page">
+    <arc-container size="lg">
+      <arc-page-header border heading="gamescale" description="The panel’s real resolution, for one game at a time.">
+        <img slot="above" class="gs-icon" src="/assets/gamescale.svg" alt="" width="48" height="48" />
+      </arc-page-header>
+
+      <section class="chapter">
+        <Gamescale />
+      </section>
+
+      <section class="chapter" id="in-the-image">
+        <h2>What ships in the image</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <p>
+            <a href="https://github.com/arclight-digital/gamescale">gamescale</a> ships at a pinned,
+            hash-verified tag: the script at <code>/usr/bin/gamescale</code>, its top-bar indicator
+            enabled system-wide, and a reconcile unit that restores your scale if a game dies
+            without cleaning up.
+          </p>
+          <p>
+            For <strong>native</strong> launchers and terminal use that is everything, and a
+            machine that never installs anything still recovers its scale after a crash.
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="flatpak">
+        <h2>Flatpak launchers need one more step</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <div>
+            <p>
+              For <strong>Flatpak</strong> launchers it is not enough, and the reason is categorical
+              rather than a papercut. Flatpak reserves <code>/usr</code> for the runtime and refuses
+              to share the host's:
+            </p>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="flatpak" code={FLATPAK_ERR}></arc-code-block>
+            <p>
+              The <code>/usr</code> a Flatpak sees is the runtime's, so no grant can ever expose{' '}
+              <code>/usr/bin/gamescale</code> to Steam. A copy under <code>$HOME</code> is the only
+              kind that maps in, which means granting a launcher always means running the installer:
+            </p>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="setup" code={SETUP}></arc-code-block>
+          </div>
+          <div>
+            <p>
+              That runs the installer copy staged in the image — offline, pinned, matching the image
+              exactly. Upstream's <code>curl | sh</code> works too; it just fetches whatever is
+              current rather than what the image pinned.
+            </p>
+            <p>
+              <strong>The install shadows the image copy, and that is the intended outcome.</strong>{' '}
+              User paths win every collision: your shell finds <code>~/.local/bin</code> before{' '}
+              <code>/usr/bin</code>, GNOME prefers a user extension over a system one with the same
+              uuid, and systemd prefers a user unit over <code>/usr/lib/systemd/user</code>. One of
+              each runs, never both.
+            </p>
+            <p class="hint">
+              Chasing odd behaviour? <code>gamescale --version</code> tells you which copy you are
+              actually running.
+            </p>
+          </div>
+        </div>
+      </section>
+    </arc-container>
+  </main>
+</Base>
+
+<style>
+  .gs-icon {
+    display: block;
+  }
+  .two {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-xl);
+    max-width: 72rem;
+    align-items: start;
+  }
+  .two arc-code-block {
+    display: block;
+    margin: var(--space-sm) 0 var(--space-md);
+  }
+  @media (max-width: 56rem) {
+    .two {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-md);
+    }
+  }
+</style>
