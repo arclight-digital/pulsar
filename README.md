@@ -15,9 +15,9 @@
 
 Fedora Silverblue with the sharp edges filed off, shipped as a bootc image on
 the official Fedora base. An ephemeral build host builds, signs, and
-publishes every image nightly;
-the machine that runs one never compiles anything, the system is the same
-every boot, and the last good version is always one reboot away.
+publishes every image nightly; the machine that runs one never compiles
+anything, the system is the same every boot, and the last good version is
+always one reboot away.
 
 ```bash
 sudo bootc switch ghcr.io/arclight-digital/pulsar:latest          # runs anywhere
@@ -48,25 +48,24 @@ base        Fedora Silverblue 44
 
 Branding, Host Grotesk + JetBrains Mono + Nimbus Sans bound all the way down
 to fontconfig's generics, a plymouth theme, and the papercuts already fixed.
-Unfiltered Flathub, shipped as an image-native remote so it survives a
-rebase. Split-lock mitigation off and `vm.max_map_count` raised,
-because several games need both. `ntsync` loaded and handed to the seat user,
-so Proton can use it where the build supports it. System-level capability
-only: `gamescope`, `gamemode`, `mangohud`, `steam-devices`, `distrobox`,
+Unfiltered Flathub as an image-native remote, so it survives a rebase.
+Split-lock mitigation off and `vm.max_map_count` raised, because several
+games need both. `ntsync` loaded and handed to the seat user, so Proton can
+use it where the build supports it. System-level capability only:
+`gamescope`, `gamemode`, `mangohud`, `steam-devices`, `distrobox`,
 `libvirt`, `android-tools`, `gnome-tweaks`, `greenboot`.
 
 Anything you merely *run* is a Flatpak. This image is the OS.
 
 ### Boots that check themselves
 
-`greenboot` checks each boot and rolls back automatically after three
-failures. The required check is that the desktop actually came up — the one
-failure you cannot type your way out of. It waits for a graphical session on
-a seat, never for `graphical.target`: the health check runs *inside* the
-transaction that target is waiting on, so waiting for it can only ever time
-out. Scheduler and network are warn-only, because a scheduler that fails to
-attach still leaves a usable machine, and a laptop that boots with no network
-is not a broken deployment.
+`greenboot` checks each boot and rolls back after three failures. The
+required check is that the desktop actually came up — the one failure you
+cannot type your way out of. It waits for a graphical session on a seat,
+never for `graphical.target`: the check runs *inside* the transaction that
+target waits on, so waiting for it can only time out. Scheduler and network
+are warn-only; a machine without a scheduler is usable, and a laptop that
+boots with no network is not a broken deployment.
 
 ### A scheduler that is honest about itself
 
@@ -79,10 +78,9 @@ fails to load, `bpfland` and `lavd` alike.
 present, it just cannot be used. So the build asks
 (`scripts/check-scx-btf.sh`) and drops `/usr/lib/pulsar/scx-supported` only
 when the answer is yes; `scx.service` conditions on that marker and is
-skipped rather than failed three times per boot. When Fedora ships a fixed
-kernel the marker reappears and the scheduler comes back with no change here.
-`pulsar doctor` reports it as `ok` with the reason, not as a warning you
-cannot act on.
+skipped rather than failed three times per boot. A fixed kernel brings the
+marker and the scheduler back with no change here, and `pulsar doctor`
+reports the gap as `ok` with the reason, not as a warning you cannot act on.
 
 ## The `pulsar` command
 
@@ -100,35 +98,34 @@ pulsar setup <recipe>   devbox | quadlet | gamescale
 ```
 
 `doctor` exists for one reason. `systemctl is-active scx.service` reported
-active for minutes at a stretch while no scheduler was attached and the
-machine ran stock EEVDF — unit state is not system state. So `doctor` reads
-`/sys/kernel/sched_ext/state` and the other places where the truth actually
-lives, and `--json` makes it scriptable. Only a `fail` sets a nonzero exit;
-a scheduler that did not attach merely warns, because the machine is entirely
-usable without one.
+active for minutes while no scheduler was attached — unit state is not
+system state. So `doctor` reads `/sys/kernel/sched_ext/state` and the other
+places where the truth actually lives, and `--json` makes it scriptable.
+Only a `fail` sets a nonzero exit; a scheduler that did not attach merely
+warns, because the machine is usable without one.
 
 Reads go through `rpm-ostree`, which works unprivileged; only the commands
 that change the system ask for root. `bootc status` needs root even to read,
 and a health check you need sudo for is one you will not run.
 
 `pulsar sbom` is generated, never baked — a file inside the image cannot
-describe the image containing it, so it reads the live rpm database, through
+describe the image containing it — so it reads the live rpm database through
 the same script the nightly uses.
 
 ## For development
 
 `bpftrace`, `bcc-tools`, `sysstat` and `perf` are on the host because a
-container cannot attach probes to the host kernel. `mise` and `direnv` handle
-toolchains, so compilers and SDKs are pinned per project instead of layered
-into the image. A default dev box is one command away:
+container cannot attach probes to the host kernel. `mise` and `direnv` pin
+compilers and SDKs per project instead of layering them into the image. A
+default dev box is one command away:
 
 ```bash
 pulsar setup devbox    # distrobox assemble from /usr/share/pulsar/distrobox.ini
 ```
 
 `podman-auto-update.timer` is enabled for user sessions, and a commented
-quadlet template lives at `/usr/share/pulsar/templates/example.container` —
-containers as systemd units, rootless, in a file you can version
+quadlet template lives at `/usr/share/pulsar/templates/example.container`:
+containers as rootless systemd units in a file you can version
 (`pulsar setup quadlet`).
 
 ## gamescale
@@ -138,14 +135,11 @@ then put the desktop back when it exits — including when it doesn't exit
 cleanly. [`gamescale`](https://github.com/arclight-digital/gamescale) ships
 at a pinned, hash-verified tag: the script at `/usr/bin/gamescale`, its
 top-bar indicator enabled system-wide, and a reconcile unit that restores
-your scale if a game dies without cleaning up.
+your scale if a game dies without cleaning up. For **native** launchers and
+terminal use that is everything.
 
-For **native** launchers and terminal use that is everything, and a machine
-that never installs anything still recovers its scale after a crash.
-
-For **Flatpak** launchers it is not enough, and the reason is categorical
-rather than a papercut. Flatpak reserves `/usr` for the runtime and refuses
-to share the host's:
+For **Flatpak** launchers it is not enough, and the reason is categorical.
+Flatpak reserves `/usr` for the runtime and refuses to share the host's:
 
 ```console
 $ flatpak run --command=sh --filesystem=/usr/bin/gamescale:ro com.valvesoftware.Steam
@@ -154,22 +148,20 @@ F: Not sharing "/usr/bin/gamescale" with sandbox: Path "/usr" is reserved by Fla
 
 The `/usr` a Flatpak sees is the runtime's, so no grant can ever expose
 `/usr/bin/gamescale` to Steam. A copy under `$HOME` is the only kind that
-maps in, which means granting a launcher always means running the installer:
+maps in, so granting a launcher always means running the installer:
 
 ```bash
 pulsar setup gamescale --platform steam
 ```
 
 That runs the installer copy staged in the image — offline, pinned, matching
-the image exactly. (Upstream's `curl | sh` from the gamescale README works
-too; it just fetches whatever is current rather than what the image pinned.)
+the image exactly. Upstream's `curl | sh` works too; it just fetches whatever
+is current rather than what the image pinned.
 
-**The install shadows the image copy, and that is the intended outcome.**
-User paths win every collision: your shell finds `~/.local/bin` before
-`/usr/bin`, GNOME prefers a user extension over a system one with the same
-uuid, and systemd prefers a user unit over `/usr/lib/systemd/user`. One of
-each runs, never both — and if you are chasing odd behaviour,
-`gamescale --version` tells you which copy you are actually running.
+**The install shadows the image copy, on purpose.** User paths win every
+collision: `~/.local/bin` before `/usr/bin`, a user extension over a system
+one with the same uuid, a user unit over `/usr/lib/systemd/user`. One of
+each runs, never both; `gamescale --version` says which.
 
 ## Two variants, one key
 
@@ -179,8 +171,8 @@ module is the better one now anyway.
 
 `Containerfile` declares no build secrets, so it is safe to build anywhere.
 `Containerfile.nvidia` needs the Secure Boot signing key — which it never
-holds. The key lives on the signing host; the build carries a bearer token,
-sends each module's bytes, and attaches the detached signature that comes
+holds. The key lives on the signing host; the build sends each module's
+bytes with a bearer token and attaches the detached signature that comes
 back (docs/SIGNING.md). Neither key nor token reaches an image layer.
 
 `system_files/etc/pki/pulsar/MOK.der` is the public half. It ships in
@@ -190,7 +182,7 @@ cert becomes a failed build instead of a black screen at boot.
 
 **Running this yourself?** Fork it and use your own key. Enrolling my cert
 means your machine permanently trusts modules I sign, which is not a
-relationship you want with a stranger's laptop. The vanilla image needs no
+relationship to have with a stranger's laptop. The vanilla image needs no
 keys at all.
 
 ## Install
@@ -226,27 +218,27 @@ happen. Run `mokutil --import` again.
 
 **Lost the key later?** A BIOS update can clear the whole MOK list (a Lenovo
 one did, on 2026-09-10). On the nvidia image the recovery is GNOME Software's
-own Secure Boot prompt: it enrols `/etc/pki/akmods/certs/public_key.der`, and
-`pulsar-akmods-cert.service` keeps that file equal to `MOK.der` on every boot,
-so the prompt enrols the right key. Before that unit existed the path held a
-key akmods-keygen had generated locally, nothing was signed with it, and the
+own Secure Boot prompt, which enrols `/etc/pki/akmods/certs/public_key.der`;
+`pulsar-akmods-cert.service` keeps that file equal to `MOK.der` on every boot
+so the prompt enrols the right key. Before that unit, the path held a key
+akmods-keygen had generated locally, nothing was signed with it, and the
 prompt enrolled it, reported success, and left the driver rejected.
 
 ## Updates
 
 Stock Silverblue behaviour, on purpose. GNOME Software notices and tells you;
 it installs when you choose to restart. bootc's `fetch-apply-updates.timer`
-is left disabled deliberately — it reboots on its own.
+stays disabled deliberately — it reboots on its own.
 
-Pulsar rebuilds nightly, so kernels, security updates, and driver bumps
+Pulsar rebuilds nightly, so kernels, security updates and driver bumps
 arrive as a normal update notification. Impatient: `sudo pulsar update`.
 
-Use `pulsar update` rather than `bootc upgrade` directly if you have layered
-anything with `rpm-ostree install`. bootc's model is the container image alone
-— it does not know about your layer and will not carry it forward. `pulsar
-update` checks the booted deployment first and hands off to `rpm-ostree
-upgrade` when there is something to preserve; `pulsar doctor` tells you which
-side of that line you are on.
+Use `pulsar update` rather than `bootc upgrade` if you have layered anything
+with `rpm-ostree install`: bootc's model is the container image alone, and it
+will not carry your layer forward. `pulsar update` checks the booted
+deployment first and hands off to `rpm-ostree upgrade` when there is
+something to preserve; `pulsar doctor` says which side of that line you are
+on.
 
 ## Every image has a paper trail
 
@@ -258,15 +250,15 @@ gh attestation verify oci://ghcr.io/arclight-digital/pulsar-nvidia:latest \
   --owner arclight-digital
 ```
 
-That tool is not in the image, and does not need to be — checking provenance
-is something you do *to* an image, from whatever machine you already trust.
-`pulsar attest` prints the same line, filled in for the image you booted, and
-runs it if you happen to have the client.
+That tool is not in the image and does not need to be — provenance is
+something you check *from* a machine you already trust. `pulsar attest`
+prints the same line, filled in for the image you booted, and runs it if you
+have the client.
 
 An SPDX SBOM ships attached to each image
 (`oras discover ghcr.io/arclight-digital/pulsar:latest`), and every nightly
 is diffed against the one before it, package by package, from those SBOMs —
-rendered at [pulsar.arclight.digital](https://pulsar.arclight.digital),
+rendered at [pulsar.arclight.digital/changelog](https://pulsar.arclight.digital/changelog),
 served raw as [changelog.json](https://pulsar.arclight.digital/changelog.json),
 and readable on the machine as `pulsar changelog`. Nothing in it is written
 by hand.
@@ -288,23 +280,43 @@ system_files/          overlay for vanilla (branding here is GENERATED)
 system_files.nvidia/   overlay for nvidia only
 scripts/sync-branding.sh   assets/ -> system_files/
 scripts/build.sh           local TEST builds; the build host ships the real ones
-site/                  the one-pager (Astro); Cloudflare builds it on push
+site/                  the site (Astro, on ARC UI); Cloudflare builds it on push
+site/integrations/     the pass that pre-renders ARC UI into the built HTML
 site/src/data/         written by the nightly — never edit by hand
 ```
 
 Push to `main` and the next nightly ships it — nothing builds off a push;
 the schedule lives on the build host as systemd timers.
 
-Two channels run the same pipeline. The timer's build is the published one.
-A build somebody starts by hand is tagged `<version>-dev` out of its own
-series, and it deliberately defines nothing: `:latest` and `:44` do not move
-onto it, the SBOM baseline the next night diffs against is left alone, and no
-site commit lands. So a `-dev` tag in the registry is a debugging image that
-was never released, and a machine booted on one says so in its boot menu.
-The channel comes from `PULSAR_CHANNEL`, which `nightly.sh` refuses to guess. `build.sh` is only
-for checking a Containerfile edit before it gets there, and it needs root —
-the nvidia variant derives `FROM` the vanilla image, and rootless and
-rootful podman keep separate storage.
+Two channels run the same pipeline, and the timer's build is the published
+one. A build somebody starts by hand is tagged `<version>-dev` out of its own
+series and defines nothing: `:latest` and `:44` do not move onto it, the SBOM
+baseline is left alone, and no site commit lands. A `-dev` tag is a debugging
+image that was never released, and a machine booted on one says so in its
+boot menu. The channel comes from `PULSAR_CHANNEL`, which `nightly.sh`
+refuses to guess. `build.sh` is only for checking a Containerfile edit before
+it gets there, and it needs root — the nvidia variant derives `FROM` the
+vanilla image, and rootless and rootful podman keep separate storage.
+
+### The site
+
+[pulsar.arclight.digital](https://pulsar.arclight.digital) is six pages —
+home, [install](https://pulsar.arclight.digital/install),
+[gamescale](https://pulsar.arclight.digital/gamescale),
+[provenance](https://pulsar.arclight.digital/provenance),
+[changelog](https://pulsar.arclight.digital/changelog) and
+[the pulsar command](https://pulsar.arclight.digital/cli) — built on
+[ARC UI](https://arcui.dev), Arclight's own web components. Its content is
+this README, the CLI's own `--help`, and the two files the nightly commits:
+the changelog diffed from the SBOMs and the image's own manifest, with the
+build chip checked against the build host after the page loads. Nothing on
+it is written by hand, so nothing can drift from what shipped.
+
+The components are pre-rendered into declarative shadow DOM after the build,
+so the HTML arrives complete before any JavaScript runs. `npm run dev` skips
+that pass and flashes unstyled elements; `npm run build` is what ships. The
+hero background is `assets/shaders/pulsar.frag`, the OS wallpaper shader,
+compiled into the bundle and run live in WebGL. Flick the mark.
 
 ## Field notes
 
@@ -319,8 +331,8 @@ rootful podman keep separate storage.
   lands in stable.
 - The nvidia module carries one patch of ours: open-gpu-kernel-modules
   PR #1286, for the DIFR prefetch deadlock (NVIDIA bug 6696638) that freezes
-  the desktop after resume. `Containerfile.nvidia` phase 2b explains it and
-  says when to drop it; the diff lives in `patches/nvidia-open/`, verbatim.
+  the desktop after resume. `Containerfile.nvidia` phase 2b says when to drop
+  it; the diff lives verbatim in `patches/nvidia-open/`.
 - Governor stays `powersave`. On `intel_pstate` with HWP that's correct, not
   slow — use `tuned` profiles to shift behaviour.
 
