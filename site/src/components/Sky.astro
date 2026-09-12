@@ -47,6 +47,9 @@ const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
 
   .deck {
     position: absolute;
+    /* above the hero's content block, whose bottom padding reserves this
+       room and would otherwise sit on top of the buttons and eat the clicks */
+    z-index: 2;
     left: 50%;
     bottom: var(--space-lg);
     transform: translateX(-50%);
