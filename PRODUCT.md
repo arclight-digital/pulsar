@@ -67,6 +67,14 @@ visible instead of invisible. CORS is locked to the site's origin, so the
 fetch fails on a dev server by design and the chip keeps the build the page
 was rendered from. Its failure mode is silence.
 
+It also says when the newest nightly built nothing. The base gate in
+`scripts/nightly.sh` skips a night when no package in Fedora's base image
+has moved, and a skip commits nothing, so the page would otherwise go on
+describing the build before it without saying why. The nightly prints `no
+build tonight:`, the builder records `"skipped": true` in its sentinel, and
+buildd serves it on `/v1/status`; the hero and both changelog sections then
+gain one sentence. A success with an empty version is never read as a skip.
+
 Weekly installer ISOs (one per variant, x86_64, 5–6 GB, the stock Silverblue
 Anaconda installer landing directly in Pulsar) are built from the published
 image and uploaded to an R2 bucket behind lighthouse.arclight.digital

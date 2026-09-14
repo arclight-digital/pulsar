@@ -71,6 +71,10 @@ const JSONLD = [
             }
             <time datetime={changelog.generated}>{changelog.generated}</time>
           </p>
+          {/* Filled by src/scripts/beacon.ts when the newest nightly built
+              nothing, which is the night this heading would otherwise be
+              wrong about. Hidden in the served HTML: skips commit nothing. */}
+          <p class="hint skip-note" data-skip-note hidden></p>
         </div>
       </section>
 
@@ -134,5 +138,10 @@ const JSONLD = [
   }
   .hint {
     margin-top: var(--space-xl);
+  }
+  /* after .hint, which it also is: it belongs to the line above it, not to
+     the section below */
+  .skip-note {
+    margin: var(--space-sm) 0 0;
   }
 </style>

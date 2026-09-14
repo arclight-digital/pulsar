@@ -63,6 +63,10 @@ const DESCRIPTION =
             }
             <arc-time-ago datetime={changelog.generated}></arc-time-ago>
           </p>
+          {/* Filled by src/scripts/beacon.ts when the newest nightly built
+              nothing, which is the night this heading would otherwise be
+              wrong about. Hidden in the served HTML: skips commit nothing. */}
+          <p class="hint skip-note" data-skip-note hidden></p>
         </div>
         <Ledger />
         <p class="hint">
@@ -153,6 +157,9 @@ const DESCRIPTION =
   }
   .dim {
     color: var(--text-ghost);
+  }
+  .skip-note {
+    margin: var(--space-sm) 0 0;
   }
   .gs-h {
     display: flex;
