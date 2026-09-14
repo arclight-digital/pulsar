@@ -428,3 +428,36 @@ refuse() {
   [[ "$stderr" == *"PULSAR_CHANNEL"* ]]
   [[ "$stderr" != *"unknown argument"* ]]
 }
+
+
+# ---------------------------------------------------------------------------
+# What a skipped night says, as the build host reads it.
+#
+# run-build.sh on the builder greps the log for "no build tonight:" and records
+# the night as skipped, which is the only way the site learns a night built
+# nothing. That line is printed on the one path --base-check never reaches: the
+# night itself. So this runs the real script from a copy of the tree whose
+# check.sh is a stub -- the real check.sh runs these tests, and a test that
+# ran it would be a loop.
+# ---------------------------------------------------------------------------
+
+night() {
+  local tree="${BATS_TEST_TMPDIR}/tree"
+  mkdir -p "${tree}/scripts"
+  cp "${NIGHTLY}" "${tree}/scripts/nightly.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${tree}/scripts/check.sh"
+  chmod +x "${tree}/scripts/nightly.sh" "${tree}/scripts/check.sh"
+  run --separate-stderr "${tree}/scripts/nightly.sh"
+}
+
+@test "a skipped night prints the line the build host scrapes" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  night
+  [ "$status" -eq 0 ]
+  # Anchored exactly the way run-build.sh anchors it.
+  grep -q '^no build tonight: ' <<<"$output"
+  # And no version: a skip that printed one would be recorded as a build, and
+  # run-build.sh trusts the version over the skip line when both are present.
+  [[ "$output" != *"this build is "* ]]
+}

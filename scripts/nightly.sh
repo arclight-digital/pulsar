@@ -400,6 +400,12 @@ fi
 if ! base_moved; then
   elapsed=$(( $(date -u +%s) - started ))
   echo
+  # The build host scrapes this line to record the night as skipped, the way
+  # it scrapes "this build is" for the version below: `grep -q '^no build
+  # tonight: '`. Keep the prefix exactly. Without it a skip reaches helios as a
+  # success with no version, which is also what a log that lost its version
+  # line looks like -- and the site cannot say "skipped" on a guess.
+  echo "no build tonight: base unchanged"
   echo "nothing to build: no package in this image can have moved, so the"
   echo "published build is still current. Skipping tonight."
   echo "  published    $(oras resolve "${IMAGE}:latest" 2>/dev/null || echo '<unknown>')"
