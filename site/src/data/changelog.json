@@ -1,17 +1,17 @@
 {
-  "generated": "2026-09-13T03:42:16Z",
+  "generated": "2026-09-15T03:36:29Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:de860236632298a8b334eb99a40f5a6248d74dd3e17e6337fedcb96ce1d6ebc2",
-    "digest": "sha256:de860236632298a8b334eb99a40f5a6248d74dd3e17e6337fedcb96ce1d6ebc2"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:3db29caefba68892e3b13f513a82b6cf9c73e8a44b291861de75071b20f09796",
     "digest": "sha256:3db29caefba68892e3b13f513a82b6cf9c73e8a44b291861de75071b20f09796"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:bd40b9a91e3a1f4fb93cf697b7589fdf7f9e3a091ea26109583d719e591a9f4c",
+    "digest": "sha256:bd40b9a91e3a1f4fb93cf697b7589fdf7f9e3a091ea26109583d719e591a9f4c"
   },
   "summary": {
     "added": 0,
     "removed": 0,
-    "upgraded": 18,
+    "upgraded": 47,
     "downgraded": 0,
     "changed": 0
   },
@@ -19,111 +19,285 @@
   "removed": [],
   "changed": [
     {
-      "name": "gnome-software",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
+      "name": "PackageKit-glib",
+      "from": "1.3.6-1.fc44",
+      "to": "1.4.0-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "gnome-software-rpm-ostree",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
+      "name": "amd-gpu-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "gtk4",
-      "from": "4.22.4-2.fc44",
-      "to": "4.22.5-2.fc44",
+      "name": "amd-ucode-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "intel-lpmd",
-      "from": "0.1.0-2.fc44",
-      "to": "0.1.0^git20260608.40d18a6-1.fc44",
+      "name": "atheros-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libpcap",
-      "from": "14:1.10.6-2.fc44",
-      "to": "14:1.10.7-1.fc44",
+      "name": "brcmfmac-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libwayland-client",
-      "from": "1.25.0-1.fc44",
-      "to": "1.26.0-1.fc44",
+      "name": "cirrus-audio-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libwayland-cursor",
-      "from": "1.25.0-1.fc44",
-      "to": "1.26.0-1.fc44",
+      "name": "cryptsetup",
+      "from": "2.8.7-1.fc44",
+      "to": "2.8.8-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libwayland-egl",
-      "from": "1.25.0-1.fc44",
-      "to": "1.26.0-1.fc44",
+      "name": "cryptsetup-libs",
+      "from": "2.8.7-1.fc44",
+      "to": "2.8.8-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libwayland-server",
-      "from": "1.25.0-1.fc44",
-      "to": "1.26.0-1.fc44",
+      "name": "gvfs",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-afc",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-afp",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-archive",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-client",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-fuse",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-goa",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-gphoto2",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-mtp",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "gvfs-smb",
+      "from": "1.60.2-1.fc44",
+      "to": "1.60.3-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "intel-audio-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "intel-gmmlib",
+      "from": "22.10.1-1.fc44",
+      "to": "22.10.2-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "intel-gpu-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "intel-vsc-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "iwlegacy-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "iwlwifi-dvm-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "iwlwifi-mld-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "iwlwifi-mvm-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-core",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-devel",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules-core",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-modules-extra",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-tools",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-tools-libs",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "libertas-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "linux-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "linux-firmware-whence",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
       "name": "mise",
-      "from": "2026.9.5-1",
-      "to": "2026.9.6-1",
+      "from": "2026.9.6-1",
+      "to": "2026.9.8-1",
       "direction": "upgraded"
     },
     {
-      "name": "python3-boto3",
-      "from": "1.43.90-1.fc44",
-      "to": "1.43.91-1.fc44",
+      "name": "mt7xxx-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "python3-botocore",
-      "from": "1.43.90-1.fc44",
-      "to": "1.43.91-1.fc44",
+      "name": "nvidia-gpu-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "tuned",
-      "from": "2.27.0-1.fc44",
-      "to": "2.28.0-1.fc44",
+      "name": "nxpwireless-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "tuned-ppd",
-      "from": "2.27.0-1.fc44",
-      "to": "2.28.0-1.fc44",
+      "name": "perf",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "upower",
-      "from": "1.91.3-1.fc44",
-      "to": "1.91.4-1.fc44",
+      "name": "python3-perf",
+      "from": "7.2.4-200.fc44",
+      "to": "7.2.5-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "upower-libs",
-      "from": "1.91.3-1.fc44",
-      "to": "1.91.4-1.fc44",
+      "name": "qcom-wwan-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "vim-data",
-      "from": "2:9.2.967-1.fc44",
-      "to": "2:9.2.1061-1.fc44",
+      "name": "qt6-qtdeclarative",
+      "from": "6.11.2-1.fc44",
+      "to": "6.11.2-2.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "vim-minimal",
-      "from": "2:9.2.967-1.fc44",
-      "to": "2:9.2.1061-1.fc44",
+      "name": "realtek-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "tiwilink-firmware",
+      "from": "20260810-1.fc44",
+      "to": "20260910-1.fc44",
       "direction": "upgraded"
     }
   ]
