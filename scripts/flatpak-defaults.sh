@@ -81,7 +81,19 @@ done
 # and each is checked twice, which is fifty-odd `flatpak list` invocations for
 # one string that changes only when we change it.
 snapshot=""
-refresh() { snapshot="$(flatpak list --system --app --columns=application 2>/dev/null || true)"; }
+# NOT --app. A Vulkan layer like MangoHud is a RUNTIME EXTENSION, and --app
+# cannot see one -- so with that flag the presence check answers "missing" for
+# an extension that is installed, every time. That is not merely a wasted
+# reinstall: the verification loop at the bottom uses the same predicate, so
+# the stamp would never be written and the unit would retry every 120s
+# forever, which is the exact failure this script was rewritten to end.
+#
+# Both spellings are emitted for every ref -- the bare id and id//branch --
+# so a list entry matches whether or not it pins a branch.
+refresh() {
+  snapshot="$(flatpak list --system --columns=application,branch 2>/dev/null \
+                | awk 'NF { print $1; if ($2 != "") print $1 "//" $2 }' || true)"
+}
 present() { printf '%s\n' "${snapshot}" | grep -Fxq -- "$1"; }
 
 refresh

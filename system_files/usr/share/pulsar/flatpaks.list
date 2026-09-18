@@ -64,6 +64,28 @@ com.vysp3r.ProtonPlus
 com.github.tchx84.Flatseal
 com.usebottles.bottles
 
+# The MangoHud Vulkan layer, for Flatpak games.
+#
+# The image installs the mangohud RPM, which covers NATIVE games only: a
+# sandboxed game cannot see a layer on the host. Flatpak games need the layer
+# installed as an extension of the runtime they use, and until this line
+# nothing installed it -- so `mangohud %command%` in Steam did nothing at all,
+# silently, on a fresh install, while the Containerfile's comment named this
+# very extension as the reason the RPM was enough.
+#
+# THE BRANCH IS PINNED AND HAS TO BE. Flathub carries 21.08 through 26.08 and
+# an extension is only visible to apps on the MATCHING runtime; Steam is on
+# org.freedesktop.Platform 25.08 today. A bare id is ambiguous, and both ways
+# flatpak could resolve it are wrong: erroring stalls the first-boot service
+# in its retry loop, and silently taking the newest installs an extension no
+# app can see.
+#
+# So this is a real maintenance item, not a set-and-forget line: when the apps
+# move to 26.08 this must move with them, and the symptom of forgetting is an
+# overlay that stops appearing with nothing logged. Check with
+# `flatpak info com.valvesoftware.Steam | grep Runtime`.
+org.freedesktop.Platform.VulkanLayer.MangoHud//25.08
+
 # daily drivers
 com.discordapp.Discord
 com.obsproject.Studio

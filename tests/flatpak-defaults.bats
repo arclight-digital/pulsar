@@ -59,7 +59,22 @@ stub_flatpak() {
 #!/bin/sh
 set -e
 if [ "$1" = list ]; then
-    awk '{print $1}' "$FLATPAK_STATE"
+    # Mirrors the real `flatpak list --columns=application,branch`: every ref
+    # answers to its bare id and, when it carries one, to id//branch.
+    #
+    # It also HONOURS --app, which is the whole point. The real flag hides
+    # runtime extensions, and a stub that ignored it would let the --app bug
+    # back in while every test stayed green.
+    only_apps=0
+    for a in "$@"; do [ "$a" = "--app" ] && only_apps=1; done
+    awk -v only_apps="$only_apps" '
+        NF {
+            id=$1; sub(/\/\/.*/,"",id)
+            is_runtime = (id ~ /^org\.(freedesktop|kde)\.(Platform|Sdk)/)
+            if (only_apps && is_runtime) next
+            print id
+            if (id != $1) print $1
+        }' "$FLATPAK_STATE"
     exit 0
 fi
 # install: the application id is the last argument, the remote the one
@@ -186,4 +201,47 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     [ "$status" -ne 0 ]
     [[ "$output" == *"lists no apps"* ]]
     [ ! -f "$STAMP" ]
+}
+
+# ---------------------------------------------------------------------------
+# Runtime extensions. MangoHud's Vulkan layer is not an application, and the
+# presence check used to run `flatpak list --app`, which cannot see one. The
+# consequence was not a wasted reinstall: the verification loop shares that
+# predicate, so the stamp was never written and the unit retried every 120s
+# forever -- the failure this script exists to have ended.
+# ---------------------------------------------------------------------------
+
+@test "a branch-pinned runtime extension installs and is then seen as present" {
+    printf 'org.freedesktop.Platform.VulkanLayer.MangoHud//25.08\n' > "$PULSAR_FLATPAKS_LIST"
+    stub_flatpak
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"installed org.freedesktop.Platform.VulkanLayer.MangoHud//25.08"* ]]
+    [ -f "$STAMP" ]
+}
+
+@test "an already-present extension is skipped rather than reinstalled" {
+    printf 'org.freedesktop.Platform.VulkanLayer.MangoHud//25.08\n' > "$PULSAR_FLATPAKS_LIST"
+    stub_flatpak "org.freedesktop.Platform.VulkanLayer.MangoHud//25.08:flathub"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already installed"* ]]
+    [ -f "$STAMP" ]
+}
+
+@test "the shipped list pins a branch on every runtime extension it names" {
+    # A bare extension id is ambiguous on flathub, which carries 21.08 through
+    # 26.08. Both resolutions are wrong: erroring stalls the first-boot
+    # service, and silently taking the newest installs a layer no app can see,
+    # with no symptom but a missing overlay.
+    local list="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/flatpaks.list"
+    while read -r app _; do
+        case "$app" in
+            org.freedesktop.Platform.*|org.kde.Platform.*|*.VulkanLayer.*)
+                [[ "$app" == *//* ]] || {
+                    echo "unpinned runtime extension in flatpaks.list: $app" >&2
+                    return 1
+                } ;;
+        esac
+    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$list")
 }
