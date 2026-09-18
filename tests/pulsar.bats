@@ -633,3 +633,127 @@ JSON
     [ "$status" -ne 0 ]
     [[ "$output" == *"must not run as root"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# doctor: the gamemode renice check.
+#
+# renice=10 is the one gaming setting in this image whose failure is entirely
+# SILENT. The nice grant ships in the gamemode package, the request ships in
+# /etc/gamemode.ini, and if the account is not in the gamemode group nothing
+# anywhere says so -- gamemoded logs a failed setpriority and carries on, the
+# game runs, and the priority simply never applies. This check is the only
+# thing that reports it, so what is pinned here is that it reports the right
+# ONE of five states, and in particular that it distinguishes "enrolled" from
+# "enrolled and live in this session".
+# ---------------------------------------------------------------------------
+
+# $1 = groups `id -nG <user>` should report (the account database)
+# $2 = groups `id -nG` should report (this session, fixed by PAM at login)
+stub_gamemode_env() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    export DB_GROUPS="$1" SESSION_GROUPS="$2"
+    export GM_GROUP_EXISTS="${GM_GROUP_EXISTS:-1}"
+    cat > "${STUB}/getent" <<'EOF'
+#!/bin/sh
+[ "$1" = group ] || exit 0
+[ "${GM_GROUP_EXISTS}" = 1 ] || exit 2
+printf 'gamemode:x:983:\n'
+EOF
+    cat > "${STUB}/id" <<'EOF'
+#!/bin/sh
+case "$1" in
+    -u)  echo 1000 ;;
+    -un) echo proto ;;
+    -nG) if [ -n "$2" ]; then echo "$DB_GROUPS"; else echo "$SESSION_GROUPS"; fi ;;
+    *)   exit 1 ;;
+esac
+EOF
+    chmod +x "${STUB}/getent" "${STUB}/id"
+    PATH="${STUB}:${PATH}"
+    export PATH
+
+    export PULSAR_GAMEMODE_INI="${BATS_TEST_TMPDIR}/gamemode.ini"
+    printf 'renice=10\n' > "$PULSAR_GAMEMODE_INI"
+    export PULSAR_LIMITS_DIR="${BATS_TEST_TMPDIR}/limits.d"
+    export PULSAR_LIMITS_CONF="${BATS_TEST_TMPDIR}/limits.conf"
+    mkdir -p "$PULSAR_LIMITS_DIR"
+    : > "$PULSAR_LIMITS_CONF"
+    printf '@gamemode - nice -10\n' > "${PULSAR_LIMITS_DIR}/10-gamemode.conf"
+    unset SUDO_USER
+}
+
+gm_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gamemode") | .status + " " + .summary + " " + .detail'; }
+
+@test "doctor: gamemode enrolled and live in this session is ok" {
+    stub_gamemode_env "proto wheel gamemode" "proto wheel gamemode"
+    run gm_check
+    [[ "$output" == ok* ]]
+    [[ "$output" == *"renice=10 available"* ]]
+}
+
+@test "doctor: enrolled but the session predates it is a warning, not ok" {
+    # The first boot after an install lands here every time: the unit enrolled
+    # the user while they were already logged in, so /etc/group says yes and
+    # the running session says no. Reporting ok here would be a lie that costs
+    # someone an afternoon.
+    stub_gamemode_env "proto wheel gamemode" "proto wheel"
+    run gm_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"predates it"* ]]
+    [[ "$output" == *"next login"* ]]
+}
+
+@test "doctor: an unenrolled account names the command that fixes it" {
+    stub_gamemode_env "proto wheel" "proto wheel"
+    run gm_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"not in the gamemode group"* ]]
+    [[ "$output" == *"pulsar setup gamemode"* ]]
+}
+
+@test "doctor: a missing nice grant is reported as inert, not as unenrolled" {
+    # Different cause, different fix: enrolling someone would not help.
+    stub_gamemode_env "proto wheel gamemode" "proto wheel gamemode"
+    rm -f "${PULSAR_LIMITS_DIR}/10-gamemode.conf"
+    run gm_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"nice grant"* ]]
+    [[ "$output" == *inert* ]]
+}
+
+@test "doctor: a missing gamemode group is reported as inert" {
+    export GM_GROUP_EXISTS=0
+    stub_gamemode_env "proto wheel" "proto wheel"
+    run gm_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"no 'gamemode' group"* ]]
+}
+
+@test "doctor: renice=0 means membership is irrelevant and is not warned about" {
+    stub_gamemode_env "proto wheel" "proto wheel"
+    printf 'renice=0\n' > "$PULSAR_GAMEMODE_INI"
+    run gm_check
+    [[ "$output" == ok* ]]
+    [[ "$output" == *"not requested"* ]]
+}
+
+@test "doctor: under sudo the human account is checked, not root" {
+    # `sudo pulsar doctor` must not report that root is missing from the
+    # gamemode group, which would be true and useless.
+    stub_gamemode_env "proto wheel gamemode" "root"
+    export SUDO_USER=proto
+    run gm_check
+    [[ "$output" == ok* ]]
+}
+
+@test "doctor: gamemode never fails the exit code, it only warns" {
+    # Same severity rule as the scheduler: a missing priority is a performance
+    # regression on a completely usable machine.
+    stub_gamemode_env "proto wheel" "proto wheel"
+    run gm_check
+    [[ "$output" == warn* ]]
+    # the warning is present, and the exit code is still clean
+    run "$PULSAR" doctor --json
+    [ "$status" -eq 0 ]
+}

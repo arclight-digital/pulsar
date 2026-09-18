@@ -143,6 +143,65 @@ check_ntsync() {
     fi
 }
 
+check_gamemode() {
+    # Paths are overridable for the same reason the rest of the CLI's are:
+    # these branches are decisions worth testing, not plumbing worth mocking.
+    local ini=${PULSAR_GAMEMODE_INI:-/etc/gamemode.ini} group=gamemode
+    local limits_dir=${PULSAR_LIMITS_DIR:-/etc/security/limits.d}
+    local limits_conf=${PULSAR_LIMITS_CONF:-/etc/security/limits.conf}
+
+    # Degrade honestly off a Pulsar system: no gamemode, nothing to say.
+    if [ ! -f "$ini" ] && ! command -v gamemoded >/dev/null 2>&1; then
+        record gamemode ok "gamemode not installed"; return
+    fi
+
+    # If renice is not being asked for, membership is irrelevant and a warning
+    # about it would be noise. Read the merged intent from our own override.
+    local renice
+    renice=$(sed -n 's/^renice=\([0-9]\{1,\}\)$/\1/p' "$ini" 2>/dev/null | tail -1) || true
+    if [ -z "$renice" ] || [ "$renice" = 0 ]; then
+        record gamemode ok "gamemode present; renice not requested"; return
+    fi
+
+    if ! getent group "$group" >/dev/null 2>&1; then
+        record gamemode warn "no '${group}' group, so renice=${renice} is inert" \
+               "the gamemode package normally creates it"
+        return
+    fi
+
+    # The grant is what makes the priority possible; without it, membership
+    # buys nothing and the symptom is silence.
+    if ! grep -rqs -- "@${group}" "$limits_dir" "$limits_conf"; then
+        record gamemode warn "no '@${group}' nice grant, so renice=${renice} is inert" \
+               "expected /etc/security/limits.d/10-gamemode.conf"
+        return
+    fi
+
+    # Under sudo the interesting account is the human one, not root: root is
+    # never in the group and never needs to be.
+    local user=${SUDO_USER:-}
+    [ -n "$user" ] || user=$(id -un)
+
+    if ! id -nG "$user" 2>/dev/null | tr ' ' '\n' | grep -qx "$group"; then
+        record gamemode warn "${user} is not in the ${group} group; renice=${renice} does nothing" \
+               "sudo pulsar setup gamemode -- then log out and back in"
+        return
+    fi
+
+    # Enrolled in /etc/group is not the same as live in THIS session:
+    # supplementary groups are fixed by PAM at login, so the session that ran
+    # the enrolment still does not have it. That gap is the whole reason this
+    # check reports two states instead of one.
+    if [ -z "${SUDO_USER:-}" ] && ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx "$group"; then
+        record gamemode warn "${user} is enrolled in ${group}, but this session predates it" \
+               "log out and back in; renice=${renice} applies from the next login"
+        return
+    fi
+
+    record gamemode ok "${user} is in ${group}; renice=${renice} available" \
+           "igpu governor demotion disabled (igpu_power_threshold=-1)"
+}
+
 check_greenboot() {
     local enabled
     # is-enabled prints "not-found" AND exits nonzero. Appending a fallback
@@ -301,6 +360,7 @@ cmd_doctor() {
     [ "${JSON:-0}" = 1 ] || printf '%sPulsar health%s  %s\n\n' "$C_BOLD" "$C_RESET" "$(mf version)"
     check_scheduler
     check_ntsync
+    check_gamemode
     check_greenboot
     check_nvidia
     check_flathub
@@ -1007,6 +1067,19 @@ cmd_setup() {
         [ -x "$script" ] || die "flatpak-defaults is not staged in this image (${script})"
         exec "$script"
         ;;
+    gamemode)
+        # Root, like `setup apps`, and for the same reason: this writes
+        # /etc/group, not $HOME. It runs the same script as the first-boot
+        # service, so it is also the manual path when that service is sitting
+        # in its retry loop waiting for an account to exist.
+        #
+        # Idempotent: accounts already in the group are left alone, so this is
+        # the right command after adding a second user too.
+        need_root "setup gamemode"
+        local script=/usr/libexec/pulsar/gamemode-group.sh
+        [ -x "$script" ] || die "gamemode-group is not staged in this image (${script})"
+        exec "$script"
+        ;;
     gamescale)
         need_user gamescale
         # Delegates to upstream's installer against the copy staged in the
@@ -1020,7 +1093,7 @@ cmd_setup() {
         "$src" "$@"
         ;;
     ""|-h|--help)
-        printf 'usage: pulsar setup <recipe>\n\n  apps        install the default Flatpaks (root)\n  devbox      create the default distrobox\n  quadlet     install the quadlet template and enable auto-update\n  gamescale   grant flatpak launchers, from the staged copy\n'
+        printf 'usage: pulsar setup <recipe>\n\n  apps        install the default Flatpaks (root)\n  devbox      create the default distrobox\n  gamemode    enrol accounts in the gamemode group, for renice (root)\n  quadlet     install the quadlet template and enable auto-update\n  gamescale   grant flatpak launchers, from the staged copy\n'
         ;;
     *) die "unknown recipe: ${recipe} (try: pulsar setup --help)" ;;
     esac
@@ -1048,7 +1121,7 @@ pulsar -- manage a Pulsar system
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
 
-  pulsar setup <recipe>    apps | devbox | quadlet | gamescale
+  pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
 
 Options
   --logo, --no-logo        force or suppress the mark in `manifest`

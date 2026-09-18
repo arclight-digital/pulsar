@@ -13,4 +13,5 @@
 enable scx.service
 enable greenboot-healthcheck.service
 enable pulsar-flatpaks.service
+enable pulsar-gamemode-group.service
 disable NetworkManager-wait-online.service

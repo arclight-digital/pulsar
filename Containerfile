@@ -489,8 +489,10 @@ ARG PULSAR_CHANGELOG_URL="https://pulsar.arclight.digital/changelog.json"
 COPY cli/pulsar /usr/bin/pulsar
 COPY scripts/rpm-sbom.sh /usr/libexec/pulsar/rpm-sbom.sh
 COPY scripts/flatpak-defaults.sh /usr/libexec/pulsar/flatpak-defaults.sh
+COPY scripts/gamemode-group.sh /usr/libexec/pulsar/gamemode-group.sh
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
-      /usr/libexec/pulsar/flatpak-defaults.sh && \
+      /usr/libexec/pulsar/flatpak-defaults.sh \
+      /usr/libexec/pulsar/gamemode-group.sh && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
       { echo "FATAL: flatpaks.list ships no apps; pulsar-flatpaks.service would fail on every boot forever"; exit 1; } && \
     mkdir -p /usr/share/pulsar && \
@@ -597,11 +599,13 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \
     systemctl enable pulsar-flatpaks.service && \
+    systemctl enable pulsar-gamemode-group.service && \
     systemctl --global enable podman-auto-update.timer && \
     systemctl --global enable gamescale-reconcile.service && \
     systemctl --global enable pulsar-update-check.timer && \
     systemctl disable NetworkManager-wait-online.service && \
-    for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service; do \
+    for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service \
+             pulsar-gamemode-group.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \

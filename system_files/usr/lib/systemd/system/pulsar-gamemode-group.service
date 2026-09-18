@@ -1,0 +1,33 @@
+# Enrols every human account in the `gamemode` group on first boot, then
+# stamps /var/lib/pulsar and never runs again -- so an account removed from
+# the group by hand stays removed.
+#
+# The nice grant (@gamemode, from the gamemode RPM's limits.d file) and the
+# renice=10 that asks for it (/etc/gamemode.ini) both ship in the image.
+# Membership is the only part that cannot, because it is per-account state on
+# a machine the image has never seen.
+#
+# RETRY IS THE MECHANISM, same as pulsar-flatpaks.service. On a fresh install
+# no human account exists until the user finishes gnome-initial-setup, minutes
+# after this unit first fires, so failing on the first attempt is the EXPECTED
+# path. The script refuses to stamp until it has verified real membership, and
+# the 120s spacing keeps the default start-rate limit (5 in 10s) from ever
+# tripping, so the retry loop cannot kill itself.
+#
+# No network, no ordering against anything but the basic system: this reads
+# and writes /etc/group and nothing else. It deliberately does NOT try to
+# order itself after a login -- see the script for why the first session
+# cannot benefit no matter when this runs.
+[Unit]
+Description=Enrol human accounts in the gamemode group (first boot only)
+Documentation=file:///etc/gamemode.ini
+ConditionPathExists=!/var/lib/pulsar/gamemode-group-enrolled
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/gamemode-group.sh
+Restart=on-failure
+RestartSec=120
+
+[Install]
+WantedBy=multi-user.target

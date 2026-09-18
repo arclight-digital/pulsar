@@ -1,0 +1,22 @@
+# Complete NVMe I/O on the CPU that submitted it.
+#
+# rq_affinity=1, the kernel default, completes a request anywhere in the
+# submitting CPU's cache group. rq_affinity=2 completes it on the submitting
+# CPU itself, so the completion path touches a request structure that is
+# already hot in that core's L1/L2 instead of pulling it across the group.
+#
+# The reason this is worth a rule HERE rather than a line in a generic tuning
+# list: the target is an 8 P-core + 16 E-core Arrow Lake-HX with no SMT, where
+# "the submitter's cache group" spans cores of two different microarchitectures
+# at two different clocks. A completion that lands on an E-core for I/O a
+# P-core issued is the case this closes, and it is a case a homogeneous CPU
+# does not have.
+#
+# This composes with user.slice's io.latency target rather than duplicating it
+# (see systemd/system/user.slice.d/10-pulsar-io-latency.conf): that drop-in
+# decides WHOSE I/O wins under contention, this one decides where the
+# completion interrupt is serviced. Different layers, no overlap.
+#
+# DEVTYPE=="disk" excludes partitions, which have no queue/ directory at all --
+# without it every nvme0n1p* event logs a failed attribute write on every boot.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL=="nvme*", ATTR{queue/rq_affinity}="2"

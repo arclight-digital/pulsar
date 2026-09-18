@@ -45,15 +45,28 @@ GPU; the vanilla image assumes nothing.
 
 Branding down to fontconfig's generics, a plymouth theme, unfiltered Flathub
 as an image-native remote, split-lock mitigation off and `vm.max_map_count`
-raised for the games that need both, `ntsync` handed to the seat user for
-Proton. System-level capability only — `gamescope`, `gamemode`, `mangohud`,
-`steam-devices`, `distrobox`, `libvirt`, `greenboot`. Anything you merely
-*run* is a Flatpak. This image is the OS.
+raised for the games that need both, hugepage defrag deferred off the faulting
+thread and proactive compaction stood down so neither costs a frame, `ntsync`
+handed to the seat user for Proton. System-level capability only —
+`gamescope`, `gamemode`, `mangohud`, `steam-devices`, `distrobox`, `libvirt`,
+`greenboot`. Anything you merely *run* is a Flatpak. This image is the OS.
 
 **Every boot is checked.** `greenboot` waits for a graphical session on a
 seat and rolls back after three failures — the one failure you cannot type
 your way out of. Scheduler and network only warn; a machine without either
 is still a machine.
+
+**`gamemode` is configured for a machine with two GPUs.** Left at its
+defaults it samples iGPU watts against CPU watts and, above a ratio of 0.3,
+demotes the CPU governor to `powersave` mid-game — a heuristic written for
+machines where the iGPU *is* the game's GPU. Here the Arrow Lake iGPU drives
+the panel while a discrete 5080 renders, so the ratio measures the wrong
+thing and acts on it anyway. `/etc/gamemode.ini` turns the check off and
+claims the `nice -10` grant the package was already shipping unused;
+`pulsar-gamemode-group.service` enrols accounts on first boot, because group
+membership is the one part an image cannot bake. `pulsar doctor` reports the
+gap between *enrolled* and *live in this session* — the state every fresh
+install lands in, since groups are fixed by PAM at login.
 
 **The scheduler is honest about itself.** `scx_bpfland` takes over because
 8P+16E with no SMT is exactly where stock EEVDF places threads badly. Fedora's
