@@ -757,3 +757,120 @@ gm_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gamemode"
     run "$PULSAR" doctor --json
     [ "$status" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# doctor: the MangoHud layer's pinned branch.
+#
+# flatpaks.list must pin a branch (a bare id is ambiguous on flathub), and a
+# pin is a thing that rots: an extension is only visible to apps on the
+# MATCHING runtime, so when the launcher moves branch and the pin does not,
+# the overlay stops appearing and nothing anywhere logs a reason. This check
+# is the only thing that would say so, which is why it is worth testing the
+# difference between "already broken" and "about to break".
+# ---------------------------------------------------------------------------
+
+# $1 = extension branches installed, space separated ("" for none)
+# $2 = the runtime branch Steam reports  ("" for no Steam at all)
+# $3 = the branch flatpaks.list pins     ("" for no entry)
+stub_mangohud() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    export EXT_BRANCHES="$1" STEAM_RUNTIME="$2"
+    export PULSAR_FLATPAKS_LIST="${BATS_TEST_TMPDIR}/flatpaks.list"
+    {
+        printf '# a comment naming the id, which must not be parsed as an entry\n'
+        printf '# org.freedesktop.Platform.VulkanLayer.MangoHud//99.99\n'
+        printf 'com.valvesoftware.Steam\n'
+        [ -n "$3" ] && printf 'org.freedesktop.Platform.VulkanLayer.MangoHud//%s\n' "$3"
+    } > "$PULSAR_FLATPAKS_LIST"
+    cat > "${STUB}/flatpak" <<'EOF'
+#!/bin/sh
+only_apps=0
+for a in "$@"; do [ "$a" = "--app" ] && only_apps=1; done
+if [ "$only_apps" = 1 ]; then
+    [ -n "$STEAM_RUNTIME" ] && \
+        printf 'com.valvesoftware.Steam\torg.freedesktop.Platform/x86_64/%s\n' "$STEAM_RUNTIME"
+    printf 'com.github.tchx84.Flatseal\torg.freedesktop.Platform/x86_64/25.08\n'
+    exit 0
+fi
+printf 'org.freedesktop.Platform\t25.08\n'
+for b in $EXT_BRANCHES; do
+    printf 'org.freedesktop.Platform.VulkanLayer.MangoHud\t%s\n' "$b"
+done
+exit 0
+EOF
+    chmod +x "${STUB}/flatpak"
+    PATH="${STUB}:${PATH}"
+    export PATH
+}
+
+mh_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="mangohud") | .status + " " + .summary + " " + .detail'; }
+
+@test "doctor: mangohud layer matching Steam's runtime is ok" {
+    stub_mangohud "25.08" "25.08" "25.08"
+    run mh_check
+    [[ "$output" == ok* ]]
+    [[ "$output" == *"25.08 matches"* ]]
+}
+
+@test "doctor: a rotted pin is reported as invisible, with the branch to move to" {
+    # The failure this check exists for: apps moved to 26.08, the layer is
+    # still 25.08, the overlay silently stopped appearing.
+    stub_mangohud "25.08" "26.08" "25.08"
+    run mh_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"Steam runs on 26.08"* ]]
+    [[ "$output" == *"repin"* ]]
+    [[ "$output" == *"26.08"* ]]
+}
+
+@test "doctor: a drifted pin still covered by an installed branch warns early" {
+    # Both branches installed, so the overlay still works today -- but the
+    # list pins the old one, and this is the window in which repinning is
+    # free rather than a bug report.
+    stub_mangohud "25.08 26.08" "26.08" "25.08"
+    run mh_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"pins //25.08"* ]]
+    [[ "$output" == *"before the old branch goes"* ]]
+}
+
+@test "doctor: a missing layer names the command that installs it" {
+    stub_mangohud "" "25.08" "25.08"
+    run mh_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"not installed"* ]]
+    [[ "$output" == *"flatpak install flathub"* ]]
+    [[ "$output" == *"//25.08"* ]]
+}
+
+@test "doctor: no Steam means there is nothing to be out of step with" {
+    stub_mangohud "25.08" "" "25.08"
+    run mh_check
+    [[ "$output" == ok* ]]
+    [[ "$output" == *"no Steam"* ]]
+}
+
+@test "doctor: a list with no MangoHud entry is not a finding" {
+    stub_mangohud "" "25.08" ""
+    run mh_check
+    [[ "$output" == ok* ]]
+    [[ "$output" == *"not in the defaults"* ]]
+}
+
+@test "doctor: a commented-out entry is not read as a pin" {
+    # The fixture carries "# ...MangoHud//99.99" as a comment. Parsing it
+    # would invent a pin nobody shipped and warn about a rot that is not real.
+    stub_mangohud "25.08" "25.08" "25.08"
+    run mh_check
+    [[ "$output" != *"99.99"* ]]
+    [[ "$output" == ok* ]]
+}
+
+@test "doctor: mangohud never fails the exit code, it only warns" {
+    stub_mangohud "" "25.08" "25.08"
+    run mh_check
+    [[ "$output" == warn* ]]
+    run "$PULSAR" doctor --json
+    [ "$status" -eq 0 ]
+}

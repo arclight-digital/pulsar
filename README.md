@@ -66,7 +66,9 @@ claims the `nice -10` grant the package was already shipping unused;
 `pulsar-gamemode-group.service` enrols accounts on first boot, because group
 membership is the one part an image cannot bake. `pulsar doctor` reports the
 gap between *enrolled* and *live in this session* — the state every fresh
-install lands in, since groups are fixed by PAM at login.
+install lands in, since groups are fixed by PAM at login — and separately
+whether the MangoHud layer's pinned branch still matches the runtime Steam
+runs on, because a rotted pin costs you the overlay with nothing logged.
 
 **The scheduler is honest about itself.** `scx_bpfland` takes over because
 8P+16E with no SMT is exactly where stock EEVDF places threads badly. Fedora's

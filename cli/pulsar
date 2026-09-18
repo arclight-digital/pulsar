@@ -202,6 +202,63 @@ check_gamemode() {
            "igpu governor demotion disabled (igpu_power_threshold=-1)"
 }
 
+check_mangohud() {
+    local list=${PULSAR_FLATPAKS_LIST:-/usr/share/pulsar/flatpaks.list}
+    local id=org.freedesktop.Platform.VulkanLayer.MangoHud
+    local launcher=com.valvesoftware.Steam
+
+    # Degrade honestly off a Pulsar system.
+    if [ ! -r "$list" ] || ! command -v flatpak >/dev/null 2>&1; then
+        record mangohud ok "no flatpak defaults here"; return
+    fi
+
+    # The branch the image pins. No entry means nothing to keep in step.
+    local pinned
+    pinned=$(sed -e 's/#.*//' "$list" \
+             | awk -v i="$id" '$1 ~ "^"i"//" { sub(/.*\/\//, "", $1); print $1; exit }') || true
+    if [ -z "$pinned" ]; then
+        record mangohud ok "the MangoHud layer is not in the defaults"; return
+    fi
+
+    # --columns rather than `flatpak info`, whose labels are translated.
+    local installed
+    installed=$(flatpak list --columns=application,branch 2>/dev/null \
+                | awk -v i="$id" '$1 == i { print $2 }' | paste -sd, -) || true
+
+    if [ -z "$installed" ]; then
+        record mangohud warn "MangoHud layer not installed; Flatpak games get no overlay" \
+               "sudo flatpak install flathub ${id}//${pinned}"
+        return
+    fi
+
+    # What the shipped launcher actually runs on. Without it there is nothing
+    # to be out of step WITH, so the pin is simply reported.
+    local used
+    used=$(flatpak list --app --columns=application,runtime 2>/dev/null \
+           | awk -v a="$launcher" '$1 == a { n = split($2, p, "/"); print p[n]; exit }') || true
+    if [ -z "$used" ]; then
+        record mangohud ok "MangoHud layer present (${installed}); no Steam to check against"
+        return
+    fi
+
+    # THE ROT THIS CHECK EXISTS FOR. An extension is only visible to apps on
+    # the matching runtime, so when the launcher moves branch and the pin does
+    # not, the overlay stops appearing and nothing anywhere logs a reason.
+    if ! printf '%s' ",${installed}," | grep -q ",${used},"; then
+        record mangohud warn "MangoHud layer is ${installed}, but Steam runs on ${used}" \
+               "the overlay is invisible to Flatpak games; repin flatpaks.list to //${used}"
+        return
+    fi
+
+    if [ "$pinned" != "$used" ]; then
+        record mangohud warn "flatpaks.list pins //${pinned}, Steam runs on ${used}" \
+               "installed (${installed}) still covers it; repin before the old branch goes"
+        return
+    fi
+
+    record mangohud ok "MangoHud layer ${used} matches Steam's runtime"
+}
+
 check_greenboot() {
     local enabled
     # is-enabled prints "not-found" AND exits nonzero. Appending a fallback
@@ -361,6 +418,7 @@ cmd_doctor() {
     check_scheduler
     check_ntsync
     check_gamemode
+    check_mangohud
     check_greenboot
     check_nvidia
     check_flathub
