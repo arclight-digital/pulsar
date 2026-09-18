@@ -490,9 +490,11 @@ COPY cli/pulsar /usr/bin/pulsar
 COPY scripts/rpm-sbom.sh /usr/libexec/pulsar/rpm-sbom.sh
 COPY scripts/flatpak-defaults.sh /usr/libexec/pulsar/flatpak-defaults.sh
 COPY scripts/gamemode-group.sh /usr/libexec/pulsar/gamemode-group.sh
+COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/flatpak-defaults.sh \
-      /usr/libexec/pulsar/gamemode-group.sh && \
+      /usr/libexec/pulsar/gamemode-group.sh \
+      /usr/libexec/pulsar/alive-timeout.sh && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
       { echo "FATAL: flatpaks.list ships no apps; pulsar-flatpaks.service would fail on every boot forever"; exit 1; } && \
     mkdir -p /usr/share/pulsar && \

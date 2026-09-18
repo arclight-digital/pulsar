@@ -70,6 +70,15 @@ install lands in, since groups are fixed by PAM at login — and separately
 whether the MangoHud layer's pinned branch still matches the runtime Steam
 runs on, because a rotted pin costs you the overlay with nothing logged.
 
+**A loading screen is not a hung window.** mutter pings every window and,
+after 5 seconds without an answer, offers to kill it — so a level load, a
+shader pass or an unskippable cutscene raises "not responding" over a
+fullscreen game that is working perfectly. The image raises that to 20s as a
+desktop default, and gamemode's `[custom]` hooks suspend the check outright
+for the length of a game, restoring the value that was there rather than the
+one the image ships. Deliberately not disabled globally: a desktop with no
+frozen-window dialog has no way to kill a hung app but a terminal.
+
 **The scheduler is honest about itself.** `scx_bpfland` takes over because
 8P+16E with no SMT is exactly where stock EEVDF places threads badly. Fedora's
 7.1.5 and 7.1.6 kernels publish scx kfuncs with a stale BTF prototype, so

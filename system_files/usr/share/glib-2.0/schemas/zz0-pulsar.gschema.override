@@ -52,8 +52,24 @@ font-hinting='slight'
 titlebar-font='Host Grotesk Bold 12'
 button-layout='appmenu:minimize,maximize,close'
 
+# mutter pings every window with _NET_WM_PING and, after this many
+# milliseconds without an answer, decides it is frozen and offers to kill it.
+# GNOME's default is 5000, which is short enough that a game blocking its main
+# loop through a level load or an unskippable cutscene trips it -- and the
+# dialog takes focus from a fullscreen game that is working perfectly.
+#
+# 20000 is chosen as a DESKTOP default, not a gaming one: four times the stock
+# value, still quick enough to be useful on a genuinely wedged application. It
+# is deliberately not 0. A machine with no frozen-window dialog at all has no
+# way to kill a hung app but a terminal, and that is a worse desktop.
+#
+# The rest of the margin a game needs -- a first-launch UE5 shader pass can
+# block far longer than 20s -- is bought only while a game is running, by
+# gamemode's [custom] hooks calling /usr/libexec/pulsar/alive-timeout.sh, and
+# handed back when it exits. See /etc/gamemode.ini.
 [org.gnome.mutter]
 experimental-features=['scale-monitor-framebuffer']
+check-alive-timeout=20000
 
 # The gamescale indicator, on by default. It ships system-wide in
 # /usr/share/gnome-shell/extensions, so this only has to switch it on.
