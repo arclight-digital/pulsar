@@ -42,6 +42,10 @@ setup() {
     : > "$GROUP_DB"
     # Whether the gamemode group exists at all.
     export GROUP_EXISTS=1
+    # The real state on an ostree host: the group is in /usr/lib/group (served
+    # by nss-altfiles, so getent finds it) and /etc/group has no line at all.
+    export PULSAR_ETC_GROUP="${BATS_TEST_TMPDIR}/group"
+    printf 'wheel:x:10:proto\n' > "$PULSAR_ETC_GROUP"
 
     cat > "${STUB}/getent" <<'EOF'
 #!/bin/sh
@@ -76,11 +80,19 @@ EOF
 
     cat > "${STUB}/usermod" <<'EOF'
 #!/bin/sh
-# usermod -aG gamemode <user> -- the name is the third argument
+# usermod -aG gamemode <user> -- the name is the third argument.
+#
+# Reproduces the behaviour that made this fix necessary: usermod edits
+# /etc/group and nothing else, so when the group is image-only it writes to
+# gshadow, changes no membership, and STILL EXITS 0.
 user=$3
 if [ -n "$USERMOD_FAIL_USER" ] && [ "$user" = "$USERMOD_FAIL_USER" ]; then
     echo "usermod: refusing $user" >&2
     exit 1
+fi
+if ! grep -q "^gamemode:" "$PULSAR_ETC_GROUP"; then
+    echo "add '$user' to shadow group 'gamemode'"
+    exit 0
 fi
 echo "$user" >> "$GROUP_DB"
 exit 0
@@ -205,4 +217,30 @@ EOF
     local cli="${BATS_TEST_DIRNAME}/../cli/pulsar"
     grep -q 'ExecStart=/usr/libexec/pulsar/gamemode-group.sh' "$unit"
     grep -q '/usr/libexec/pulsar/gamemode-group.sh' "$cli"
+}
+
+@test "an image-only group is copied into /etc/group before anyone is enrolled" {
+    # THE BUG THIS PINS. On an ostree host the group ships in /usr/lib/group
+    # and is merged in by nss-altfiles, so `getent group gamemode` answers
+    # while /etc/group has no line. usermod edits only /etc/group, so it wrote
+    # to gshadow, reported success, and enrolled nobody -- silently, with
+    # res=success in the audit log. Without the copy, this test hangs the unit
+    # in its retry loop forever.
+    printf 'proto:1000:/bin/bash\n' > "$PASSWD_DB"
+    ! grep -q '^gamemode:' "$PULSAR_ETC_GROUP"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"copied gamemode into"* ]]
+    grep -q '^gamemode:x:983:' "$PULSAR_ETC_GROUP"
+    grep -qx proto "$GROUP_DB"
+    [ -f "$STAMP" ]
+}
+
+@test "a group already in /etc/group is not copied twice" {
+    printf 'gamemode:x:983:\n' >> "$PULSAR_ETC_GROUP"
+    printf 'proto:1000:/bin/bash\n' > "$PASSWD_DB"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"copied gamemode"* ]]
+    [ "$(grep -c '^gamemode:' "$PULSAR_ETC_GROUP")" -eq 1 ]
 }

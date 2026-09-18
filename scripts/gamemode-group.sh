@@ -38,6 +38,7 @@ STAMP_DIR=${PULSAR_STATE_DIR:-/var/lib/pulsar}
 STAMP="${STAMP_DIR}/gamemode-group-enrolled"
 LIMITS_DIR=${PULSAR_LIMITS_DIR:-/etc/security/limits.d}
 LIMITS_CONF=${PULSAR_LIMITS_CONF:-/etc/security/limits.conf}
+ETC_GROUP=${PULSAR_ETC_GROUP:-/etc/group}
 GROUP=gamemode
 
 [ "$(id -u)" -eq 0 ] || { echo "gamemode-group: must run as root" >&2; exit 1; }
@@ -56,6 +57,32 @@ fi
 if ! grep -rqs -- "@${GROUP}" "$LIMITS_DIR" "$LIMITS_CONF"; then
   echo "gamemode-group: no '@${GROUP}' nice grant in limits.d; renice=10 would be inert" >&2
   exit 1
+fi
+
+# THE OSTREE TRAP, and the reason this block exists at all.
+#
+# On this image the system groups ship in /usr/lib/group and are merged into
+# the namespace by nss-altfiles -- /etc/nsswitch.conf reads
+# "group: files [SUCCESS=merge] altfiles [SUCCESS=merge] systemd". So `getent
+# group gamemode` answers, and /etc/group has no gamemode line whatsoever.
+#
+# usermod edits /etc/group and only /etc/group. With no line there it has
+# nothing to append a member to, so it writes the member into /etc/gshadow,
+# logs "add 'proto' to shadow group 'gamemode'", and EXITS 0. The audit record
+# reads res=success. `id -nG` never changes. Observed on cherenkov
+# 2026-09-18: the enrolment reported success and the user was not enrolled.
+#
+# Copying the entry into /etc/group first gives usermod something to edit. The
+# line comes from getent, so the GID is the image's (983) and nothing is
+# renumbered; the grep guard makes it idempotent. This must happen BEFORE the
+# loop, or every usermod below is a silent no-op.
+if ! grep -q "^${GROUP}:" "$ETC_GROUP"; then
+  if getent group "$GROUP" >> "$ETC_GROUP"; then
+    echo "gamemode-group: copied ${GROUP} into ${ETC_GROUP} (it was image-only)"
+  else
+    echo "gamemode-group: could not write ${GROUP} into ${ETC_GROUP}" >&2
+    exit 1
+  fi
 fi
 
 mapfile -t humans < <(
