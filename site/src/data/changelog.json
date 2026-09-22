@@ -1,474 +1,68 @@
 {
-  "generated": "2026-09-20T03:56:22Z",
+  "generated": "2026-09-22T02:49:12Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:7b0670cd93e5d918cc9fd0060267d1b1a58c4d88f8488939f90751080ed520bd",
-    "digest": "sha256:7b0670cd93e5d918cc9fd0060267d1b1a58c4d88f8488939f90751080ed520bd"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:2cdedda3602e355ab12cc699a5f6a3032a296c3c01b5a2e58ce016c8af6b82f5",
     "digest": "sha256:2cdedda3602e355ab12cc699a5f6a3032a296c3c01b5a2e58ce016c8af6b82f5"
   },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:a8103aea240cbbd6dcc888e55aa7b182f296f3e8b0f34f716cafd3c434b8024d",
+    "digest": "sha256:a8103aea240cbbd6dcc888e55aa7b182f296f3e8b0f34f716cafd3c434b8024d"
+  },
   "summary": {
-    "added": 2,
+    "added": 1,
     "removed": 0,
-    "upgraded": 74,
+    "upgraded": 7,
     "downgraded": 0,
     "changed": 0
   },
   "added": [
     {
-      "name": "intel-npu-firmware",
-      "version": "20260916-1.fc44"
-    },
-    {
-      "name": "iwlbluetooth-firmware",
-      "version": "20260916-1.fc44"
+      "name": "libheif-ffmpeg",
+      "version": "1.23.4-6.fc44"
     }
   ],
   "removed": [],
   "changed": [
     {
-      "name": "amd-gpu-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
+      "name": "ImageMagick",
+      "from": "1:7.1.2.27-1.fc44",
+      "to": "1:7.1.2.31-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "amd-ucode-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
+      "name": "ImageMagick-libs",
+      "from": "1:7.1.2.27-1.fc44",
+      "to": "1:7.1.2.31-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "at-spi2-atk",
-      "from": "2.60.6-1.fc44",
-      "to": "2.60.7-1.fc44",
+      "name": "libheif",
+      "from": "1.21.2-1.fc44",
+      "to": "1.23.4-6.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "at-spi2-core",
-      "from": "2.60.6-1.fc44",
-      "to": "2.60.7-1.fc44",
+      "name": "libsecret",
+      "from": "0.21.7-10.fc44",
+      "to": "0.21.8.2-2.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "atheros-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
+      "name": "mise",
+      "from": "2026.9.11-1",
+      "to": "2026.9.12-1",
       "direction": "upgraded"
     },
     {
-      "name": "atk",
-      "from": "2.60.6-1.fc44",
-      "to": "2.60.7-1.fc44",
+      "name": "vim-data",
+      "from": "2:9.2.1061-1.fc44",
+      "to": "2:9.2.1119-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "brcmfmac-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "buildah",
-      "from": "2:1.43.2-1.fc44",
-      "to": "2:1.43.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "cirrus-audio-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "container-selinux",
-      "from": "4:2.250.0-1.fc44",
-      "to": "4:2.251.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "containers-common",
-      "from": "5:0.67.0-1.fc44",
-      "to": "5:0.67.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "containers-common-extra",
-      "from": "5:0.67.0-1.fc44",
-      "to": "5:0.67.2-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "dnf5",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "dnf5-plugins",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "dnf5daemon-server",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "dnf5daemon-server-polkit",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "firefox",
-      "from": "155.0-1.fc44",
-      "to": "156.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "firefox-langpacks",
-      "from": "155.0-1.fc44",
-      "to": "156.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gamescope",
-      "from": "3.16.28-1.fc44",
-      "to": "3.16.29-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-classic-session",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-shell",
-      "from": "50.4-1.fc44",
-      "to": "50.5-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-shell-common",
-      "from": "50.4-1.fc44",
-      "to": "50.5-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-shell-extension-apps-menu",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-shell-extension-common",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-shell-extension-launch-new-instance",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-shell-extension-places-menu",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-shell-extension-window-list",
-      "from": "50.3-1.fc44",
-      "to": "50.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "gnome-user-docs",
-      "from": "50.4-1.fc44",
-      "to": "50.5-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "intel-audio-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "intel-gpu-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "intel-vsc-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "iwlegacy-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "iwlwifi-dvm-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "iwlwifi-mld-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "iwlwifi-mvm-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libadwaita",
-      "from": "1.9.3-1.fc44",
-      "to": "1.9.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libdav1d",
-      "from": "1.5.3-1.fc44",
-      "to": "1.5.4-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libdnf5",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libdnf5-cli",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libdnf5-plugin-appstream",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libdnf5-plugin-expired-pgp-keys",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libdnf5-plugin-systemd-inhibit",
-      "from": "5.4.4.0-1.fc44",
-      "to": "5.4.5.0-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libertas-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libunwind",
-      "from": "1.8.3-1.fc44",
-      "to": "1.8.3-4.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "linux-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "linux-firmware-whence",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mt7xxx-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "nvidia-gpu-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "nxpwireless-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "papers-libs",
-      "from": "49.7-1.fc44",
-      "to": "49.8-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "papers-nautilus",
-      "from": "49.7-1.fc44",
-      "to": "49.8-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "papers-previewer",
-      "from": "49.7-1.fc44",
-      "to": "49.8-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "papers-thumbnailer",
-      "from": "49.7-1.fc44",
-      "to": "49.8-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "parted",
-      "from": "3.6-14.fc44",
-      "to": "3.6-15.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-alsa",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-config-raop",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-gstreamer",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-jack-audio-connection-kit",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-jack-audio-connection-kit-libs",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-libs",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-plugin-libcamera",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-pulseaudio",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "pipewire-utils",
-      "from": "1.6.8-1.fc44",
-      "to": "1.6.9-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "podman",
-      "from": "5:5.8.4-1.fc44",
-      "to": "5:5.8.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "python3-boto3",
-      "from": "1.43.93-1.fc44",
-      "to": "1.43.96-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "python3-botocore",
-      "from": "1.43.93-1.fc44",
-      "to": "1.43.96-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "qcom-wwan-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "realtek-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "skopeo",
-      "from": "1:1.22.2-2.fc44",
-      "to": "1:1.22.3-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "tiwilink-firmware",
-      "from": "20260910-1.fc44",
-      "to": "20260916-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "tzdata",
-      "from": "2026c-1.fc44",
-      "to": "2026c-2.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "wireplumber",
-      "from": "0.5.14-1.fc44",
-      "to": "0.5.17-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "wireplumber-libs",
-      "from": "0.5.14-1.fc44",
-      "to": "0.5.17-1.fc44",
+      "name": "vim-minimal",
+      "from": "2:9.2.1061-1.fc44",
+      "to": "2:9.2.1119-1.fc44",
       "direction": "upgraded"
     }
   ]
