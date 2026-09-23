@@ -1,68 +1,93 @@
 {
-  "generated": "2026-09-22T02:49:12Z",
+  "generated": "2026-09-23T03:30:32Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:2cdedda3602e355ab12cc699a5f6a3032a296c3c01b5a2e58ce016c8af6b82f5",
-    "digest": "sha256:2cdedda3602e355ab12cc699a5f6a3032a296c3c01b5a2e58ce016c8af6b82f5"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:a8103aea240cbbd6dcc888e55aa7b182f296f3e8b0f34f716cafd3c434b8024d",
     "digest": "sha256:a8103aea240cbbd6dcc888e55aa7b182f296f3e8b0f34f716cafd3c434b8024d"
   },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:c723699b7a865ddcaa408060cf5d000e96862d8d700d82ab8bb79e723c1b6018",
+    "digest": "sha256:c723699b7a865ddcaa408060cf5d000e96862d8d700d82ab8bb79e723c1b6018"
+  },
   "summary": {
-    "added": 1,
+    "added": 0,
     "removed": 0,
-    "upgraded": 7,
+    "upgraded": 12,
     "downgraded": 0,
     "changed": 0
   },
-  "added": [
-    {
-      "name": "libheif-ffmpeg",
-      "version": "1.23.4-6.fc44"
-    }
-  ],
+  "added": [],
   "removed": [],
   "changed": [
     {
-      "name": "ImageMagick",
-      "from": "1:7.1.2.27-1.fc44",
-      "to": "1:7.1.2.31-1.fc44",
+      "name": "kernel",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "ImageMagick-libs",
-      "from": "1:7.1.2.27-1.fc44",
-      "to": "1:7.1.2.31-1.fc44",
+      "name": "kernel-core",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libheif",
-      "from": "1.21.2-1.fc44",
-      "to": "1.23.4-6.fc44",
+      "name": "kernel-devel",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libsecret",
-      "from": "0.21.7-10.fc44",
-      "to": "0.21.8.2-2.fc44",
+      "name": "kernel-modules",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "mise",
-      "from": "2026.9.11-1",
-      "to": "2026.9.12-1",
+      "name": "kernel-modules-core",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "vim-data",
-      "from": "2:9.2.1061-1.fc44",
-      "to": "2:9.2.1119-1.fc44",
+      "name": "kernel-modules-extra",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "vim-minimal",
-      "from": "2:9.2.1061-1.fc44",
-      "to": "2:9.2.1119-1.fc44",
+      "name": "kernel-tools",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "kernel-tools-libs",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "perf",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "python3-perf",
+      "from": "7.2.5-200.fc44",
+      "to": "7.2.6-200.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "selinux-policy",
+      "from": "44.9-1.fc44",
+      "to": "44.10-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "selinux-policy-targeted",
+      "from": "44.9-1.fc44",
+      "to": "44.10-1.fc44",
       "direction": "upgraded"
     }
   ]
