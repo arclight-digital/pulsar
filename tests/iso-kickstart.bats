@@ -114,7 +114,9 @@ build() {
   # unattended kickstart again with no sign anything was wrong.
   grep -Fxq -- '--config' "${ARGV}"
   grep -Fxq -- '/config.toml' "${ARGV}"
-  grep -Fq -- "${REPO}/iso-config.toml:/config.toml:ro" "${ARGV}"
+  # The RENDERED copy, not the repo file: build-iso.sh fills in the ref the
+  # installed system tracks, so what bib reads lives in the work dir.
+  grep -Fq -- "${WORK}/iso-config.toml:/config.toml:ro" "${ARGV}"
 
   # The mount target's EXTENSION is load-bearing -- bib picks its decoder from
   # it, and a .toml file mounted under any other name is parsed as JSON.
@@ -164,4 +166,51 @@ build() {
   # Refusing late would still cost a multi-gigabyte build and leave an ISO on
   # disk that nobody should boot. The guard has to fire before bib runs.
   [ ! -f "${ARGV}" ]
+}
+
+# ---------------------------------------------------------------------------
+# The installed system has to FOLLOW the image. bib's own %post switches it
+# onto the exact ref bib was given, and build-iso.sh gives bib a digest, so
+# every ISO before 2026-09-25 installed a machine whose origin was
+# ghcr.io/...@sha256:... -- `pulsar update` re-pulled the same image forever.
+# iso-config.toml carries a second %post that points it back at a tag, with a
+# placeholder only build-iso.sh knows how to fill.
+# ---------------------------------------------------------------------------
+
+@test "REGRESSION: the kickstart bib reads points installs at the tag, not the digest" {
+  build
+  local rendered="${WORK}/iso-config.toml"
+  grep -Fxq -- 'bootc switch --mutate-in-place --transport registry ghcr.io/arclight-digital/pulsar:latest' "${rendered}"
+  ! grep -q '@PULSAR_TRACK_IMGREF@' "${rendered}"
+  # Only the command lines: the prose above them quotes the old digest origin.
+  ! grep -E '^bootc switch .*@sha256' "${rendered}"
+}
+
+@test "the tracking %post is after bib's switch and fails the install loudly" {
+  # bib %includes its own kickstart at the TOP of ours, so anything in the
+  # contents runs after its `bootc switch` onto the digest -- which is the
+  # only order in which a second switch means anything.
+  grep -Fxq -- '%post --erroronfail' "${CONFIG}"
+}
+
+@test "--track changes what installs follow, not what the ISO installs" {
+  run -0 "${ISO}" --variant vanilla --image ghcr.io/arclight-digital/pulsar \
+    --work "${WORK}" --keyless --track testing
+  grep -Fxq -- 'bootc switch --mutate-in-place --transport registry ghcr.io/arclight-digital/pulsar:testing' "${WORK}/iso-config.toml"
+  grep -Fxq -- "ghcr.io/arclight-digital/pulsar@${DIGEST}" "${ARGV}"
+}
+
+@test "--track refuses a reference, which would pin installs all over again" {
+  run -2 "${ISO}" --variant vanilla --image ghcr.io/arclight-digital/pulsar \
+    --work "${WORK}" --keyless --track "latest@${DIGEST}"
+  [[ "$output" == *"bare tag"* ]]
+  [ ! -e "${ARGV}" ]
+}
+
+@test "the sidecar records the ref installs will follow" {
+  build
+  local sidecar
+  sidecar="$(find "${WORK}/iso" -name '*.json' | head -1)"
+  [ "$(jq -r .tracks "${sidecar}")" = ghcr.io/arclight-digital/pulsar:latest ]
+  [ "$(jq -r .digest "${sidecar}")" = "${DIGEST}" ]
 }

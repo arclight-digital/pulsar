@@ -381,6 +381,52 @@ CHECK_STAGED='{"deployments":[
     [[ "$output" != *"up to date"* ]]
 }
 
+# What every ISO before 2026-09-25 installed: bib switched the new system onto
+# the digest it was built from, so the origin names a digest and not a tag.
+CHECK_PINNED='{"deployments":[{"booted":true,"version":"44.1",
+  "requested-packages":["1password"],
+  "container-image-reference":"ostree-unverified-registry:ghcr.io/x/pulsar-nvidia@sha256:aaa",
+  "container-image-reference-digest":"sha256:aaa"}]}'
+
+@test "REGRESSION: update --check does not call a digest-pinned system up to date" {
+    # The registry is asked what the digest points at, and it always answers
+    # "itself" -- so the old code printed "up to date" on a machine that could
+    # never update, and the six-hourly timer never said a word.
+    stub_ostree "$CHECK_PINNED"
+    stub_skopeo "sha256:aaa" "44.1"
+    run "$PULSAR" update --check
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"up to date"* ]]
+    [[ "$output" == *"rpm-ostree rebase ostree-unverified-registry:ghcr.io/x/pulsar-nvidia:latest"* ]]
+}
+
+@test "update refuses a digest-pinned system rather than re-pull the same image" {
+    stub_ostree "$CHECK_PINNED"
+    as_root update
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"bootc upgrade"* ]]
+    [[ "$output" != *"rpm-ostree upgrade"* ]]
+    [[ "$output" == *"rpm-ostree rebase ostree-unverified-registry:ghcr.io/x/pulsar-nvidia:latest"* ]]
+}
+
+@test "doctor fails a digest-pinned origin and names the fix" {
+    stub_ostree "$CHECK_PINNED"
+    run "$PULSAR" doctor --json
+    check=$(echo "$output" | jq -c '.checks[] | select(.id=="origin")')
+    [ "$(echo "$check" | jq -r .status)" = fail ]
+    [[ "$(echo "$check" | jq -r .detail)" == *"ghcr.io/x/pulsar-nvidia:latest"* ]]
+}
+
+@test "a tag-following origin is not mistaken for a pinned one" {
+    stub_ostree "$CHECK_STATUS"
+    run "$PULSAR" doctor --json
+    [ "$(echo "$output" | jq -r '.checks[] | select(.id=="origin") | .status')" = ok ]
+    stub_skopeo "sha256:aaa" "44.1"
+    run "$PULSAR" update --check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"up to date"* ]]
+}
+
 @test "update refuses rather than guess when status is unreadable" {
     stub_ostree 'not json at all'
     as_root update

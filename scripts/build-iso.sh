@@ -13,6 +13,7 @@
 #   --variant V         vanilla | nvidia                    (required)
 #   --image NAME        registry image to build from        (required)
 #   --tag TAG           tag to resolve                      (default: latest)
+#   --track TAG         tag the INSTALLED system follows    (default: latest)
 #   --work DIR          scratch for /output, /store, /rpmmd; needs ~40GB
 #   --push              upload ISO + sidecars to R2
 #   --signer-url URL    signd, for the release-key signature on the manifest
@@ -30,6 +31,15 @@
 # the pull, the bib invocation, and the metadata sidecar. ":latest moved while
 # the ISO was building" stops being a possible state, and the sidecar records
 # exactly which image the installer installs.
+#
+# The digest must NOT follow the image onto the machine, though. bib's own
+# %post runs `bootc switch` onto the exact ref it was given, so every ISO
+# before 2026-09-25 installed a system whose origin was
+# ghcr.io/...@sha256:<digest>: `pulsar update` re-pulled the same digest
+# forever, and `update --check` compared it to itself and said "up to date".
+# The installer therefore gets a second %post (iso-config.toml) that points
+# the origin back at ${IMAGE}:${TRACK}, filled in here -- --track rather than
+# --tag, because an ISO built from an older tag should still follow latest.
 #
 # The version comes from the image's org.opencontainers.image.version label
 # (stamped by build.sh), so the ISO inherits the collision-proof
@@ -65,6 +75,7 @@ ROOTFS="${ROOTFS:-btrfs}"
 VARIANT=""
 IMAGE=""
 TAG=latest
+TRACK=latest
 WORK="${PULSAR_ISO_WORK:-/var/tmp/pulsar-iso}"
 DO_PUSH=no
 SIGNER_URL="${PULSAR_SIGNER_URL:-}"
@@ -77,13 +88,14 @@ while [ $# -gt 0 ]; do
     --variant)           VARIANT="${2:?}"; shift ;;
     --image)             IMAGE="${2:?}"; shift ;;
     --tag)               TAG="${2:?}"; shift ;;
+    --track)             TRACK="${2:?}"; shift ;;
     --work)              WORK="${2:?}"; shift ;;
     --push)              DO_PUSH=yes ;;
     --signer-url)        SIGNER_URL="${2:?}"; shift ;;
     --signer-token-file) SIGNER_TOKEN_FILE="${2:?}"; shift ;;
     --signer-ca-file)    SIGNER_CA_FILE="${2:?}"; shift ;;
     --keyless)           KEYLESS=yes ;;
-    -h|--help)           sed -n '2,47p' "$0"; exit 0 ;;
+    -h|--help)           sed -n '2,57p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -95,6 +107,9 @@ case "${VARIANT}" in
   *) echo "--variant must be vanilla or nvidia" >&2; exit 2 ;;
 esac
 [ -n "${IMAGE}" ] || { echo "--image is required" >&2; exit 2; }
+case "${TRACK}" in
+  *[@:/]*|"") echo "--track takes a bare tag, not a reference: ${TRACK}" >&2; exit 2 ;;
+esac
 [ "$(id -u)" = 0 ] || { echo "run as root: bib needs the rootful store" >&2; exit 2; }
 
 if [ "${KEYLESS}" = no ] && { [ -z "${SIGNER_URL}" ] || [ -z "${SIGNER_TOKEN_FILE}" ]; }; then
@@ -156,6 +171,22 @@ say "building ${ARTIFACT} ISO for ${VERSION} (${DIGEST})"
 
 podman pull --retry 5 "${IMAGE}@${DIGEST}"
 
+# Fill in the ref the installed system follows (see the header). Checked for
+# the exact command rather than just for the placeholder going away: a config
+# edited so the line no longer exists would pass that check and ship the
+# digest-pinned installs again, and there is no symptom until the first update
+# that never comes.
+TRACK_REF="${IMAGE}:${TRACK}"
+RENDERED_CONFIG="${WORK}/iso-config.toml"
+sed "s|@PULSAR_TRACK_IMGREF@|${TRACK_REF}|g" "${ISO_CONFIG}" > "${RENDERED_CONFIG}"
+if grep -q '@PULSAR_TRACK_IMGREF@' "${RENDERED_CONFIG}" || \
+   ! grep -qxF "bootc switch --mutate-in-place --transport registry ${TRACK_REF}" "${RENDERED_CONFIG}"; then
+  echo "iso-config.toml no longer carries the %post that points installs at ${TRACK_REF}" >&2
+  echo "without it every install stays on ${DIGEST} and never updates. refusing to build." >&2
+  exit 1
+fi
+say "installed systems will track ${TRACK_REF}"
+
 # ---------------------------------------------------------------------------
 # bootc-image-builder
 #
@@ -178,7 +209,7 @@ say "running bootc-image-builder"
 podman run --rm --privileged \
   --security-opt label=type:unconfined_t \
   -v "${WORK}/iso:/output" \
-  -v "${ISO_CONFIG}:/config.toml:ro" \
+  -v "${RENDERED_CONFIG}:/config.toml:ro" \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
   -v "${WORK}/store:/store" \
   -v "${WORK}/rpmmd:/rpmmd" \
@@ -215,10 +246,11 @@ jq -n \
   --arg version "${VERSION}" \
   --arg image "${IMAGE}" \
   --arg digest "${DIGEST}" \
+  --arg tracks "${TRACK_REF}" \
   --arg built "$(date -u -Iseconds)" \
   --arg iso_sha256 "${ISO_SHA256}" \
   '{variant: $variant, version: $version, image: $image, digest: $digest,
-    built: $built, iso_sha256: $iso_sha256}' > "${NAME}.json"
+    tracks: $tracks, built: $built, iso_sha256: $iso_sha256}' > "${NAME}.json"
 
 # ---------------------------------------------------------------------------
 # Sign the manifest

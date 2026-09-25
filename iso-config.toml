@@ -24,7 +24,8 @@
 # that block, and supplying ANY contents is what throws it. Everything bib
 # writes AROUND them is untouched and is the part that makes the install work:
 # ostreecontainer pointing at the payload on the ISO, and the %post that runs
-# `bootc switch` onto the pinned digest.
+# `bootc switch` onto the pinned digest -- which the %post at the end of the
+# contents then points back at a tag, or the machine never updates.
 #
 # Two things that bite when editing this file. bib decodes it with
 # BurntSushi/toml and rejects unknown keys outright, so a mistyped key is a
@@ -56,6 +57,27 @@ timezone UTC
 # otherwise vanish silently. NetworkManager would DHCP a wired link on its own
 # anyway; this keeps the installed system byte-identical to what shipped.
 network --device=link --bootproto=dhcp --onboot=on --activate
+
+# Follow the image, do not stay on it. bib's kickstart, which this file is
+# %included AFTER, ends with a %post of its own:
+#
+#   bootc switch --mutate-in-place --transport registry <the ref bib was given>
+#
+# and scripts/build-iso.sh gives bib a DIGEST, so until 2026-09-25 every ISO
+# install's origin was ghcr.io/...@sha256:... and `pulsar update` had nothing
+# to move to, ever. Upstream knows: that %post exists only because Anaconda
+# has no --target-imgref (osbuild/image-builder#380), and bib has no flag for
+# it either. So this runs the same command a second time, after bib's, with
+# the tag. --mutate-in-place rewrites the deployment's origin and nothing else:
+# no pull, no network, the bits on disk are still the digest that was verified.
+#
+# The placeholder is filled in by build-iso.sh (it depends on the variant), and
+# that script refuses to build unless the finished line is present exactly.
+# --erroronfail because an install that cannot update is not a success.
+%post --erroronfail
+set -e
+bootc switch --mutate-in-place --transport registry @PULSAR_TRACK_IMGREF@
+%end
 """
 
 # The ISO volume label, which is not cosmetic. osbuild writes it into the ISO's

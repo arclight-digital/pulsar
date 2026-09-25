@@ -369,6 +369,37 @@ JQ_LAYERED='[ .deployments[]? | select(.booted == true) |
      ."requested-base-local-replacements", ."requested-modules" ) ]
  | map(length) | add // 0'
 
+# An origin that names a DIGEST has nowhere to go: upgrading it re-pulls the
+# image it is already on. Every ISO built before 2026-09-25 installed exactly
+# that, because bib switches the new system onto the ref it was handed and
+# build-iso.sh hands it a digest (iso-config.toml's %post now undoes it). So a
+# pinned origin is a machine that will never update, and `update --check`
+# comparing the digest with itself would call it up to date forever.
+#
+# Given `rpm-ostree status --json`, prints the command that points the booted
+# deployment back at :latest, or nothing when it already follows a tag. The
+# transport prefix is kept as found, so a signed origin stays signed. Three
+# readers share this -- doctor, update, update --check -- so it is spelled once.
+pinned_origin_fix() {
+    local origin
+    origin=$(printf '%s' "$1" | jq -r '[ .deployments[]? | select(.booted == true) ][0]
+        | ."container-image-reference" // ""' 2>/dev/null) || return 0
+    case "$origin" in
+        *@sha256:*) printf 'sudo rpm-ostree rebase %s:latest\n' "${origin%@sha256:*}" ;;
+    esac
+}
+
+check_origin() {
+    have rpm-ostree || return 0   # check_updates reports that
+    local fix
+    fix=$(pinned_origin_fix "$(rpm-ostree status --json 2>/dev/null || echo '{}')")
+    if [ -n "$fix" ]; then
+        record origin fail "this system follows one image digest, so it will never update" "fix: ${fix}"
+    else
+        record origin ok "not pinned to a digest"
+    fi
+}
+
 check_updates() {
     have rpm-ostree || { record updates warn "rpm-ostree not available"; return; }
     local js line staged pinned total ver lay
@@ -423,6 +454,7 @@ cmd_doctor() {
     check_nvidia
     check_flathub
     check_fedora
+    check_origin
     check_updates
     check_disk
     if [ "${JSON:-0}" = 1 ]; then
@@ -917,6 +949,9 @@ cmd_update_check() {
 
     [ -n "$ref" ] || die "the booted deployment is not container-native; there is no registry to ask"
     [ -n "$local_digest" ] || die "rpm-ostree reports no image digest for the booted deployment"
+    # Asking the registry what a digest points at always answers "itself".
+    local fix; fix=$(pinned_origin_fix "$js")
+    [ -z "$fix" ] || die "this system follows one image digest, so no update can ever arrive; run: ${fix}"
 
     local inspect
     inspect=$(skopeo inspect --no-tags "docker://${ref}" 2>/dev/null) \
@@ -973,8 +1008,12 @@ cmd_update() {
     done
 
     need_root update
-    local lay
+    local lay fix
     if have rpm-ostree; then
+        # Refused rather than run: the upgrade would re-pull the same digest
+        # and report success, which is how this went unnoticed.
+        fix=$(pinned_origin_fix "$(rpm-ostree status --json 2>/dev/null || echo '{}')")
+        [ -z "$fix" ] || die "this system follows one image digest, so there is nothing to upgrade to; run: ${fix}"
         lay=$(rpm-ostree status --json 2>/dev/null | jq -r "$JQ_LAYERED" 2>/dev/null) \
             || die "could not read deployment status; refusing to guess which upgrade path is right"
         [ -n "$lay" ] || die "could not read deployment status; refusing to guess which upgrade path is right"
