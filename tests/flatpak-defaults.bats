@@ -55,6 +55,33 @@ stub_flatpak() {
     # FAIL_APP is the app the stub should refuse outright, standing in for an
     # app that is simply unavailable rather than one that collides.
     export FLATPAK_FAIL_APP="${FLATPAK_FAIL_APP:-}"
+
+    # The bus. `fedora` is an OCI remote, and the real flatpak can only install
+    # from one over a session bus -- so the stub refuses a `fedora` install,
+    # with the real error, unless it is on the PRIVATE bus the script is meant
+    # to start. Not "any bus": a test can hand the script a bus of its own and
+    # the install must still come through dbus-run-session.
+    export STUB_PRIVATE_BUS="unix:path=${BATS_TEST_TMPDIR}/private-bus"
+    cat > "${STUB}/dbus-run-session" <<'EOF'
+#!/bin/sh
+[ "$1" = -- ] && shift
+echo x >> "${BATS_TEST_TMPDIR}/dbus-run-session.calls"
+DBUS_SESSION_BUS_ADDRESS="$STUB_PRIVATE_BUS" exec "$@"
+EOF
+    # Answers GetConnectionUnixProcessID the way the real one does, for the
+    # pid in AUTH_PID_FILE when there is one, and as "no owner" otherwise.
+    cat > "${STUB}/gdbus" <<'EOF'
+#!/bin/sh
+f="${BATS_TEST_TMPDIR}/auth.pid"
+if [ -s "$f" ] && [ "$DBUS_SESSION_BUS_ADDRESS" = "$STUB_PRIVATE_BUS" ]; then
+    echo "($(printf 'uint32 %s' "$(cat "$f")"),)"
+    exit 0
+fi
+echo "Error: GDBus.Error:org.freedesktop.DBus.Error.NameHasNoOwner" >&2
+exit 1
+EOF
+    chmod +x "${STUB}/dbus-run-session" "${STUB}/gdbus"
+
     cat > "${STUB}/flatpak" <<'EOF'
 #!/bin/sh
 set -e
@@ -82,6 +109,10 @@ fi
 prev=; app=
 for a in "$@"; do prev="$app"; app="$a"; done
 remote="$prev"
+if [ "$remote" = fedora ] && [ "$DBUS_SESSION_BUS_ADDRESS" != "$STUB_PRIVATE_BUS" ]; then
+    echo "error: Cannot autolaunch D-Bus without X11 \$DISPLAY" >&2
+    exit 1
+fi
 if [ -n "$FLATPAK_FAIL_APP" ] && [ "$app" = "$FLATPAK_FAIL_APP" ]; then
     echo "error: ${app} not found in remote ${remote}" >&2
     exit 1
@@ -244,4 +275,56 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
                 } ;;
         esac
     done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$list")
+}
+
+# ---------------------------------------------------------------------------
+# The session bus. Installing from the `fedora` OCI remote goes through
+# flatpak's OCI authenticator, which lives on the SESSION bus, and the
+# first-boot service is a system unit with none. On the first machine installed
+# from a Pulsar ISO every flathub app landed and all 18 Silverblue apps failed
+# with "Cannot autolaunch D-Bus without X11 $DISPLAY", every 120s.
+# ---------------------------------------------------------------------------
+
+@test "REGRESSION: a fedora-remote app installs when the caller has no session bus" {
+    stub_flatpak
+    run env -u DBUS_SESSION_BUS_ADDRESS -u XDG_RUNTIME_DIR -u DISPLAY "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Cannot autolaunch"* ]]
+    [[ "$output" == *"installed org.example.FromFedora from fedora"* ]]
+    [ -f "$STAMP" ]
+}
+
+@test "the private bus is used even when the caller already has one" {
+    # sudo from a desktop session: a bus exists, but it is the user's, and a
+    # root install must not depend on someone being logged in.
+    stub_flatpak
+    DBUS_SESSION_BUS_ADDRESS="unix:path=${BATS_TEST_TMPDIR}/someone-elses-bus" run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"installed org.example.FromFedora from fedora"* ]]
+    [ "$(wc -l < "${BATS_TEST_TMPDIR}/dbus-run-session.calls")" -eq 1 ]
+}
+
+@test "the authenticator left on the private bus is stopped on the way out" {
+    # It outlives dbus-run-session and holds stdout open, which is what makes
+    # `sudo pulsar setup apps | tee log` never return.
+    stub_flatpak
+    # Detached from every fd bats reads, or bats waits on it instead.
+    sleep 300 </dev/null >/dev/null 2>&1 3>&- &
+    local auth=$!
+    echo "$auth" > "${BATS_TEST_TMPDIR}/auth.pid"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    sleep 0.2
+    if kill -0 "$auth" 2>/dev/null; then
+        kill "$auth"
+        echo "the authenticator (pid ${auth}) survived the script" >&2
+        return 1
+    fi
+}
+
+@test "no authenticator to stop is the ordinary case, not an error" {
+    stub_flatpak
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -f "$STAMP" ]
 }

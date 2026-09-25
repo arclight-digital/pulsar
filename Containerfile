@@ -146,6 +146,13 @@ RUN for attempt in 1 2 3; do \
 #                   the failure mode is silent, because fontconfig SUBSTITUTES
 #                   for a family it cannot find rather than erroring. Asserted
 #                   below with the other two.
+#   dbus-daemon     for dbus-run-session, and nothing else. The stock
+#                   Silverblue apps come from Fedora's OCI remote, which only
+#                   installs with a session bus to reach flatpak's OCI
+#                   authenticator on, and pulsar-flatpaks.service is a system
+#                   unit with none. See scripts/flatpak-defaults.sh. The system
+#                   bus stays dbus-broker: the package's dbus-daemon.service
+#                   ships disabled, and that is asserted below.
 #
 # `gh` was here once, carried as an admitted exception to the rule above so
 # that `pulsar attest` had its verifier on a fresh install. The exception is
@@ -169,7 +176,12 @@ RUN dnf5 install -y \
       distrobox \
       android-tools \
       libvirt \
-      qemu-kvm
+      qemu-kvm \
+      dbus-daemon && \
+    case "$(readlink /etc/systemd/system/dbus.service)" in \
+      */dbus-broker.service) echo "system bus: still dbus-broker" ;; \
+      *) echo "FATAL: installing dbus-daemon moved the system bus off dbus-broker ($(readlink /etc/systemd/system/dbus.service))"; exit 1 ;; \
+    esac
 
 # ---------------------------------------------------------------------------
 # Fedora's Background Logo extension paints /usr/share/fedora-logos over the
@@ -527,7 +539,12 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       command -v "$t" >/dev/null || \
         { echo "FATAL: ${t} is gone from the base image; pulsar-update-check.timer would fail every six hours and this system would go stale in silence, which is the exact failure it exists to prevent"; exit 1; }; \
     done && \
-    echo "update check: jq / skopeo / notify-send present"
+    echo "update check: jq / skopeo / notify-send present" && \
+    for t in flatpak dbus-run-session gdbus; do \
+      command -v "$t" >/dev/null || \
+        { echo "FATAL: ${t} is missing; pulsar-flatpaks.service could not install the Silverblue apps from the fedora OCI remote and would retry every 120s forever"; exit 1; }; \
+    done && \
+    echo "default flatpaks: flatpak / dbus-run-session / gdbus present"
 
 # ---------------------------------------------------------------------------
 # Finalize. The initramfs carries the plymouth theme, so the dracut regen has

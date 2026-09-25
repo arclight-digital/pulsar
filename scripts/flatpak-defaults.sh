@@ -46,6 +46,54 @@
 # there when they are not. The stamp still encodes "the defaults landed once"
 # -- NOT "the defaults are present". Removing a default app afterwards is a
 # user choice this script will never see and never revert.
+#
+# A PRIVATE SESSION BUS, BECAUSE THE `fedora` REMOTE NEEDS ONE. Installing from
+# an oci+https:// remote goes through org.flatpak.Authenticator.Oci, which
+# flatpak reaches over the SESSION bus -- and this runs as a system service,
+# which has no session bus, no $XDG_RUNTIME_DIR, and no $DISPLAY. GLib's last
+# resort is X11 autolaunch, so every install from `fedora` failed with:
+#
+#   error: Cannot autolaunch D-Bus without X11 $DISPLAY
+#
+# while every flathub install beside it succeeded, because flathub is not OCI
+# and asks no authenticator anything. The first machine installed from a Pulsar
+# ISO (2026-09-25) got the gaming stack and none of the Silverblue desktop, and
+# the unit retried every 120s. Every machine before it was a rebase that already
+# had Fedora's apps from its own installer, which is why nothing had shown it.
+#
+# So the whole script re-runs itself under dbus-run-session: a throwaway bus
+# the authenticator is activated on, torn down when the script exits. Always a
+# private one, never "whatever bus happens to be around": under sudo from a
+# desktop that would be the user's bus, and a root install that only works
+# when someone is logged in is the bug again with a better alibi.
+if [ -z "${PULSAR_FLATPAK_PRIVATE_BUS:-}" ]; then
+  command -v dbus-run-session >/dev/null || {
+    echo "flatpak-defaults: dbus-run-session is missing; the fedora remote cannot be installed from without it" >&2
+    exit 1
+  }
+  exec env -u DBUS_SESSION_BUS_ADDRESS PULSAR_FLATPAK_PRIVATE_BUS=1 \
+    dbus-run-session -- "$0" "$@"
+fi
+
+# The authenticator OUTLIVES the bus. dbus-run-session stops dbus-daemon on the
+# way out, but the service it activated is not its child and does not exit when
+# the bus goes away, so it lingers as an orphan holding our stdout. Under the
+# systemd unit that is only untidy, since the unit's cgroup is reaped when it
+# stops. Under `sudo pulsar setup apps | tee log` the pipe never closes and the
+# command never returns. So ask the bus who owns the name while there still is
+# a bus, and stop it. No owner -- nothing was installed from an OCI remote --
+# is the ordinary case, not an error.
+stop_authenticator() {
+  local pid
+  pid="$(gdbus call --session --dest org.freedesktop.DBus \
+           --object-path /org/freedesktop/DBus \
+           --method org.freedesktop.DBus.GetConnectionUnixProcessID \
+           org.flatpak.Authenticator.Oci 2>/dev/null \
+         | sed -n 's/^(uint32 \([0-9][0-9]*\),)$/\1/p')" || true
+  if [ -n "${pid}" ]; then kill "${pid}" 2>/dev/null || true; fi
+}
+trap stop_authenticator EXIT
+
 set -euo pipefail
 
 LIST=${PULSAR_FLATPAKS_LIST:-/usr/share/pulsar/flatpaks.list}
