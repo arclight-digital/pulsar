@@ -114,7 +114,14 @@ const structuredData = {
 
     <meta name="theme-color" content="#0B0E1A" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#E9EDF7" media="(prefers-color-scheme: light)" />
-    <link rel="icon" href="/assets/favicon.svg" />
+    {/* SVG first for every browser that takes it; the PNGs are for the ones
+        that do not (and for anything that scrapes a favicon by size). Each is
+        drawn at its size rather than the SVG shrunk: the 16 drops the glow
+        and thickens the trail, which a scaled SVG cannot do. */}
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/assets/favicon-16.png" type="image/png" sizes="16x16" />
+    <link rel="icon" href="/assets/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/assets/favicon-48.png" type="image/png" sizes="48x48" />
 
     {/* The hero ground and the UI faces are the LCP path; preloads keep the
         first paint from waiting on discovery. Fonts need crossorigin even

@@ -15,7 +15,7 @@
 //
 // Runs from `npm run stage`, which `npm run dev` and `npm run build` both
 // depend on. Node only -- Cloudflare's builder has node and nothing else.
-import { cp, mkdir, rm } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,12 +25,25 @@ const OUT = join(SITE, 'public', 'assets');
 
 // [source relative to the repo root, name it is served as]
 const FILES = [
-  // brand: the hero/footer marks in both cuts, plus the favicon
-  ['assets/brand/pulsar-mark.svg', 'pulsar-mark.svg'],
-  ['assets/brand/pulsar-mark-color-dark.svg', 'pulsar-mark-color-dark.svg'],
-  ['assets/brand/pulsar-animated.svg', 'pulsar-animated.svg'],
-  ['assets/brand/pulsar-animated-color-dark.svg', 'pulsar-animated-color-dark.svg'],
-  ['assets/brand/favicon.svg', 'favicon.svg'],
+  // brand: the v2 package's own files, by its "which file where" table. The
+  // mark is a responsive family -- the large drawing above 56px, the heavier
+  // -small drawing from 20 to 56px -- so each slot gets the drawing drawn for
+  // its size: the 28px top bar the small animated cut, the 44px footer the
+  // small static mark, the hero the large animated cut.
+  //
+  // The package has no animated -light cut, so light theme gets the static
+  // -light marks (see theme.ts); the light hero mark is not in this list
+  // because it is re-boxed below rather than copied.
+  ['assets/brand/svg/pulsar-animated.svg', 'pulsar-animated.svg'],
+  ['assets/brand/svg/pulsar-animated-large.svg', 'pulsar-animated-large.svg'],
+  ['assets/brand/svg/pulsar-mark-small.svg', 'pulsar-mark-small.svg'],
+  ['assets/brand/svg/pulsar-mark-small-light.svg', 'pulsar-mark-small-light.svg'],
+  ['assets/brand/svg/favicon.svg', 'favicon.svg'],
+  // PNG fallbacks for the favicon, each drawn at its size (the 16 drops the
+  // glow and thickens the trail). Base.astro offers them beside the SVG.
+  ['assets/brand/png/favicon-16.png', 'favicon-16.png'],
+  ['assets/brand/png/favicon-32.png', 'favicon-32.png'],
+  ['assets/brand/png/favicon-48.png', 'favicon-48.png'],
 
   // the two faces the page sets itself in
   ['assets/fonts/Host_Grotesk/static/HostGrotesk-Regular.ttf', 'HostGrotesk-Regular.ttf'],
@@ -68,4 +81,48 @@ await Promise.all(
   ),
 );
 
-console.log(`staged ${FILES.length} assets into public/assets`);
+// The light hero mark, re-boxed onto the dark hero mark's canvas.
+//
+// v2's files are each cropped to their own art plus 3%, so pulsar-mark-light
+// (no glow) has a tighter box than pulsar-animated-large (glow), and neither
+// box is centred on the core. theme.ts swaps one for the other in the same
+// 180px <img>, which as supplied would draw the light mark 15% larger and
+// shift its core by ~13px -- the mark would visibly jump on every theme flip,
+// and the flywheel's transform-origin (Hero.astro) could only be right for
+// one of them. Both files share the 256-unit drawing grid, so giving the
+// light one the dark one's viewBox is a lossless fix: the art is untouched,
+// only its transparent canvas grows. Read from the files rather than copied
+// here as numbers, so the next drop cannot silently disagree with them.
+//
+// Done here, not by editing assets/brand: that directory stays the designer's
+// package byte for byte, so a re-drop is a copy.
+const ROOT_BOX = /<svg\b[^>]*>/;
+function viewBox(svg, from) {
+  const box = svg.match(ROOT_BOX)?.[0].match(/viewBox="([^"]+)"/)?.[1];
+  if (!box) throw new Error(`no root viewBox in ${from}`);
+  return box.split(/[\s,]+/).map(Number);
+}
+const HERO = 'assets/brand/svg/pulsar-animated-large.svg';
+const LIGHT = 'assets/brand/svg/pulsar-mark-light.svg';
+const hero = viewBox(await readFile(join(REPO, HERO), 'utf8'), HERO);
+const lightSvg = await readFile(join(REPO, LIGHT), 'utf8');
+const light = viewBox(lightSvg, LIGHT);
+// The bigger canvas must contain the smaller one, or the re-box would crop
+// the light art. Fail the build rather than ship a clipped mark.
+if (
+  light[0] < hero[0] ||
+  light[1] < hero[1] ||
+  light[0] + light[2] > hero[0] + hero[2] ||
+  light[1] + light[3] > hero[1] + hero[3]
+) {
+  throw new Error(`${LIGHT}'s box does not fit inside ${HERO}'s; re-box by hand`);
+}
+const rebox = lightSvg.replace(ROOT_BOX, (tag) =>
+  tag
+    .replace(/viewBox="[^"]*"/, `viewBox="${hero.join(' ')}"`)
+    .replace(/width="[^"]*"/, `width="${hero[2]}"`)
+    .replace(/height="[^"]*"/, `height="${hero[3]}"`),
+);
+await writeFile(join(OUT, 'pulsar-mark-light.svg'), rebox);
+
+console.log(`staged ${FILES.length + 1} assets into public/assets`);

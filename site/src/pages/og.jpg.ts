@@ -29,44 +29,79 @@ const STAR = '#E9EDF7';
 const INK = '#0B0E1A';
 const TAGLINE = 'Your lighthouse in the sky.';
 
-// Proportions taken from the authored lockup, assets/brand/pulsar-lockup-stacked.svg,
-// which is a 234x253 canvas holding:
+// Proportions taken from the authored lockup, assets/brand/svg/pulsar-lockup-stacked.svg.
+// v2's wordmark is outlines, not <text>, so there is no font-size to read off
+// it; these are measured off its rendered ink (alpha at 50%) instead, in the
+// mark's own 256-unit drawing grid, which the lockup draws at scale 1 -- its
+// mark's ink lands on exactly the same coordinates as pulsar-mark.svg's:
 //
-//   mark      160 square, top at y=16, so its bottom edge is y=176
-//   wordmark  font-size 34, font-weight 700, letter-spacing 6.8, baseline y=207
+//   mark box     221.01 square (pulsar-mark.svg's viewBox, = pulsar-mark-1024.png)
+//   mark ink     21.25 below the box top, 19.35 above the box bottom
+//   wordmark     cap height 50.47, cap top 92.95 below the mark's lowest ink
+//                (the package README's "about 1.4x below the trail")
+//   tracking     0.24em (README; the outlines carry it, the number is theirs)
 //
-// Everything below is those numbers as ratios, so the card is a rendering of
-// the lockup at card scale rather than a second set of hand-tuned values that
-// can disagree with it.
-const LOCKUP = {
-  wordPerMark: 34 / 160, // 0.2125
-  trackPerWord: 6.8 / 34, // 0.2em, the brand's tracking
-  baselineBelowMarkPerMark: (207 - 176) / 160, // 0.19375
+// Everything below is those numbers scaled by one factor, so the card is a
+// rendering of the lockup at card scale rather than a second set of hand-tuned
+// values that can disagree with it. Re-measure if the lockup is re-drawn.
+const GRID = {
+  box: 221.01,
+  boxLeft: 24.5, // viewBox x; the core is at x = 128
+  inkTop: 21.25,
+  inkBottom: 19.35,
+  cap: 50.47,
+  capGap: 92.95,
 };
+const TRACK_EM = 0.24;
 
-const MARK_SIZE = 280;
-const WORD_SIZE = Math.round(MARK_SIZE * LOCKUP.wordPerMark); // 60
-const TRACKING = WORD_SIZE * LOCKUP.trackPerWord; // 12
+// Host Grotesk's OS/2 capHeight is 700 of 1000 units: a cap height of c needs
+// a font-size of c / 0.7.
+const CAP_PER_EM = 0.7;
+
+// The box size sets the scale. 240 keeps the mark's INK the size it was on the
+// v1 card (~195px): v1's file had wide margins, v2's is cropped to the art.
+const MARK_SIZE = 240;
+const UNIT = MARK_SIZE / GRID.box; // card px per grid unit
+const WORD_SIZE = Math.round((GRID.cap * UNIT) / CAP_PER_EM); // 78
+const TRACKING = WORD_SIZE * TRACK_EM; // ~18.7
 
 // The tagline is not part of the lockup. It takes the page's own hierarchy:
 // the same weight and colour as the wordmark, told apart by size alone
 // (the hero runs a 64px wordmark over a 32px tagline).
 const TAG_SIZE = Math.round(WORD_SIZE / 2);
 
-// Gaps between the flex items. The lockup expresses its gap as a baseline
-// offset, which flexbox has no way to address, so these are the box margins
-// that reproduce it. Measured back off the rendered pixels rather than
-// assumed: they put the wordmark's cap top 0.248 of a mark box below the
-// mark's ink, against the authored lockup's 0.239.
-const WORD_GAP = 6;
-const TAG_GAP = 18;
+// Where the cap line sits inside a lineHeight:1 box, as a fraction of the
+// font-size. Satori centres the font's content area (ascent 1.015 + descent
+// 0.315 = 1.33em) on the 1em line, so the ascender pokes 0.165em out of the top
+// and the cap line is 1.015 - 0.7 - 0.165 = 0.15em down from the box top. The
+// baseline is then 0.15em above the box bottom, by the same symmetry.
+const CAP_INSET = 0.15;
 
-// The mark's artwork does not fill its own box -- pulsar-mark-1024.png has
-// transparent margin, and its ink runs from 0.106 to 0.802 of the height, so
-// there is roughly twice as much dead space below the arc as above it.
-// Centring the BOXES therefore leaves the INK sitting low. Half the imbalance,
-// as padding under the stack, lifts the visible card back onto centre.
-const OPTICAL_LIFT = Math.round(MARK_SIZE * (1 - 0.802 - 0.106)); // ~26px
+// Gaps between the flex items. The lockup's gap is ink to ink, which flexbox
+// has no way to address, so these are the box margins that reproduce it:
+// from the mark box's bottom edge (19.35 units below its ink) to the word box
+// top (CAP_INSET above its cap line).
+const WORD_GAP = Math.round(
+  (GRID.capGap - GRID.inkBottom) * UNIT - CAP_INSET * WORD_SIZE,
+); // ~74
+// Wordmark baseline to tagline cap line: half the lockup's own mark-to-word
+// gap, so the tagline reads as a caption to the lockup rather than a third
+// member of it.
+const TAG_GAP = Math.round(
+  (GRID.capGap / 2) * UNIT - CAP_INSET * WORD_SIZE - CAP_INSET * TAG_SIZE,
+); // ~33
+
+// Centring the BOXES leaves the ink low: the mark box has 21.25 units of empty
+// glow above its ink, while the tagline's descenders (y, g) fill the bottom of
+// its box. Padding under the stack by that top margin lifts the visible card
+// back onto centre.
+const OPTICAL_LIFT = Math.round(GRID.inkTop * UNIT); // ~23
+
+// The lockup centres the wordmark under the CORE, and v2's mark file is
+// cropped to its art, so the core is not the box centre: it sits 7 units left
+// of it. flex centres the box, so push the box right by that much (a margin
+// on one side moves a centred item by half of it).
+const CORE_SHIFT = (GRID.boxLeft + GRID.box / 2 - 128) * UNIT; // ~7.6
 
 // Read from the project root rather than from import.meta.url: this module is
 // bundled into dist/.prerender/chunks before it runs, so a path relative to
@@ -94,7 +129,7 @@ const FONTS = join(REPO, 'assets', 'fonts', 'Host_Grotesk', 'static');
 // Bold only: the wordmark is Bold by brand commitment and the tagline takes
 // the page's hierarchy, which tells the two apart by size rather than weight.
 const bold = asset(FONTS, 'HostGrotesk-Bold.ttf');
-const mark = dataUri('image/png', REPO, 'assets', 'brand', 'pulsar-mark-1024.png');
+const mark = dataUri('image/png', REPO, 'assets', 'brand', 'png', 'pulsar-mark-1024.png');
 const silk = dataUri('image/jpeg', SITE, 'assets-static', 'silk-still-dark.jpg');
 
 /** Satori takes React-shaped nodes; this is the whole of what it needs. */
@@ -137,7 +172,12 @@ const card: Node = h(
         paddingBottom: OPTICAL_LIFT,
       },
     },
-    h('img', { src: mark, width: MARK_SIZE, height: MARK_SIZE }),
+    h('img', {
+      src: mark,
+      width: MARK_SIZE,
+      height: MARK_SIZE,
+      style: { marginLeft: 2 * CORE_SHIFT },
+    }),
     h(
       'div',
       {
@@ -152,9 +192,8 @@ const card: Node = h(
           marginTop: WORD_GAP,
           // Letter-spacing trails the final R, so a centred box sits half a
           // tracking unit left of true centre. The negative margin takes that
-          // trailing space back out of the box, which is the same optical
-          // recentre the authored lockup makes by anchoring at 120.4 rather
-          // than the mark's 117.
+          // trailing space back out of the box: the authored lockup centres
+          // the wordmark's INK under the core.
           marginRight: -TRACKING,
         },
       },

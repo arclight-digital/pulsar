@@ -38,7 +38,15 @@ const active = (href: string) => path === href || path.startsWith(`${href}/`);
   class:list={['bar', { 'theme-fixed-dark': !immersive }]}
 >
   <a slot="logo" class="lockup" href="/" aria-label="Pulsar home">
-    <img data-mark src="/assets/pulsar-animated.svg" alt="" width="28" height="28" />
+    <img
+      data-mark
+      data-dark="/assets/pulsar-animated.svg"
+      data-light="/assets/pulsar-mark-small-light.svg"
+      src="/assets/pulsar-animated.svg"
+      alt=""
+      width="28"
+      height="28"
+    />
     <span class="word">PULSAR</span>
   </a>
   {/* The build names the product; it is not something you can do, so it sits

@@ -21,8 +21,10 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
     <img
       data-mark
       data-spin
+      data-dark="/assets/pulsar-animated-large.svg"
+      data-light="/assets/pulsar-mark-light.svg"
       class="mark"
-      src="/assets/pulsar-animated.svg"
+      src="/assets/pulsar-animated-large.svg"
       alt=""
       width="180"
       height="180"
@@ -127,11 +129,20 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
     height: 180px;
     width: 180px;
     margin-bottom: var(--space-lg);
+    /* The core, not the box centre. v2's files are cropped to their art, so
+       the core sits at (128, 128) in a viewBox of 24.5 12 221.01 221.01:
+       (128 - 24.5) / 221.01 and (128 - 12) / 221.01. Spun about 50% 50% the
+       core would orbit a ~9px circle. The light mark is staged on the same
+       box (stage-assets.mjs), so one origin serves both themes. */
+    transform-origin: 46.83% 52.49%;
   }
 
   /* Easter egg: the mark takes a flick and spins down like a flywheel. The
-     core sits dead centre and the arc is the only asymmetric part of the cut,
-     so rotating the whole image reads as the arc orbiting the core.
+     image turns about the core (transform-origin above) and the arc is the
+     only asymmetric part of the cut, so it reads as the arc orbiting the core.
+     The brand package suggests rotating the SVG's own #pl-spin group, but an
+     <img> exposes nothing inside it to the page, so the page turns the image
+     about the same point instead.
      A WHOLE number of turns, so it comes to rest exactly where it started.
 
      The curve is the decay, and it was picked against numbers rather than by

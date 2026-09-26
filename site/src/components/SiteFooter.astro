@@ -25,7 +25,17 @@ const MACHINE = [
   <div class="spectrum" aria-hidden="true"></div>
   <arc-footer contained="xl" no-border>
     <div slot="logo" class="brand">
-      <img data-mark src="/assets/pulsar-animated.svg" alt="" width="44" height="44" />
+      {/* Static, and the small drawing: the brand package's placement for a
+          44px footer mark. The pulse belongs to the top bar and the hero. */}
+      <img
+        data-mark
+        data-dark="/assets/pulsar-mark-small.svg"
+        data-light="/assets/pulsar-mark-small-light.svg"
+        src="/assets/pulsar-mark-small.svg"
+        alt=""
+        width="44"
+        height="44"
+      />
       <div>
         <p class="word">PULSAR</p>
         <p class="brandline">An immutable Fedora spin</p>
