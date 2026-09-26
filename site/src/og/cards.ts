@@ -64,9 +64,9 @@ export const CARDS: Card[] = [
   {
     slug: 'home',
     path: '/',
-    headline: 'An agentic, atomic, stylish Linux.',
+    headline: 'A stylish, atomic, agentic Linux.',
     sub: 'Sixteen desktop themes in one command.',
-    alt: 'The Pulsar logo beside three screenshots of the same desktop in the Gruvbox, Catppuccin and Pulsar themes, with the line: an agentic, atomic, stylish Linux.',
+    alt: 'The Pulsar logo beside three screenshots of the same desktop in the Gruvbox, Catppuccin and Pulsar themes, with the line: a stylish, atomic, agentic Linux.',
     visual: { kind: 'desktops', themes: HOME_THEMES },
   },
   {
