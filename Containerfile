@@ -598,6 +598,99 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
     echo "default flatpaks: flatpak / dbus-run-session / gdbus present"
 
 # ---------------------------------------------------------------------------
+# Theme engine: one command re-colours the desktop -- libadwaita and GTK3
+# apps, Ptyxis, btop, Text Editor, the top bar and quick settings, and the
+# wallpaper -- and `pulsar theme revert` puts stock GNOME back. On by default:
+# pulsar-theme-init.service applies the Pulsar theme once per account on first
+# login, and leaves an account that already has its own look alone. The whole
+# design, and what each piece is for, is in docs/theming.md.
+#
+# The overlay above already landed the themes, templates, extension, units
+# and zz1 override; this installs the two executables, turns the rendered
+# wallpapers into JPEG XL, and asserts every piece that could otherwise fail
+# by silently doing nothing.
+#
+# Wallpapers: scripts/build.sh renders them as PNG on the builder (there is no
+# GL stack in here), cjxl converts them at quality 97 and the PNGs go. q97 is
+# about 0.6 MB against a 3.7 MB PNG and keeps the film grain, which is also
+# the dither that stops the dark gradients banding; q90 strips it and blocks.
+# GNOME 50 reads .jxl natively (glycin-jxl), and ships its own wallpapers as
+# .jxl. A --no-wallpapers build has no renders: that is fine, the engine falls
+# back to the brand wallpapers, so it is announced rather than fatal.
+#
+# adw-gtk3 is what lets GTK3 apps take the palette at all: stock Adwaita GTK3
+# reads different colour names and no light/dark pairing.
+# ---------------------------------------------------------------------------
+COPY scripts/pulsar-theme scripts/pulsar-theme-picker /usr/libexec/pulsar/
+RUN set -eu; \
+    chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker; \
+    free_kb=$(df --output=avail -k / | tail -1); \
+    [ "${free_kb}" -gt 1048576 ] || \
+      { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
+    dnf5 install -y adw-gtk3-theme libjxl-utils; \
+    n=0; \
+    for png in /usr/share/pulsar/themes/*/backgrounds/*.png; do \
+      [ -e "${png}" ] || continue; \
+      cjxl -q 97 --quiet "${png}" "${png%.png}.jxl"; \
+      [ -s "${png%.png}.jxl" ] || { echo "FATAL: cjxl wrote nothing for ${png}"; exit 1; }; \
+      rm -f "${png}"; \
+      n=$((n + 1)); \
+    done; \
+    dnf5 remove -y libjxl-utils; \
+    if [ "${n}" -eq 0 ]; then \
+      echo "theme wallpapers: none rendered (--no-wallpapers build); themes fall back to the brand pair"; \
+    else \
+      echo "theme wallpapers: ${n} converted to JPEG XL q97 ($(du -sh /usr/share/pulsar/themes | cut -f1) of themes)"; \
+    fi; \
+    if find /usr/share/pulsar/themes -name '*.png' | grep -q .; then \
+      echo "FATAL: PNG renders left under /usr/share/pulsar/themes; only .jxl is meant to ship"; exit 1; \
+    fi; \
+    for t in gtk4.css gtk3.css ptyxis.palette gtksourceview.xml gnome-shell.css btop.theme; do \
+      [ -s "/usr/share/pulsar/theme/templates/${t}" ] || \
+        { echo "FATAL: theme template ${t} is missing; every 'pulsar theme set' would die rendering it"; exit 1; }; \
+    done; \
+    themes=$(find /usr/share/pulsar/themes -name theme.toml | wc -l); \
+    [ "${themes}" -ge 13 ] || \
+      { echo "FATAL: only ${themes} themes under /usr/share/pulsar/themes"; exit 1; }; \
+    if /usr/libexec/pulsar/pulsar-theme list | grep -q '^!'; then \
+      /usr/libexec/pulsar/pulsar-theme list; echo "FATAL: a shipped theme does not parse"; exit 1; \
+    fi; \
+    /usr/libexec/pulsar/pulsar-theme audit || \
+      { echo "FATAL: a shipped theme fails the WCAG AA contrast audit above"; exit 1; }; \
+    [ -d /usr/share/themes/adw-gtk3 ] && [ -d /usr/share/themes/adw-gtk3-dark ] || \
+      { echo "FATAL: adw-gtk3 is not installed; GTK3 apps would silently keep stock colours"; exit 1; }; \
+    EXT=/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital; \
+    test "$(jq -r .uuid "${EXT}/metadata.json")" = pulsar-theme@arclight.digital; \
+    SHELL_MAJOR="$(gnome-shell --version | sed 's/[^0-9.]//g' | cut -d. -f1)"; \
+    jq -e --arg v "${SHELL_MAJOR}" '."shell-version" | index($v)' "${EXT}/metadata.json" >/dev/null || \
+      { echo "FATAL: the pulsar-theme extension does not declare GNOME Shell ${SHELL_MAJOR}"; \
+        echo "       it declares: $(jq -c '."shell-version"' "${EXT}/metadata.json")"; \
+        echo "       an extension that does not declare the running Shell is never loaded, and every theme loses its top bar"; \
+        echo "       bump shell-version only after tests/theme-gate/gate.sh passes on the new Shell"; exit 1; }; \
+    setters=$(grep -l '^enabled-extensions=' /usr/share/glib-2.0/schemas/*pulsar*.gschema.override | wc -l); \
+    [ "${setters}" -eq 1 ] || \
+      { echo "FATAL: ${setters} Pulsar overrides set org.gnome.shell enabled-extensions; exactly one may, or the last file silently wins"; exit 1; }; \
+    rm -rf /tmp/schemas && mkdir /tmp/schemas && \
+    glib-compile-schemas --targetdir=/tmp/schemas /usr/share/glib-2.0/schemas && \
+    ext=$(HOME=/tmp GSETTINGS_SCHEMA_DIR=/tmp/schemas gsettings get org.gnome.shell enabled-extensions) && \
+    rm -rf /tmp/schemas; \
+    for u in gamescale@arclight.digital pulsar-theme@arclight.digital; do \
+      case "${ext}" in *"'${u}'"*) ;; *) echo "FATAL: ${u} is not in the default enabled-extensions (${ext})"; exit 1 ;; esac; \
+    done; \
+    rm -rf /tmp/themerender; \
+    HOME=/tmp/themerender XDG_CONFIG_HOME=/tmp/themerender/c XDG_DATA_HOME=/tmp/themerender/d \
+      XDG_STATE_HOME=/tmp/themerender/s /usr/libexec/pulsar/pulsar-theme render pulsar /tmp/themerender/out >/dev/null; \
+    install -m 0644 /tmp/themerender/out/.local/share/gtksourceview-5/styles/pulsar-pulsar.xml \
+                    /tmp/themerender/out/.local/share/gtksourceview-5/styles/pulsar-pulsar-dark.xml \
+                    /usr/share/gtksourceview-5/styles/; \
+    rm -rf /tmp/themerender; \
+    for f in /usr/share/gtksourceview-5/styles/pulsar-pulsar.xml /usr/share/gtksourceview-5/styles/pulsar-pulsar-dark.xml; do \
+      xmllint --noout "${f}" || { echo "FATAL: ${f} is not well-formed; Text Editor would silently fall back to Adwaita"; exit 1; }; \
+    done; \
+    desktop-file-validate /usr/share/applications/digital.arclight.Pulsar.ThemePicker.desktop; \
+    echo "theme engine: $(/usr/libexec/pulsar/pulsar-theme list | wc -l) themes, audit clean, extension declares Shell ${SHELL_MAJOR}"
+
+# ---------------------------------------------------------------------------
 # Finalize. The initramfs carries the plymouth theme, so the dracut regen has
 # to come after the overlay lands. The nvidia variant regenerates it a second
 # time because it adds modprobe.d options that also live in the initramfs.
@@ -649,6 +742,12 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # cli/pulsar). On the vanilla image it wakes up, finds no nvidia module, and
 # exits.
 #
+# pulsar-theme-init.service and pulsar-theme-notice.service are --global
+# because theming is per account: init themes each account once on its first
+# login (and leaves a customised one alone), notice tells that account what
+# happened once the Shell is up. Both are gated on stamps in the account's
+# state dir, so on every later login they do not even start.
+#
 # Still deliberately NOT enabled: bootc's fetch-apply-updates.timer, which
 # runs `bootc upgrade --apply` and reboots on its own, and would additionally
 # drop the layers on any system that has them. Notifying is the policy;
@@ -680,6 +779,8 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable gamescale-reconcile.service && \
     systemctl --global enable pulsar-update-check.timer && \
     systemctl --global enable pulsar-gl-check.path && \
+    systemctl --global enable pulsar-theme-init.service && \
+    systemctl --global enable pulsar-theme-notice.service && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service \
              pulsar-gamemode-group.service; do \
@@ -687,7 +788,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
-             pulsar-gl-check.path; do \
+             pulsar-gl-check.path pulsar-theme-init.service pulsar-theme-notice.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

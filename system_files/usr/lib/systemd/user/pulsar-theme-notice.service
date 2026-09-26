@@ -1,0 +1,19 @@
+# Delivers the one notification pulsar-theme-init.service queued. init runs
+# before the Shell exists, so it cannot notify directly; this runs once the
+# session is up, and only when there is something to say -- the condition
+# keeps it from even starting python on every other login. If delivery fails
+# the notice stays and is tried again next login; once shown it is deleted,
+# so it can never nag twice.
+[Unit]
+Description=Pulsar theme: first-login notice
+ConditionPathExists=%S/pulsar-theme/notice.json
+After=gnome-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/pulsar-theme notice
+TimeoutStartSec=20
+
+[Install]
+WantedBy=gnome-session.target

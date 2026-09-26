@@ -40,8 +40,9 @@
 #                       the podman store are checked for free space before the
 #                       build starts; PULSAR_MIN_FREE_GB moves the floor (GB,
 #                       default 10) and 0 turns the check off.
-#   --no-wallpapers     skip the shader render (they are gitignored 4K PNGs,
-#                       so skipping means the image ships without them)
+#   --no-wallpapers     skip the shader renders, brand and theme (they are
+#                       gitignored PNGs, so skipping means the image ships
+#                       without them; themes then use the brand pair)
 #   --no-floating-tags  push the version tag ONLY: :latest and :<fedora> in the
 #                       REGISTRY stay where they are. What a manual build wants
 #                       -- a debugging image that moves :latest is what every
@@ -312,6 +313,12 @@ render_wallpapers() {
   fi
   say "rendering wallpapers"
   python3 "${REPO}/scripts/render-wallpapers.py"
+  # Each theme's own wallpapers, from the same shader family, as PNG into the
+  # theme dirs; the Containerfile converts them to JPEG XL. Same toolchain,
+  # same gitignore treatment, and --no-wallpapers skips both (themes then
+  # fall back to the brand pair above).
+  say "rendering theme wallpapers"
+  python3 "${REPO}/scripts/render-theme-wallpapers.py"
 }
 
 build_vanilla() {
