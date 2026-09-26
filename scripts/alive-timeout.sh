@@ -45,6 +45,7 @@ HELD=0
 
 STATE_DIR=${PULSAR_ALIVE_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/pulsar}
 STATE="${STATE_DIR}/alive-timeout.saved"
+MIGRATED="${STATE_DIR}/alive-timeout.migrated"
 
 # A failed hook must never be the reason a game does not start, so every exit
 # below is 0 unless the caller asked for something meaningless.
@@ -63,9 +64,19 @@ hold)
             die_soft "could not read ${SCHEMA} ${KEY}"
         # dconf answers only with the user's own value, empty when unset.
         # Without dconf the old behaviour stands: save what gsettings says.
-        if command -v dconf >/dev/null 2>&1 \
-           && [ -z "$(dconf read "/org/gnome/mutter/${KEY}" 2>/dev/null)" ]; then
-            current=default
+        user_value=""
+        if command -v dconf >/dev/null 2>&1; then
+            user_value=$(dconf read "/org/gnome/mutter/${KEY}" 2>/dev/null) || user_value=""
+            # ONE-TIME REPAIR. The old version of this script froze GNOME's
+            # old default into dconf, so every machine that ran a game under
+            # it carries an explicit 5000 that outranks the image's 20000.
+            # Exactly 5000, seen once, is read as that leftover rather than a
+            # choice; the stamp means a user who sets 5000 later keeps it.
+            if [ ! -e "$MIGRATED" ] && [ "$user_value" = "uint32 5000" ]; then
+                gsettings reset "$SCHEMA" "$KEY" 2>/dev/null && user_value=""
+            fi
+            mkdir -p "$STATE_DIR" 2>/dev/null && : > "$MIGRATED" 2>/dev/null || true
+            [ -n "$user_value" ] || current=default
         fi
         mkdir -p "$STATE_DIR" || die_soft "could not create ${STATE_DIR}"
         printf '%s\n' "$current" > "$STATE" || die_soft "could not write ${STATE}"

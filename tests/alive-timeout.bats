@@ -24,7 +24,7 @@ setup() {
     STUB="${BATS_TEST_TMPDIR}/stub"
     mkdir -p "$STUB"
     export GS_VALUE="${BATS_TEST_TMPDIR}/value"
-    printf 'uint32 5000\n' > "$GS_VALUE"
+    printf 'uint32 8000\n' > "$GS_VALUE"  # a value the user set; not 5000, which the one-time repair treats as the old script's leftover
     export GS_FAIL="${GS_FAIL:-}"
     cat > "${STUB}/gsettings" <<'EOF'
 #!/bin/sh
@@ -55,14 +55,14 @@ value() { cat "$GS_VALUE"; }
     run "$SCRIPT" hold
     [ "$status" -eq 0 ]
     [ "$(value)" = "uint32 0" ]
-    [ "$(cat "$STATE")" = "uint32 5000" ]
+    [ "$(cat "$STATE")" = "uint32 8000" ]
 }
 
 @test "release restores the saved value and clears the state" {
     "$SCRIPT" hold
     run "$SCRIPT" release
     [ "$status" -eq 0 ]
-    [ "$(value)" = "uint32 5000" ]
+    [ "$(value)" = "uint32 8000" ]
     [ ! -f "$STATE" ]
 }
 
@@ -82,9 +82,9 @@ value() { cat "$GS_VALUE"; }
     run "$SCRIPT" hold
     [ "$status" -eq 0 ]
     [[ "$output" == *"did not release"* ]]
-    [ "$(cat "$STATE")" = "uint32 5000" ]
+    [ "$(cat "$STATE")" = "uint32 8000" ]
     "$SCRIPT" release
-    [ "$(value)" = "uint32 5000" ]
+    [ "$(value)" = "uint32 8000" ]
 }
 
 @test "release with nothing held leaves the key alone" {
@@ -162,4 +162,21 @@ value() { cat "$GS_VALUE"; }
     [[ "$output" == *"back to the default"* ]]
     [ ! -e "${GS_VALUE}.user" ]
     [ ! -f "$STATE" ]
+}
+
+@test "REGRESSION: a 5000 frozen by the old script is reset once, and only once" {
+    # the old script wrote GNOME's default back as a user value
+    : > "${GS_VALUE}.user"
+    printf 'uint32 5000\n' > "$GS_VALUE"
+    run "$SCRIPT" hold
+    [ "$status" -eq 0 ]
+    run "$SCRIPT" release
+    [[ "$output" == *"back to the default"* ]]
+    [ ! -e "${GS_VALUE}.user" ]
+    # a 5000 set deliberately afterwards is kept
+    : > "${GS_VALUE}.user"
+    printf 'uint32 5000\n' > "$GS_VALUE"
+    run "$SCRIPT" hold
+    run "$SCRIPT" release
+    [[ "$output" == *"restored to 5000ms"* ]]
 }
