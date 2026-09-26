@@ -1151,3 +1151,143 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"pulsar doctor"* ]]
 }
+
+# --- GPU containers (CDI) --------------------------------------------------
+# A CDI spec names every driver library by its full version, so one written
+# for another driver resolves fine and then fails inside the container. What
+# these pin down: doctor compares versions rather than checking existence,
+# reads /etc/cdi (where hand-written, stale-prone specs live) as well as the
+# tmpfs /var/run/cdi, and says nothing on an image that promised nothing.
+
+stub_cdi() {   # stub_cdi <running driver> <spec driver, or "" for none> [sebool 0|1]
+    jq '.variant = "nvidia-open"' "$PULSAR_MANIFEST" > "$PULSAR_MANIFEST.new" \
+        && mv "$PULSAR_MANIFEST.new" "$PULSAR_MANIFEST"
+    export PULSAR_NVIDIA_CTK="${BATS_TEST_TMPDIR}/nvidia-ctk"
+    printf '#!/bin/sh\n' > "$PULSAR_NVIDIA_CTK"
+    chmod +x "$PULSAR_NVIDIA_CTK"
+    export PULSAR_NVIDIA_VERSION_FILE="${BATS_TEST_TMPDIR}/nvidia-version"
+    printf '%s\n' "$1" > "$PULSAR_NVIDIA_VERSION_FILE"
+    mkdir -p "${BATS_TEST_TMPDIR}/etc-cdi" "${BATS_TEST_TMPDIR}/run-cdi" "${BATS_TEST_TMPDIR}/booleans"
+    export PULSAR_CDI_DIRS="${BATS_TEST_TMPDIR}/etc-cdi ${BATS_TEST_TMPDIR}/run-cdi"
+    export PULSAR_SELINUX_BOOLEANS="${BATS_TEST_TMPDIR}/booleans"
+    printf '%s %s\n' "${3:-1}" "${3:-1}" > "${PULSAR_SELINUX_BOOLEANS}/container_use_xserver_devices"
+    if [ -n "$2" ]; then cdi_spec "${BATS_TEST_TMPDIR}/run-cdi/nvidia.yaml" "$2"; fi
+}
+
+cdi_spec() {   # cdi_spec <file> <driver version> -- the shape nvidia-ctk 1.20 writes
+    cat > "$1" <<YAML
+---
+cdiVersion: 0.7.0
+kind: nvidia.com/gpu
+devices:
+    - name: all
+containerEdits:
+    hooks:
+        - hookName: createContainer
+          path: /usr/bin/nvidia-cdi-hook
+          args:
+            - nvidia-cdi-hook
+            - enable-cuda-compat
+            - --host-driver-version=$2
+    mounts:
+        - hostPath: /usr/lib64/libcuda.so.$2
+          containerPath: /usr/lib64/libcuda.so.$2
+YAML
+}
+
+gpu_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gpu-ctr") | .status + " " + .summary + " " + .detail'; }
+
+@test "doctor: a CDI spec for the running driver is ok and says how to use it" {
+    stub_cdi 615.71.09 615.71.09
+    run gpu_check
+    [[ "$output" == ok* ]]
+    [[ "$output" == *"matches driver 615.71.09"* ]]
+    [[ "$output" == *"--device nvidia.com/gpu=all"* ]]
+}
+
+@test "doctor: a CDI spec for another driver is stale, and names the file" {
+    stub_cdi 615.71.09 610.57.04
+    run gpu_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"stale"* ]]
+    [[ "$output" == *"run-cdi/nvidia.yaml (610.57.04)"* ]]
+}
+
+@test "doctor: a hand-written /etc/cdi spec from an old driver is caught beside a fresh one" {
+    # The real failure shape: the boot unit's /var/run/cdi spec is fine, and a
+    # how-to's `nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml` from two
+    # drivers ago is still sitting in /etc.
+    stub_cdi 615.71.09 615.71.09
+    cdi_spec "${BATS_TEST_TMPDIR}/etc-cdi/nvidia.yaml" 595.58.03
+    run gpu_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"etc-cdi/nvidia.yaml (595.58.03)"* ]]
+    [[ "$output" != *"run-cdi"* ]]
+}
+
+@test "doctor: the libcuda soname is enough when the compat hook is absent" {
+    stub_cdi 615.71.09 ""
+    printf 'kind: nvidia.com/gpu\nmounts:\n  - hostPath: /usr/lib64/libcuda.so.615.71.09\n' \
+        > "${BATS_TEST_TMPDIR}/run-cdi/nvidia.yaml"
+    run gpu_check
+    [[ "$output" == ok* ]]
+}
+
+@test "doctor: a spec with no readable driver version is stale, not ok" {
+    stub_cdi 615.71.09 ""
+    printf 'kind: nvidia.com/gpu\n' > "${BATS_TEST_TMPDIR}/run-cdi/nvidia.yaml"
+    run gpu_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"no driver version"* ]]
+}
+
+@test "doctor: no CDI spec at all warns with the unit to restart" {
+    stub_cdi 615.71.09 ""
+    run gpu_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"no CDI spec"* ]]
+    [[ "$output" == *"nvidia-cdi-refresh.service"* ]]
+}
+
+@test "doctor: a non-nvidia CDI spec is not mistaken for the GPU one" {
+    stub_cdi 615.71.09 ""
+    printf 'cdiVersion: 0.7.0\nkind: example.com/fpga\n' > "${BATS_TEST_TMPDIR}/etc-cdi/fpga.yaml"
+    run gpu_check
+    [[ "$output" == *"no CDI spec"* ]]
+}
+
+@test "doctor: SELinux blocking container GPU access is reported even with a good spec" {
+    # Measured on the reference laptop: with the boolean off, nvidia-smi in a
+    # CDI container dies "Failed to initialize NVML: Insufficient Permissions".
+    stub_cdi 615.71.09 615.71.09 0
+    run gpu_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"container_use_xserver_devices"* ]]
+}
+
+@test "doctor: the GPU container check only warns, never fails" {
+    # Not asserted through the exit code: with variant=nvidia-open on a CI box
+    # with no nvidia module, check_nvidia rightly FAILs. The claim is only
+    # that this check never contributes a failure of its own.
+    stub_cdi 615.71.09 610.57.04 0
+    run "$PULSAR" doctor --json
+    [ "$(printf '%s' "$output" | jq -r '.checks[] | select(.id=="gpu-ctr") | .status')" = warn ]
+}
+
+@test "doctor: the GPU container check is silent on vanilla and on pre-toolkit images" {
+    stub_cdi 615.71.09 ""
+    jq '.variant = "vanilla"' "$PULSAR_MANIFEST" > "$PULSAR_MANIFEST.new" \
+        && mv "$PULSAR_MANIFEST.new" "$PULSAR_MANIFEST"
+    run gpu_check
+    [ -z "$output" ]
+    stub_cdi 615.71.09 ""
+    rm -f "$PULSAR_NVIDIA_CTK"
+    run gpu_check
+    [ -z "$output" ]
+}
+
+@test "doctor: no loaded module leaves the GPU container check to check_nvidia" {
+    stub_cdi "" ""
+    run gpu_check
+    [ -z "$output" ]
+}

@@ -456,6 +456,64 @@ check_flatpak_gl() {
     esac
 }
 
+# GPU containers: `podman run --device nvidia.com/gpu=all` resolves through a
+# CDI spec, and a spec names every driver library by its full version
+# (libcuda.so.615.71.09). One written for another driver still parses, still
+# resolves, and then fails inside the container on files that are not there
+# -- so "a spec exists" is not the check; "a spec for THIS driver" is.
+#
+# nvidia-cdi-refresh.service writes /var/run/cdi/nvidia.yaml every boot, and
+# /var/run is tmpfs, so that one cannot go stale. The stale one is the spec a
+# how-to told someone to write by hand into /etc/cdi: it survives every
+# driver bump after it. Every nvidia spec in podman's search path is read.
+#
+# The version comes from the enable-cuda-compat hook's --host-driver-version,
+# falling back to the libcuda soname. Paths are overridable for the tests;
+# /sys and /proc are read directly for the reason check_nvidia gives.
+check_gpu_containers() {
+    local variant; variant=$(mf variant)
+    case "$variant" in *nvidia*) ;; *) return 0 ;; esac
+    # An image from before the toolkit shipped: nothing promised, say nothing.
+    local ctk=${PULSAR_NVIDIA_CTK:-/usr/bin/nvidia-ctk}
+    [ -x "$ctk" ] || return 0
+    local running
+    running=$(cat "${PULSAR_NVIDIA_VERSION_FILE:-/sys/module/nvidia/version}" 2>/dev/null) || true
+    # No module is check_nvidia's failure to report; a second line saying
+    # the same thing louder is noise.
+    [ -n "$running" ] || return 0
+
+    local dirs=${PULSAR_CDI_DIRS:-/etc/cdi /var/run/cdi}
+    local d f v found=0 stale=""
+    for d in $dirs; do
+        for f in "$d"/*.yaml "$d"/*.json; do
+            [ -f "$f" ] || continue
+            grep -q 'nvidia.com/gpu' "$f" 2>/dev/null || continue
+            found=$((found + 1))
+            v=$(grep -o -m1 -e '--host-driver-version=[0-9.]*' "$f" 2>/dev/null | cut -d= -f2) || true
+            [ -n "$v" ] || v=$(grep -o -m1 -e 'libcuda\.so\.[0-9][0-9.]*[0-9]' "$f" 2>/dev/null \
+                               | sed 's/^libcuda\.so\.//') || true
+            if [ "$v" != "$running" ]; then
+                stale="${stale:+${stale}, }${f} (${v:-no driver version})"
+            fi
+        done
+    done
+
+    local sebool=${PULSAR_SELINUX_BOOLEANS:-/sys/fs/selinux/booleans}/container_use_xserver_devices
+    if [ "$found" -eq 0 ]; then
+        record gpu-ctr warn "no CDI spec, so containers cannot be given the GPU" \
+               "sudo systemctl restart nvidia-cdi-refresh.service; journalctl -b -u nvidia-cdi-refresh.service"
+    elif [ -n "$stale" ]; then
+        record gpu-ctr warn "stale CDI spec for driver ${running}: ${stale}" \
+               "the boot unit owns /var/run/cdi; a hand-written spec in /etc/cdi goes stale on every driver bump -- delete it"
+    elif [ -r "$sebool" ] && [ "$(cut -d' ' -f1 "$sebool" 2>/dev/null)" = 0 ]; then
+        record gpu-ctr warn "CDI spec matches ${running}, but SELinux blocks containers from the GPU" \
+               "container_use_xserver_devices is off: systemctl status pulsar-gpu-containers.service"
+    else
+        record gpu-ctr ok "CDI spec matches driver ${running}" \
+               "podman run --rm --device nvidia.com/gpu=all IMAGE"
+    fi
+}
+
 check_flathub() {
     have flatpak || { record flathub warn "flatpak is not installed"; return; }
     local opts
@@ -598,6 +656,7 @@ cmd_doctor() {
     check_greenboot
     check_nvidia
     check_flatpak_gl
+    check_gpu_containers
     check_flathub
     check_fedora
     check_origin
