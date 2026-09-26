@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 """pulsar-theme-picker -- pick a theme from cards; bound to a GNOME custom shortcut.
 
-A libadwaita window of theme cards (wallpaper + palette strip). Enter or a
+A libadwaita window of theme cards, each dressed in its own theme (see
+pulsar_theme_cards.py); type to filter. Enter or a
 click applies through `pulsar-theme set`; Escape closes. Meant to be bound to
 a GNOME custom keybinding (see docs/theming.md). PyGObject ships in the image.
 """
@@ -14,56 +15,56 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
-
-
-
 sys.path.insert(0, str(HERE))
 import pulsar_theme_engine  # noqa: E402
 
 pt = pulsar_theme_engine.load(HERE / "pulsar-theme")
 
-CSS = b"""
-.theme-card { border-radius: 14px; padding: 0; }
-.theme-card picture { border-radius: 14px 14px 0 0; }
-.swatch { min-width: 22px; min-height: 10px; }
-.swatch:first-child { border-bottom-left-radius: 0; }
-.card-name { font-weight: 700; }
-.current { outline: 3px solid var(--accent-bg-color); outline-offset: 2px; }
-"""
+sys.path.insert(0, str(HERE))
+import pulsar_theme_cards as cards  # noqa: E402
 
 
 class Picker(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="Themes", default_width=1180, default_height=720)
-        prov = Gtk.CssProvider()
-        prov.load_from_data(CSS)
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), prov, 700)
+        super().__init__(application=app, title="Themes", default_width=1080, default_height=760)
+        cards.install_css()
         tv = Adw.ToolbarView()
         hb = Adw.HeaderBar()
-        self.status = Gtk.Label(css_classes=["dim-label"])
-        hb.set_title_widget(Adw.WindowTitle(title="Themes", subtitle="Enter to apply · Esc to close"))
+        hb.set_title_widget(Adw.WindowTitle(title="Themes",
+                                            subtitle="Enter to apply · Esc to close · type to search"))
         tv.add_top_bar(hb)
+        # Type anywhere to filter: the search bar captures keys from the window.
+        self.search = Gtk.SearchEntry(placeholder_text="Search themes", hexpand=True)
+        sb = Gtk.SearchBar(child=Adw.Clamp(child=self.search, maximum_size=420), show_close_button=False)
+        sb.connect_entry(self.search)
+        sb.set_key_capture_widget(self)
+        self.searchbar = sb
+        tv.add_top_bar(sb)
         flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE, max_children_per_line=4,
-                           min_children_per_line=2, row_spacing=18, column_spacing=18,
-                           margin_top=18, margin_bottom=18, margin_start=18, margin_end=18,
-                           activate_on_single_click=True, homogeneous=True)
+                           min_children_per_line=1, row_spacing=22, column_spacing=22,
+                           margin_top=22, margin_bottom=28, margin_start=28, margin_end=28,
+                           activate_on_single_click=True, homogeneous=True, valign=Gtk.Align.START)
         flow.connect("child-activated", self.on_pick)
+        flow.set_filter_func(self._match)
+        self.search.connect("search-changed", lambda *_: flow.invalidate_filter())
+        self.search.connect("activate", lambda *_: self._pick_first(flow))
+        self.flow = flow
         cur = pt.current_state().get("theme")
         first = None
         for slug, th in pt.ordered_themes():
             if th is None:
                 continue
-            child = Gtk.FlowBoxChild(child=self.card(th))
-            child.slug = slug
+            card = cards.ThemeCard(pt, th, current=(slug == cur), width=240)
+            child = Gtk.FlowBoxChild(child=card, css_classes=["pt-child"])
+            child.slug, child.card = slug, card
+            child.set_tooltip_text(f"pulsar theme set {slug}")
             if slug == cur:
-                child.add_css_class("current")
                 first = child
             flow.append(child)
-        sc = Gtk.ScrolledWindow(child=flow, vexpand=True)
+        sc = Gtk.ScrolledWindow(child=flow, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         tv.set_content(sc)
         self.set_content(tv)
         if first:
@@ -80,46 +81,34 @@ class Picker(Adw.ApplicationWindow):
                 return False
             GLib.timeout_add(2500, autopick)
         key = Gtk.EventControllerKey()
-        key.connect("key-pressed", lambda _c, kv, *_: kv == Gdk.KEY_Escape and (self.close() or True))
+        key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key.connect("key-pressed", self._key)
         self.add_controller(key)
 
-    @staticmethod
-    def _thumb(pic, path):
-        try:
-            pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, 640, -1, True)
-        except GLib.Error:
-            return
-        GLib.idle_add(lambda: pic.set_paintable(Gdk.Texture.new_for_pixbuf(pb)) and False)
+    def _key(self, _c, kv, *_):
+        if kv != Gdk.KEY_Escape:
+            return False
+        # Esc clears a search first, then closes
+        if self.searchbar.get_search_mode():
+            self.search.set_text("")
+            self.searchbar.set_search_mode(False)
+            return True
+        self.close()
+        return True
 
-    def card(self, th):
-        v = th.variants[th.prefer]
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["card", "theme-card"])
-        wp = (th.wallpapers[th.prefer] or th.wallpapers["dark"] or th.wallpapers["light"] or [None])[0]
-        if wp and wp.exists():
-            pic = Gtk.Picture()
-            pic.set_content_fit(Gtk.ContentFit.COVER)
-            pic.set_size_request(260, 146)
-            box.append(pic)
-            # Not Gtk.Picture.new_for_filename: GTK's own loaders stop at
-            # PNG/JPEG/TIFF and show a blank for the theme wallpapers, which
-            # are JPEG XL. gdk-pixbuf hands those to glycin. Decoded off the
-            # main thread at card size, so sixteen of them do not hold up the
-            # window.
-            threading.Thread(target=self._thumb, args=(pic, str(wp)), daemon=True).start()
-        strip = Gtk.Box(homogeneous=True)
-        for k in ("background", "foreground", "accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta"):
-            sw = Gtk.DrawingArea(content_height=12, hexpand=True)
-            c = v[k]
-            sw.set_draw_func(lambda _a, cr, w, h, c=c: (cr.set_source_rgb(c.r, c.g, c.b), cr.paint()))
-            strip.append(sw)
-        box.append(strip)
-        meta = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin_top=10, margin_bottom=12, margin_start=12, margin_end=12)
-        meta.append(Gtk.Label(label=th.name, xalign=0, css_classes=["card-name"]))
-        modes = " + ".join(m for m in ("dark", "light") if m in th.variants)
-        meta.append(Gtk.Label(label=f"{modes} · {th.author or 'unknown'}", xalign=0, css_classes=["dim-label", "caption"],
-                              ellipsize=3))
-        box.append(meta)
-        return box
+    def _match(self, child):
+        q = self.search.get_text().strip().lower()
+        if not q:
+            return True
+        th = child.card.theme
+        return q in th.name.lower() or q in child.slug or q in (th.author or "").lower()
+
+    def _pick_first(self, flow):
+        for ch in list(flow):
+            if ch.get_child_visible() and self._match(ch):
+                flow.select_child(ch)
+                self.on_pick(flow, ch)
+                return
 
     def on_pick(self, _flow, child):
         # Everything slow runs off the main thread: `set` is a subprocess we
@@ -131,6 +120,8 @@ class Picker(Adw.ApplicationWindow):
         if getattr(self, "_busy", False) or getattr(self, "_closing", False):
             return
         self._busy = True
+        self._picked = child
+        child.card.set_busy(True)
         self.set_sensitive(False)
         proc = Gio.Subprocess.new([str(HERE / "pulsar-theme"), "set", child.slug, "--no-restart"],
                                   Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
@@ -142,6 +133,7 @@ class Picker(Adw.ApplicationWindow):
         except GLib.Error as e:
             out = e.message
         if not proc.get_successful():
+            self._picked.card.set_busy(False)
             self.set_sensitive(True)
             self._busy = False
             d = Adw.AlertDialog(heading="Could not apply the theme",

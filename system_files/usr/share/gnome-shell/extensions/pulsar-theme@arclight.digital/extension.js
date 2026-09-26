@@ -49,6 +49,17 @@ export default class PulsarThemeExtension extends Extension {
                 console.warn(`pulsar-theme: follow-scheme: ${e.message}`);
             }
         });
+        // Workspace thumbnails draw windows only, over a flat colour; the
+        // extension puts the current wallpaper behind them. Runtime-generated
+        // (not in the theme's sheets) so it follows any wallpaper change,
+        // the user's own included.
+        this._thumbDir = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'pulsar-theme']);
+        GLib.mkdir_with_parents(this._thumbDir, 0o700);
+        this._bg = new Gio.Settings({schema_id: 'org.gnome.desktop.background'});
+        this._bgId = this._bg.connect('changed', (_s, key) => {
+            if (key.startsWith('picture-'))
+                this._reload();
+        });
         this._themeCtx = St.ThemeContext.get_for_stage(global.stage);
         this._themeChangedId = this._themeCtx.connect('changed', () => {
             // Our own load/unload emits this too: only a NEW theme object
@@ -65,6 +76,8 @@ export default class PulsarThemeExtension extends Extension {
         this._monitor = null;
         this._iface?.disconnect(this._schemeId);
         this._iface = null;
+        this._bg?.disconnect(this._bgId);
+        this._bg = null;
         this._themeCtx?.disconnect(this._themeChangedId);
         this._reloading = true;     // nothing from here on re-enters
         this._unload();
@@ -82,6 +95,27 @@ export default class PulsarThemeExtension extends Extension {
         return null;
     }
 
+    _thumbSheet() {
+        const dark = this._iface.get_string('color-scheme') === 'prefer-dark';
+        if (this._bg.get_string('picture-options') === 'none')
+            return null;
+        const uri = this._bg.get_string(dark ? 'picture-uri-dark' : 'picture-uri') ||
+            this._bg.get_string('picture-uri');
+        // a slideshow .xml is not an image St can draw
+        if (!uri || !uri.startsWith('file://') || uri.endsWith('.xml') || /["\\]/.test(uri))
+            return null;
+        const css = '.workspace-thumbnails .workspace-thumbnail {\n' +
+            `  background-image: url("${uri}");\n` +
+            '  background-size: cover; }\n';
+        const p = GLib.build_filenamev([this._thumbDir, 'thumbnails.css']);
+        try {
+            GLib.file_set_contents(p, css);
+        } catch (e) {
+            return null;
+        }
+        return p;
+    }
+
     _unload() {
         const theme = this._themeCtx?.get_theme();
         if (!theme)
@@ -90,7 +124,8 @@ export default class PulsarThemeExtension extends Extension {
         // so every element is checked before it is touched.
         for (const f of theme.get_custom_stylesheets()) {
             const path = f?.get_path?.();
-            if (path && GLib.path_get_dirname(path) === this._dir) {
+            const dir = path ? GLib.path_get_dirname(path) : null;
+            if (dir === this._dir || dir === this._thumbDir) {
                 try {
                     theme.unload_stylesheet(f);
                 } catch (e) {}
@@ -106,8 +141,12 @@ export default class PulsarThemeExtension extends Extension {
             this._unload();
             const path = this._path();
             // A fresh GFile each time: St.Theme caches parsed sheets per GFile.
-            if (path)
+            if (path) {
                 this._themeCtx.get_theme().load_stylesheet(Gio.File.new_for_path(path));
+                const thumbs = this._thumbSheet();
+                if (thumbs)
+                    this._themeCtx.get_theme().load_stylesheet(Gio.File.new_for_path(thumbs));
+            }
         } catch (e) {
             console.warn(`pulsar-theme: ${e.message}`);
         } finally {

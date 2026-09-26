@@ -622,7 +622,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # adw-gtk3 is what lets GTK3 apps take the palette at all: stock Adwaita GTK3
 # reads different colour names and no light/dark pairing.
 # ---------------------------------------------------------------------------
-COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py /usr/libexec/pulsar/
+COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py /usr/libexec/pulsar/
 RUN set -eu; \
     chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker; \
     free_kb=$(df --output=avail -k / | tail -1); \
