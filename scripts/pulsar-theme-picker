@@ -53,12 +53,8 @@ class Picker(Adw.ApplicationWindow):
         flow.connect("child-activated", self.on_pick)
         cur = pt.current_state().get("theme")
         first = None
-        paths = pt.find_themes()
-        for slug in pt.ordered_themes():
-            path = paths[slug]
-            try:
-                th = pt.Theme(path)
-            except Exception:
+        for slug, th in pt.ordered_themes():
+            if th is None:
                 continue
             child = Gtk.FlowBoxChild(child=self.card(th))
             child.slug = slug
@@ -115,7 +111,9 @@ class Picker(Adw.ApplicationWindow):
         # wait on asynchronously, and the scan for open apps (D-Bus calls,
         # seconds on a busy session) runs in a worker thread. The window stays
         # responsive, and a failed switch is shown, not swallowed.
-        if getattr(self, "_busy", False):
+        # One pick at a time, and none once the window is closing: a second
+        # pick in the close gap would start a `set` nobody waits for.
+        if getattr(self, "_busy", False) or getattr(self, "_closing", False):
             return
         self._busy = True
         self.set_sensitive(False)
@@ -145,16 +143,20 @@ class Picker(Adw.ApplicationWindow):
             restart, manual = [], []
         GLib.idle_add(self._ask, restart, manual)
 
+    def _close_soon(self, ms):
+        # stays insensitive (and _busy) until it is gone: nothing can be picked
+        self._closing = True
+        self.set_sensitive(False)
+        GLib.timeout_add(ms, self.close)
+
     def _ask(self, restart, manual):
-        # the switch is done: the window, and the dialog it is about to
-        # present, answer again
-        self.set_sensitive(True)
-        self._busy = False
         if not restart or pt.conf_get("restart-prompt") != "on":
             if restart or manual:
                 self.toast(pt.NOTE)
-            GLib.timeout_add(600, self.close)
+            self._close_soon(600)
             return False
+        # the switch is done and a question is about to be asked: the window
+        # (and so the dialog on it) answers again, only while it is shown
         names = ", ".join(a["name"] for a in restart)
         body = f"{names} will quit and reopen. Apps with unsaved work will ask first."
         if manual:
@@ -179,8 +181,9 @@ class Picker(Adw.ApplicationWindow):
                                     "--ids", ",".join(a["id"] for a in restart)], Gio.SubprocessFlags.NONE)
             elif resp == "never":
                 pt.conf_put("restart-prompt", "off")
-            GLib.timeout_add(300, self.close)
+            self._close_soon(300)
         d.connect("response", done)
+        self.set_sensitive(True)
         d.present(self)
         return False
 

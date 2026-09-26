@@ -70,7 +70,7 @@ def uniforms(theme, spec):
         # Silk carries its filament web well; on the smooth looks (leak, satin,
         # holo) a full-strength web read as electrical crackle. A render can
         # still ask for more -- the phosphor themes do.
-        s["web"] = {"silk": 1.0, "satin": 0.5}.get(spec["look"], 0.6)
+        s["web"] = {"silk": 1.0, "satin": 0.45}.get(spec["look"], 0.55)
     if "seed" not in spec:
         # Looks other than silk take the seed only for their filament field and
         # sky; without one, every theme on the same look drew the same trails.

@@ -38,9 +38,9 @@ uniform vec2  u_bloom;            // satin bloom centre
 uniform float u_beam;             // leak beam angle (brand: -0.35)
 uniform float u_quiet;            // how hard the top-right (quick settings) corner is calmed
 uniform float u_glow;             // luminescence: emissive cores, filaments, halos (0 = the plain look)
-uniform float u_signal;           // signal treatment: lit lattice, raster, edge aberration (0 = none)
+uniform float u_signal;           // signal treatment: lit lattice, edge aberration (0 = none)
 uniform float u_grain;            // grain multiplier (it is also the 8-bit dither: never 0)
-uniform float u_web;              // filament + lattice density/brightness (silk 1, other looks 0.6)
+uniform float u_web;              // filament + lattice density/brightness (silk 1; leak/holo 0.55, satin 0.45)
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -244,9 +244,9 @@ void main() {
     float inten = clamp(dot(night - mix(u_ga, u_gb, 0.5), vec3(0.3333)) * 2.6, 0.0, 1.0);
     float ca = 0.0022 * u_signal;
     vec3 fil = vec3(line(g2 - 0.52 - ca, 0.0042), line(g2 - 0.52, 0.0042), line(g2 - 0.52 + ca, 0.0042))
-             + 0.55 * u_web * vec3(line(f - 0.63 - ca, 0.0036), line(f - 0.63, 0.0036), line(f - 0.63 + ca, 0.0036));
-    float halo = line(g2 - 0.52, 0.040) + 0.5 * u_web * line(f - 0.63, 0.030);
-    fil *= u_web;
+             + 0.55 * vec3(line(f - 0.63 - ca, 0.0036), line(f - 0.63, 0.0036), line(f - 0.63 + ca, 0.0036));
+    float halo = line(g2 - 0.52, 0.040) + 0.5 * line(f - 0.63, 0.030);
+    fil *= u_web;     // once: the web strength scales every trail and its halo
     halo *= u_web;
     float carry = 0.07 + 0.93 * smoothstep(0.05, 0.7, inten);    // trails live in the lit mass
     // fewer lit cells as well as dimmer ones: the web thins, not just fades
@@ -260,7 +260,12 @@ void main() {
     // light: luminous on paper reads as pearl -- a thin-film sheen where the
     // look has colour, white-hot filaments with a tinted halo, and the
     // lattice as the faintest ink, never glow
-    float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
+    // "lit" is measured against each look's OWN ground: satin's cloth is its
+    // own gradient and weave, and measured against dawnBase all of it read as
+    // lit and took the pearl and the filaments over plain cloth
+    vec3 groundS = mix(u_db, u_da, smoothstep(-0.60, 0.70, sdiag)) * (1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.10);
+    float onSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
+    float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, onSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
     vec3 pearl = 0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67)));
     pearl = mixo(pearl, l2, 0.75);
     dawn = mixo(dawn, pearl, intenD * 0.22 * u_glow);
@@ -269,10 +274,9 @@ void main() {
     dawn = mixo(dawn, l3, clamp(halo * 0.10 * carryD * u_glow, 0.0, 1.0));
     dawn *= 1.0 - tr * 0.035 * u_signal;
 
-    // raster: a 3-pixel scanline you feel more than see
-    float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 2.0944);
-    night *= 1.0 - 0.045 * u_signal * scan;
-    dawn *= 1.0 - 0.012 * u_signal * scan;
+    // No baked raster. A 3-pixel scanline looked right at 1:1 and beat into
+    // moire the moment GNOME scaled the wallpaper to the monitor (3840->1920,
+    // 2560->1366); the lattice and the grain carry the texture instead.
 
     // ---- the quiet corner ----
     // Quick settings, notifications and the calendar all open from the top

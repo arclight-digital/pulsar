@@ -293,8 +293,10 @@ def gate(only):
     return 0 if report["ok"] else 1
 
 
+# ours, plus any null entry (an orphan the Shell could no longer unload):
+# both count against the bound
 SHEETS = ("(() => { const t = imports.gi.St.ThemeContext.get_for_stage(global.stage).get_theme();"
-          " return t.get_custom_stylesheets().filter(f => (f.get_path() || '').includes('/pulsar-theme/shell/')).length; })()")
+          " return t.get_custom_stylesheets().filter(f => !f || (f?.get_path?.() || '').includes('/pulsar-theme/shell/')).length; })()")
 
 
 def extension_stress():

@@ -22,7 +22,7 @@
 // LOCKED: the silk field is approved as-is -- do not retune its constants or
 // math. Post-approval additions sit on top of it and leave it untouched: the
 // downlight, and the luminescence + signal pass at the end of main() (glowing
-// cores, ion-trail filaments, a lit circuit lattice, a faint raster; approved
+// cores, ion-trail filaments, a lit circuit lattice; approved
 // 2026-09-26, at full strength on silk and thinned on the smooth looks).
 uniform vec2  u_resolution;
 uniform float u_time;   // fixed per render for stills, live for WebGL
@@ -289,7 +289,7 @@ void main() {
     // Light that glows from within, over every look: emissive cores where the
     // look is brightest, thin cyan ion trails on isolines of a second field
     // with a periwinkle halo and a slight chromatic split, a violet circuit
-    // lattice lit only by the glow near it, and a 3-pixel raster. Silk
+    // lattice lit only by the glow near it. Silk
     // carries the full web; the smooth looks (leak, satin, holo) a thinner
     // one -- at full strength there it read as electrical crackle. The
     // top-right, where quick settings open, stays quiet.
@@ -315,15 +315,21 @@ void main() {
               + mix(VIOLET, PERI, 0.5) * tr * (0.015 + 0.30 * inten);
     night = knee(night + emit * quiet);
     // dawn: luminous on light reads as pearl, not glow
-    float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
+    // "lit" is measured against each look's own ground: satin's cloth is its
+    // own gradient and weave, and measured against dawnBase all of it read
+    // as lit and took the pearl and filaments over plain cloth
+    vec3 groundS = mix(vec3(0.800, 0.818, 0.900), vec3(0.862, 0.880, 0.940), smoothstep(-0.60, 0.70, sdiag))
+                 * (1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.12);
+    float onSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
+    float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, onSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
     vec3 pearl = 0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67)));
     pearl = mix(pearl, mix(PERI, vec3(1.0), 0.3), 0.75);
     dawn = mix(dawn, pearl, intenD * 0.22 * quiet);
     dawn = mix(dawn, vec3(1.0), clamp(fil.g * 0.40 * (0.10 + 0.90 * intenD) * quiet, 0.0, 1.0));
     dawn *= 1.0 - tr * 0.035;
-    float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 2.0944);
-    night *= 1.0 - 0.045 * scan;
-    dawn *= 1.0 - 0.012 * scan;
+    // No raster: a fine scanline beats into moire when GNOME scales a baked
+    // wallpaper to the monitor, and shimmers in the live sky; the lattice and
+    // the grain carry the texture.
 
     vec3 col = mix(night, dawn, theme);
 

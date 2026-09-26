@@ -338,19 +338,20 @@ def find_themes():
 
 
 def ordered_themes():
-    """Slugs in presentation order -- `list`, the picker, next/prev: the
-    brand first, then themes that follow Dark Style, then dark-only ones,
-    then light-only ones, each by name. Dark first because that is this
-    desktop's default."""
-    rank = {}
+    """(slug, Theme or None) in presentation order -- `list`, the picker,
+    next/prev: the brand first, then themes that follow Dark Style, then
+    dark-only, then light-only, each by name; anything that does not parse
+    last. Dark first because that is this desktop's default. Each theme is
+    parsed once, here."""
+    rows = []
     for slug, path in find_themes().items():
         try:
             t = Theme(path)
             kind = 0 if t.both else (1 if t.prefer == "dark" else 2)   # both, dark-only, light-only
-            rank[slug] = (slug not in ("pulsar", "pulsar-holo"), kind, t.name.lower())
+            rows.append(((slug not in ("pulsar", "pulsar-holo"), kind, t.name.lower()), slug, t))
         except Exception:
-            rank[slug] = (True, True, slug)
-    return sorted(rank, key=rank.get)
+            rows.append(((True, 3, slug), slug, None))
+    return [(slug, t) for _k, slug, t in sorted(rows, key=lambda r: r[0])]
 
 
 def load_theme(name):
@@ -403,6 +404,18 @@ def dconf_write(key, value):
         subprocess.run(["dconf", "write", key, value], check=True, stderr=subprocess.DEVNULL)
 
 
+def uread(p):
+    """A user file as text, whatever its bytes. surrogateescape carries any
+    non-UTF-8 byte through unchanged, and uwrite puts it back exactly --
+    'replace' would have corrupted it on the way out."""
+    p = pathlib.Path(p)
+    return p.read_text(encoding="utf-8", errors="surrogateescape") if p.exists() else ""
+
+
+def uenc(text):
+    return text.encode("utf-8", errors="surrogateescape")
+
+
 def gv_str(s):
     return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -427,7 +440,7 @@ class Transaction:
 
     def write(self, path, content):
         if isinstance(content, str):
-            content = content.encode()
+            content = uenc(content)
         self.files[pathlib.Path(path)] = content
 
     def remove(self, path):
@@ -448,7 +461,7 @@ class Transaction:
 
     def _load_baseline(self):
         if self.base_manifest.exists():
-            return json.loads(self.base_manifest.read_text())
+            return resolve_inflight(json.loads(self.base_manifest.read_text()))
         return {"created": datetime.datetime.now().isoformat(timespec="seconds"), "files": {}, "keys": {}}
 
     def commit(self):
@@ -466,13 +479,13 @@ class Transaction:
         for p, undo in self.shared.items():
             rec = base["shared"].setdefault(str(p), {"existed": p.exists(), **undo, "orig": {}})
             if undo["kind"] in ("conf", "keyfile"):
-                text = p.read_text() if p.exists() else ""
+                text = uread(p)
                 for k in undo["keys"]:
                     if k not in rec["orig"]:
                         rec["orig"][k] = (conf_value(text, k) if undo["kind"] == "conf"
                                           else _kf_get(text, undo["group"], k))
             elif undo["kind"] == "list":
-                text = p.read_text() if p.exists() else ""
+                text = uread(p)
                 had = [x for x in (_kf_get(text, undo["group"], undo["key"]) or "").split(";") if x]
                 rec.setdefault("added", [])
                 for it in undo["items"]:
@@ -492,6 +505,10 @@ class Transaction:
         for k in self.keys:
             if k not in base["keys"]:
                 base["keys"][k] = dconf_read(k)
+        # In flight: what this commit is about to write. If the process dies
+        # before `wrote` lands, the next run resolves it -- a key still at the
+        # intended value is the engine's, not a user change.
+        base["inflight"] = {k: v for k, v in self.keys.items() if v is not None}
         atomic_write(self.base_manifest, json.dumps(base, indent=1).encode())
         # 2. pre-images for rollback of THIS transaction
         pre_files = {p: (p.read_bytes() if p.is_file() else None) for p in self.files}
@@ -524,9 +541,10 @@ class Transaction:
         # user has changed since alone, and init tells its own writes from
         # the user's choices.
         base["wrote"].update({k: dconf_read(k) for k in self.keys})
+        base.pop("inflight", None)
         for p, undo in self.shared.items():
             if undo["kind"] in ("conf", "keyfile"):
-                text = p.read_text(errors="replace") if p.exists() else ""
+                text = uread(p)
                 rec = base["shared"][str(p)].setdefault("wrote", {})
                 for k in undo["keys"]:
                     rec[k] = conf_value(text, k) if undo["kind"] == "conf" else _kf_get(text, undo["group"], k)
@@ -590,6 +608,26 @@ def upstream_default(schema, name):
     return None
 
 
+def gv_equal(a, b):
+    """Two GVariant texts, compared as values: dconf prints its own
+    normalised form, which is not always what was written."""
+    if a is None or b is None:
+        return a == b
+    try:
+        from gi.repository import GLib
+        return GLib.Variant.parse(None, a, None, None).equal(GLib.Variant.parse(None, b, None, None))
+    except Exception:
+        return a.strip() == b.strip()
+
+
+def resolve_inflight(base):
+    for k, v in base.pop("inflight", {}).items():
+        cur = dconf_read(k)
+        if cur is not None and gv_equal(cur, v):
+            base.setdefault("wrote", {})[k] = cur
+    return base
+
+
 def revert(to="stock"):
     """Put back everything the engine changed. Files come back byte-for-byte.
     Keys the user had set come back to their value. Keys that were unset --
@@ -597,7 +635,7 @@ def revert(to="stock"):
     written to GNOME's upstream default (to="stock"), or just reset to the
     image default (to="image")."""
     man = STATE / "baseline" / "manifest.json"
-    base = json.loads(man.read_text()) if man.exists() else {"files": {}, "keys": {}}
+    base = resolve_inflight(json.loads(man.read_text())) if man.exists() else {"files": {}, "keys": {}}
     # Files only the engine writes: back to exactly what was there.
     for sp, info in base["files"].items():
         p = pathlib.Path(sp)
@@ -612,7 +650,7 @@ def revert(to="stock"):
         p = pathlib.Path(sp)
         if not p.exists():
             continue
-        text = p.read_text(errors="replace")
+        text = uread(p)
         if rec["kind"] == "block":
             text = strip_block(text)
         elif rec["kind"] in ("conf", "keyfile"):
@@ -635,7 +673,7 @@ def revert(to="stock"):
             p.unlink()
             print(f"  removed  {p}")
         else:
-            atomic_write(p, text.encode())
+            atomic_write(p, uenc(text))
             print(f"  cleaned  {p}")
     wrote = base.get("wrote", {})
     # Ptyxis profiles are the user's once they exist: a profile the engine
@@ -752,7 +790,7 @@ MARK_END = "/* <<< pulsar-theme <<< */"
 def managed(path, block):
     """Put our block at the END of a user-owned CSS file (later wins at equal
     priority) and leave everything else in it alone."""
-    old = path.read_text() if path.exists() else ""
+    old = uread(path)
     old = re.sub(re.escape(MARK_BEGIN) + r".*?" + re.escape(MARK_END) + r"\n?", "", old, flags=re.S)
     old = old.rstrip() + ("\n\n" if old.strip() else "")
     return old + MARK_BEGIN + "\n" + block.rstrip() + "\n" + MARK_END + "\n"
@@ -947,13 +985,38 @@ class Flatpak(Target):
 
     def apply(self, tx, theme, vm):
         p = DATA / "flatpak" / "overrides" / "global"
-        text = p.read_text() if p.exists() else ""
-        items = ["xdg-config/gtk-4.0:ro", "xdg-config/gtk-3.0:ro"]
+        text = uread(p)
+        items = FLATPAK_ITEMS
         for fs in items:
             text = keyfile_list_add(text, "Context", "filesystems", fs)
         tx.edit(p, text, {"kind": "list", "group": "Context", "key": "filesystems", "items": items})
 
 
+    def remove(self, tx):
+        """Turn the widening off again: exactly the entries the engine added
+        (per the baseline), the way revert does, and nothing the user had."""
+        p = DATA / "flatpak" / "overrides" / "global"
+        man = STATE / "baseline" / "manifest.json"
+        if not p.exists() or not man.exists():
+            return False
+        rec = json.loads(man.read_text()).get("shared", {}).get(str(p))
+        if not rec:
+            return False
+        text = uread(p)
+        cur = [x for x in (_kf_get(text, "Context", "filesystems") or "").split(";") if x]
+        keep = [x for x in cur if x not in rec.get("added", [])]
+        text = (_kf_edit(text, "Context", "filesystems", lambda _o: ";".join(keep) + ";") if keep
+                else _kf_remove(text, "Context", "filesystems"))
+        undo = {"kind": "list", "group": "Context", "key": "filesystems", "items": []}
+        if not rec["existed"] and not text.strip():
+            tx.files[p] = None
+            tx.shared[p] = undo
+        else:
+            tx.edit(p, text, undo)
+        return True
+
+
+FLATPAK_ITEMS = ["xdg-config/gtk-4.0:ro", "xdg-config/gtk-3.0:ro"]
 TARGETS = [Scheme(), Gtk4(), Gtk3(), Ptyxis(), SourceView(), Wallpaper(), Shell(), Btop(), Flatpak()]
 
 # --------------------------------------------------------------- helpers ----
@@ -983,7 +1046,7 @@ def parse_gv_list(s):
 
 
 def conf_set(path, key, value):
-    return conf_set_text(path.read_text() if path.exists() else "", key, value)
+    return conf_set_text(uread(path), key, value)
 
 
 def conf_value(text, key):
@@ -1019,44 +1082,42 @@ def _kf_get(text, group, key):
 
 
 def _kf_remove(text, group, key):
-    """Remove one key; a group left with no keys goes too, so a keyfile the
-    engine created can end up empty and be deleted."""
-    out, in_g = [], False
-    for ln in text.splitlines():
+    """Remove one key from one group. If that removal left THAT group with
+    nothing in it -- no keys and no comments -- its header goes too, so a
+    keyfile the engine created can end up empty and be deleted. Every other
+    group, empty or not, and every comment, is the user's and stays."""
+    lines = text.splitlines()
+    out, in_g, removed, start = [], False, False, None
+    for ln in lines:
         m = re.match(r"^\[(.*)\]\s*$", ln)
         if m:
             in_g = m.group(1) == group
+            if in_g:
+                start = len(out)
         elif in_g and "=" in ln and ln.split("=", 1)[0].strip() == key:
+            removed = True
             continue
         out.append(ln)
-    # drop headers whose group now has no key lines (blank lines don't count)
-    kept, i = [], 0
-    while i < len(out):
-        if re.match(r"^\[(.*)\]\s*$", out[i]):
-            j = i + 1
-            while j < len(out) and not re.match(r"^\[(.*)\]\s*$", out[j]):
-                j += 1
-            body = out[i + 1:j]
-            if any(b.strip() and not b.lstrip().startswith("#") for b in body):
-                kept += out[i:j]
-            i = j
-        else:
-            kept.append(out[i])
-            i += 1
-    while kept and not kept[-1].strip():
-        kept.pop()
-    return "\n".join(kept) + ("\n" if kept else "")
+    if removed and start is not None:
+        end = start + 1
+        while end < len(out) and not re.match(r"^\[(.*)\]\s*$", out[end]):
+            end += 1
+        if not any(b.strip() for b in out[start + 1:end]):
+            del out[start:end]
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out) + ("\n" if out else "")
 
 
 def conf_set_many(path, kv):
-    text = path.read_text() if path.exists() else ""
+    text = uread(path)
     for k, v in kv.items():
         text = conf_set_text(text, k, v)
     return text
 
 
 def keyfile_set(path, group, key, value):
-    text = path.read_text() if path.exists() else ""
+    text = uread(path)
     return _kf_edit(text, group, key, lambda old: value)
 
 
@@ -1323,7 +1384,7 @@ def engine_wrote():
     man = STATE / "baseline" / "manifest.json"
     if not man.exists():
         return set()
-    wrote = json.loads(man.read_text()).get("wrote", {})
+    wrote = resolve_inflight(json.loads(man.read_text())).get("wrote", {})
     return {k for k, v in wrote.items() if dconf_read(k) == v}
 
 
@@ -1335,7 +1396,7 @@ def customised():
     why = []
     ours = engine_wrote()
     for f in (CONFIG / "gtk-4.0" / "gtk.css", CONFIG / "gtk-3.0" / "gtk.css"):
-        if f.exists() and f.read_text(errors="replace").strip() and MARK_BEGIN not in f.read_text(errors="replace"):
+        if f.exists() and uread(f).strip() and MARK_BEGIN not in uread(f):
             why.append(f"own {f.relative_to(HOME)}")
     for k, label in [("/org/gnome/desktop/interface/accent-color", "chose an accent colour"),
                      ("/org/gnome/desktop/interface/gtk-theme", "set a GTK theme"),
@@ -1350,7 +1411,7 @@ def customised():
             why.append("chose a terminal palette")
             break
     bt = CONFIG / "btop" / "btop.conf"
-    if bt.exists() and re.search(r'^color_theme\s*=\s*"(?!Default|TTY|.*pulsar-)', bt.read_text(errors="replace"), re.M):
+    if bt.exists() and re.search(r'^color_theme\s*=\s*"(?!Default|TTY|.*pulsar-)', uread(bt), re.M):
         why.append("chose a btop theme")
     return why
 
@@ -1504,6 +1565,9 @@ def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, r
         for f in current_state().get("files", []):
             if pathlib.Path(f) not in tx.files:
                 tx.remove(f)
+        if "flatpak" in (without or []) and "flatpak" in current_state().get("targets", []):
+            if Flatpak().remove(tx):
+                print("  flatpak: the gtk.css override is off again")
     print(f"pulsar-theme: {theme.name} ({variant}) -> {', '.join(applied)}")
     tx.commit()
     if not dry:
@@ -1539,10 +1603,11 @@ def cmd_render(theme, out):
 
 
 def cmd_cycle(step):
-    themes = ordered_themes()
+    themes = [(slug, t) for slug, t in ordered_themes() if t is not None]   # skip what does not parse
+    slugs = [slug for slug, _t in themes]
     cur = current_state().get("theme")
-    i = (themes.index(cur) + step) % len(themes) if cur in themes else 0
-    cmd_set(load_theme(themes[i]))
+    i = (slugs.index(cur) + step) % len(slugs) if cur in slugs else 0
+    cmd_set(themes[i][1])
 
 
 def cmd_bg_next():
@@ -1559,10 +1624,10 @@ def cmd_bg_next():
 def cmd_list():
     cur = current_state().get("theme")
     paths = find_themes()
-    for slug in ordered_themes():
-        path = paths[slug]
+    for slug, t in ordered_themes():
         try:
-            t = Theme(path)
+            if t is None:
+                Theme(paths[slug])      # re-raise, for the reason
             vs = "+".join(m for m in ("dark", "light") if m in t.variants)
             sw = " ".join(ansi_swatch(t.variants[t.prefer][k]) for k in
                           ("background", "accent", "red", "green", "yellow", "blue", "magenta", "cyan"))

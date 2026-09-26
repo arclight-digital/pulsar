@@ -366,3 +366,84 @@ PY
     run python3 "$ENGINE" audit phosphor amber
     [ "$status" -eq 0 ]
 }
+
+@test "--without flatpak removes the entries the engine added, and only those" {
+    fake_dconf
+    f="$XDG_DATA_HOME/flatpak/overrides/global"
+    mkdir -p "$(dirname "$f")"
+    printf '[Context]\nfilesystems=xdg-download;\n' > "$f"
+    python3 "$ENGINE" set pulsar --with flatpak --no-restart >/dev/null
+    grep -q 'xdg-config/gtk-4.0:ro' "$f"
+    python3 "$ENGINE" set pulsar --without flatpak --no-restart >/dev/null
+    ! grep -q 'xdg-config/gtk' "$f"
+    grep -q '^filesystems=xdg-download;$' "$f"
+}
+
+@test "--without flatpak deletes an override file the engine created" {
+    fake_dconf
+    f="$XDG_DATA_HOME/flatpak/overrides/global"
+    python3 "$ENGINE" set pulsar --with flatpak --no-restart >/dev/null
+    [ -s "$f" ]
+    python3 "$ENGINE" set pulsar --without flatpak --no-restart >/dev/null
+    [ ! -e "$f" ]
+}
+
+@test "revert keeps the user's own empty and comment-only keyfile groups" {
+    fake_dconf
+    f="$XDG_DATA_HOME/flatpak/overrides/global"
+    mkdir -p "$(dirname "$f")"
+    printf '# my overrides\n[Environment]\n\n[Session Bus Policy]\n# nothing yet\n' > "$f"
+    python3 "$ENGINE" set pulsar --with flatpak --no-restart >/dev/null
+    python3 "$ENGINE" revert --to image >/dev/null
+    grep -qx '# my overrides' "$f"
+    grep -qx '\[Environment\]' "$f"
+    grep -qx '\[Session Bus Policy\]' "$f"
+    grep -qx '# nothing yet' "$f"
+    ! grep -q '\[Context\]' "$f"
+}
+
+@test "a non-UTF-8 btop.conf survives set and revert byte for byte" {
+    fake_dconf
+    mkdir -p "$XDG_CONFIG_HOME/btop"
+    printf 'color_theme = "Default"\nlabel = caf\xe9\n' > "$XDG_CONFIG_HOME/btop/btop.conf"
+    cp "$XDG_CONFIG_HOME/btop/btop.conf" "${BATS_TEST_TMPDIR}/orig"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -qa $'caf\xe9' "$XDG_CONFIG_HOME/btop/btop.conf"
+    python3 "$ENGINE" revert --to image >/dev/null
+    cmp "$XDG_CONFIG_HOME/btop/btop.conf" "${BATS_TEST_TMPDIR}/orig"
+}
+
+@test "a commit killed before its bookkeeping still counts as the engine's own write" {
+    fake_dconf
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    man="$XDG_STATE_HOME/pulsar-theme/baseline/manifest.json"
+    # simulate the kill window: the keys landed, `wrote` did not
+    python3 - "$man" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["inflight"] = {"/org/gnome/desktop/interface/accent-color": m["wrote"].pop("/org/gnome/desktop/interface/accent-color")}
+json.dump(m, open(sys.argv[1], "w"))
+PY
+    : > "$XDG_STATE_HOME/pulsar-theme/init.pending"
+    rm -f "$XDG_STATE_HOME/pulsar-theme/init.pending"
+    run python3 "$ENGINE" init
+    grep -q '"applied"' "$XDG_STATE_HOME/pulsar-theme/init.json"
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ -z "$(key /org/gnome/desktop/interface/accent-color)" ]
+}
+
+@test "a theme that does not parse lists last and next/prev skip it" {
+    fake_dconf
+    d="${BATS_TEST_TMPDIR}/themes"
+    cp -r "$PULSAR_THEME_PATH" "$d"
+    mkdir -p "$d/aaa-broken"; echo 'not = [valid' > "$d/aaa-broken/theme.toml"
+    PULSAR_THEME_PATH="$d" run python3 "$ENGINE" list
+    [[ "$(printf '%s\n' "$output" | tail -1)" == '! aaa-broken'* ]]
+    PULSAR_THEME_PATH="$d" python3 "$ENGINE" set alucard --no-restart >/dev/null
+    PULSAR_THEME_PATH="$d" python3 "$ENGINE" next >/dev/null
+    grep -q '"theme": "pulsar"' "$XDG_STATE_HOME/pulsar-theme/current.json"
+}
+
+@test "no baked scanline raster in either wallpaper shader" {
+    ! grep -n 'gl_FragCoord.y \* 2.0944' "${REPO}/assets/shaders/theme.frag" "${REPO}/assets/shaders/pulsar.frag"
+}

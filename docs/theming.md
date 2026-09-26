@@ -131,8 +131,8 @@ holo) rendered in its palette from `assets/shaders/theme.frag`, dark and
 light, two looks each for `bg-next`. On top of each look goes a
 luminescence and signal treatment: emissive cores, thin ion-trail
 filaments with a halo and a hint of chromatic split, a circuit lattice lit
-only by the glow near it, and a 3-pixel raster you feel more than see,
-all through a soft-knee rolloff so highlights bloom instead of clipping.
+only by the glow near it (no scanline raster: baked into a wallpaper it
+beats into moire when GNOME scales it to the monitor), all through a soft-knee rolloff so highlights bloom instead of clipping.
 Light variants read as pearl rather than glow. Silk carries the full
 filament web; on the smooth looks (leak, satin, holo) it is thinned to
 about 60% (satin 50%) -- at full strength there it read as electrical
