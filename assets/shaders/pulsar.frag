@@ -28,6 +28,8 @@ uniform vec2  u_resolution;
 uniform float u_time;   // fixed per render for stills, live for WebGL
 uniform float u_theme;  // 0 = dark variant, 1 = light variant
 uniform float u_look;   // 0 = silk (shipped), 1 = leak, 2 = satin, 3 = holo
+uniform float u_live;   // 1 on the site's live hero sky: the luminescence drops to a hint,
+                        // so text over it stays readable; 0 (unset) for wallpapers
 
 // brand palette
 const vec3 CYAN   = vec3(0.243, 0.796, 1.000); // #3ECBFF
@@ -359,6 +361,11 @@ void main() {
         dawnFx += wHolo * (film * 0.06 + grating * 0.05 + vec3(scanBand * 0.04));
     }
     emit = min(emit, CYAN * 0.85 + 0.03);
+    // the live sky sits behind the site's hero text: the calmest of all
+    float fx = mix(1.0, 0.22, clamp(u_live, 0.0, 1.0));
+    emit *= fx;
+    dawnFx *= fx;
+    dawnInk *= fx;
     float aspect = u_resolution.x / u_resolution.y;
     vec2 qc = (uv - vec2(0.5 * aspect, 0.5)) * vec2(0.8, 1.2);
     float quiet = 1.0 - exp(-dot(qc, qc) * 2.2) * 0.85;
