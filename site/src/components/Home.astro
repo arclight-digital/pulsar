@@ -1,0 +1,255 @@
+---
+// The home page, in four pillars: make it yours, hand it to an agent, play,
+// and the base that cannot rot. Built as a component so the live page and
+// the hero-option previews (/preview/hero-a|b|c) render the same body.
+//
+// Order is the argument: show the thing people will switch for (themes),
+// then the thing nobody else can promise safely (agents), then the thing it
+// was first built for (games), and close on why all of it keeps working
+// (the nightly paper trail) -- with the changelog as the proof, not a claim.
+import Agents from './Agents.astro';
+import Gamescale from './Gamescale.astro';
+import Hero from './Hero.astro';
+import Inside from './Inside.astro';
+import Ledger from './Ledger.astro';
+import Pipeline from './Pipeline.astro';
+import ThemeShowcase from './ThemeShowcase.astro';
+import Version from './Version.astro';
+import Base from '../layouts/Base.astro';
+import { changelog } from '../data/build';
+import { arithmetic, digest } from '../data/digest';
+
+interface Props {
+  hero: 'a' | 'b' | 'c';
+  preview?: boolean;
+}
+const { hero, preview = false } = Astro.props;
+
+const lead = digest.lead;
+const extra = lead ? lead.members.length - 1 : 0;
+const headline = digest.baseline ? 'First build.' : digest.quiet ? 'Nothing moved.' : lead?.label;
+
+const DESCRIPTION =
+  'Pulsar is Silverblue+: Fedora’s unbreakable desktop, made yours. Thirteen themes in one command, a machine you can hand to an agent, and games that just run.';
+
+const GAMING = [
+  {
+    t: 'Your screen’s real resolution',
+    d: 'gamescale runs each game at your panel’s native resolution even with fractional scaling on, and hands the desktop its scaling back when the game quits.',
+  },
+  {
+    t: 'Tuned the way games want',
+    d: 'Gamescope, GameMode and MangoHud are built in. ntsync is there for Proton, split-lock mitigation is off and the memory-map limit is raised.',
+  },
+  {
+    t: 'Updates don’t take the GPU away',
+    d: 'On the NVIDIA image, the driver piece Flatpak games need is fetched before you reboot into an update. If an app ever starts without it, Pulsar tells you to restart it instead of leaving you with a black window.',
+  },
+  {
+    t: 'The launchers are already there',
+    d: 'Steam, Heroic, Faugus, ProtonPlus, Protontricks and Bottles install on first boot, next to a video player, a music player and the stock GNOME apps.',
+  },
+  {
+    t: 'NVIDIA with Secure Boot on',
+    d: 'The open NVIDIA driver is built for the image’s exact kernel and signed, so Secure Boot stays&nbsp;on.',
+  },
+];
+
+const ROT = [
+  {
+    t: 'A bad update undoes itself',
+    d: 'Every boot is health-checked. If the desktop fails to come up three times running, the machine goes back to the previous version without being&nbsp;asked.',
+  },
+  {
+    t: 'The same system, every boot',
+    d: 'The OS is one image, read-only while it runs. Nothing drifts, nothing half-updates, and the last good version is always one reboot away.',
+  },
+  {
+    t: 'It stays GNOME',
+    d: 'Stock GNOME underneath, the way Fedora ships it. Nothing to learn, nothing to outgrow, and a theme is a change you can take back.',
+  },
+  {
+    t: 'Ready for work',
+    d: 'Toolboxes for any Linux userland, libvirt and virt-manager for virtual machines, Flatpaks from an unfiltered Flathub. <span class="ns">The image is the&nbsp;OS.</span>',
+  },
+];
+---
+
+<Base
+  title="Pulsar — Silverblue+: make it yours, hand it to an agent, play"
+  ogTitle="Pulsar — your lighthouse in the sky"
+  description={DESCRIPTION}
+  path="/"
+  immersive
+  noindex={preview}
+>
+  <Hero variant={hero} />
+  <main id="main">
+    <arc-container size="lg">
+      <ThemeShowcase layout={hero === 'b' ? 'wide' : 'section'} />
+
+      <Agents />
+
+      <section class="chapter" id="gaming">
+        <h2>Games that just work</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <p class="lede">
+          Pulsar started as a gaming machine, and it still is one.
+          {' '}<span class="sent">Install Steam, press play.</span>
+        </p>
+        <Inside facts={GAMING} />
+        <h3 class="gs-h">
+          <img class="gs-icon" src="/assets/gamescale.svg" alt="" width="32" height="32" />
+          <span>gamescale</span>
+        </h3>
+        <Gamescale compact />
+      </section>
+
+      <section class="chapter" id="rot">
+        <h2>It can’t rot</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <p class="lede">
+          A new image is built every night and compared with the last one, package by package.
+          {' '}<span class="sent">You never inherit a mess, and you can check all of&nbsp;it.</span>
+        </p>
+        <Inside facts={ROT} manifest />
+
+        <h3 id="changelog">What changed last night</h3>
+        {/* The night in one line. On a quiet night that line is the news. */}
+        <div class="lead">
+          <p class="lead-tx">
+            <span class="lead-pkg">{headline}</span>
+            {
+              lead && !digest.baseline && !digest.quiet && (
+                <>
+                  {extra > 0 && <arc-badge size="sm" class="mono">+{extra} related {extra === 1 ? 'package' : 'packages'}</arc-badge>}
+                  <span class="lead-ver" aria-hidden="true">
+                    <Version delta={lead.delta} from={lead.from} to={lead.to} />
+                  </span>
+                  <span class="sr-only">{lead.label}, {lead.from} to {lead.to}</span>
+                </>
+              )
+            }
+          </p>
+          <p class="lead-sub">{arithmetic()}</p>
+          <p class="prov mono">
+            {
+              digest.fromDigest && digest.toDigest && (
+                <>
+                  <span class="dim">image</span>
+                  <span>{digest.fromDigest}</span>
+                  <span class="dim" aria-hidden="true">→</span>
+                  <span>{digest.toDigest}</span>
+                </>
+              )
+            }
+            <span><span class="dim">diffed</span> <arc-time-ago datetime={changelog.generated}></arc-time-ago></span>
+          </p>
+          {/* Filled by src/scripts/beacon.ts when the newest nightly built
+              nothing, which is the night this heading would otherwise be
+              wrong about. Hidden in the served HTML: skips commit nothing. */}
+          <p class="hint skip-note" data-skip-note hidden></p>
+        </div>
+        <Ledger />
+        <p class="hint">
+          Every row, unsummarised: <a href="/changelog.json">changelog.json</a>.
+          On a Pulsar machine, <code>pulsar changelog</code> prints the same&nbsp;list.
+        </p>
+
+        <h3 id="provenance">Every image has a paper trail</h3>
+        <p class="sub-lede">
+          Built on a machine that exists for one night, and published with its full package list attached.
+          {' '}<span class="sent">Check any of it from your own&nbsp;terminal.</span>
+        </p>
+        <Pipeline compact />
+        <p class="more"><a href="/provenance">How the pipeline works →</a></p>
+      </section>
+    </arc-container>
+
+    <arc-cta-banner headline="Make it yours." class="close">
+      Already on Silverblue or Kinoite, it’s one command. On a new machine, one download. Free, MIT
+      licensed, and made by Arclight Digital LLC.
+      <arc-button slot="actions" href="/install" variant="primary" size="md">Install guide</arc-button>
+      <arc-button slot="actions" href="https://github.com/arclight-digital/pulsar" variant="secondary" size="md">Browse the source</arc-button>
+    </arc-cta-banner>
+  </main>
+</Base>
+
+<style>
+  /* full-bleed, so the banner's radial glow fades out on its own instead of
+     being cut at the content edge */
+  .close {
+    display: block;
+    margin-top: var(--space-2xl);
+  }
+  h3 {
+    margin: var(--space-2xl) 0 var(--space-md);
+    font-size: var(--text-xl);
+  }
+  .sub-lede {
+    max-width: 62ch;
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-lg);
+  }
+  .lead {
+    margin: var(--space-md) 0 var(--space-xl);
+  }
+  .lead-tx {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-md);
+  }
+  .lead-pkg {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-3xl);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
+  }
+  .lead-ver {
+    font-size: var(--text-lg);
+  }
+  .lead-sub {
+    max-width: 62ch;
+    font-size: var(--text-lg);
+    margin: 0 0 var(--space-sm);
+  }
+  .prov {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-md);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    margin: 0;
+  }
+  .dim {
+    color: var(--text-ghost);
+  }
+  .skip-note {
+    margin: var(--space-sm) 0 0;
+  }
+  .gs-h {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+  .gs-icon {
+    display: block;
+    width: 32px;
+    height: 32px;
+  }
+  .more {
+    margin: var(--space-lg) 0 0;
+  }
+  .more a {
+    text-decoration: none;
+  }
+  .more a:hover {
+    text-decoration: underline;
+  }
+</style>

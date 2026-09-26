@@ -1,0 +1,289 @@
+---
+// Pillar one: the themes, shown before they are described. The preview is a
+// real screenshot of the desktop in that theme, the tiles are the wallpapers
+// the image renders for it, and picking one recolours this page through
+// ARC's two-colour contract -- the same move the engine makes on GNOME.
+//
+// Works without JavaScript: the first theme is shown, every tile is still a
+// wallpaper and a name, and the command is in the code block. The script only
+// adds the switching (src/scripts/themes.ts).
+import { THEMES, label, setCommand, tileAttrs, variant } from '../data/themes';
+
+interface Props {
+  // 'wide' is the full-width gallery hero option (b) puts straight under
+  // the hero; 'section' is the ordinary chapter.
+  layout?: 'section' | 'wide';
+}
+const { layout = 'section' } = Astro.props;
+
+const first = THEMES[0];
+const FACTS = [
+  {
+    t: 'The whole desktop, at once',
+    d: 'Accent, apps, older GTK apps, the terminal, the text editor, btop, the top bar, quick settings and the wallpaper. One command, one change.',
+  },
+  {
+    t: 'Light and dark, both',
+    d: 'Every theme follows GNOME’s Dark Style switch. Flip it and the theme flips with you.',
+  },
+  {
+    t: 'Readable, by rule',
+    d: 'Every palette passes a WCAG AA contrast check. Where a colour fell short, its lightness moved and its hue stayed, so Gruvbox still looks like Gruvbox.',
+  },
+  {
+    t: 'Undo is exact',
+    d: 'pulsar theme revert puts stock GNOME back, file for file and setting for setting.',
+  },
+  {
+    t: 'Never loses your work',
+    d: 'Apps that were already open are offered a restart. Each one is asked to quit the way Ctrl+Q asks, so anything unsaved keeps its save dialog.',
+  },
+  {
+    t: 'In the image, and yours',
+    d: 'The themes ship inside the image, so every machine has them and an update keeps them current. Your own sit beside them, and any base16 scheme imports in one line.',
+  },
+];
+---
+
+<section class={`chapter showcase ${layout}`} id="themes" data-showcase>
+  <h2>Make it yours in one command</h2>
+  <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+  <p class="lede">
+    Thirteen themes ship in the image, and each one changes everything you look at.
+    {' '}<span class="sent">A fresh install starts in Pulsar’s own. Yours is one line&nbsp;away.</span>
+  </p>
+
+  <figure class="preview">
+    <div class="shot">
+      <img
+        data-preview
+        src={variant(first, 'dark').desktop}
+        alt={`The Pulsar desktop in the ${label(first)} theme`}
+        width="1600"
+        height="1000"
+        loading="lazy"
+        decoding="async"
+      />
+    </div>
+    <figcaption class="cap">
+      <span class="cap-name" data-preview-name>{label(first)}</span>
+      <arc-code-block
+        class="theme-fixed-dark"
+        language="bash"
+        filename="terminal"
+        data-preview-cmd
+        code={setCommand(first)}
+      ></arc-code-block>
+    </figcaption>
+  </figure>
+
+  <ul class="tiles" role="list">
+    {
+      THEMES.map((t, i) => {
+        const dark = variant(t, 'dark');
+        const light = variant(t, 'light');
+        return (
+          <li>
+            <button
+              type="button"
+              class="tile"
+              aria-pressed={i === 0 ? 'true' : 'false'}
+              {...tileAttrs(t)}
+            >
+              <span class="wall">
+                <img class="w-dark" src={dark.wall} alt="" width="1600" height="1000" loading="lazy" decoding="async" />
+                <img class="w-light" src={light.wall} alt="" width="1600" height="1000" loading="lazy" decoding="async" />
+              </span>
+              <span class="swatch" aria-hidden="true">
+                {dark.swatch.slice(2, 9).map((c) => <span style={`background:${c}`} />)}
+              </span>
+              <span class="t-name">{label(t)}</span>
+            </button>
+          </li>
+        );
+      })
+    }
+  </ul>
+
+  <dl class="facts">
+    {
+      FACTS.map((f) => (
+        <div class="fact">
+          <dt>{f.t}</dt>
+          <dd>{f.d}</dd>
+        </div>
+      ))
+    }
+  </dl>
+</section>
+
+<style>
+  .preview {
+    margin: var(--space-xl) 0 var(--space-lg);
+  }
+  .shot {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-deep);
+    aspect-ratio: 16 / 10;
+  }
+  .shot img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: opacity 0.25s var(--ease-out);
+  }
+  .shot img[data-loading] {
+    opacity: 0.4;
+  }
+  .cap {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-md) var(--space-lg);
+    margin-top: var(--space-md);
+  }
+  .cap-name {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-lg);
+    color: var(--text-primary);
+  }
+  .cap arc-code-block {
+    display: block;
+    min-width: 0;
+  }
+
+  .tiles {
+    list-style: none;
+    margin: 0 0 var(--space-xl);
+    padding: 0;
+    display: grid;
+    /* seven across: thirteen themes land as 7 + 6, not a lone straggler */
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--space-md);
+  }
+  .tile {
+    appearance: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .wall {
+    display: block;
+    position: relative;
+    aspect-ratio: 16 / 10;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    transition: box-shadow 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
+  }
+  .wall img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .w-light {
+    display: none;
+  }
+  :global(:root[data-theme='light']) .w-light {
+    display: block;
+  }
+  :global(:root[data-theme='light']) .w-dark {
+    display: none;
+  }
+  @media (prefers-color-scheme: light) {
+    :global(:root[data-theme='auto']) .w-light {
+      display: block;
+    }
+    :global(:root[data-theme='auto']) .w-dark {
+      display: none;
+    }
+  }
+  .swatch {
+    display: flex;
+    height: 4px;
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .swatch span {
+    flex: 1;
+  }
+  .t-name {
+    font-size: var(--text-sm);
+  }
+  .tile:hover .wall {
+    box-shadow: var(--glow-hover);
+  }
+  .tile[aria-pressed='true'] .wall {
+    border-color: var(--accent-primary);
+    box-shadow: var(--glow-sm);
+  }
+  .tile[aria-pressed='true'] .t-name {
+    color: var(--text-primary);
+  }
+  .tile:focus-visible {
+    outline: none;
+  }
+  .tile:focus-visible .wall {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0 var(--space-xl);
+    margin: 0;
+  }
+  .fact {
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+  dt {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-md);
+    color: var(--text-primary);
+    margin-bottom: var(--space-xs);
+  }
+  dd {
+    margin: 0;
+    color: var(--text-secondary);
+    text-wrap: pretty;
+  }
+
+  @media (max-width: 64rem) {
+    .tiles {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 40rem) {
+    .cap {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-sm);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .shot img,
+    .wall {
+      transition: none;
+    }
+  }
+</style>

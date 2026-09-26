@@ -6,15 +6,48 @@
 // The wordmark wears ARC's hero device: a blurred bloom twin behind it,
 // breathing on the hero's own glow knob so the light theme stays calm. The
 // wordmark itself stays solid star -- the brand draws it that way.
+//
+// Three options, for choosing between -- /preview/hero-a, -b and -c render
+// each on the full home page:
+//   a  identity hero, and the sky itself shows the themes: every theme's
+//      wallpaper still crossfades over the live shader, with a deck to step
+//      through them in the spot the look picker used to hold.
+//   b  identity hero unchanged; the theme gallery leads right under it.
+//   c  split: the identity on the left, a live switcher on the right that
+//      shows the desktop in each theme and recolours the page.
 import Sky from './Sky.astro';
 import { version } from '../data/build';
 import { IMAGES, REPO } from '../data/site';
+import { THEMES, label, setCommand, tileAttrs, variant as themeVariant } from '../data/themes';
+
+interface Props {
+  variant?: 'a' | 'b' | 'c';
+}
+const { variant = 'b' } = Astro.props;
 
 const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
+const first = THEMES[0];
 ---
 
-<header class="hero">
-  <Sky />
+<header class={`hero hero-${variant}`} data-hero={variant}>
+  <Sky deck={variant !== 'a'} />
+
+  {
+    variant === 'a' && (
+      <div class="stills" aria-hidden="true">
+        {/* Not the two brand themes: Pulsar is the live canvas itself, and
+            Pulsar Holo's shipped wallpaper carries the mark, which would sit
+            behind the hero's own. The deck still names them; the sky shows
+            the live shader for both. */}
+        {THEMES.filter((t) => !['pulsar', 'pulsar-holo'].includes(t.slug)).map((t) => (
+          <div class="still" data-still={t.slug}>
+            <img class="w-dark" data-src={themeVariant(t, 'dark').wall} alt="" />
+            <img class="w-light" data-src={themeVariant(t, 'light').wall} alt="" />
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   <div class="inner">
     {/* data-spin is the easter egg's hook -- see src/scripts/spin.ts */}
@@ -35,9 +68,9 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
     </h1>
     <p class="tagline">Your lighthouse in the sky.</p>
     <p class="sub">
-      <span class="sent">An immutable Fedora for gaming and development.</span> Games get your
-      screen&rsquo;s full resolution even with fractional scaling on, every boot runs the same
-      system, and a bad update is one reboot from&nbsp;undone.
+      <strong class="kicker">Silverblue+.</strong> Fedora’s unbreakable desktop, made yours:
+      thirteen themes in one command, a machine you can hand to an agent, and games that just
+      run.{' '}<span class="sent">A bad update is one reboot from&nbsp;undone.</span>
     </p>
 
     {/* The one number that proves the nightly is real, worn in the hero. It
@@ -77,11 +110,60 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
     <div class="actions">
       <arc-button href="/install" variant="primary" size="lg">Install</arc-button>
       <p class="links">
-        <a href="#changelog">What changed last night&nbsp;↓</a>
+        <a href="#themes">See the themes&nbsp;↓</a>
         <a href={REPO}>Browse the source&nbsp;→</a>
       </p>
     </div>
+
+    {
+      variant === 'a' && (
+        <div class="tdeck" role="group" aria-label="Themes on the sky" data-tdeck>
+          <button type="button" class="tstep" data-tstep="-1" aria-label="Previous theme">‹</button>
+          <span class="tname">
+            <span data-tdeck-name>{label(first)}</span>
+            <code class="tcmd" data-tdeck-cmd>{setCommand(first)}</code>
+          </span>
+          <button type="button" class="tstep" data-tstep="1" aria-label="Next theme">›</button>
+        </div>
+      )
+    }
   </div>
+
+  {
+    variant === 'c' && (
+      <aside class="switcher" aria-label="Try a theme">
+        <div class="shot">
+          <img
+            data-preview
+            src={themeVariant(first, 'dark').desktop}
+            alt={`The Pulsar desktop in the ${label(first)} theme`}
+            width="1600"
+            height="1000"
+          />
+        </div>
+        <div class="dots" role="group" aria-label="Themes">
+          {THEMES.map((t, i) => (
+            <button
+              type="button"
+              class="dot"
+              aria-pressed={i === 0 ? 'true' : 'false'}
+              aria-label={label(t)}
+              title={label(t)}
+              style={`--a:${themeVariant(t, 'dark').accent};--b:${themeVariant(t, 'dark').bg}`}
+              {...tileAttrs(t)}
+            />
+          ))}
+        </div>
+        <arc-code-block
+          class="theme-fixed-dark"
+          language="bash"
+          filename="terminal"
+          data-preview-cmd
+          code={setCommand(first)}
+        ></arc-code-block>
+      </aside>
+    )
+  }
 </header>
 
 <style>
@@ -314,6 +396,208 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
     text-shadow: var(--glow-xs);
   }
 
+  .kicker {
+    font-weight: var(--font-display-weight);
+    color: inherit;
+  }
+
+  /* ---- option (a): the sky shows the themes ---------------------------- */
+  .stills {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .still {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 1.2s var(--ease-out);
+  }
+  .still[data-on] {
+    opacity: 1;
+  }
+  .still img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .still .w-light {
+    display: none;
+  }
+  /* not fetched until the deck first reaches it; an <img> with no src would
+     otherwise draw the broken-image glyph */
+  .still img:not([src]) {
+    visibility: hidden;
+  }
+  :global(:root[data-theme='light']) .still .w-light {
+    display: block;
+  }
+  :global(:root[data-theme='light']) .still .w-dark {
+    display: none;
+  }
+  @media (prefers-color-scheme: light) {
+    :global(:root[data-theme='auto']) .still .w-light {
+      display: block;
+    }
+    :global(:root[data-theme='auto']) .still .w-dark {
+      display: none;
+    }
+  }
+  .tdeck {
+    position: absolute;
+    left: 50%;
+    bottom: var(--space-lg);
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs);
+    border-radius: var(--radius-full);
+    background: var(--chip);
+    border: 1px solid var(--chip-line);
+    backdrop-filter: blur(12px);
+    white-space: nowrap;
+  }
+  .tname {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 13rem;
+    padding: 0 var(--space-sm);
+    color: var(--on-chip);
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
+    font-size: var(--label-size);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .tcmd {
+    font-family: var(--font-mono);
+    font-weight: var(--font-mono-weight);
+    font-size: var(--text-xs);
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--cyan);
+    background: none;
+    padding: 0;
+  }
+  .tstep {
+    appearance: none;
+    border: 0;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--on-chip);
+    font: inherit;
+    font-size: var(--text-lg);
+    line-height: 1;
+    cursor: pointer;
+    transition: color 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
+  }
+  .tstep:hover {
+    color: var(--star);
+    background: var(--chip-line);
+  }
+  .tstep:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+  }
+
+  /* ---- option (c): split, with a live switcher ------------------------- */
+  .hero-c {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xl);
+    padding: 0 var(--space-lg);
+  }
+  .switcher {
+    position: relative;
+    display: grid;
+    gap: var(--space-md);
+    width: 100%;
+    max-width: 44rem;
+    margin: 0 auto calc(var(--space-2xl) + 4rem);
+  }
+  .switcher .shot {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--chip-line);
+    background: var(--ink);
+    aspect-ratio: 16 / 10;
+    box-shadow: 0 0 60px rgba(var(--accent-primary-rgb), calc(0.25 * var(--glow-a)));
+    transition: box-shadow 0.4s var(--ease-out);
+  }
+  .switcher .shot img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .switcher arc-code-block {
+    display: block;
+    min-width: 0;
+  }
+  .dots {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-sm);
+  }
+  .dot {
+    appearance: none;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--chip-line);
+    background: linear-gradient(135deg, var(--b) 0 50%, var(--a) 50% 100%);
+    cursor: pointer;
+    transition: transform 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out);
+  }
+  .dot:hover {
+    transform: scale(1.12);
+  }
+  .dot[aria-pressed='true'] {
+    box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--a);
+  }
+  .dot:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 3px;
+  }
+  @media (min-width: 64rem) {
+    .hero-c {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-items: center;
+      padding: 0 var(--space-2xl);
+    }
+    .hero-c .inner {
+      width: 100%;
+      align-items: flex-start;
+      text-align: left;
+    }
+    .hero-c .cmds {
+      max-width: none;
+    }
+    .hero-c .actions {
+      align-items: flex-start;
+    }
+    .hero-c .links {
+      justify-content: flex-start;
+    }
+    .hero-c .mark {
+      width: 120px;
+      height: 120px;
+    }
+    .hero-c .word {
+      margin-right: 0;
+    }
+    .hero-c .switcher {
+      margin: 0;
+    }
+  }
+
   /* The belt to spin.ts's braces: the script never adds the class under
      reduced motion, and if it somehow did, this refuses to run it. */
   @media (prefers-reduced-motion: reduce) {
@@ -321,6 +605,11 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
     .word-shadow,
     .mark.is-spinning {
       animation: none;
+    }
+    .still,
+    .dot,
+    .switcher .shot {
+      transition: none;
     }
   }
 

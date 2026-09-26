@@ -13,11 +13,19 @@
 // actually exists -- a visitor without WebGL must never see buttons that
 // silently do nothing. Theme is the top bar's toggle, not the deck's.
 const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
+
+// Hero option (a) trades the look picker for its theme deck in the same spot;
+// sky.ts copes with the deck being absent.
+interface Props {
+  deck?: boolean;
+}
+const { deck = true } = Astro.props;
 ---
 
 <canvas id="sky" aria-hidden="true"></canvas>
 <canvas id="skyfade" aria-hidden="true"></canvas>
 
+{deck && (
 <div class="deck" role="group" aria-label="Backdrop" id="lookSeg" hidden>
   <span class="deck-note">the shipped wallpapers, live</span>
   <div class="picker">
@@ -30,6 +38,7 @@ const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
     }
   </div>
 </div>
+)}
 
 <style>
   #sky,

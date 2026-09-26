@@ -29,3 +29,12 @@ export const ISOS = {
 // is also committed to the repo as keys/cosign.pub, and the build verifies
 // every signature against the committed copy before publishing.
 export const COSIGN_PUB = `${ISO_BASE}/cosign.pub`;
+
+// Where "Support Pulsar" points. Pulsar is free to download; this is the tip
+// jar, run on Open Collective and hosted by Arclight Digital LLC. Tips are
+// that company's income, not a charitable gift, so the page says "support",
+// never "donate" or anything about tax.
+// TODO(support): set this once the collective exists. Until then the footer
+// shows the line without a link rather than guess at a URL someone else may
+// own.
+export const SUPPORT_URL: string | null = null;

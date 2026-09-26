@@ -24,9 +24,19 @@ interface Props {
   immersive?: boolean;
   /** extra JSON-LD objects for this page, merged into the graph */
   jsonLd?: Record<string, unknown>[];
+  /** preview routes (the hero options) stay out of search and the sitemap */
+  noindex?: boolean;
 }
 
-const { title, description, ogTitle = title, path = '/', immersive = false, jsonLd = [] } = Astro.props;
+const {
+  title,
+  description,
+  ogTitle = title,
+  path = '/',
+  immersive = false,
+  jsonLd = [],
+  noindex = false,
+} = Astro.props;
 
 // Absolute, always: crawlers resolve nothing relative.
 const canonical = new URL(path, Astro.site).href;
@@ -46,13 +56,13 @@ const app = {
   operatingSystem: 'Linux',
   softwareVersion: version,
   description:
-    'An immutable Fedora spin tuned for gaming and development, built and signed in CI, published nightly with SBOMs and provenance attestations.',
+    'Silverblue+: Fedora Silverblue made yours. Thirteen desktop themes in one command, a system safe to hand to a coding agent, and games that just run, on nightly images with automatic rollback.',
   url: home,
   image: ogImage,
   downloadUrl: 'https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso',
   license: 'https://github.com/arclight-digital/pulsar/blob/main/LICENSE',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-  author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+  author: { '@type': 'Organization', name: 'Arclight Digital LLC', url: 'https://arclight.build' },
   sameAs: ['https://github.com/arclight-digital/pulsar'],
 };
 
@@ -92,6 +102,7 @@ const structuredData = {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
     <link rel="canonical" href={canonical} />
 
     <meta property="og:type" content="website" />

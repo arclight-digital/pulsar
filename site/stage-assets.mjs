@@ -68,4 +68,14 @@ await Promise.all(
   ),
 );
 
-console.log(`staged ${FILES.length} assets into public/assets`);
+// The theme showcase: a wallpaper still and a desktop screenshot per theme
+// variant, as WebP (~2.7MB for all thirteen). Every one is output the OS
+// itself produces -- the stills are the wallpaper shader rendered in each
+// palette, the desktops are the theme harness's screenshots -- so the
+// showcase stays inside the "shader and its stills" rule. Regenerated from
+// the theme sources, not hand-edited; src/data/themes.json names them.
+await cp(join(SITE, 'assets-static', 'themes'), join(OUT, 'themes'), { recursive: true }).catch((cause) => {
+  throw new Error(`cannot stage site/assets-static/themes: ${cause.message}`, { cause });
+});
+
+console.log(`staged ${FILES.length} assets and the theme showcase into public/assets`);

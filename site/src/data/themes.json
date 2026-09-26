@@ -1,0 +1,630 @@
+[
+  {
+    "slug": "pulsar",
+    "name": "Pulsar",
+    "author": "Arclight",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#0b0e1a",
+          "#141830",
+          "#3ecbff",
+          "#ff6b8b",
+          "#ffd479",
+          "#5ee6a8",
+          "#3ecbff",
+          "#8fa8ff",
+          "#b69cff",
+          "#e9edf7"
+        ],
+        "accent": "#3ecbff",
+        "bg": "#0b0e1a",
+        "deep": "#070912",
+        "raised": "#141830",
+        "fg": "#e9edf7",
+        "wall": "/assets/themes/pulsar/wall-dark.webp",
+        "desktop": "/assets/themes/pulsar/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#f1f3fa",
+          "#e6e9f5",
+          "#4b3fd4",
+          "#c42b52",
+          "#8a6a00",
+          "#017e4f",
+          "#00769f",
+          "#3b5bdb",
+          "#7a3fd4",
+          "#241f3d"
+        ],
+        "accent": "#4b3fd4",
+        "bg": "#f1f3fa",
+        "deep": "#f1f3fa",
+        "raised": "#e6e9f5",
+        "fg": "#241f3d",
+        "wall": "/assets/themes/pulsar/wall-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "pulsar-holo",
+    "name": "Pulsar Holo",
+    "author": "Arclight",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#120f24",
+          "#1d1838",
+          "#8fa8ff",
+          "#ff7aa2",
+          "#ffe08a",
+          "#7af0c0",
+          "#3ecbff",
+          "#8fa8ff",
+          "#c3a6ff",
+          "#e9edf7"
+        ],
+        "accent": "#8fa8ff",
+        "bg": "#120f24",
+        "deep": "#0b0e1a",
+        "raised": "#1d1838",
+        "fg": "#e9edf7",
+        "wall": "/assets/themes/pulsar-holo/wall-dark.webp",
+        "desktop": "/assets/themes/pulsar-holo/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#eef0fa",
+          "#e4e6f6",
+          "#4b3fd4",
+          "#c42b6a",
+          "#876700",
+          "#007b4c",
+          "#00739b",
+          "#3b5bdb",
+          "#8b3fc4",
+          "#241f3d"
+        ],
+        "accent": "#4b3fd4",
+        "bg": "#eef0fa",
+        "deep": "#eef0fa",
+        "raised": "#e4e6f6",
+        "fg": "#241f3d",
+        "wall": "/assets/themes/pulsar-holo/wall-light.webp",
+        "desktop": "/assets/themes/pulsar-holo/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "catppuccin",
+    "name": "Catppuccin",
+    "author": "Catppuccin (catppuccin.com), MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#1e1e2e",
+          "#181825",
+          "#cba6f7",
+          "#f38ba8",
+          "#f9e2af",
+          "#a6e3a1",
+          "#94e2d5",
+          "#89b4fa",
+          "#cba6f7",
+          "#cdd6f4"
+        ],
+        "accent": "#cba6f7",
+        "bg": "#1e1e2e",
+        "deep": "#11111b",
+        "raised": "#181825",
+        "fg": "#cdd6f4",
+        "wall": "/assets/themes/catppuccin/wall-dark.webp",
+        "desktop": "/assets/themes/catppuccin/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#eff1f5",
+          "#e6e9ef",
+          "#8839ef",
+          "#d20f39",
+          "#a35700",
+          "#157e00",
+          "#00777e",
+          "#175fee",
+          "#8839ef",
+          "#4c4f69"
+        ],
+        "accent": "#8839ef",
+        "bg": "#eff1f5",
+        "deep": "#dce0e8",
+        "raised": "#e6e9ef",
+        "fg": "#4c4f69",
+        "wall": "/assets/themes/catppuccin/wall-light.webp",
+        "desktop": "/assets/themes/catppuccin/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "tokyo-night",
+    "name": "Tokyo Night",
+    "author": "enkia (Tokyo Night), MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#1a1b26",
+          "#16161e",
+          "#7aa2f7",
+          "#f7768e",
+          "#e0af68",
+          "#9ece6a",
+          "#7dcfff",
+          "#7aa2f7",
+          "#bb9af7",
+          "#c0caf5"
+        ],
+        "accent": "#7aa2f7",
+        "bg": "#1a1b26",
+        "deep": "#16161e",
+        "raised": "#16161e",
+        "fg": "#c0caf5",
+        "wall": "/assets/themes/tokyo-night/wall-dark.webp",
+        "desktop": "/assets/themes/tokyo-night/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#e1e2e7",
+          "#d8dbe5",
+          "#2e7de9",
+          "#c90043",
+          "#7d5e30",
+          "#506c30",
+          "#006b91",
+          "#0761ca",
+          "#8138d5",
+          "#2c54b2"
+        ],
+        "accent": "#2e7de9",
+        "bg": "#e1e2e7",
+        "deep": "#d0d5e3",
+        "raised": "#d8dbe5",
+        "fg": "#2c54b2",
+        "wall": "/assets/themes/tokyo-night/wall-light.webp",
+        "desktop": "/assets/themes/tokyo-night/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "nord",
+    "name": "Nord",
+    "author": "Arctic Ice Studio, MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#2e3440",
+          "#3b4252",
+          "#88c0d0",
+          "#e4828a",
+          "#ebcb8b",
+          "#a3be8c",
+          "#88c0d0",
+          "#81a1c1",
+          "#b791b0",
+          "#e5e9f0"
+        ],
+        "accent": "#88c0d0",
+        "bg": "#2e3440",
+        "deep": "#242933",
+        "raised": "#3b4252",
+        "fg": "#e5e9f0",
+        "wall": "/assets/themes/nord/wall-dark.webp",
+        "desktop": "/assets/themes/nord/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#eceff4",
+          "#e5e9f0",
+          "#5e81ac",
+          "#99324b",
+          "#8b6600",
+          "#3d773b",
+          "#157390",
+          "#3b6ea8",
+          "#97365b",
+          "#2e3440"
+        ],
+        "accent": "#5e81ac",
+        "bg": "#eceff4",
+        "deep": "#d8dee9",
+        "raised": "#e5e9f0",
+        "fg": "#2e3440",
+        "wall": "/assets/themes/nord/wall-light.webp",
+        "desktop": "/assets/themes/nord/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "rose-pine",
+    "name": "Rosé Pine",
+    "author": "Rosé Pine (rosepinetheme.com), MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#191724",
+          "#1f1d2e",
+          "#c4a7e7",
+          "#eb6f92",
+          "#f6c177",
+          "#4a8ca8",
+          "#ebbcba",
+          "#9ccfd8",
+          "#c4a7e7",
+          "#e0def4"
+        ],
+        "accent": "#c4a7e7",
+        "bg": "#191724",
+        "deep": "#12101a",
+        "raised": "#1f1d2e",
+        "fg": "#e0def4",
+        "wall": "/assets/themes/rose-pine/wall-dark.webp",
+        "desktop": "/assets/themes/rose-pine/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#faf4ed",
+          "#fffaf3",
+          "#907aa9",
+          "#a4546b",
+          "#a55c00",
+          "#286983",
+          "#a85855",
+          "#377681",
+          "#7b6693",
+          "#575279"
+        ],
+        "accent": "#907aa9",
+        "bg": "#faf4ed",
+        "deep": "#f2e9e1",
+        "raised": "#fffaf3",
+        "fg": "#575279",
+        "wall": "/assets/themes/rose-pine/wall-light.webp",
+        "desktop": "/assets/themes/rose-pine/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "gruvbox",
+    "name": "Gruvbox",
+    "author": "Pavel Pertsev (morhetz), MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#282828",
+          "#3c3836",
+          "#fe8019",
+          "#ff543e",
+          "#fabd2f",
+          "#b8bb26",
+          "#8ec07c",
+          "#83a598",
+          "#d3869b",
+          "#ebdbb2"
+        ],
+        "accent": "#fe8019",
+        "bg": "#282828",
+        "deep": "#1d2021",
+        "raised": "#3c3836",
+        "fg": "#ebdbb2",
+        "wall": "/assets/themes/gruvbox/wall-dark.webp",
+        "desktop": "/assets/themes/gruvbox/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#fbf1c7",
+          "#ebdbb2",
+          "#af3a03",
+          "#9d0006",
+          "#9b5e00",
+          "#736e00",
+          "#3f7855",
+          "#076678",
+          "#8f3f71",
+          "#3c3836"
+        ],
+        "accent": "#af3a03",
+        "bg": "#fbf1c7",
+        "deep": "#ebdbb2",
+        "raised": "#ebdbb2",
+        "fg": "#3c3836",
+        "wall": "/assets/themes/gruvbox/wall-light.webp",
+        "desktop": "/assets/themes/gruvbox/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "everforest",
+    "name": "Everforest",
+    "author": "sainnhe, MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#2d353b",
+          "#343f44",
+          "#a7c080",
+          "#e98183",
+          "#dbbc7f",
+          "#a7c080",
+          "#83c092",
+          "#7fbbb3",
+          "#d699b6",
+          "#d3c6aa"
+        ],
+        "accent": "#a7c080",
+        "bg": "#2d353b",
+        "deep": "#232a2e",
+        "raised": "#343f44",
+        "fg": "#d3c6aa",
+        "wall": "/assets/themes/everforest/wall-dark.webp",
+        "desktop": "/assets/themes/everforest/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#fdf6e3",
+          "#f4f0d9",
+          "#819400",
+          "#d43034",
+          "#9e6200",
+          "#657600",
+          "#007f57",
+          "#0e75a5",
+          "#b64394",
+          "#5c6a72"
+        ],
+        "accent": "#819400",
+        "bg": "#fdf6e3",
+        "deep": "#efebd4",
+        "raised": "#f4f0d9",
+        "fg": "#5c6a72",
+        "wall": "/assets/themes/everforest/wall-light.webp",
+        "desktop": "/assets/themes/everforest/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "kanagawa",
+    "name": "Kanagawa",
+    "author": "rebelot (kanagawa.nvim), MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#1f1f28",
+          "#16161d",
+          "#7e9cd8",
+          "#e46876",
+          "#e6c384",
+          "#98bb6c",
+          "#7aa89f",
+          "#7e9cd8",
+          "#957fb8",
+          "#dcd7ba"
+        ],
+        "accent": "#7e9cd8",
+        "bg": "#1f1f28",
+        "deep": "#16161d",
+        "raised": "#16161d",
+        "fg": "#dcd7ba",
+        "wall": "/assets/themes/kanagawa/wall-dark.webp",
+        "desktop": "/assets/themes/kanagawa/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#f2ecbc",
+          "#e5ddb0",
+          "#4d699b",
+          "#bd364b",
+          "#6e6836",
+          "#587137",
+          "#4e6f69",
+          "#4d699b",
+          "#624c83",
+          "#545464"
+        ],
+        "accent": "#4d699b",
+        "bg": "#f2ecbc",
+        "deep": "#e4d794",
+        "raised": "#e5ddb0",
+        "fg": "#545464",
+        "wall": "/assets/themes/kanagawa/wall-light.webp",
+        "desktop": "/assets/themes/kanagawa/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "solarized",
+    "name": "Solarized",
+    "author": "Ethan Schoonover, MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#002b36",
+          "#073642",
+          "#268bd2",
+          "#fd544b",
+          "#b58900",
+          "#859900",
+          "#2aa198",
+          "#3294dc",
+          "#8086db",
+          "#93a1a1"
+        ],
+        "accent": "#268bd2",
+        "bg": "#002b36",
+        "deep": "#00212b",
+        "raised": "#073642",
+        "fg": "#93a1a1",
+        "wall": "/assets/themes/solarized/wall-dark.webp",
+        "desktop": "/assets/themes/solarized/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#fdf6e3",
+          "#eee8d5",
+          "#268bd2",
+          "#d52928",
+          "#936800",
+          "#657700",
+          "#007c74",
+          "#0072b8",
+          "#6468ba",
+          "#52686f"
+        ],
+        "accent": "#268bd2",
+        "bg": "#fdf6e3",
+        "deep": "#eee8d5",
+        "raised": "#eee8d5",
+        "fg": "#52686f",
+        "wall": "/assets/themes/solarized/wall-light.webp",
+        "desktop": "/assets/themes/solarized/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "flexoki",
+    "name": "Flexoki",
+    "author": "Steph Ango (stephango.com/flexoki), MIT",
+    "prefer": "light",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#100f0f",
+          "#1c1b1a",
+          "#4385be",
+          "#d55044",
+          "#d0a215",
+          "#879a39",
+          "#3aa99f",
+          "#4385be",
+          "#8b7ec8",
+          "#cecdc3"
+        ],
+        "accent": "#4385be",
+        "bg": "#100f0f",
+        "deep": "#0b0a0a",
+        "raised": "#1c1b1a",
+        "fg": "#cecdc3",
+        "wall": "/assets/themes/flexoki/wall-dark.webp",
+        "desktop": "/assets/themes/flexoki/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#fffcf0",
+          "#f2f0e5",
+          "#205ea6",
+          "#af3029",
+          "#946b00",
+          "#637d03",
+          "#208078",
+          "#205ea6",
+          "#5e409d",
+          "#403e3c"
+        ],
+        "accent": "#205ea6",
+        "bg": "#fffcf0",
+        "deep": "#e6e4d9",
+        "raised": "#f2f0e5",
+        "fg": "#403e3c",
+        "wall": "/assets/themes/flexoki/wall-light.webp",
+        "desktop": "/assets/themes/flexoki/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "ayu",
+    "name": "Ayu",
+    "author": "Ike Ku (ayu-theme), MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#0b0e14",
+          "#131721",
+          "#e6b450",
+          "#f07178",
+          "#ffb454",
+          "#aad94c",
+          "#95e6cb",
+          "#59c2ff",
+          "#d2a6ff",
+          "#e6e1cf"
+        ],
+        "accent": "#e6b450",
+        "bg": "#0b0e14",
+        "deep": "#07090d",
+        "raised": "#131721",
+        "fg": "#e6e1cf",
+        "wall": "/assets/themes/ayu/wall-dark.webp",
+        "desktop": "/assets/themes/ayu/desktop-dark.webp"
+      },
+      "light": {
+        "swatch": [
+          "#f8f9fa",
+          "#edeff1",
+          "#db7117",
+          "#c2484b",
+          "#a36400",
+          "#308300",
+          "#00805e",
+          "#0076bb",
+          "#885faf",
+          "#5c6166"
+        ],
+        "accent": "#db7117",
+        "bg": "#f8f9fa",
+        "deep": "#e7eaed",
+        "raised": "#edeff1",
+        "fg": "#5c6166",
+        "wall": "/assets/themes/ayu/wall-light.webp",
+        "desktop": "/assets/themes/ayu/desktop-light.webp"
+      }
+    }
+  },
+  {
+    "slug": "dracula",
+    "name": "Dracula",
+    "author": "Dracula Theme (draculatheme.com), MIT",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#282a36",
+          "#21222c",
+          "#bd93f9",
+          "#ff5958",
+          "#f1fa8c",
+          "#50fa7b",
+          "#8be9fd",
+          "#bd93f9",
+          "#ff79c6",
+          "#f8f8f2"
+        ],
+        "accent": "#bd93f9",
+        "bg": "#282a36",
+        "deep": "#191a21",
+        "raised": "#21222c",
+        "fg": "#f8f8f2",
+        "wall": "/assets/themes/dracula/wall-dark.webp",
+        "desktop": "/assets/themes/dracula/desktop-dark.webp"
+      }
+    }
+  }
+]

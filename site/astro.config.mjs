@@ -23,6 +23,9 @@ export default defineConfig({
   integrations: [
     arcDsd(),
     sitemap({
+      // /preview/* are the hero options, rendered for choosing between and
+      // marked noindex; they are not pages anyone should land on
+      filter: (page) => !new URL(page).pathname.startsWith('/preview/'),
       // the home page and the changelog change every night; the rest when
       // the repo does
       serialize: (item) => {

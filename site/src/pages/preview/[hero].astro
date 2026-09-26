@@ -1,0 +1,13 @@
+---
+// Hero options, side by side: each renders the whole home page with one hero.
+// noindex, and kept out of the sitemap, so they exist for choosing, not for
+// search. Delete this route once a hero is picked.
+import Home from '../../components/Home.astro';
+
+export function getStaticPaths() {
+  return (['a', 'b', 'c'] as const).map((v) => ({ params: { hero: `hero-${v}` }, props: { v } }));
+}
+const { v } = Astro.props as { v: 'a' | 'b' | 'c' };
+---
+
+<Home hero={v} preview />

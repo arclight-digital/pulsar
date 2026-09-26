@@ -146,7 +146,7 @@ Pulsar's site is a nightly build log wearing the OS's own wallpaper. The world i
 
 The mood is dry and inspectable. The hero is not a tagline but a package name at display size; proof is shown as terminals and code blocks rendering real commands and real outputs; the ledger is a ruled list of monospace rows, not cards. Emphasis is light rather than weight: the moving part of a version number glows in the accent, the one row that is the answer lifts to primary and then to accent, and everything shared or secondary is thinned toward ghost. Depth is tonal and luminous (ARC's `--glow-*`), never a drop shadow.
 
-Confirmed rejections, carried from the direction contract and the ARC rulebook that binds this site: no wordmark-tagline-two-buttons hero; no images other than the shader and its still; no coloured left borders for state; no literal colours, sizes or typeface names in stylesheets; no motion without a state change to explain it.
+Confirmed rejections, carried from the direction contract and the ARC rulebook that binds this site: no wordmark-tagline-two-buttons hero; no images other than the shader and its stills (bent once, on purpose, for the theme showcase: every image there is still output the OS itself produces -- each theme's wallpaper is the same shader rendered in that palette, and each desktop shot is the theme harness's screenshot -- so nothing stock, nothing illustrated, nothing borrowed); no coloured left borders for state; no literal colours, sizes or typeface names in stylesheets; no motion without a state change to explain it.
 
 **Key Characteristics:**
 - Ink-blue-black ground with cyan and periwinkle accents on dark; violet as the single accent on light, chosen for contrast, not taste.
