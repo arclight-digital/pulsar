@@ -31,11 +31,26 @@ uniform float u_look;   // 0 = silk (shipped), 1 = leak, 2 = satin, 3 = holo
 uniform float u_live;   // 1 on the site's live hero sky: the luminescence drops to a hint,
                         // so text over it stays readable; 0 (unset) for wallpapers
 
-// brand palette
-const vec3 CYAN   = vec3(0.243, 0.796, 1.000); // #3ECBFF
-const vec3 PERI   = vec3(0.561, 0.659, 1.000); // #8FA8FF
-const vec3 VIOLET = vec3(0.294, 0.247, 0.831); // #4B3FD4
+// brand palette. Not const: the site's live sky can hand in a picked
+// theme's palette (u_palette_on = 1), which main() writes over these before
+// anything reads them. Unset -- every wallpaper render -- they stay exactly
+// the brand values, so the brand wallpapers are pixel-identical.
+vec3 CYAN   = vec3(0.243, 0.796, 1.000); // #3ECBFF
+vec3 PERI   = vec3(0.561, 0.659, 1.000); // #8FA8FF
+vec3 VIOLET = vec3(0.294, 0.247, 0.831); // #4B3FD4
 const vec3 STAR   = vec3(0.914, 0.929, 0.969); // #E9EDF7
+vec3 ROSE   = vec3(0.980, 0.520, 0.760);         // holo's rose column
+vec3 TEAL   = vec3(0.290, 0.800, 0.840);         // holo's teal column
+vec3 INDIGO = vec3(0.055, 0.075, 0.360);         // holo's flanks
+
+// The site's theme palette (sky.ts). Eight colours and a flag; no extra
+// noise, a few mixes. Grounds are the theme's own deep/bg, lights its accent
+// and two supporting hues, mixed in OKLab so distant hues never go muddy.
+uniform float u_palette_on;
+uniform vec3 u_p_hi, u_p_mid, u_p_deep, u_p_alt;   // accent, supporting, deep light, holo's contrast
+uniform vec3 u_p_ga, u_p_gb;                       // night ground: far, near
+uniform vec3 u_p_da, u_p_db;                       // dawn ground: bottom, top
+bool pal() { return u_palette_on > 0.5; }
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
@@ -92,14 +107,42 @@ vec3 knee(vec3 x) {
     return min(x, vec3(0.62)) + 0.38 * (1.0 - exp(-over / 0.38));
 }
 
+// OKLab mixing, for theme palettes only: the brand ramp is analogous and
+// keeps its sRGB mix (and its exact pixels).
+vec3 toLinS(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+vec3 toSrgbS(vec3 c) { c = max(c, 0.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+vec3 toLab(vec3 c) {
+    c = toLinS(c);
+    vec3 lms = vec3(0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b,
+                    0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b,
+                    0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b);
+    lms = pow(max(lms, 0.0), vec3(1.0 / 3.0));
+    return vec3(0.2104542553 * lms.x + 0.7936177850 * lms.y - 0.0040720468 * lms.z,
+                1.9779984951 * lms.x - 2.4285922050 * lms.y + 0.4505937099 * lms.z,
+                0.0259040371 * lms.x + 0.7827717662 * lms.y - 0.8086757660 * lms.z);
+}
+vec3 fromLab(vec3 L) {
+    vec3 lms = vec3(L.x + 0.3963377774 * L.y + 0.2158037573 * L.z,
+                    L.x - 0.1055613458 * L.y - 0.0638541728 * L.z,
+                    L.x - 0.0894841775 * L.y - 1.2914855480 * L.z);
+    lms = lms * lms * lms;
+    return toSrgbS(vec3( 4.0767416621 * lms.x - 3.3077115913 * lms.y + 0.2309699292 * lms.z,
+                        -1.2684380046 * lms.x + 2.6097574011 * lms.y - 0.3413193965 * lms.z,
+                        -0.0041960863 * lms.x - 0.7034186147 * lms.y + 1.7076147010 * lms.z));
+}
+vec3 pmix(vec3 a, vec3 b, float t) {
+    if (pal()) return fromLab(mix(toLab(a), toLab(b), clamp(t, 0.0, 1.0)));
+    return mix(a, b, t);
+}
+
 // holo's column ramp: indigo | rose | periwinkle | teal | indigo. Split out
 // so the technicolor pass can sample it three times at offset positions.
 vec3 holoRamp(float hx) {
-    vec3 c = vec3(0.055, 0.075, 0.360);
-    c = mix(c, vec3(0.980, 0.520, 0.760), smoothstep(-0.38, -0.16, hx));
-    c = mix(c, PERI,                      smoothstep(-0.04,  0.12, hx));
-    c = mix(c, vec3(0.290, 0.800, 0.840), smoothstep( 0.16,  0.30, hx));
-    c = mix(c, vec3(0.055, 0.075, 0.360), smoothstep( 0.34,  0.52, hx));
+    vec3 c = INDIGO;
+    c = pmix(c, ROSE,   smoothstep(-0.38, -0.16, hx));
+    c = pmix(c, PERI,   smoothstep(-0.04,  0.12, hx));
+    c = pmix(c, TEAL,   smoothstep( 0.16,  0.30, hx));
+    c = pmix(c, INDIGO, smoothstep( 0.34,  0.52, hx));
     return c;
 }
 
@@ -112,6 +155,10 @@ vec3 beamRGB(float y, float c, float w, float o) {
 }
 
 void main() {
+    if (pal()) {
+        CYAN = u_p_hi; PERI = u_p_mid; VIOLET = u_p_deep;
+        ROSE = u_p_alt; TEAL = u_p_hi; INDIGO = mix(u_p_ga, u_p_deep, 0.35);
+    }
     vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
     float r = length(uv);
     float theme = clamp(u_theme, 0.0, 1.0);
@@ -135,8 +182,8 @@ void main() {
 
     // color from the fold depth, brand ramp only, then pulled toward grey --
     // full-sat hues are what made the earlier cuts read like test cards
-    vec3 silk = mix(VIOLET * 0.75, PERI, smoothstep(0.35, 0.75, f));
-    silk = mix(silk, CYAN, smoothstep(0.70, 0.95, f) * 0.8);
+    vec3 silk = pmix(VIOLET * 0.75, PERI, smoothstep(0.35, 0.75, f));
+    silk = pmix(silk, CYAN, smoothstep(0.70, 0.95, f) * 0.8);
     silk = mix(silk, vec3(dot(silk, vec3(0.30, 0.55, 0.15))), 0.18);
 
     // each variant gets its own sky: a seed shift moves every star, and the
@@ -150,8 +197,8 @@ void main() {
     // ---- night -------------------------------------------------------------
     // kept LOW on purpose: this sits behind a desktop full of windows, and
     // the reference boards go to true black in the empty regions
-    vec3 night = mix(vec3(0.005, 0.006, 0.016),      // upper-right, near black
-                     vec3(0.016, 0.019, 0.048),      // lower-left, indigo cast
+    vec3 night = mix(pal() ? u_p_ga : vec3(0.005, 0.006, 0.016),      // upper-right, near black
+                     pal() ? u_p_gb : vec3(0.016, 0.019, 0.048),      // lower-left, indigo cast
                      mask);
     night += silk * lum * 0.75;
     night += STAR * starsNight * clamp(1.0 - lum * 3.0, 0.0, 1.0) * 0.55;
@@ -176,7 +223,8 @@ void main() {
     vec2 lq = vec2(cos(lA) * uv.x + sin(lA) * uv.y,
                    -sin(lA) * uv.x + cos(lA) * uv.y);
     float lfade = smoothstep(0.85, -0.35, lq.x);
-    vec3 leak = mix(vec3(0.006, 0.007, 0.018), vec3(0.014, 0.016, 0.040), lfade);
+    vec3 leak = pal() ? mix(u_p_ga, u_p_gb * 0.85, lfade)
+                      : mix(vec3(0.006, 0.007, 0.018), vec3(0.014, 0.016, 0.040), lfade);
     leak += VIOLET * beamRGB(lq.y, 0.36, 0.20, 0.050) * lfade * 0.55;
     leak += PERI   * beamRGB(lq.y, 0.05, 0.26, 0.055) * lfade * 0.45;
     leak += CYAN   * beamRGB(lq.y, -0.28, 0.14, 0.040)
@@ -193,8 +241,8 @@ void main() {
     // diagonal like woven fabric; it scales with local brightness the way a
     // real weave only shows where the light hits it.
     float sdiag = dot(uv, normalize(vec2(-0.35, 1.0)));
-    vec3 satin = mix(vec3(0.006, 0.008, 0.020),
-                     vec3(0.030, 0.045, 0.110),
+    vec3 satin = mix(pal() ? u_p_ga : vec3(0.006, 0.008, 0.020),
+                     pal() ? mix(u_p_gb, u_p_deep, 0.25) : vec3(0.030, 0.045, 0.110),
                      smoothstep(-0.60, 0.70, sdiag));
     vec2 sp = uv - vec2(0.42, -0.06);
     float sd = dot(sp, sp);
@@ -246,13 +294,13 @@ void main() {
     // -light mark, which is designed to read on pale ground as-is.
     // ground sits a full step below white -- "too light" feedback killed the
     // near-white version; the tint does the work of making the marks pop
-    vec3 dawnBase = mix(vec3(0.906, 0.916, 0.958),
-                        vec3(0.822, 0.842, 0.922),
+    vec3 dawnBase = mix(pal() ? u_p_da : vec3(0.906, 0.916, 0.958),
+                        pal() ? u_p_db : vec3(0.822, 0.842, 0.922),
                         smoothstep(-0.5, 0.5, uv.y));
 
     // silk dawn: the field as watercolor, wetter than before
     vec3 dawn = dawnBase;
-    vec3 silkDawn = mix(mix(PERI, vec3(1.0), 0.12), mix(CYAN, vec3(1.0), 0.20),
+    vec3 silkDawn = pmix(mix(PERI, vec3(1.0), 0.12), mix(CYAN, vec3(1.0), 0.20),
                         smoothstep(0.6, 0.9, f));
     dawn = mix(dawn, silkDawn, lum * 0.95);
     dawn = mix(dawn, mix(VIOLET, vec3(1.0), 0.60), starsDawn * 0.35); // pale glints
@@ -269,8 +317,8 @@ void main() {
 
     // satin dawn: daylight on the same cloth -- the weave flips to reading
     // as darker threads on pale fabric, and the bloom becomes a soft sheen
-    vec3 dawnS = mix(vec3(0.800, 0.818, 0.900),
-                     vec3(0.862, 0.880, 0.940),
+    vec3 dawnS = mix(pal() ? u_p_db * 0.96 : vec3(0.800, 0.818, 0.900),
+                     pal() ? u_p_da : vec3(0.862, 0.880, 0.940),
                      smoothstep(-0.60, 0.70, sdiag));
     dawnS += CYAN * exp(-sd * 7.0) * 0.18;
     dawnS *= 1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.12;
@@ -305,7 +353,7 @@ void main() {
     float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
     float wSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
     float wHolo = clamp(look - 2.0, 0.0, 1.0);
-    float inten = clamp(dot(night - vec3(0.012, 0.014, 0.034), vec3(0.3333)) * 2.6, 0.0, 1.0);
+    float inten = clamp(dot(night - (pal() ? mix(u_p_ga, u_p_gb, 0.5) : vec3(0.012, 0.014, 0.034)), vec3(0.3333)) * 2.6, 0.0, 1.0);
     float carry = 0.05 + 0.95 * smoothstep(0.05, 0.7, inten);
     vec3 emit = CYAN * pow(inten, 3.0) * 0.16;
     float g2 = 0.0;
@@ -372,7 +420,8 @@ void main() {
     night = knee(night + emit * quiet);
     // dawn: the same effects in pearl, low-contrast against the paper, with
     // "lit" measured against each look's own ground (satin's is its cloth)
-    vec3 groundS = mix(vec3(0.800, 0.818, 0.900), vec3(0.862, 0.880, 0.940), smoothstep(-0.60, 0.70, sdiag))
+    vec3 groundS = mix(pal() ? u_p_db * 0.96 : vec3(0.800, 0.818, 0.900),
+                       pal() ? u_p_da : vec3(0.862, 0.880, 0.940), smoothstep(-0.60, 0.70, sdiag))
                  * (1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.12);
     float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, wSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
     if (wSilk > 0.0) {
