@@ -29,7 +29,8 @@ the site claims it before it lands. The site's job is to present it well.
 Silverblue+ (repositioned 2026-09-26): Fedora's unbreakable desktop, made
 yours. Four pillars, in this order on the home page:
 
-1. **Make it yours in one command.** Thirteen themes, each light and dark,
+1. **Make it yours in one command.** Fourteen themes (twelve light-and-dark,
+   plus Dracula and Alucard as a dark/light pair of separate themes),
    recolouring the whole desktop at once; shipped in the image, exact revert,
    graceful restarts, on by default.
 2. **The safest machine to hand to an agent.** AGENTS.md in the image,

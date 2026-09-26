@@ -6,9 +6,13 @@
 // So the showcase bends the "shader and its still only" rule without breaking
 // it -- every image here is one the OS itself produces.
 //
-// TODO(alucard): Dracula ships its light variant (Alucard) with the theming
-// integration. Until its renders land here, the light slot falls back to
-// Dracula's dark one rather than showing nothing.
+// Dracula and Alucard are two themes, not one: Dracula is dark only and
+// Alucard light only, so neither follows the Dark Style toggle and choosing
+// either is a full switch. A single-variant theme shows the variant it has
+// whichever mode the page is in.
+//
+// TODO(alucard-shot): no harness screenshot of Alucard exists yet, so its
+// preview shows its wallpaper; add desktop-light.webp when one is taken.
 import raw from './themes.json';
 
 export type Variant = {
@@ -36,7 +40,6 @@ export const THEMES = raw as Theme[];
 // variants carry their own names upstream.
 const LABEL: Record<string, string> = {
   catppuccin: 'Catppuccin',
-  dracula: 'Dracula · Alucard',
 };
 export const label = (t: Theme) => LABEL[t.slug] ?? t.name;
 

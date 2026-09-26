@@ -48,12 +48,18 @@ function show(detail: ThemeDetail) {
   current = detail;
   recolour(detail);
   const v = detail[mode()];
+  // A theme with no desktop screenshot yet shows its wallpaper instead, so the
+  // preview never keeps showing the previous theme under the new one's name.
+  const src = v.desktop ?? v.wall;
+  const alt = v.desktop
+    ? `The Pulsar desktop in the ${detail.name} theme`
+    : `The ${detail.name} wallpaper`;
   document.querySelectorAll<HTMLImageElement>('[data-preview]').forEach((img) => {
-    if (!v.desktop || img.getAttribute('src') === v.desktop) return;
+    if (!src || img.getAttribute('src') === src) return;
     img.dataset.loading = '';
     img.onload = () => delete img.dataset.loading;
-    img.src = v.desktop;
-    img.alt = `The Pulsar desktop in the ${detail.name} theme`;
+    img.src = src;
+    img.alt = alt;
   });
   document.querySelectorAll('[data-preview-name]').forEach((el) => (el.textContent = detail.name));
   document.querySelectorAll('[data-preview-cmd]').forEach((el) => el.setAttribute('code', `pulsar theme set ${detail.slug}`));

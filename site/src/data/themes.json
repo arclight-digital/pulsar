@@ -502,7 +502,7 @@
     "slug": "flexoki",
     "name": "Flexoki",
     "author": "Steph Ango (stephango.com/flexoki), MIT",
-    "prefer": "light",
+    "prefer": "dark",
     "variants": {
       "dark": {
         "swatch": [
@@ -624,6 +624,34 @@
         "fg": "#f8f8f2",
         "wall": "/assets/themes/dracula/wall-dark.webp",
         "desktop": "/assets/themes/dracula/desktop-dark.webp"
+      }
+    }
+  },
+  {
+    "slug": "alucard",
+    "name": "Alucard",
+    "author": "Dracula Theme (draculatheme.com), MIT",
+    "prefer": "light",
+    "variants": {
+      "light": {
+        "swatch": [
+          "#fffbeb",
+          "#f4efdd",
+          "#644ac9",
+          "#cb3a2a",
+          "#846e15",
+          "#14710a",
+          "#036a96",
+          "#644ac9",
+          "#a3144d",
+          "#1f1f1f"
+        ],
+        "accent": "#644ac9",
+        "bg": "#fffbeb",
+        "deep": "#ece7d5",
+        "raised": "#f4efdd",
+        "fg": "#1f1f1f",
+        "wall": "/assets/themes/alucard/wall-light.webp"
       }
     }
   }

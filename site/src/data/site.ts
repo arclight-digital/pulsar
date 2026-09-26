@@ -2,6 +2,11 @@
 // cannot leave half the page pointing at the old thing.
 export const REPO = 'https://github.com/arclight-digital/pulsar';
 
+// TODO(getpulsar.dev): the site is moving to getpulsar.dev once that domain is
+// registered and live. Until then everything -- astro.config's `site`, the
+// canonical tags, the sitemap and every link -- stays on
+// pulsar.arclight.digital; change them together, in one commit, on the day.
+
 export const IMAGES = {
   vanilla: 'ghcr.io/arclight-digital/pulsar',
   nvidia: 'ghcr.io/arclight-digital/pulsar-nvidia',
