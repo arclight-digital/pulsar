@@ -1,0 +1,7 @@
+{
+  "uuid": "pulsar-theme@arclight.digital",
+  "name": "Pulsar Theme",
+  "description": "Layers the stylesheet written by `pulsar theme` over the Shell theme, and reloads it when it changes.",
+  "shell-version": ["50"],
+  "url": "https://github.com/arclight-digital/pulsar"
+}

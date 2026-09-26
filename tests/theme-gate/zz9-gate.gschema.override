@@ -1,0 +1,8 @@
+# GATE ONLY: quiet the headless session without writing user dconf keys (a
+# user key would make the fresh test account look customised to init).
+[org.gnome.shell]
+enabled-extensions=['gamescale@arclight.digital', 'pulsar-theme@arclight.digital', 'gate-harness@local']
+welcome-dialog-last-shown-version='999'
+
+[org.gnome.desktop.interface]
+enable-animations=false

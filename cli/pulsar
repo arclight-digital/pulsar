@@ -2129,6 +2129,49 @@ cmd_report() {
       "", .report.note'
 }
 
+# ---------------------------------------------------------------------------
+# pulsar theme -- the theme engine is its own program (python: colour maths in
+# bash would be the whole file), so this verb is a doorway, not a second
+# implementation. Arguments go through untouched, --json and --help included:
+# they belong to the engine, not to this CLI's global flag parsing.
+# ---------------------------------------------------------------------------
+THEME_ENGINE=${PULSAR_THEME_ENGINE:-/usr/libexec/pulsar/pulsar-theme}
+
+theme_usage() {
+    cat <<'EOF'
+usage: pulsar theme <command>
+
+  list                      the themes, with swatches; * marks the current one
+  set <theme>               re-colour the desktop: accent, light/dark, GTK4 and
+                            GTK3 apps, Ptyxis, btop, Text Editor, the top bar
+                            and quick settings, the wallpaper
+    --variant dark|light    pin one variant (default: follow Dark Style)
+    --restart | --no-restart
+                            open GTK apps keep the old colours until they
+                            restart; by default you are asked, once per switch
+  next | prev               cycle themes
+  bg-next                   cycle the current theme's wallpapers
+  current                   what is applied, and what it wrote
+  revert [--to image]       put everything back: stock GNOME, or with
+                            --to image the Pulsar image defaults
+  audit [theme...]          WCAG contrast checks
+  restart-apps [--yes]      open apps still showing the previous palette
+  config [key [value]]      restart-prompt on|off
+  import base16 <file|url>  add a base16/base24 scheme as your own theme
+
+The picker is Themes in the app grid (Super+Shift+T if it was free).
+Themes live in /usr/share/pulsar/themes; your own in ~/.local/share/pulsar/themes.
+EOF
+}
+
+cmd_theme() {
+    case "${1:-}" in
+        ""|-h|--help|help) theme_usage; return 0 ;;
+    esac
+    [ -x "$THEME_ENGINE" ] || die "theme engine not found at ${THEME_ENGINE}"
+    exec "$THEME_ENGINE" "$@"
+}
+
 usage() {
     cat <<'EOF'
 pulsar -- manage a Pulsar system
@@ -2161,6 +2204,9 @@ pulsar -- manage a Pulsar system
                            graphics, flatpak. JSON; --text for people.
                            redacted; see: pulsar report --help
 
+  pulsar theme <command>   re-colour the whole desktop in one step:
+                           list | set <theme> | revert | ...  see: pulsar theme
+
   pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
   pulsar setup agent <name>
                            a coding agent CLI in a toolbox, run from the
@@ -2181,6 +2227,21 @@ EOF
 }
 
 main() {
+    # `theme` is found before the global flag loop, which would otherwise eat
+    # --json and --help that belong to the engine. Global flags BEFORE it
+    # (`pulsar --json theme current`) are this CLI's, and like every other
+    # command that does not use them, theme ignores them; --help/--version
+    # there still mean what they always did.
+    local i=0 a
+    for a in "$@"; do
+        i=$((i + 1))
+        case "$a" in
+            -h|--help|-V|--version) break ;;
+            -*) continue ;;
+            theme) shift "$i"; cmd_theme "$@"; exit $? ;;
+            *) break ;;
+        esac
+    done
     JSON=0
     local args=() seen_cmd=0
     for a in "$@"; do

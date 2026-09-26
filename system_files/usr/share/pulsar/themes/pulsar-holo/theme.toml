@@ -1,0 +1,55 @@
+# Pulsar, periwinkle-led and pushed toward deep violet: the holo look.
+name = "Pulsar Holo"
+author = "Arclight"
+source = "pulsar/DESIGN.md"
+prefer = "dark"
+
+[dark]
+background = "#120f24"
+background_deep = "#0b0e1a"   # ink
+background_raised = "#1d1838"
+foreground = "#e9edf7"
+muted = "#8f89b3"
+selection = "#2e2757"
+accent = "#8fa8ff"              # peri
+blue = "#8fa8ff"
+cyan = "#3ecbff"
+magenta = "#c3a6ff"
+red = "#ff7aa2"
+orange = "#ffab7a"
+yellow = "#ffe08a"
+green = "#7af0c0"
+window = "#15122b"
+view = "#0f0c20"
+headerbar = "#1d1838"
+sidebar = "#15122b"
+card = "#1d1838"
+popover = "#241f3d"             # deep
+
+# Holo by day: star ground, violet accent (cyan fails on light -- DESIGN.md's
+# contrast rule), the holo foil's rose and teal deepened to read as text.
+[light]
+background = "#eef0fa"
+background_raised = "#e4e6f6"
+foreground = "#241f3d"
+foreground_dim = "#4a4566"
+muted = "#6d6887"
+selection = "#d6d8f5"
+accent = "#4b3fd4"
+blue = "#3b5bdb"
+cyan = "#00739b"
+magenta = "#8b3fc4"
+red = "#c42b6a"
+orange = "#b15012"
+yellow = "#876700"
+green = "#007b4c"
+window = "#eef0fa"
+view = "#f8f8fe"
+headerbar = "#e4e6f6"
+sidebar = "#e7e8f7"
+card = "#f8f8fe"
+popover = "#ffffff"
+
+[wallpaper]
+dark = ["/usr/share/backgrounds/pulsar/pulsar-holo-dark.png", "/usr/share/backgrounds/pulsar/pulsar-satin-dark.png"]
+light = ["/usr/share/backgrounds/pulsar/pulsar-holo-light.png", "/usr/share/backgrounds/pulsar/pulsar-satin-light.png"]

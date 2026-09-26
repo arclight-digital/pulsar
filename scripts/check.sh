@@ -51,7 +51,12 @@ shellcheck \
   scripts/sbom-changelog.sh \
   scripts/sign-file-oracle \
   scripts/sync-branding.sh \
-  scripts/weekly.sh
+  scripts/theme-test-image.sh \
+  scripts/weekly.sh \
+  tests/theme-gate/gate.sh \
+  tests/theme-gate/run.sh \
+  tests/theme-gate/session.sh \
+  tests/theme-gate/bin/systemd-run
 echo "shellcheck: clean"
 
 # The signer holds the Secure Boot key, so a syntax error in it is a nightly
@@ -60,6 +65,20 @@ echo "shellcheck: clean"
 say "compile-check the signer"
 python3 -m py_compile scripts/pulsar-signer.py
 echo "pulsar-signer: compiles"
+
+# The theme engine runs at every first login, and a syntax error there is a
+# desktop that stays stock forever (the unit fails, the stamp is never
+# written, it fails again next login). The rest are build and gate tooling.
+say "compile-check the theme engine and its tooling"
+for f in scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/build-themes.py \
+         scripts/render-theme-wallpapers.py tests/theme-gate/scenario.py \
+         tests/theme-gate/fixtures/notes.py; do
+  python3 - "$f" <<'PY'
+import sys
+compile(open(sys.argv[1]).read(), sys.argv[1], "exec")
+PY
+done
+echo "theme engine: compiles"
 
 # The shell inside RUN instructions is shell too, and it is the most
 # expensive place to have a syntax error: a quote left open by a missing

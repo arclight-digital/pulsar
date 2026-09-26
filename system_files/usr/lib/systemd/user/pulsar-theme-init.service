@@ -1,0 +1,32 @@
+# First login: give the account the full Pulsar theme through the engine --
+# gtk.css, the Ptyxis palette, btop, the Shell stylesheet: the parts that have
+# no system-wide default, so zz1-pulsar-theme.gschema.override cannot carry
+# them.
+#
+# Runs once per account, ever. `pulsar-theme init` writes the stamp itself
+# whatever it decides, including when it leaves a customised account alone
+# (its own gtk.css, accent, wallpaper, GTK or Shell theme, terminal palette or
+# btop theme -- see customised() in the engine), and `pulsar theme revert`
+# stamps too. So an existing user meets this exactly once, on the first login
+# after the update, and a user who reverted is never re-themed.
+[Unit]
+Description=Pulsar theme: first-login setup
+ConditionPathExists=!%S/pulsar-theme/init.json
+# Before gnome-session starts the Shell and the autostart apps, so they come
+# up already themed and nothing is holding the old palette.
+Before=gnome-session-pre.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/pulsar-theme init
+# Bounded, and a failure is logged rather than blocking the login. init does
+# no D-Bus app scans and its worst case is a few seconds of dconf and
+# gsettings calls; 90s is for a first boot on a slow disk. If it is killed or
+# fails anyway, init.pending tells the next login's run that what it finds
+# was written by the engine, not chosen by the user, and it finishes the job.
+TimeoutStartSec=90
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=gnome-session-pre.target
