@@ -58,7 +58,7 @@ const FILES = [
   // Committed stills: the no-WebGL and still-loading hero ground, plus the
   // gamescale icon. The one place rendered output lives in git -- silk is
   // locked, the pair is ~180KB, and re-rendering is documented beside the
-  // files. src/pages/og.png.ts also reads silk-still-dark as its background.
+  // files. src/og/render.ts also reads silk-still-dark as the share cards ground.
   //
   // The share card is NOT here any more: it is rendered at build time.
   ['site/assets-static/silk-still-dark.jpg', 'silk-still-dark.jpg'],

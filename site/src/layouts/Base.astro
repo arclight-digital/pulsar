@@ -13,6 +13,7 @@ import ThemePicker from '../components/ThemePicker.astro';
 import SiteTopBar from '../components/SiteTopBar.astro';
 import { manifest, version } from '../data/build';
 import { APP_ID, ISO_BASE, ISOS, ORG_ID, REPO } from '../data/site';
+import { cardFor, cardUrl } from '../og/cards';
 
 interface Props {
   /** carries the keywords -- a search snippet and a share card have different jobs */
@@ -49,6 +50,11 @@ const canonical = new URL(path, Astro.site).href;
 // same lockup and faces as the page rather than being an image someone
 // remembered to regenerate.
 const ogImage = new URL('/og.jpg', Astro.site).href;
+// The page's own share card, looked up by route in src/og/cards.ts, which is
+// also the list src/pages/og/[card].jpg.ts renders. cardFor throws on a route
+// with no card, so a new page fails the build until it has one.
+const card = cardFor(path);
+const cardImage = new URL(cardUrl(card), Astro.site).href;
 
 // Structured data, honest only: everything here is real and verifiable, and
 // softwareVersion names the build the nightly actually published.
@@ -150,17 +156,17 @@ const ldJson = JSON.stringify(structuredData).replace(/</g, '\\u003c');
     <meta property="og:title" content={ogTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content={ogImage} />
+    <meta property="og:image" content={cardImage} />
+    <meta property="og:image:secure_url" content={cardImage} />
+    <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta
-      property="og:image:alt"
-      content="The Pulsar mark and wordmark over the silk wallpaper: your lighthouse in the sky."
-    />
+    <meta property="og:image:alt" content={card.alt} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={ogTitle} />
     <meta name="twitter:description" content={description} />
-    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image" content={cardImage} />
+    <meta name="twitter:image:alt" content={card.alt} />
 
     <meta name="theme-color" content="#0B0E1A" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#E9EDF7" media="(prefers-color-scheme: light)" />
