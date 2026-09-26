@@ -8,14 +8,29 @@
 // #skyfade holds a snapshot of the outgoing look so backdrop switches
 // crossfade directly instead of sweeping u_look through the intermediate ones.
 //
-// The deck drives the SAME u_look uniform the OS wallpapers are rendered with:
-// four looks x two themes = the shipped set. It is hidden until a GL context
-// actually exists -- a visitor without WebGL must never see buttons that
-// silently do nothing. Theme is the top bar's toggle, not the deck's.
+// The deck is the WALLPAPER picker, and it is independent of the theme: a
+// visitor can wear Nord's colours over Pulsar's Silk. Two parts, side by side:
+//   - the palette: "Pulsar, live" (the shader) or any theme's own rendered
+//     wallpaper -- the same shader, rendered in that palette, shown as a still
+//     over the canvas;
+//   - the looks row: Silk / Leak / Satin / Holo, driving the SAME u_look
+//     uniform the OS wallpapers are rendered with. Shown for the live palette.
+// Picking a theme suggests its wallpaper until the visitor picks one; from
+// then on theme changes leave the wallpaper alone (src/scripts/wallpaper.ts).
+// Site-only: the OS's own engine pairs each theme with its wallpapers.
+//
+// Hidden until a GL context actually exists -- a visitor without WebGL must
+// never see buttons that silently do nothing. Light/dark is the top bar's
+// toggle, not the deck's.
+import { THEMES, label, variant } from '../data/themes';
+
 const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
 
-// Hero option (a) trades the look picker for its theme deck in the same spot;
-// sky.ts copes with the deck being absent.
+// Every theme that has its own rendered wallpaper. Pulsar's own is the live
+// shader; Pulsar Holo's shipped wallpaper is the live Holo look plus the mark.
+const WALLS = THEMES.filter((t) => !['pulsar', 'pulsar-holo'].includes(t.slug) && variant(t, 'dark').wall);
+
+// Hero option (a) trades this deck for its theme deck in the same spot.
 interface Props {
   deck?: boolean;
 }
@@ -24,18 +39,40 @@ const { deck = true } = Astro.props;
 
 <canvas id="sky" aria-hidden="true"></canvas>
 <canvas id="skyfade" aria-hidden="true"></canvas>
+{/* empty until a theme's wallpaper is chosen; wallpaper.ts adds the image */}
+<div class="wallstill" aria-hidden="true" data-wallstill-layer></div>
 
 {deck && (
-<div class="deck" role="group" aria-label="Backdrop" id="lookSeg" hidden>
-  <span class="deck-note">the shipped wallpapers, live</span>
-  <div class="picker">
-    {
-      LOOKS.map((name, index) => (
-        <button type="button" data-look={index} aria-pressed={index === 0 ? 'true' : 'false'}>
-          {name}
-        </button>
-      ))
-    }
+<div class="deck" role="group" aria-label="Wallpaper" id="lookSeg" hidden>
+  <span class="deck-note">wallpaper, independent of the theme</span>
+  <div class="row">
+    <label class="pal">
+      <span class="sr-only">Wallpaper palette</span>
+      <select data-wall-palette>
+        <option value="pulsar">Pulsar, live</option>
+        <optgroup label="A theme’s wallpaper">
+          {
+            WALLS.map((t) => (
+              // Only the variants the theme really has: a light-only theme's
+              // wallpaper under dark-mode text is unreadable, so in the other
+              // mode the sky stays live (wallpaper.ts).
+              <option value={t.slug} data-dark={t.variants.dark?.wall} data-light={t.variants.light?.wall}>
+                {label(t)}
+              </option>
+            ))
+          }
+        </optgroup>
+      </select>
+    </label>
+    <div class="picker" data-looks>
+      {
+        LOOKS.map((name, index) => (
+          <button type="button" data-look={index} aria-pressed={index === 0 ? 'true' : 'false'}>
+            {name}
+          </button>
+        ))
+      }
+    </div>
   </div>
 </div>
 )}
@@ -52,6 +89,22 @@ const { deck = true } = Astro.props;
   #skyfade {
     pointer-events: none;
     opacity: 0;
+  }
+  .wallstill {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.7s var(--ease-out);
+  }
+  .wallstill[data-on] {
+    opacity: 1;
+  }
+  .wallstill :global(img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .deck {
@@ -77,6 +130,36 @@ const { deck = true } = Astro.props;
     letter-spacing: 0.04em;
     color: var(--on-chip);
   }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+  .pal select {
+    appearance: auto;
+    font: inherit;
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
+    font-size: var(--label-size);
+    letter-spacing: 0.04em;
+    color: var(--on-chip);
+    background: var(--chip);
+    border: 1px solid var(--chip-line);
+    border-radius: var(--radius-full);
+    padding: var(--space-sm) var(--space-md);
+    min-height: 2.75rem;
+    backdrop-filter: blur(12px);
+    cursor: pointer;
+  }
+  .pal select:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+  }
+  .pal option,
+  .pal optgroup {
+    color: initial;
+    background: initial;
+  }
   .picker {
     display: inline-flex;
     padding: var(--space-xs);
@@ -85,6 +168,9 @@ const { deck = true } = Astro.props;
     background: var(--chip);
     border: 1px solid var(--chip-line);
     backdrop-filter: blur(12px);
+  }
+  .picker[hidden] {
+    display: none;
   }
   .picker button {
     appearance: none;
@@ -124,6 +210,14 @@ const { deck = true } = Astro.props;
     }
     .deck-note {
       display: none;
+    }
+    .row {
+      flex-direction: column;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wallstill {
+      transition: none;
     }
   }
 </style>

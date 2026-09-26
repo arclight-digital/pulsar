@@ -5,9 +5,9 @@
 import Home from '../../components/Home.astro';
 
 export function getStaticPaths() {
-  return (['a', 'b', 'c'] as const).map((v) => ({ params: { hero: `hero-${v}` }, props: { v } }));
+  return (['a', 'b', 'c1', 'c2'] as const).map((v) => ({ params: { hero: `hero-${v}` }, props: { v } }));
 }
-const { v } = Astro.props as { v: 'a' | 'b' | 'c' };
+const { v } = Astro.props as { v: 'a' | 'b' | 'c1' | 'c2' };
 ---
 
 <Home hero={v} preview />

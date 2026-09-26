@@ -31,6 +31,8 @@ export type Theme = {
   name: string;
   author: string;
   prefer: string;
+  /** TODO(phosphor-amber-assets): a provisional palette with no pictures yet */
+  placeholder?: boolean;
   variants: { dark?: Variant; light?: Variant };
 };
 

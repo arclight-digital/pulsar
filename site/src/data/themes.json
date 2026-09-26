@@ -628,6 +628,62 @@
     }
   },
   {
+    "slug": "phosphor",
+    "name": "Phosphor",
+    "author": "Pulsar",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#050a06",
+          "#0b140d",
+          "#33ff66",
+          "#6bff8f",
+          "#b8ff9e",
+          "#33ff66",
+          "#5cffa8",
+          "#2ee07a",
+          "#88ffb8",
+          "#9dffb0"
+        ],
+        "accent": "#33ff66",
+        "bg": "#050a06",
+        "deep": "#020503",
+        "raised": "#0b140d",
+        "fg": "#9dffb0"
+      }
+    },
+    "placeholder": true
+  },
+  {
+    "slug": "amber",
+    "name": "Amber",
+    "author": "Pulsar",
+    "prefer": "dark",
+    "variants": {
+      "dark": {
+        "swatch": [
+          "#0c0802",
+          "#171004",
+          "#ffb000",
+          "#ff9a1f",
+          "#ffc233",
+          "#ffb000",
+          "#ffcf66",
+          "#e89a00",
+          "#ffbe4d",
+          "#ffd27a"
+        ],
+        "accent": "#ffb000",
+        "bg": "#0c0802",
+        "deep": "#060401",
+        "raised": "#171004",
+        "fg": "#ffd27a"
+      }
+    },
+    "placeholder": true
+  },
+  {
     "slug": "alucard",
     "name": "Alucard",
     "author": "Dracula Theme (draculatheme.com), MIT",

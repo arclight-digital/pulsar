@@ -62,7 +62,12 @@ function show(detail: ThemeDetail) {
     img.alt = alt;
   });
   document.querySelectorAll('[data-preview-name]').forEach((el) => (el.textContent = detail.name));
-  document.querySelectorAll('[data-preview-cmd]').forEach((el) => el.setAttribute('code', `pulsar theme set ${detail.slug}`));
+  const cmd = `pulsar theme set ${detail.slug}`;
+  document.querySelectorAll('[data-preview-cmd]').forEach((el) => {
+    // an ARC code block takes the command as its attribute; a caption is text
+    if (el.tagName === 'ARC-CODE-BLOCK') el.setAttribute('code', cmd);
+    else el.textContent = cmd;
+  });
   document.querySelectorAll<HTMLElement>('[data-theme-tile]').forEach((b) =>
     b.setAttribute('aria-pressed', b.dataset.themeTile === detail.slug ? 'true' : 'false'),
   );
@@ -82,8 +87,18 @@ export function pick(detail: ThemeDetail) {
 export function initThemes(): void {
   document.addEventListener('pulsar:theme', (e) => show((e as CustomEvent<ThemeDetail>).detail));
   document.addEventListener('click', (e) => {
-    const tile = (e.target as HTMLElement).closest<HTMLElement>('[data-theme-tile]');
-    if (tile) pick(detailOf(tile));
+    const target = e.target as HTMLElement;
+    const tile = target.closest<HTMLElement>('[data-theme-tile]');
+    if (tile) return pick(detailOf(tile));
+    // A ‹ theme › stepper walks the gallery's own order, so it and the
+    // tiles can never disagree about what comes next.
+    const step = target.closest<HTMLElement>('[data-stepper] [data-step]');
+    if (!step) return;
+    const tiles = [...document.querySelectorAll<HTMLElement>('#themes [data-theme-tile]')];
+    if (!tiles.length) return;
+    const at = Math.max(0, tiles.findIndex((t) => t.dataset.themeTile === (current?.slug ?? tiles[0].dataset.themeTile)));
+    const next = (at + Number(step.dataset.step) + tiles.length) % tiles.length;
+    pick(detailOf(tiles[next]));
   });
   // The page's own light/dark toggle changes which accent and which shot is
   // right for the theme on show; re-apply it rather than leave a dark accent

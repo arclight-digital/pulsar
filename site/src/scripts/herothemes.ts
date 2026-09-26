@@ -49,6 +49,14 @@ export function initHeroThemes(): void {
     if (i >= 0 && i !== index) show(i);
   });
 
+  // ?theme=<slug> holds the sky on one theme -- how the review screenshots
+  // catch each frame. Only meaningful on the preview routes.
+  const fixed = new URLSearchParams(location.search).get('theme');
+  if (fixed) {
+    const i = tiles.findIndex((t) => t.dataset.themeTile === fixed);
+    if (i >= 0) show(i);
+    return;
+  }
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   timer = window.setInterval(() => {
     if (!document.hidden) show(index + 1);

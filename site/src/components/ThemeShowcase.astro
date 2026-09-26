@@ -24,7 +24,7 @@ const FACTS = [
   },
   {
     t: 'Light and dark, your call',
-    d: 'Twelve themes follow GNOME’s Dark Style switch: flip it and the theme flips with you. Dracula and Alucard are a pair instead, one dark and one light, each a theme of its own.',
+    d: 'Twelve themes follow GNOME’s Dark Style switch: flip it and the theme flips with you. Four are single-mode on purpose: Dracula and the Phosphor and Amber terminals are dark, Alucard is light.',
   },
   {
     t: 'Readable, by rule',
@@ -49,7 +49,7 @@ const FACTS = [
   <h2>Make it yours in one command</h2>
   <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
   <p class="lede">
-    Fourteen themes ship in the image, and each one changes everything you look at.
+    Sixteen themes ship in the image, and each one changes everything you look at.
     {' '}<span class="sent">A fresh install starts in Pulsar’s own. Yours is one line&nbsp;away.</span>
   </p>
 
@@ -91,8 +91,16 @@ const FACTS = [
               {...tileAttrs(t)}
             >
               <span class="wall">
-                <img class="w-dark" src={dark.wall} alt="" width="1600" height="1000" loading="lazy" decoding="async" />
-                <img class="w-light" src={light.wall} alt="" width="1600" height="1000" loading="lazy" decoding="async" />
+                {dark.wall ? (
+                  <>
+                    <img class="w-dark" src={dark.wall} alt="" width="1600" height="1000" loading="lazy" decoding="async" />
+                    <img class="w-light" src={light.wall} alt="" width="1600" height="1000" loading="lazy" decoding="async" />
+                  </>
+                ) : (
+                  // TODO(phosphor-amber-assets): drawn from the palette until
+                  // the theme's own wallpaper render lands
+                  <span class="ph" style={`--pa:${dark.accent};--pb:${dark.bg}`} />
+                )}
               </span>
               <span class="swatch" aria-hidden="true">
                 {dark.swatch.slice(2, 9).map((c) => <span style={`background:${c}`} />)}
@@ -161,8 +169,8 @@ const FACTS = [
     margin: 0 0 var(--space-xl);
     padding: 0;
     display: grid;
-    /* seven across: fourteen themes land as two even rows of seven */
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    /* eight across: sixteen themes land as two even rows of eight */
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: var(--space-md);
   }
   .tile {
@@ -211,6 +219,13 @@ const FACTS = [
     :global(:root[data-theme='auto']) .w-dark {
       display: none;
     }
+  }
+  .ph {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(120% 90% at 30% 70%, color-mix(in oklab, var(--pa) 45%, transparent), transparent 60%),
+      var(--pb);
   }
   .swatch {
     display: flex;
