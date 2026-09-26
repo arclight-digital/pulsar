@@ -26,7 +26,7 @@ the site claims it before it lands. The site's job is to present it well.
 
 ## Positioning
 
-**Public line: an agentic, atomic, stylish Linux** (2026-09-26). "Silverblue+"
+**Public line: a stylish, atomic, agentic Linux** (2026-09-26; word order set the same day: stylish first, theming leads). "Silverblue+"
 and any comparison to other distros are INTERNAL shorthand only and never
 appear on the site, in the README or in release notes; the Fedora Silverblue
 base is stated plainly where it is a technical fact (install, provenance),
