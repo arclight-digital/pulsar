@@ -192,9 +192,11 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 # What is in the images.
 #
-# The attestation on the push proves WHERE an image came from. An SBOM proves
-# WHAT IS IN IT. Provenance without contents just tells you who built the blob
-# you still cannot see into.
+# An SBOM proves WHAT IS IN an image. It is the one piece of the paper trail
+# every image carries today: the GitHub attestations stopped when the build
+# left Actions, and signing with Pulsar's own cosign key is not wired yet
+# (docs/SIGNING.md). A signature will say who built the blob; this says what
+# the blob holds.
 #
 # Scanned from LOCAL STORAGE, not by pulling the published digest back down.
 # The two are the same package set: the rechunk only re-slices layers, and

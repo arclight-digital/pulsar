@@ -1704,7 +1704,19 @@ cmd_sbom() {
 # ---------------------------------------------------------------------------
 cmd_attest() {
     local cmd; cmd=$(mf attestation)
-    [ -n "$cmd" ] || die "this image's manifest carries no attestation command"
+    # No command is the honest state of every image since the build left
+    # GitHub Actions in August: the GitHub attestations stopped, and signing
+    # with Pulsar's own cosign key is not wired yet. Say that plainly rather
+    # than print a verifier that can only fail.
+    if [ -z "$cmd" ]; then
+        printf '%s\n' \
+          "this image is not signed yet, so there is nothing to verify it against." \
+          "signing moves to Pulsar's own cosign release key, the one that already signs" \
+          "the installer ISOs: https://github.com/arclight-digital/pulsar/blob/main/keys/cosign.pub" \
+          "until then: \`pulsar sbom\` lists what is in it, and \`pulsar status\` shows the" \
+          "digest you are running, to compare with the registry's." >&2
+        return 1
+    fi
     local -a argv=(); read -ra argv <<<"$cmd"
     [ "${#argv[@]}" -gt 0 ] || die "the manifest's attestation command is empty"
     # Echoed first: the point of the command is that you can check it yourself,
@@ -2102,7 +2114,8 @@ pulsar -- manage a Pulsar system
   pulsar status            deployments: booted, staged, rollback, pins
   pulsar changelog         packages that moved in the latest published build
   pulsar sbom              this system's packages as SPDX 2.3
-  pulsar attest            print (and run) the provenance check for this image
+  pulsar attest            how to verify this image (image signing is coming;
+                           until then it says what can and cannot be checked)
 
   pulsar update            fetch and stage an update        (root)
                            through bootc, or through rpm-ostree if you have

@@ -1,5 +1,5 @@
 ARG FEDORA_VERSION=44
-# Default base is the CI-built, attested image from ghcr. Override with
+# Default base is the nightly-built image from ghcr. Override with
 # BASE_IMAGE=localhost/pulsar to test against a local vanilla build.
 ARG BASE_IMAGE=ghcr.io/arclight-digital/pulsar
 FROM ${BASE_IMAGE}:${FEDORA_VERSION}

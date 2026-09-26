@@ -14,7 +14,7 @@
 </p>
 
 Fedora Silverblue as a bootc image, rebuilt every night by an ephemeral build
-host that signs and attests what it ships. The machine that runs it never
+host, with a signed NVIDIA driver and signed installer ISOs. The machine that runs it never
 compiles anything; the last good version is always one reboot away.
 
 ```bash
@@ -210,12 +210,14 @@ keys at all.
 
 ## Every image has a paper trail
 
-```bash
-gh attestation verify oci://ghcr.io/arclight-digital/pulsar-nvidia:latest --owner arclight-digital
-```
+Every image carries an SPDX SBOM
+(`oras discover ghcr.io/arclight-digital/pulsar:latest`).
 
-Every image carries SLSA provenance and an SPDX SBOM
-(`oras discover ghcr.io/arclight-digital/pulsar:latest`). Each nightly is
+**Images are not signed yet.** They were attested by GitHub Actions until the
+build moved to its own host in August, and nothing has signed them since.
+Signing moves to Pulsar's own cosign release key: the one that already signs
+the installer ISOs, published at [`keys/cosign.pub`](keys/cosign.pub). Until
+that lands, the SBOM and the nightly diff are the paper trail. Each nightly is
 diffed against the one before it from those SBOMs — rendered at
 [pulsar.arclight.digital/changelog](https://pulsar.arclight.digital/changelog),
 served raw as [changelog.json](https://pulsar.arclight.digital/changelog.json),

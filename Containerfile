@@ -579,8 +579,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
                     mesa:$mesa, \
                     mesa_va:(if $mesava == "" then "fedora" else "freeworld" end), \
                     gamescale:$gamescale}, \
-        changelog_url:$changelog, \
-        attestation:"gh attestation verify oci://ghcr.io/arclight-digital/pulsar --owner arclight-digital"}' \
+        changelog_url:$changelog}' \
       > /usr/share/pulsar/manifest.json && \
     jq -e '.version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \
     pulsar --version && \

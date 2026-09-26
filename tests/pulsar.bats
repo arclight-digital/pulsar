@@ -94,7 +94,7 @@ JSON
     echo '{"image":"pulsar"}' > "$PULSAR_MANIFEST"
     run "$PULSAR" attest
     [ "$status" -ne 0 ]
-    [[ "$output" == *"no attestation"* ]]
+    [[ "$output" == *"not signed yet"* ]]
 }
 
 @test "manifest --json is machine readable and unstyled" {
