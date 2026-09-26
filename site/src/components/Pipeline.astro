@@ -1,8 +1,10 @@
 ---
-// The supply chain, as a trail, and then the command that checks it. A real
-// shell session rather than another input-looking row: the command wrapped
-// the way you would actually type it, plus gh's genuine output shape. The
-// button copies the one-line form.
+// The supply chain, as a trail, and then the command that shows what is
+// attached to an image. Honest about where it stands: every image carries its
+// package list (an SPDX SBOM) and is diffed nightly; the NVIDIA module is
+// signed for Secure Boot and the installer ISOs with the cosign release key;
+// the images themselves are not signed yet. Image signing with that same key
+// is coming -- until it lands, nothing here claims it.
 import { IMAGES, REPO } from '../data/site';
 
 interface Props {
@@ -15,16 +17,12 @@ const { compact = false } = Astro.props;
 const STAGES = [
   { name: 'commit', detail: 'a change lands in the public repo; that night’s build picks it up' },
   { name: 'build', detail: 'both images, on a build machine created for the night and destroyed after' },
-  { name: 'sign', detail: 'the NVIDIA driver with the key Secure Boot is told to trust; the image with cosign' },
-  { name: 'attest', detail: 'a build record (SLSA provenance) and a full package list (SPDX SBOM), attached to the image' },
-  { name: 'boot', detail: 'your machine switches to the signed image, and rolls back on its own if the new one fails its boot checks' },
+  { name: 'sign', detail: 'the NVIDIA kernel module, with the key Secure Boot is told to trust' },
+  { name: 'record', detail: 'a full package list (SPDX SBOM), attached to the image and diffed against last night’s' },
+  { name: 'boot', detail: 'your machine switches to the new image, and rolls back on its own if it fails its boot checks' },
 ];
 
-const shown = [
-  'gh attestation verify \\',
-  `  oci://${IMAGES.nvidia}:latest \\`,
-  '  --owner arclight-digital',
-].join('\n');
+const shown = `oras discover ${IMAGES.nvidia}:latest`;
 ---
 
 <div class="pipe">
@@ -41,15 +39,16 @@ const shown = [
     <arc-code-block
       class="theme-fixed-dark"
       language="bash"
-      filename="check where an image came from"
+      filename="what is attached to an image"
       code={shown}
     ></arc-code-block>
     {
       !compact && (
         <p class="hint">
-          <span class="sent">One person's laptop OS, over-engineered on purpose, MIT-licensed.</span>{' '}
-          Running someone else's signed images is a trust decision —{' '}
-          <a href={`${REPO}#two-variants-one-key`}>fork it and use your own key</a> if that's not a
+          The installer ISOs are signed with Pulsar’s cosign release key; the images are not signed
+          yet, and signing them with that same key is coming.{' '}
+          Running someone else’s images is a trust decision —{' '}
+          <a href={`${REPO}#two-variants-one-key`}>fork it and build your own</a> if that’s not a
           relationship you want.
         </p>
       )

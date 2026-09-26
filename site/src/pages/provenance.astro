@@ -4,7 +4,7 @@ import Base from '../layouts/Base.astro';
 import { IMAGES, REPO } from '../data/site';
 
 const DESCRIPTION =
-  'Every Pulsar image carries SLSA provenance and an SPDX SBOM. The builder never holds the signing keys. Verify any image from any machine you already trust.';
+  'Every Pulsar image carries its full package list as an SPDX SBOM and is diffed package by package every night. The NVIDIA module is signed for Secure Boot and the installer ISOs with Pulsar’s release key; image signing is coming.';
 
 const JSONLD = [
   {
@@ -12,7 +12,7 @@ const JSONLD = [
     headline: 'Every Pulsar image has a paper trail',
     description: DESCRIPTION,
     about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
-    author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+    author: { '@type': 'Organization', name: 'Arclight Digital LLC', url: 'https://arclight.build' },
   },
 ];
 const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
@@ -23,7 +23,7 @@ const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
     <arc-container size="lg">
       <arc-page-header border>
         <h1 slot="heading">Every image has a paper trail</h1>
-        <p slot="description">The machine that runs Pulsar never compiles anything. A build machine that exists for one night builds, signs and attests every image, and the keys that matter never touch it.</p>
+        <p slot="description">The machine that runs Pulsar never compiles anything. A build machine that exists for one night builds every image and attaches its full package list, and the keys that matter never touch it.</p>
       </arc-page-header>
 
       <section class="chapter">
@@ -36,11 +36,12 @@ const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
         <div class="two">
           <div>
             <p>
-              Every published image carries SLSA provenance. The verifying tool is not in the image
-              and does not need to be — checking provenance is something you do <em>to</em> an
-              image, from whatever machine you already trust. On a Pulsar machine,{' '}
-              <code>pulsar attest</code> prints the same line filled in for the image you booted,
-              and runs it if you happen to have the client.
+              Every published image carries its full package list as an SPDX SBOM, attached in the
+              registry, so you can read it from whatever machine you already trust:{' '}
+              <code>oras discover</code> lists it. The installer ISOs are signed with Pulsar’s cosign
+              release key. The images themselves are not signed yet; signing them with that same key
+              is coming, and this page will say so when it lands. On a Pulsar machine,{' '}
+              <code>pulsar attest</code> tells you the same about the image you booted.
             </p>
             <p>
               An SPDX SBOM ships attached to each image, and every nightly is diffed against the one
@@ -55,7 +56,7 @@ const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
             <arc-description-list class="endpoints" layout="horizontal">
               <arc-description-item term="changelog.json"><a href="/changelog.json">the night's diff, as the build wrote it</a></arc-description-item>
               <arc-description-item term="manifest.json"><a href="/manifest.json">the image's baked manifest</a></arc-description-item>
-              <arc-description-item term="cosign.pub"><a href={`${REPO}/blob/main/keys/cosign.pub`}>the release key's public half</a></arc-description-item>
+              <arc-description-item term="cosign.pub"><a href={`${REPO}/blob/main/keys/cosign.pub`}>the release key that signs the ISOs</a></arc-description-item>
             </arc-description-list>
           </div>
         </div>
