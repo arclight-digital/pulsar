@@ -20,10 +20,12 @@ PartOf=graphical-session.target
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/pulsar/pulsar-theme init
-# A theme is never worth a slow or failed login: bounded, and a failure is
-# logged and forgotten. The stamp is not written on failure, so it retries at
-# the next login.
-TimeoutStartSec=20
+# Bounded, and a failure is logged rather than blocking the login. init does
+# no D-Bus app scans and its worst case is a few seconds of dconf and
+# gsettings calls; 90s is for a first boot on a slow disk. If it is killed or
+# fails anyway, init.pending tells the next login's run that what it finds
+# was written by the engine, not chosen by the user, and it finishes the job.
+TimeoutStartSec=90
 SuccessExitStatus=0 1
 
 [Install]

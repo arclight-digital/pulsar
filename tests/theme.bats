@@ -131,3 +131,142 @@ setup() {
     [ "$status" -eq 0 ]
     ! printf '%s\n' "$output" | grep -oE '"[^"]+"' | grep -vE '\.jxl"$|^"/usr/share/backgrounds/pulsar/'
 }
+
+# --- review regressions. These drive the engine for real against a JSON
+# stand-in for dconf (PULSAR_THEME_FAKE_DCONF), so they never reach a session
+# bus and can never write the dconf of whoever runs them.
+
+fake_dconf() {
+    export PULSAR_THEME_FAKE_DCONF="${BATS_TEST_TMPDIR}/dconf.json"
+    echo '{}' > "$PULSAR_THEME_FAKE_DCONF"
+}
+key() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$PULSAR_THEME_FAKE_DCONF" "$1"; }
+setkey() { python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d[sys.argv[2]]=sys.argv[3]; json.dump(d, open(f, "w"))' "$PULSAR_THEME_FAKE_DCONF" "$1" "$2"; }
+
+@test "revert takes back only the managed block and our keys, keeping later user edits" {
+    fake_dconf
+    mkdir -p "$XDG_CONFIG_HOME/gtk-4.0" "$XDG_CONFIG_HOME/btop"
+    echo '/* mine */' > "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    printf 'color_theme = "Default"\nupdate_ms = 1500\n' > "$XDG_CONFIG_HOME/btop/btop.conf"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q 'pulsar-theme (managed' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    # the user keeps living in these files after theming
+    echo 'window { opacity: 1; }' >> "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    sed -i 's/update_ms = 1500/update_ms = 500/' "$XDG_CONFIG_HOME/btop/btop.conf"
+    python3 "$ENGINE" revert --to image >/dev/null
+    grep -q '/\* mine \*/' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    grep -q 'opacity: 1' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    ! grep -q 'pulsar-theme' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    grep -qx 'update_ms = 500' "$XDG_CONFIG_HOME/btop/btop.conf"
+    grep -qx 'color_theme = "Default"' "$XDG_CONFIG_HOME/btop/btop.conf"
+    ! grep -q theme_background "$XDG_CONFIG_HOME/btop/btop.conf"
+    # a gtk-3.0/gtk.css that did not exist before is gone again
+    [ ! -e "$XDG_CONFIG_HOME/gtk-3.0/gtk.css" ]
+}
+
+@test "revert leaves a key the user changed after theming alone" {
+    fake_dconf
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    setkey /org/gnome/desktop/interface/accent-color "'red'"
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ "$(key /org/gnome/desktop/interface/accent-color)" = "'red'" ]
+}
+
+@test "revert keeps Ptyxis profiles, including one created since" {
+    command -v ptyxis >/dev/null || [ -x /usr/bin/ptyxis ] || skip "no ptyxis here; the ptyxis target is unavailable"
+    fake_dconf
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    u=$(key /org/gnome/Ptyxis/profile-uuids | tr -d "[]' ")
+    setkey /org/gnome/Ptyxis/profile-uuids "['${u}', 'made-since']"
+    python3 "$ENGINE" revert --to image >/dev/null
+    [[ "$(key /org/gnome/Ptyxis/profile-uuids)" == *made-since* ]]
+    [ -z "$(key "/org/gnome/Ptyxis/Profiles/${u}/palette")" ]
+}
+
+@test "a two-variant theme never touches Dark Style" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(key /org/gnome/desktop/interface/color-scheme)" = "'default'" ]
+    run python3 "$ENGINE" render pulsar "${BATS_TEST_TMPDIR}/r"
+    ! [[ "$output" == *color-scheme* ]]
+    # an explicit --variant is the user asking, so that one does write it
+    python3 "$ENGINE" set pulsar --variant dark --no-restart >/dev/null
+    [ "$(key /org/gnome/desktop/interface/color-scheme)" = "'prefer-dark'" ]
+}
+
+@test "init leaves an account with its own accent alone, and never runs twice" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/accent-color "'red'"
+    python3 "$ENGINE" init >/dev/null
+    grep -q '"skipped"' "$XDG_STATE_HOME/pulsar-theme/init.json"
+    [ "$(key /org/gnome/desktop/interface/accent-color)" = "'red'" ]
+    [ ! -e "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" ]
+    run python3 "$ENGINE" init
+    [[ "$output" == *"already done"* ]]
+}
+
+@test "init after an interrupted init finishes the job instead of calling it customised" {
+    fake_dconf
+    # the killed run: the engine's own writes landed, no final stamp
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    : > "$XDG_STATE_HOME/pulsar-theme/init.pending"
+    python3 "$ENGINE" init >/dev/null
+    grep -q '"applied"' "$XDG_STATE_HOME/pulsar-theme/init.json"
+    [ ! -e "$XDG_STATE_HOME/pulsar-theme/init.pending" ]
+}
+
+@test "the engine's own earlier writes do not count as customisation" {
+    fake_dconf
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    python3 "$ENGINE" init >/dev/null
+    grep -q '"applied"' "$XDG_STATE_HOME/pulsar-theme/init.json"
+}
+
+@test "the image sets no theme colours as defaults, only the extensions" {
+    f="${REPO}/system_files/usr/share/glib-2.0/schemas/zz1-pulsar-theme.gschema.override"
+    ! grep -q '^accent-color=' "$f"
+    ! grep -q '^style-scheme=' "$f"
+    grep -q '^enabled-extensions=' "$f"
+}
+
+@test "--with flatpak is a full switch: stale files go and the target stays on" {
+    fake_dconf
+    python3 "$ENGINE" set pulsar --with flatpak --no-restart >/dev/null
+    st="$XDG_STATE_HOME/pulsar-theme/current.json"
+    grep -q '"flatpak"' "$st"
+    grep -q 'pulsar-pulsar.xml' "$st"
+    python3 "$ENGINE" set gruvbox --with flatpak --no-restart >/dev/null
+    [ ! -e "$XDG_DATA_HOME/gtksourceview-5/styles/pulsar-pulsar.xml" ]
+    python3 "$ENGINE" bg-next >/dev/null
+    grep -q '"flatpak"' "$st"
+    python3 "$ENGINE" next >/dev/null
+    grep -q '"flatpak"' "$st"
+}
+
+@test "names with & and quotes survive into TOML and the editor scheme" {
+    printf 'system: "base16"\nname: \047Tom & "Jerry"\047\nauthor: "A <b> & c"\nvariant: "dark"\npalette:\n' > "${BATS_TEST_TMPDIR}/s.yaml"
+    i=0
+    for c in 1d1f21 282a2e 373b41 969896 b4b7b4 c5c8c6 e0e0e0 ffffff cc6666 de935f f0c674 b5bd68 8abeb7 81a2be b294bb a3685a; do
+        printf '  base0%X: "#%s"\n' "$i" "$c" >> "${BATS_TEST_TMPDIR}/s.yaml"
+        i=$((i + 1))
+    done
+    python3 "$ENGINE" import base16 "${BATS_TEST_TMPDIR}/s.yaml" --name tj --into "${BATS_TEST_TMPDIR}/themes" >/dev/null
+    PULSAR_THEME_PATH="${BATS_TEST_TMPDIR}/themes" run python3 "$ENGINE" list
+    [[ "$output" == *'Tom & "Jerry"'* ]]
+    PULSAR_THEME_PATH="${BATS_TEST_TMPDIR}/themes" python3 "$ENGINE" render tj "${BATS_TEST_TMPDIR}/r" >/dev/null
+    python3 -c 'import sys, xml.etree.ElementTree as E; E.parse(sys.argv[1])' \
+        "${BATS_TEST_TMPDIR}/r/.local/share/gtksourceview-5/styles/pulsar-tj.xml"
+}
+
+@test "theme is found after global flags too" {
+    PULSAR_THEME_ENGINE="$STUB" run "$PULSAR" --json theme current
+    [ "$status" -eq 0 ]
+    [ "$output" = "current|" ]
+    PULSAR_THEME_ENGINE="$STUB" run "$PULSAR" --no-logo theme set nord --json
+    [ "$output" = "set|nord|--json|" ]
+}
+
+@test "nothing imports the engine through the deprecated load_module" {
+    ! grep -rn 'load_module(' "${REPO}/scripts" "${REPO}/tests/theme-gate"
+}

@@ -1,25 +1,12 @@
-# The theme engine's image half: every key that has a system-wide default, so
-# a brand-new account shows the Pulsar theme from its very first frame, before
-# pulsar-theme-init.service has run and on any surface the engine cannot reach
-# (the lock screen, a Flatpak, a session that never logs in twice).
-# Wallpaper and color-scheme already come from zz0. See docs/theming.md.
+# The theme engine's image half, kept to what is harmless for every account:
+# the extensions list. The theme's own colours -- the accent, Text Editor's
+# scheme -- are NOT image defaults, because a default reaches every account,
+# including the ones pulsar-theme-init.service leaves alone for having their
+# own look; init writes them into a fresh account's dconf instead. It runs
+# before the Shell starts, so a fresh account's first frame is themed anyway.
+# See docs/theming.md.
 #
-# Defaults only. A user's own dconf value always wins, and `pulsar theme
-# revert` writes GNOME's UPSTREAM values over these for anyone who wants the
-# stock desktop back -- it reads them from the schema XML, not from here.
-#
-# Sorts after zz0 on purpose, and nothing in zz0 sets these keys.
-
-[org.gnome.desktop.interface]
-# The nearest of libadwaita's nine accents to Pulsar cyan (#3ecbff) by OKLab
-# distance. The Shell, the settings portal and every Flatpak only ever see a
-# named accent; the exact hex reaches GTK through the engine's gtk.css.
-accent-color='teal'
-
-[org.gnome.TextEditor]
-# /usr/share/gtksourceview-5/styles/pulsar-pulsar{,-dark}.xml, rendered from
-# the Pulsar theme at build time. Text Editor picks the -dark one by itself.
-style-scheme='pulsar-pulsar'
+# Sorts after zz0 on purpose, and nothing in zz0 sets this key.
 
 # The gamescale indicator and the theme extension, both on by default. They
 # ship system-wide in /usr/share/gnome-shell/extensions, so this only has to

@@ -606,7 +606,9 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # design, and what each piece is for, is in docs/theming.md.
 #
 # The overlay above already landed the themes, templates, extension, units
-# and zz1 override; this installs the two executables, turns the rendered
+# and zz1 override (which only enables the extension: the theme's colours are
+# written per account by init, never as image defaults, so an account init
+# leaves alone keeps its own look); this installs the two executables, turns the rendered
 # wallpapers into JPEG XL, and asserts every piece that could otherwise fail
 # by silently doing nothing.
 #
@@ -676,16 +678,6 @@ RUN set -eu; \
     rm -rf /tmp/schemas; \
     for u in gamescale@arclight.digital pulsar-theme@arclight.digital; do \
       case "${ext}" in *"'${u}'"*) ;; *) echo "FATAL: ${u} is not in the default enabled-extensions (${ext})"; exit 1 ;; esac; \
-    done; \
-    rm -rf /tmp/themerender; \
-    HOME=/tmp/themerender XDG_CONFIG_HOME=/tmp/themerender/c XDG_DATA_HOME=/tmp/themerender/d \
-      XDG_STATE_HOME=/tmp/themerender/s /usr/libexec/pulsar/pulsar-theme render pulsar /tmp/themerender/out >/dev/null; \
-    install -m 0644 /tmp/themerender/out/.local/share/gtksourceview-5/styles/pulsar-pulsar.xml \
-                    /tmp/themerender/out/.local/share/gtksourceview-5/styles/pulsar-pulsar-dark.xml \
-                    /usr/share/gtksourceview-5/styles/; \
-    rm -rf /tmp/themerender; \
-    for f in /usr/share/gtksourceview-5/styles/pulsar-pulsar.xml /usr/share/gtksourceview-5/styles/pulsar-pulsar-dark.xml; do \
-      xmllint --noout "${f}" || { echo "FATAL: ${f} is not well-formed; Text Editor would silently fall back to Adwaita"; exit 1; }; \
     done; \
     desktop-file-validate /usr/share/applications/digital.arclight.Pulsar.ThemePicker.desktop; \
     echo "theme engine: $(/usr/libexec/pulsar/pulsar-theme list | wc -l) themes, audit clean, extension declares Shell ${SHELL_MAJOR}"

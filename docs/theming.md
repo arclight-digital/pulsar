@@ -14,7 +14,7 @@ it deliberately does not.
 | 13 themes, each dark + light | `/usr/share/pulsar/themes/<slug>/theme.toml` + `backgrounds/*.jxl` |
 | per-target templates | `/usr/share/pulsar/theme/templates/` |
 | Shell extension | `/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital` |
-| image defaults | `zz1-pulsar-theme.gschema.override`: accent, Text Editor scheme, `enabled-extensions` |
+| image default | `zz1-pulsar-theme.gschema.override`: `enabled-extensions` only |
 | first-login units | `pulsar-theme-init.service`, `pulsar-theme-notice.service` (user, `--global`) |
 | GTK3 recolouring | `adw-gtk3-theme` |
 
@@ -35,12 +35,15 @@ build if any theme fails.
 All in the user's own config, each file replaced with rename(2), all in one
 transaction:
 
-- `color-scheme` and the nearest libadwaita accent (live everywhere,
-  Flatpaks included, through the settings portal)
+- the nearest libadwaita accent (live everywhere, Flatpaks included,
+  through the settings portal). Dark Style is never touched: every shipped
+  theme has both variants and follows it. Only a one-variant theme (an
+  import) or an explicit `--variant` writes `color-scheme`
 - `~/.config/gtk-4.0/gtk.css`: libadwaita's documented colour variables in a
   marked block appended to whatever the user already has. Both variants,
   fenced in `@media (prefers-color-scheme)`, so Dark Style keeps working
-- `~/.config/gtk-3.0/gtk.css` + `gtk-theme=adw-gtk3[-dark]`
+- `~/.config/gtk-3.0/gtk.css` + `gtk-theme=adw-gtk3[-dark]`, for the scheme
+  in effect at the switch (GTK3 has no media queries)
 - a Ptyxis palette on every profile, following Dark Style
 - a GtkSourceView scheme pair; Text Editor also recolours its own window
   from it
@@ -55,10 +58,22 @@ asked (`--with flatpak`).
 ## Revert
 
 The first time the engine touches a file or key, the original goes into
-`~/.local/state/pulsar-theme/baseline/`. `revert` restores files byte for
-byte, restores keys the user had set, and writes GNOME's UPSTREAM defaults --
-read from the schema XML, not from Fedora's or Pulsar's overrides -- over
-keys that were showing the image default. The result is stock GNOME, and the
+`~/.local/state/pulsar-theme/baseline/`. What `revert` does with it depends
+on who owns the thing:
+
+- files only the engine writes (palettes, schemes, the btop theme, the Shell
+  sheets) come back byte for byte, or go if they did not exist;
+- files the user owns too take back only the engine's part and keep every
+  other line, including edits made after theming: the marked block in
+  `gtk.css`, the two `btop.conf` keys, the Text Editor keyfile key, the two
+  Flatpak filesystem entries it added;
+- a dconf key comes back to its original value -- unless the user has
+  changed it since the engine wrote it, in which case it is theirs and stays;
+- Ptyxis profiles stay (even one the engine created for a fresh account);
+  only their palette key is reset.
+
+Keys that were showing the image default get GNOME's UPSTREAM defaults, read
+from the schema XML, not from Fedora's or Pulsar's overrides. The result is stock GNOME, and the
 extension is dropped from `enabled-extensions`. `revert --to image` resets to
 the image defaults instead. `tests/theme-gate` checks the byte-and-dconf
 round trip.
@@ -68,8 +83,11 @@ round trip.
 Two halves, because neither is enough alone: image defaults cannot reach
 gtk.css, Ptyxis or btop, and a unit alone would leave the first frame stock.
 
-- `zz1-pulsar-theme.gschema.override` gives a brand-new account the Pulsar
-  accent, Text Editor scheme and extension from its very first frame.
+- `zz1-pulsar-theme.gschema.override` only enables the extension, which does
+  nothing until a stylesheet exists. The theme's colours are deliberately
+  NOT image defaults: a default reaches every account, including the ones
+  init leaves alone. init writes them into a fresh account's dconf before
+  the Shell starts, so its first frame is themed anyway.
 - `pulsar-theme-init.service` runs `pulsar-theme init` once per account,
   before the Shell starts. A fresh account gets the full theme, plus the
   picker on Super+Shift+T if nothing in that account already uses it. An
@@ -77,7 +95,10 @@ gtk.css, Ptyxis or btop, and a unit alone would leave the first frame stock.
   wallpaper, GTK or Shell theme, terminal palette or btop theme -- is left
   entirely alone.
 - Either way `init` writes `~/.local/state/pulsar-theme/init.json`, and the
-  unit is conditioned on it, so it never runs twice. `revert` writes it too,
+  unit is conditioned on it, so it never runs twice. If a run is killed
+  part-way, `init.pending` tells the next login that what it finds was
+  written by the engine, and it finishes the job; values the engine wrote
+  are never mistaken for the user's own choices. `revert` writes it too,
   so a user who reverted is never re-themed.
 - `pulsar-theme-notice.service` delivers the one notification afterwards:
   init runs before there is a Shell to show it. It is conditioned on the
