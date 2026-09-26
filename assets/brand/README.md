@@ -3,7 +3,7 @@
 ## Rationale
 - **Kept:** the core-and-satellite idea, the palette and Host Grotesk.
 - **Refined:**
-  - The trail now swells into the satellite, so satellite and trail read as one moving body. It sweeps 228° and tapers to a soft point, with no hairline and no stray dot.
+  - The trail now swells into the satellite, so satellite and trail read as one moving body. It sweeps 225°, with the satellite at 45°, and tapers to a soft point, with no hairline and no stray dot.
   - The trail is heavier and the core and satellite are larger, which sits closer to Adwaita's icon weight.
 - **Colour:** the beam's colour changes along its sweep.
   - On dark it runs violet → peri → cyan, with a white core.

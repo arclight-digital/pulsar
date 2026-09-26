@@ -575,12 +575,12 @@ PYEOF
 }
 
 @test "the art is pasted at its own width, with no margin in between" {
-    # 37 columns of art, then the two spaces paste_logo adds, then the first
+    # 36 columns of art, then the two spaces paste_logo adds, then the first
     # key. Written as an exact width because the whole point of the trim is
     # that the offset IS the mark: a regression that reinstates the glow
     # padding shows up here as a wider prefix, not as a vaguer one.
     line=$(manifest_first_line 200)
-    [[ "$line" =~ ^.{37}[[:space:]][[:space:]]image ]] || fail "not 37 columns of art: ${line}"
+    [[ "$line" =~ ^.{36}[[:space:]][[:space:]]image ]] || fail "not 36 columns of art: ${line}"
 }
 
 @test "a terminal too narrow for the art gets the readout alone" {
@@ -593,9 +593,9 @@ PYEOF
 @test "the trimmed mark is drawn on terminals the untrimmed one lost" {
     # 80 columns is the case that made the trim worth doing rather than
     # shipping a second, smaller file: the old 38-wide art needed 79 and an
-    # untrimmed 56-wide one would have needed 97. The v2 mark's 37 needs 72.
+    # untrimmed 56-wide one would have needed 97. The v2 mark's 36 needs 71.
     line=$(manifest_first_line 80)
-    [[ "$line" =~ ^.{37}[[:space:]][[:space:]]image ]] || fail "no art at 80 columns: ${line}"
+    [[ "$line" =~ ^.{36}[[:space:]][[:space:]]image ]] || fail "no art at 80 columns: ${line}"
 }
 
 @test "manifest draws the logo when asked and omits it when told not to" {
