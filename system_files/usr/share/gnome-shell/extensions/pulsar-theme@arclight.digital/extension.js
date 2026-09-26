@@ -76,8 +76,10 @@ export default class PulsarThemeExtension extends Extension {
         const theme = this._themeCtx?.get_theme();
         if (!theme)
             return;
+        // The list can hold null entries in GNOME 50 (seen in the theme gate),
+        // so every element is checked before it is touched.
         for (const f of theme.get_custom_stylesheets()) {
-            const path = f.get_path();
+            const path = f?.get_path?.();
             if (path && GLib.path_get_dirname(path) === this._dir) {
                 try {
                     theme.unload_stylesheet(f);

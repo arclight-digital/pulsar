@@ -238,6 +238,17 @@ def gate(only):
     state = eval_js(f"Main.extensionManager.lookup('{EXT}')?.state")[1]
     add("pulsar-theme extension ACTIVE", state == "1", f"state={state}")
 
+    ok, detail = extension_stress()
+    add("extension survives Dark Style flips, a switch and a revert, sheets bounded", ok, detail)
+    if not ok:
+        stop_shell()
+        report["ok"] = False
+        (SHOTS / "gate-report.json").write_text(json.dumps(report, indent=1))
+        print("\n".join(f"{'PASS' if c['ok'] else 'FAIL'}  {c['check']}" + (f"  -- {c['detail']}" if c["detail"] else "")
+                        for c in report["checks"]))
+        print(f"GATE FAIL on {report['gnome_shell']}")
+        return 1
+
     for slug, modes in theme_list().items():
         if only and slug not in only:
             continue
@@ -280,6 +291,46 @@ def gate(only):
                     for c in report["checks"]))
     print(f"GATE {'PASS' if report['ok'] else 'FAIL'} on {report['gnome_shell']}")
     return 0 if report["ok"] else 1
+
+
+SHEETS = ("(() => { const t = imports.gi.St.ThemeContext.get_for_stage(global.stage).get_theme();"
+          " return t.get_custom_stylesheets().filter(f => (f.get_path() || '').includes('/pulsar-theme/shell/')).length; })()")
+
+
+def extension_stress():
+    """The extension's reload paths, hammered: a theme swap on every Dark
+    Style flip, a switch, a revert. The Shell must keep answering, and at no
+    point may more than one of our sheets be loaded."""
+    counts = []
+    steps = [("set pulsar", lambda: pt("set", "pulsar", "--no-restart"))]
+    for i in range(6):
+        v = "'default'" if i % 2 == 0 else "'prefer-dark'"
+        steps.append((f"Dark Style -> {v}", lambda v=v: dconf("/org/gnome/desktop/interface/color-scheme", v)))
+    steps += [("set gruvbox", lambda: pt("set", "gruvbox", "--no-restart")),
+              ("revert", lambda: pt("revert", "--to", "image"))]
+    for label, fn in steps:
+        fn()
+        time.sleep(1.2)
+        ok, n = eval_js(SHEETS)
+        if not ok:
+            if not eval_js("1")[0]:
+                return False, f"Shell stopped answering after: {label}"
+            return False, f"could not count stylesheets after {label}: {n[:300]}"
+        try:
+            n = int(n.strip('"'))
+        except ValueError:
+            return False, f"could not count stylesheets after {label}: {n}"
+        counts.append(n)
+        if n > 1:
+            return False, f"{n} of our stylesheets loaded after: {label} (counts so far {counts})"
+    if counts[-1] != 0:
+        return False, f"a stylesheet is still loaded after revert (counts {counts})"
+    # revert disabled the extension for stock; the theme runs need it back
+    shutil.rmtree(pathlib.Path(os.environ["XDG_STATE_HOME"]) / "pulsar-theme", ignore_errors=True)
+    sh("dconf", "reset", "/org/gnome/shell/enabled-extensions")
+    sh("dconf", "reset", "/org/gnome/desktop/interface/color-scheme")
+    time.sleep(1.5)
+    return True, f"stylesheet counts per step: {counts}"
 
 
 def snapshot_tree():

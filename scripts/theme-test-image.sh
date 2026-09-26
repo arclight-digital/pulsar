@@ -56,7 +56,8 @@ RUN glib-compile-schemas /usr/share/glib-2.0/schemas && \\
         { echo "FATAL: \${u} is enabled --global here but missing from the user preset"; exit 1; }; \\
     done && \\
     pulsar theme list && \\
-    rm -rf /tmp/* && \\
+    dnf5 clean all && \\
+    rm -rf /tmp/* /var/cache/libdnf5 /var/cache/ldconfig /var/log/dnf5.log && \\
     bootc container lint
 EOF
 
