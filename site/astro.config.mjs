@@ -12,6 +12,13 @@ import arcDsd from './integrations/arc-dsd.mjs';
 // pre-rendered into declarative shadow DOM by the arc-dsd integration after the
 // build, so the HTML that ships is complete and styled before Lit loads.
 export default defineConfig({
+  // Off, on purpose. Astro's compressor deletes the whitespace at a source
+  // line break whenever it sits next to a tag or a {…} expression, and this
+  // site's prose wraps constantly -- so "usual job.<link>", "as one
+  // change.<code>" and "Digital LLC.<span>Support…" each shipped glued
+  // together, one at a time, as they were found. Fixing instances by hand
+  // was whack-a-mole; keeping the whitespace costs a few KB of HTML.
+  compressHTML: false,
   site: 'https://pulsar.arclight.digital',
   output: 'static',
   // Slash-less URLs, everywhere they appear: the nav, the canonical tags, the
