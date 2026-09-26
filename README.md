@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/pulsar-mark.svg" width="140" alt="">
+  <img src="assets/brand/svg/pulsar-mark.svg" width="140" alt="">
 </p>
 
 <h1 align="center">Pulsar</h1>

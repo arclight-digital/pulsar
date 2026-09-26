@@ -121,11 +121,17 @@ beside the ISOs and committed as `keys/cosign.pub`.
 
 ## Brand Commitments
 
-- Mark: `assets/brand/pulsar-mark.svg` (dark surfaces) and
-  `pulsar-mark-color-dark.svg` (light surfaces — colored arc, dark cores);
-  `pulsar-animated.svg` is the hero mark. All brand art is authored, in
-  `assets/brand/`.
-- Wordmark: PULSAR, Host Grotesk Bold, uppercase, 0.3em tracking.
+- Mark: the v2 package in `assets/brand/` (its README.md says which file
+  goes where). `svg/pulsar-mark.svg` is colour on dark, `-light` colour on
+  light (deep-violet core), `-mono` ink, `-mono-white` star. The mark is a
+  responsive family with one silhouette: the large drawing above 56px, the
+  heavier `-small` from 20 to 56px, and a 16px favicon cut with no glow. `svg/pulsar-animated-large.svg` is
+  the hero mark, `svg/pulsar-animated.svg` the top bar's; `in-os/` holds the
+  GDM logo, Plymouth watermark and app icon, drawn for the OS. All brand art
+  is authored; nothing is recoloured into a variant.
+- Wordmark: PULSAR, Host Grotesk, uppercase. The lockups set it at weight
+  650, 0.24em tracking, as outlines; live text (the site, the share card)
+  uses Host Grotesk Bold, the nearest static cut.
 - Tagline: "Your lighthouse in the sky." (the pulsar-as-cosmic-lighthouse
   metaphor, made personal; replaced "Lighthouses don't drift", which needed
   a decoder ring, which replaced "Fedora with a pulse", retired). Footer
