@@ -37,6 +37,9 @@ uniform vec2  u_dir;              // direction the light mass flows FROM (brand:
 uniform vec2  u_bloom;            // satin bloom centre
 uniform float u_beam;             // leak beam angle (brand: -0.35)
 uniform float u_quiet;            // how hard the top-right (quick settings) corner is calmed
+uniform float u_glow;             // luminescence: emissive cores, filaments, halos (0 = the plain look)
+uniform float u_signal;           // signal treatment: lit lattice, raster, edge aberration (0 = none)
+uniform float u_grain;            // grain multiplier (it is also the 8-bit dither: never 0)
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -83,6 +86,33 @@ vec3 fromLab(vec3 L) {
 }
 vec3 mixo(vec3 a, vec3 b, float t) { return fromLab(mix(toLab(a), toLab(b), clamp(t, 0.0, 1.0))); }
 vec3 grey(vec3 c, float amt) { vec3 l = toLab(c); return fromLab(vec3(l.x, l.yz * (1.0 - amt))); }
+
+// thin line with a gaussian profile; d is a distance in field units
+float line(float d, float w) { return exp(-(d * d) / (w * w)); }
+
+// Circuit lattice: a grid whose cells each carry at most one trace segment
+// (horizontal, vertical or none) and, rarely, a node. Traces are only ever
+// LIT by the glow around them, so the structure is felt, not drawn.
+float lattice(vec2 uv, float scale) {
+    vec2 g = uv * scale;
+    vec2 id = floor(g), f = fract(g);
+    float h = hash(id + 17.0);
+    float w = 0.045;
+    float lh = 1.0 - smoothstep(w * 0.5, w, abs(f.y - 0.5));
+    float lv = 1.0 - smoothstep(w * 0.5, w, abs(f.x - 0.5));
+    float seg = h < 0.30 ? lh : (h < 0.52 ? lv : 0.0);
+    float node = step(0.94, hash(id + 3.1)) * (1.0 - smoothstep(0.07, 0.11, length(f - 0.5)));
+    return max(seg * (0.55 + 0.45 * hash(id + 9.7)), node);
+}
+
+// Soft-knee highlight rolloff: identity below the knee, so the dark grounds
+// keep their exact values, and an exponential shoulder above it, so hot
+// cores bloom toward white instead of clipping flat.
+vec3 knee(vec3 x) {
+    const float k = 0.62;
+    vec3 over = max(x - k, 0.0);
+    return min(x, vec3(k)) + (1.0 - k) * (1.0 - exp(-over / (1.0 - k)));
+}
 
 vec3 holoRamp(float hx) {
     vec3 flank = u_c1 * 0.32;
@@ -202,6 +232,44 @@ void main() {
     dawn = mix(dawn, dawnS, clamp(look - 1.0, 0.0, 1.0));
     dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
 
+    // ---- luminescence + signal (both variants) -------------------------------
+    // Light that glows from within: the look above is the ground-glow; on it
+    // go emissive cores where the look is brightest, ion-trail filaments on
+    // isolines of a second warped field with a halo falloff and a touch of
+    // chromatic split, and a circuit lattice lit only by the glow around it.
+    // All of it is emission (added), tonemapped through a soft knee so the
+    // highlights bloom rather than clip.
+    float g2 = fbm(uv * 2.7 + w * 1.8 + u_seed * 0.73 + 4.1);
+    float inten = clamp(dot(night - mix(u_ga, u_gb, 0.5), vec3(0.3333)) * 2.6, 0.0, 1.0);
+    float ca = 0.0022 * u_signal;
+    vec3 fil = vec3(line(g2 - 0.52 - ca, 0.0042), line(g2 - 0.52, 0.0042), line(g2 - 0.52 + ca, 0.0042))
+             + 0.55 * vec3(line(f - 0.63 - ca, 0.0036), line(f - 0.63, 0.0036), line(f - 0.63 + ca, 0.0036));
+    float halo = line(g2 - 0.52, 0.040) + 0.5 * line(f - 0.63, 0.030);
+    float carry = 0.07 + 0.93 * smoothstep(0.05, 0.7, inten);    // trails live in the lit mass
+    float tr = lattice(uv, 26.0);
+    vec3 emit = u_c3 * fil * 0.95 * carry
+              + mixo(u_c2, u_c3, 0.5) * halo * 0.16 * carry
+              + u_c3 * pow(inten, 3.0) * 0.30
+              + mixo(u_c2, u_c3, 0.4) * tr * (0.015 + 0.30 * inten) * u_signal / max(u_glow, 0.001);
+    night = knee(night + emit * u_glow);
+
+    // light: luminous on paper reads as pearl -- a thin-film sheen where the
+    // look has colour, white-hot filaments with a tinted halo, and the
+    // lattice as the faintest ink, never glow
+    float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
+    vec3 pearl = 0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67)));
+    pearl = mixo(pearl, l2, 0.75);
+    dawn = mixo(dawn, pearl, intenD * 0.22 * u_glow);
+    float carryD = 0.10 + 0.90 * intenD;
+    dawn = mix(dawn, vec3(1.0), clamp(fil.g * 0.40 * carryD * u_glow, 0.0, 1.0));
+    dawn = mixo(dawn, l3, clamp(halo * 0.10 * carryD * u_glow, 0.0, 1.0));
+    dawn *= 1.0 - tr * 0.035 * u_signal;
+
+    // raster: a 3-pixel scanline you feel more than see
+    float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 2.0944);
+    night *= 1.0 - 0.045 * u_signal * scan;
+    dawn *= 1.0 - 0.012 * u_signal * scan;
+
     // ---- the quiet corner ----
     // Quick settings, notifications and the calendar all open from the top
     // edge, mostly top-right, and sit over the wallpaper as translucent-feeling
@@ -220,6 +288,6 @@ void main() {
     // keeps the long low-contrast gradients from banding in 8-bit
     float g = hash(gl_FragCoord.xy + fract(u_time) * 17.0) - 0.5;
     float brightness = dot(col, vec3(0.33));
-    col += g * (0.012 + 0.050 * brightness) * mix(1.0, 0.5, theme);
+    col += g * (0.012 + 0.050 * brightness) * mix(1.0, 0.5, theme) * u_grain;
     gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }

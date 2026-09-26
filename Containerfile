@@ -652,7 +652,7 @@ RUN set -eu; \
         { echo "FATAL: theme template ${t} is missing; every 'pulsar theme set' would die rendering it"; exit 1; }; \
     done; \
     themes=$(find /usr/share/pulsar/themes -name theme.toml | wc -l); \
-    [ "${themes}" -ge 14 ] || \
+    [ "${themes}" -ge 16 ] || \
       { echo "FATAL: only ${themes} themes under /usr/share/pulsar/themes"; exit 1; }; \
     if /usr/libexec/pulsar/pulsar-theme list | grep -q '^!'; then \
       /usr/libexec/pulsar/pulsar-theme list; echo "FATAL: a shipped theme does not parse"; exit 1; \

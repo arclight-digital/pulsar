@@ -234,6 +234,46 @@ THEMES = [
                dawn_bottom="#fdf6e3", dawn_top="#eee8d5"),
          ]),
 
+    # Two CRT terminals, dark only by nature. A literally monochrome palette
+    # would make red errors and green success the same colour, so every ANSI
+    # slot keeps its meaning and is only PULLED toward the phosphor: the
+    # warm hues stay recognisably warm, desaturated toward the tint. The
+    # contrast fit below then holds all of them to the usual floors.
+    dict(slug="phosphor", name="Phosphor", author="Pulsar; after P1 green-phosphor terminals", prefer="dark",
+         dark=V(pal=dict(background="#050a06", foreground="#5dff8a", foreground_dim="#3fc46a", muted="#2f7a45",
+                         selection="#0f3a1c", accent="#33ff66",
+                         red="#e38a6d", orange="#e0b55c", yellow="#c8ff5c", green="#33ff66", cyan="#66ffd0",
+                         blue="#57c8e0", magenta="#cf94b8", brown="#a8a060",
+                         bright_red="#f0a080", bright_yellow="#dcff85", bright_green="#8affaa",
+                         bright_cyan="#99ffe0", bright_blue="#85dcee", bright_magenta="#e0b0cc"),
+                background_deep="#020503", background_sunken="#030704", window="#07100a", view="#040a06",
+                headerbar="#0b1a10", sidebar="#07100a", card="#0b1a10", popover="#0f2416",
+                background_raised="#0b1a10"),
+         renders=[
+             # plasma in a phosphor tube: the strongest treatment of any theme
+             R("dark", "silk", c1="#06351a", c2="#1f9e48", c3="bright_green", seed=[7.3, -1.9], fold=2.0,
+               dir=[-0.9, -0.5], stars=0.0, desat=0.15, gain=0.95, glow=1.35, signal=1.7, down=0.04),
+             R("dark", "leak", c1="#0f5a2a", c2="green", c3="yellow", beam=-0.25, stars=0.0, desat=0.0,
+               glow=1.3, signal=1.7, seed=[2.2, 5.4]),
+         ]),
+
+    dict(slug="amber", name="Amber", author="Pulsar; after P3 amber-phosphor terminals", prefer="dark",
+         dark=V(pal=dict(background="#0a0703", foreground="#ffb000", foreground_dim="#c98a14", muted="#8a6420",
+                         selection="#3a2608", accent="#ffb000",
+                         red="#ff6a3d", orange="#ff8c1a", yellow="#ffd24a", green="#b8c94a", cyan="#a8d4b0",
+                         blue="#a3b8cc", magenta="#e38aa0", brown="#b08040",
+                         bright_red="#ff8f66", bright_yellow="#ffe07a", bright_green="#d0de70",
+                         bright_cyan="#c4e6cc", bright_blue="#c0d0e0", bright_magenta="#f0aabc"),
+                background_deep="#050301", background_sunken="#070502", window="#0e0a04", view="#080602",
+                headerbar="#1a1207", sidebar="#0e0a04", card="#1a1207", popover="#241a0a",
+                background_raised="#1a1207"),
+         renders=[
+             R("dark", "leak", c1="#7a3a00", c2="orange", c3="#ffc84a", beam=-0.20, stars=0.0, desat=0.0,
+               glow=1.3, signal=1.7, seed=[-4.1, 3.3]),
+             R("dark", "silk", c1="#6a3000", c2="orange", c3="yellow", seed=[-6.2, 2.7], fold=1.9,
+               dir=[-0.7, -0.8], stars=0.0, desat=0.0, gain=1.6, glow=1.35, signal=1.7, down=0.06),
+         ]),
+
     dict(slug="alucard", name="Alucard", author="Dracula Theme (draculatheme.com), MIT", prefer="light",
          # Dracula's light theme, from the Dracula spec (draculatheme.com/spec):
          # light only, its own theme, and it sets Light Style when chosen.

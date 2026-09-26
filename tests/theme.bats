@@ -63,10 +63,13 @@ setup() {
 @test "engine lists every shipped theme, brand first and dark-leading, none broken" {
     run python3 "$ENGINE" list
     [ "$status" -eq 0 ]
-    [ "$(printf '%s\n' "$output" | wc -l)" -ge 14 ]
+    [ "$(printf '%s\n' "$output" | wc -l)" -ge 16 ]
     ! printf '%s\n' "$output" | grep -q '^!'
-    # every theme follows Dark Style except the two upstream ships one-sided
-    [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 2 ]
+    # every theme follows Dark Style except the one-sided ones: Dracula and
+    # Alucard as upstream ships them, and the two CRT phosphors
+    [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 4 ]
+    printf '%s\n' "$output" | grep -q '^  phosphor .*\[dark\]$'
+    printf '%s\n' "$output" | grep -q '^  amber .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  dracula .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  alucard .*\[light\]$'
     [ "$(printf '%s\n' "$output" | head -1 | awk '{print $1}')" = pulsar ]
@@ -332,10 +335,34 @@ setkey() { python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d[s
 @test "the engine loads through the one shared loader" {
     run python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pulsar_theme_engine as m; e = m.load(); print(len(e.ordered_themes()))' "${REPO}/scripts"
     [ "$status" -eq 0 ]
-    [ "$output" -ge 14 ]
+    [ "$output" -ge 16 ]
     [ "$(grep -l 'def _load_engine\|SourceFileLoader(' "${REPO}"/scripts/* "${REPO}"/tests/theme-gate/*.py | grep -vc pulsar_theme_engine.py)" -eq 0 ]
 }
 
 @test "the gate fails when no report is written" {
     grep -q 'no gate-report.json was written' "${REPO}/tests/theme-gate/gate.sh"
+}
+
+@test "the phosphor themes keep every ANSI colour telling its meaning apart" {
+    run python3 - "$ENGINE" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+bad = []
+for slug in ("phosphor", "amber"):
+    v = e.load_theme(slug).variants["dark"]
+    names = ["red", "green", "yellow", "blue", "magenta", "cyan"]
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            la, lb = v[a].oklab(), v[b].oklab()
+            d = sum((x - y) ** 2 for x, y in zip(la, lb)) ** 0.5
+            if d < 0.08:
+                bad.append(f"{slug}: {a}/{b} only {d:.3f} apart")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+    [ "$status" -eq 0 ]
+    run python3 "$ENGINE" audit phosphor amber
+    [ "$status" -eq 0 ]
 }

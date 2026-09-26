@@ -339,13 +339,15 @@ def find_themes():
 
 def ordered_themes():
     """Slugs in presentation order -- `list`, the picker, next/prev: the
-    brand first, then dark-leading themes, then light-only ones, each by
-    name. Dark first because that is this desktop's default."""
+    brand first, then themes that follow Dark Style, then dark-only ones,
+    then light-only ones, each by name. Dark first because that is this
+    desktop's default."""
     rank = {}
     for slug, path in find_themes().items():
         try:
             t = Theme(path)
-            rank[slug] = (slug not in ("pulsar", "pulsar-holo"), t.prefer != "dark", t.name.lower())
+            kind = 0 if t.both else (1 if t.prefer == "dark" else 2)   # both, dark-only, light-only
+            rank[slug] = (slug not in ("pulsar", "pulsar-holo"), kind, t.name.lower())
         except Exception:
             rank[slug] = (True, True, slug)
     return sorted(rank, key=rank.get)
