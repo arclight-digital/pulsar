@@ -55,6 +55,7 @@ need() { have "$1" || die "required tool not found: $1"; }
 # they were given: `pulsar doctor tomorrow` should not run doctor today.
 no_args() {
     local c=$1; shift
+    case "${1:-}" in -h|--help) usage; exit 0 ;; esac
     [ $# -eq 0 ] || die "'${c}' takes no arguments (got: $*)"
 }
 
@@ -271,8 +272,22 @@ check_greenboot() {
                "automatic rollback is not armed"
         return
     fi
-    local result; result=$(systemctl show -p Result --value greenboot-healthcheck.service 2>/dev/null || echo unknown)
-    if [ "$result" = "success" ] || [ "$result" = "" ]; then
+    if [ "$enabled" = "disabled" ]; then
+        record greenboot warn "greenboot is installed but disabled" \
+               "automatic rollback is not armed: sudo systemctl enable greenboot-healthcheck.service"
+        return
+    fi
+    # Result=success is also what a unit that has NEVER RUN reports, so on
+    # its own it read a greenboot that had not run (or was still running,
+    # early in boot) as a green boot. The unit is RemainAfterExit, so after a
+    # real pass it sits active/exited.
+    local result active
+    result=$(systemctl show -p Result --value greenboot-healthcheck.service 2>/dev/null) || result=unknown
+    active=$(systemctl show -p ActiveState --value greenboot-healthcheck.service 2>/dev/null) || active=unknown
+    if [ "$result" = "success" ] && [ "$active" != "active" ]; then
+        record greenboot warn "health checks have not finished this boot (${active:-unknown})" \
+               "journalctl -u greenboot-healthcheck.service"
+    elif [ "$result" = "success" ] || [ "$result" = "" ]; then
         record greenboot ok "health checks passed" "boot marked green"
     else
         # A red boot means greenboot is counting down to a rollback.
@@ -444,7 +459,9 @@ check_flatpak_gl() {
 check_flathub() {
     have flatpak || { record flathub warn "flatpak is not installed"; return; }
     local opts
-    opts=$(flatpak remotes --columns=name,options 2>/dev/null | awk '$1=="flathub"{ $1=""; print }')
+    # `|| true`: under pipefail a failing flatpak here aborted the whole
+    # doctor, and --json printed nothing at all.
+    opts=$(flatpak remotes --columns=name,options 2>/dev/null | awk '$1=="flathub"{ $1=""; print }') || true
     if [ -z "$opts" ]; then
         record flathub warn "flathub remote is not configured"
     elif printf '%s' "$opts" | grep -q filter; then
@@ -526,6 +543,12 @@ check_updates() {
     have rpm-ostree || { record updates warn "rpm-ostree not available"; return; }
     local js line staged pinned total ver lay
     js=$(rpm-ostree status --json 2>/dev/null || echo '{}')
+    # A failed read used to come out as "no update staged, 0 deployment(s)":
+    # health nobody verified. A booted system always has at least one.
+    if ! printf '%s' "$js" | jq -e '(.deployments // []) | length > 0' >/dev/null 2>&1; then
+        record updates warn "could not read deployment status" "rpm-ostree status --json"
+        return
+    fi
     # one jq pass for all five numbers, not five passes over the same JSON
     line=$(printf '%s' "$js" | jq -r '
       [ ([.deployments[]? | select(.staged == true)] | length),
@@ -552,8 +575,8 @@ check_disk() {
     local root=/sysroot
     [ -d "$root" ] || root=/
     local pct avail
-    pct=$(df --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc '0-9')
-    avail=$(df -h --output=avail "$root" 2>/dev/null | tail -1 | tr -d ' ')
+    pct=$(df --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc '0-9') || true
+    avail=$(df -h --output=avail "$root" 2>/dev/null | tail -1 | tr -d ' ') || true
     [ -n "$pct" ] || { record disk warn "could not read disk usage for ${root}"; return; }
     # A bootc system needs room to stage a whole new image. Under ~10GB free
     # an upgrade starts failing in ways that look like network errors.
@@ -1214,12 +1237,16 @@ cmd_rollback() { need_root rollback; need bootc; exec bootc rollback "$@"; }
 
 cmd_pin() {
     need_root pin; need ostree
-    # Index 0 is the booted deployment for `ostree admin pin`.
-    ostree admin pin 0 && printf 'pinned the booted deployment; it will survive GC\n'
+    # `booted`, not index 0. Index 0 is the staged deployment when there is
+    # one (ostree then refuses: "Cannot pin staged deployment"), and after a
+    # rollback or a pick from GRUB the booted one is index 1 -- so `0` pinned
+    # the OTHER deployment and reported the booted one pinned, at exactly the
+    # moment a pin is wanted.
+    ostree admin pin booted && printf 'pinned the booted deployment; it will survive GC\n'
 }
 cmd_unpin() {
     need_root unpin; need ostree
-    ostree admin pin --unpin 0 && printf 'unpinned the booted deployment\n'
+    ostree admin pin --unpin booted && printf 'unpinned the booted deployment\n'
 }
 
 # ---------------------------------------------------------------------------

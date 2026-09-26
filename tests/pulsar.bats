@@ -1087,3 +1087,67 @@ gl_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="flatpak-g
     [[ "$output" == missing* ]]
     [ ! -s "$NOTIFY_LOG" ]
 }
+
+# ---------------------------------------------------------------------------
+# doctor: reporting health it did not see.
+# ---------------------------------------------------------------------------
+
+stub_bin() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    cat > "${STUB}/$1"
+    chmod +x "${STUB}/$1"
+    PATH="${STUB}:${PATH}"
+    export PATH
+}
+
+@test "doctor: a greenboot that has not run is not a green boot" {
+    # Result=success is also what a unit that never ran reports.
+    stub_bin systemctl <<'EOF'
+#!/bin/sh
+case "$*" in
+    *is-enabled*greenboot*) echo enabled ;;
+    *"-p Result"*greenboot*) echo success ;;
+    *"-p ActiveState"*greenboot*) echo inactive ;;
+    *) exit 1 ;;
+esac
+EOF
+    run bash -c "'$PULSAR' doctor --json | jq -r '.checks[] | select(.id==\"greenboot\") | .status + \" \" + .summary'"
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"not finished"* ]]
+}
+
+@test "doctor: a disabled greenboot says rollback is not armed" {
+    stub_bin systemctl <<'EOF'
+#!/bin/sh
+case "$*" in *is-enabled*) echo disabled; exit 1 ;; esac
+exit 1
+EOF
+    run bash -c "'$PULSAR' doctor --json | jq -r '.checks[] | select(.id==\"greenboot\") | .status + \" \" + .detail'"
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"not armed"* ]]
+}
+
+@test "doctor: a failing flatpak still yields a whole json report" {
+    stub_bin flatpak <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+    run "$PULSAR" doctor --json
+    echo "$output" | jq -e '.checks | length > 3'
+}
+
+@test "doctor: unreadable deployment status is a warning, not 'no update staged'" {
+    stub_bin rpm-ostree <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+    run bash -c "'$PULSAR' doctor --json | jq -r '.checks[] | select(.id==\"updates\") | .status + \" \" + .summary'"
+    [[ "$output" == "warn could not read deployment status" ]]
+}
+
+@test "commands that take no arguments still answer --help" {
+    run "$PULSAR" doctor --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pulsar doctor"* ]]
+}
