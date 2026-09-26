@@ -1467,3 +1467,16 @@ REPO_AGENTS_MD="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/AGENTS.md"
         [[ "$output" == *"$v"* ]] || fail "usage() does not mention ${v}"
     done
 }
+
+@test "REGRESSION: report completes when there is no user bus" {
+    # ssh, a bare TTY, a container: `systemctl --user` exits nonzero there,
+    # and under pipefail that ended the whole report with no output at all.
+    stub_bin systemctl <<'EOF'
+#!/bin/sh
+case "$*" in *--user*) exit 1 ;; esac
+exit 0
+EOF
+    run "$PULSAR" report
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.units' >/dev/null
+}

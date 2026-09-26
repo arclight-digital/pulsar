@@ -1538,8 +1538,12 @@ json_or_null() {
 # is the first field; --no-legend drops the header and footer.
 failed_units_json() {
     have systemctl || { printf '[]'; return 0; }
+    # `|| true`: with no user bus (ssh, a bare TTY, a container)
+    # `systemctl --user` exits nonzero, pipefail carries that out of the
+    # pipeline, and set -e ended the whole report in silence at the caller.
+    # jq has still printed its (empty) array by then.
     systemctl "$@" --failed --plain --no-legend --no-pager 2>/dev/null \
-        | awk '$1 ~ /\./ { print $1 }' | jq -R -s -c 'split("\n") | map(select(length > 0))'
+        | awk '$1 ~ /\./ { print $1 }' | jq -R -s -c 'split("\n") | map(select(length > 0))' || true
 }
 
 # $1 = system|user, $2 = line cap, $3 = JSON array of extra units.
