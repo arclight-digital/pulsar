@@ -13,13 +13,24 @@
 # completely normal state -- no wifi in range, ethernet unplugged, on a
 # plane -- and a REQUIRED network check would roll back a perfectly healthy
 # deployment for it, repeatedly, with no way to stop it from the air.
+#
+# WAITS UP TO A MINUTE FIRST. greenboot runs about eight seconds into boot,
+# and with NetworkManager-wait-online disabled nothing holds it for Wi-Fi, so
+# a single look failed on every boot on cherenkov: the check ran at 11:18:33
+# and the link came up at 11:18:36. A warning that fires on every healthy boot
+# teaches everyone to ignore it. Nothing waits on greenboot except
+# boot-complete.target -- not the display manager, not login -- so the wait
+# costs nothing visible.
 set -euo pipefail
 
-if [ -n "$(ip route show default 2>/dev/null)" ]; then
-    echo "default route present:"
-    ip route show default
-    exit 0
-fi
+for _ in $(seq 1 30); do
+    if [ -n "$(ip route show default 2>/dev/null)" ]; then
+        echo "default route present:"
+        ip route show default
+        exit 0
+    fi
+    sleep 2
+done
 
-echo "no default route -- system booted without usable networking"
+echo "no default route after 60s -- system booted without usable networking"
 exit 1

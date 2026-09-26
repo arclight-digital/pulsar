@@ -21,6 +21,13 @@
 # deliberately set for themselves. This saves what was actually there and puts
 # that back.
 #
+# "What was there" includes NOTHING. `gsettings get` answers with the default
+# when the user never set the key, and writing that back made it an explicit
+# user value: the default of the day, frozen in dconf, outranking every image
+# default after it. cherenkov carried GNOME's old 5000 that way, so the
+# image's 20000 never reached it. So an unset key is saved as `default` and
+# released with a reset, which is exactly "put back what was there".
+#
 # SELF-HEALING, because a hold can leak. If gamemoded is killed outright the
 # end hook never runs and the key stays at 0 -- note that an ordinary game
 # CRASH does not do this, since gamemoded's reaper thread notices the dead
@@ -54,6 +61,12 @@ hold)
     else
         current=$(gsettings get "$SCHEMA" "$KEY" 2>/dev/null) || \
             die_soft "could not read ${SCHEMA} ${KEY}"
+        # dconf answers only with the user's own value, empty when unset.
+        # Without dconf the old behaviour stands: save what gsettings says.
+        if command -v dconf >/dev/null 2>&1 \
+           && [ -z "$(dconf read "/org/gnome/mutter/${KEY}" 2>/dev/null)" ]; then
+            current=default
+        fi
         mkdir -p "$STATE_DIR" || die_soft "could not create ${STATE_DIR}"
         printf '%s\n' "$current" > "$STATE" || die_soft "could not write ${STATE}"
     fi
@@ -66,6 +79,15 @@ release)
     saved=$(cat "$STATE" 2>/dev/null)
     # Refuse to restore a value that is not a gsettings uint32. A corrupt
     # state file must not be written back into dconf.
+    if [ "$saved" = default ]; then
+        if gsettings reset "$SCHEMA" "$KEY" 2>/dev/null; then
+            rm -f "$STATE"
+            echo "alive-timeout: frozen-window check back to the default"
+        else
+            die_soft "could not reset ${KEY}; state kept at ${STATE} for the next release"
+        fi
+        exit 0
+    fi
     case "$saved" in
         "uint32 "[0-9]*) ;;
         [0-9]*)          saved="uint32 ${saved}" ;;

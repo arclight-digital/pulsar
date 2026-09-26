@@ -31,11 +31,20 @@ setup() {
 [ -n "$GS_FAIL" ] && exit 1
 case "$1" in
     get) cat "$GS_VALUE" ;;
-    set) printf 'uint32 %s\n' "$4" > "$GS_VALUE" ;;
+    set) printf 'uint32 %s\n' "$4" > "$GS_VALUE"; : > "$GS_VALUE.user" ;;
+    reset) printf 'uint32 20000\n' > "$GS_VALUE"; rm -f "$GS_VALUE.user" ;;
     *)   exit 1 ;;
 esac
 EOF
     chmod +x "${STUB}/gsettings"
+    # dconf answers only for a key the user has set: $GS_VALUE.user marks it.
+    : > "${GS_VALUE}.user"
+    cat > "${STUB}/dconf" <<'EOF'
+#!/bin/sh
+[ -e "$GS_VALUE.user" ] && cat "$GS_VALUE"
+exit 0
+EOF
+    chmod +x "${STUB}/dconf"
     PATH="${STUB}:${PATH}"
     export PATH
 }
@@ -139,4 +148,18 @@ value() { cat "$GS_VALUE"; }
     [ -n "$v" ]
     [ "$v" -gt 5000 ]
     [ "$v" -ne 0 ]
+}
+
+@test "REGRESSION: a key the user never set is reset on release, not frozen" {
+    # gsettings get answers the default for an unset key; writing that back
+    # pinned it in dconf, over every later image default.
+    rm -f "${GS_VALUE}.user"
+    printf 'uint32 20000\n' > "$GS_VALUE"
+    run "$SCRIPT" hold
+    [ "$status" -eq 0 ]
+    run "$SCRIPT" release
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"back to the default"* ]]
+    [ ! -e "${GS_VALUE}.user" ]
+    [ ! -f "$STATE" ]
 }

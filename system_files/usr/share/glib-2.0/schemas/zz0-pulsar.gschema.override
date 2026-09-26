@@ -68,7 +68,6 @@ button-layout='appmenu:minimize,maximize,close'
 # gamemode's [custom] hooks calling /usr/libexec/pulsar/alive-timeout.sh, and
 # handed back when it exits. See /etc/gamemode.ini.
 [org.gnome.mutter]
-experimental-features=['scale-monitor-framebuffer']
 check-alive-timeout=20000
 
 # The gamescale indicator, on by default. It ships system-wide in

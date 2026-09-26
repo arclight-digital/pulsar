@@ -7,9 +7,15 @@
 # Shipped in /usr/lib, not written into ~/.config by `gamescale --install-unit`
 # as the upstream installer does: an image-native unit is enabled for every
 # user, survives a rebase, and cannot rot out of sync with the /usr/bin script
-# it calls. Running the installer's version too is harmless -- it writes the
-# same unit name into a higher-priority directory, so one of them wins rather
-# than both running.
+# it calls.
+#
+# An installer copy is NOT harmless alongside this one. `gamescale
+# --install-unit` writes the same unit name into ~/.config/systemd/user, which
+# outranks /usr/lib, and that unit runs the HOME copy of the script -- so the
+# whole home install shadows the image's, and an image update that fixes
+# gamescale changes nothing for that user. cherenkov carried a home 2.0.0
+# that way. `install.sh --uninstall` removes the home copy and hands back to
+# this one; `gamescale --doctor` reports the shadowing from 2.0.2 on.
 Description=Restore display scale left over by gamescale
 After=graphical-session.target
 PartOf=graphical-session.target
