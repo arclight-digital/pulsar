@@ -18,6 +18,8 @@
 //   c2 split, calmer still: the screenshot and a single ‹ theme › stepper,
 //      no row at all; "all sixteen" jumps to the gallery.
 //   On phones both c options drop to the stepper.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import Sky from './Sky.astro';
 import { version } from '../data/build';
 import { IMAGES, REPO } from '../data/site';
@@ -27,6 +29,27 @@ interface Props {
   variant?: 'a' | 'b' | 'c1' | 'c2';
 }
 const { variant = 'b' } = Astro.props;
+
+// Where the flywheel pivots: the mark's CORE, read from the shipped SVG at
+// build time rather than typed in as a percentage. Each logo drop moves the
+// core inside its cropped viewBox (v16 put it at 46.83% 52.49%, v18 at
+// 49.60% 52.24%), and a hard-coded origin left over from the last drop makes
+// the core orbit instead of spin. The light mark is staged onto this file's
+// box (stage-assets.mjs), so the one origin serves both themes. The build
+// runs from site/, so the repo root is one level up.
+const MARK_SVG = join(process.cwd(), '..', 'assets', 'brand', 'svg', 'pulsar-animated-large.svg');
+function coreOrigin(svg: string): string {
+  const box = svg.match(/<svg\b[^>]*\bviewBox="([^"]+)"/)?.[1]?.split(/[\s,]+/).map(Number);
+  const core = svg.match(/<circle\b[^>]*\bclass="pl-core"[^>]*>/)?.[0];
+  const cx = Number(core?.match(/\bcx="([^"]+)"/)?.[1]);
+  const cy = Number(core?.match(/\bcy="([^"]+)"/)?.[1]);
+  if (!box || box.length !== 4 || !Number.isFinite(cx) || !Number.isFinite(cy)) {
+    throw new Error(`cannot find the viewBox and .pl-core circle in ${MARK_SVG}`);
+  }
+  const [x, y, w, h] = box;
+  return `${(((cx - x) / w) * 100).toFixed(2)}% ${(((cy - y) / h) * 100).toFixed(2)}%`;
+}
+const markOrigin = coreOrigin(readFileSync(MARK_SVG, 'utf8'));
 
 const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
 const first = THEMES[0];
@@ -61,6 +84,7 @@ const first = THEMES[0];
       data-light="/assets/pulsar-mark-light.svg"
       class="mark"
       src="/assets/pulsar-animated-large.svg"
+      style={`--mark-origin: ${markOrigin}`}
       alt=""
       width="180"
       height="180"
@@ -221,12 +245,13 @@ const first = THEMES[0];
     height: 180px;
     width: 180px;
     margin-bottom: var(--space-lg);
-    /* The core, not the box centre. v2's files are cropped to their art, so
-       the core sits at (128, 128) in a viewBox of 24.5 12 221.01 221.01:
-       (128 - 24.5) / 221.01 and (128 - 12) / 221.01. Spun about 50% 50% the
-       core would orbit a ~9px circle. The light mark is staged on the same
-       box (stage-assets.mjs), so one origin serves both themes. */
-    transform-origin: 46.83% 52.49%;
+    /* The core, not the box centre: the files are cropped to their art, so
+       the core is off-centre in its box and a spin about 50% 50% makes it
+       orbit. --mark-origin is computed from the SVG at build time (see the
+       frontmatter), so a new logo drop cannot leave it pointing at the old
+       core. The light mark is staged on the same box, so one origin serves
+       both themes. */
+    transform-origin: var(--mark-origin, 50% 50%);
   }
 
   /* Easter egg: the mark takes a flick and spins down like a flywheel. The
