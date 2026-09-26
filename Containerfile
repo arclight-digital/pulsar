@@ -96,6 +96,10 @@ RUN for attempt in 1 2 3; do \
 #
 # Retried like every other rpmfusion fetch, and for the same reason. Missing
 # is not retried: an absent version will not appear in the next 45 seconds.
+# And NOTHING here fails the build except a full disk. Any other reason the
+# install will not go through -- a dependency skew, a Fedora rebuild at the
+# same Mesa version that rpmfusion has not matched -- ends in the same skip
+# after three attempts. That is the promise above, kept on every path.
 # ---------------------------------------------------------------------------
 RUN mesa="$(rpm -q --qf '%{VERSION}' mesa-filesystem.x86_64)" && \
     echo "installed Mesa: ${mesa}" && \
@@ -111,7 +115,8 @@ RUN mesa="$(rpm -q --qf '%{VERSION}' mesa-filesystem.x86_64)" && \
         echo "WARNING: rpmfusion has no mesa-va-drivers-freeworld for Mesa ${mesa} yet; AMD video decode stays on the CPU this build" >&2; \
         break; \
       fi; \
-      [ "${attempt}" -lt 3 ] || { echo "mesa-va-drivers-freeworld unreachable after 3 attempts" >&2; exit 1; }; \
+      [ "${attempt}" -lt 3 ] || \
+        { echo "WARNING: mesa-va-drivers-freeworld ${mesa} would not install after 3 attempts; AMD video decode stays on the CPU this build" >&2; break; }; \
       echo "attempt ${attempt} failed (rpmfusion free); retrying" >&2; \
       sleep $((attempt * 15)); \
     done

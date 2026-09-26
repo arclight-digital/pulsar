@@ -229,6 +229,13 @@ base_moved() {
   # this, the next night skips and nvidia stays behind until quay happens to
   # move, while the healthcheck reports a clean skip. Fails open with the
   # rest: an nvidia tag that cannot be read is a mismatch, and builds.
+  #
+  # THE COST, accepted with open eyes: an nvidia half that fails EVERY night
+  # (an akmod that will not build against a new kernel) makes every night
+  # rebuild and republish an unchanged vanilla too -- empty changelogs until
+  # nvidia is fixed. Each of those nights also fails the nvidia build loudly,
+  # which is the point: the old behaviour went silent after the first. The
+  # real fix is an nvidia-only rebuild, which build.sh cannot do yet.
   local version nv_version
   version="$(label_of "${published}" org.opencontainers.image.version)"
   if [ -n "${version}" ]; then
