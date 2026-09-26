@@ -29,10 +29,23 @@ in the table -- they are written by hand from DESIGN.md.
 import json
 import pathlib
 import sys
-from importlib.machinery import SourceFileLoader
+import importlib.machinery
+import importlib.util
+
+
+def _load_engine(path):
+    """Import the engine (a script with no .py suffix) the non-deprecated way:
+    SourceFileLoader.load_module goes away in Python 3.15."""
+    loader = importlib.machinery.SourceFileLoader("pulsar_theme", str(path))
+    spec = importlib.util.spec_from_loader("pulsar_theme", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-pt = SourceFileLoader("pulsar_theme", str(REPO / "scripts" / "pulsar-theme")).load_module()
+pt = _load_engine(REPO / "scripts" / "pulsar-theme")
 IMP = REPO / "assets" / "themes" / "imports"
 OUT = REPO / "system_files" / "usr" / "share" / "pulsar" / "themes"
 

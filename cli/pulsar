@@ -2189,9 +2189,21 @@ EOF
 }
 
 main() {
-    # Before the global flag loop, which would otherwise eat --json and
-    # --help that belong to the engine.
-    if [ "${1:-}" = theme ]; then shift; cmd_theme "$@"; exit $?; fi
+    # `theme` is found before the global flag loop, which would otherwise eat
+    # --json and --help that belong to the engine. Global flags BEFORE it
+    # (`pulsar --json theme current`) are this CLI's, and like every other
+    # command that does not use them, theme ignores them; --help/--version
+    # there still mean what they always did.
+    local i=0 a
+    for a in "$@"; do
+        i=$((i + 1))
+        case "$a" in
+            -h|--help|-V|--version) break ;;
+            -*) continue ;;
+            theme) shift "$i"; cmd_theme "$@"; exit $? ;;
+            *) break ;;
+        esac
+    done
     JSON=0
     local args=() seen_cmd=0
     for a in "$@"; do

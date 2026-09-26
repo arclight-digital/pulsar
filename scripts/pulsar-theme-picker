@@ -3,12 +3,12 @@
 
 A libadwaita window of theme cards (wallpaper + palette strip). Enter or a
 click applies through `pulsar-theme set`; Escape closes. Meant to be bound to
-a GNOME custom keybinding (see REPORT.md). PyGObject ships in the image.
+a GNOME custom keybinding (see docs/theming.md). PyGObject ships in the image.
 """
 import os
 import pathlib
-import subprocess
 import sys
+import threading
 
 import gi
 
@@ -18,9 +18,22 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from importlib.machinery import SourceFileLoader  # noqa: E402
+import importlib.machinery  # noqa: E402
+import importlib.util  # noqa: E402
 
-pt = SourceFileLoader("pulsar_theme", str(HERE / "pulsar-theme")).load_module()
+
+def _load_engine(path):
+    """Import the engine (a script with no .py suffix) the non-deprecated way:
+    SourceFileLoader.load_module goes away in Python 3.15."""
+    loader = importlib.machinery.SourceFileLoader("pulsar_theme", str(path))
+    spec = importlib.util.spec_from_loader("pulsar_theme", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+
+pt = _load_engine(HERE / "pulsar-theme")
 
 CSS = b"""
 .theme-card { border-radius: 14px; padding: 0; }
@@ -106,14 +119,46 @@ class Picker(Adw.ApplicationWindow):
         return box
 
     def on_pick(self, _flow, child):
-        # the switch itself never prompts from here; the picker owns the question
-        subprocess.run([str(HERE / "pulsar-theme"), "set", child.slug, "--no-restart"])
-        restart, manual = pt.open_gtk_apps()
+        # Everything slow runs off the main thread: `set` is a subprocess we
+        # wait on asynchronously, and the scan for open apps (D-Bus calls,
+        # seconds on a busy session) runs in a worker thread. The window stays
+        # responsive, and a failed switch is shown, not swallowed.
+        if getattr(self, "_busy", False):
+            return
+        self._busy = True
+        self.set_sensitive(False)
+        proc = Gio.Subprocess.new([str(HERE / "pulsar-theme"), "set", child.slug, "--no-restart"],
+                                  Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
+        proc.communicate_utf8_async(None, None, self._set_done, child.slug)
+
+    def _set_done(self, proc, res, slug):
+        try:
+            _ok, out, _err = proc.communicate_utf8_finish(res)
+        except GLib.Error as e:
+            out = e.message
+        if not proc.get_successful():
+            self.set_sensitive(True)
+            self._busy = False
+            d = Adw.AlertDialog(heading="Could not apply the theme",
+                                body=(out or "").strip()[-600:] or f"pulsar-theme set {slug} failed")
+            d.add_response("close", "Close")
+            d.present(self)
+            return
+        threading.Thread(target=self._scan, daemon=True).start()
+
+    def _scan(self):
+        try:
+            restart, manual = pt.open_gtk_apps()
+        except Exception:
+            restart, manual = [], []
+        GLib.idle_add(self._ask, restart, manual)
+
+    def _ask(self, restart, manual):
         if not restart or pt.conf_get("restart-prompt") != "on":
             if restart or manual:
                 self.toast(pt.NOTE)
-            GLib.timeout_add(1200, self.close)
-            return
+            GLib.timeout_add(600, self.close)
+            return False
         names = ", ".join(a["name"] for a in restart)
         body = f"{names} will quit and reopen. Apps with unsaved work will ask first."
         if manual:
@@ -129,14 +174,17 @@ class Picker(Adw.ApplicationWindow):
 
         def done(_d, resp):
             if resp == "restart":
-                pt.restart_apps(restart)
+                # A separate process, so it outlives the picker: restarting
+                # waits for each app to exit, and the picker (a libadwaita
+                # window holding the old palette itself) closes right away
+                # rather than showing a half-switched self.
+                Gio.Subprocess.new([str(HERE / "pulsar-theme"), "restart-apps", "--yes"], Gio.SubprocessFlags.NONE)
             elif resp == "never":
                 pt.conf_put("restart-prompt", "off")
-            # libadwaita windows (this one included) take gtk.css at startup,
-            # so the picker closes rather than showing a half-switched self
-            self.close()
+            GLib.timeout_add(300, self.close)
         d.connect("response", done)
         d.present(self)
+        return False
 
     def toast(self, text):
         print(f"pulsar-theme: {text}")

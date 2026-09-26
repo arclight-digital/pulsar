@@ -26,11 +26,24 @@ import argparse
 import os
 import pathlib
 import sys
-from importlib.machinery import SourceFileLoader
+import importlib.machinery
+import importlib.util
+
+
+def _load_engine(path):
+    """Import the engine (a script with no .py suffix) the non-deprecated way:
+    SourceFileLoader.load_module goes away in Python 3.15."""
+    loader = importlib.machinery.SourceFileLoader("pulsar_theme", str(path))
+    spec = importlib.util.spec_from_loader("pulsar_theme", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
 
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 REPO = pathlib.Path(__file__).resolve().parent.parent
-pt = SourceFileLoader("pulsar_theme", str(REPO / "scripts" / "pulsar-theme")).load_module()
+pt = _load_engine(REPO / "scripts" / "pulsar-theme")
 SHADER = (REPO / "assets" / "shaders" / "theme.frag").read_text()
 THEMES = REPO / "system_files" / "usr" / "share" / "pulsar" / "themes"
 PREVIEW = REPO / ".preview"
@@ -50,24 +63,12 @@ def color(v, spec):
         b, t = rest.rsplit("@", 1)
         ca, cb, t = color(v, a), color(v, b), float(t)
         la, lb = ca.oklab(), cb.oklab()
-        return from_oklab([x + (y - x) * t for x, y in zip(la, lb)])
+        return pt.from_oklab(*(x + (y - x) * t for x, y in zip(la, lb)))
     if spec.startswith("#"):
         return pt.Color.parse(spec)
     if spec in ("white", "black"):
         return pt.WHITE if spec == "white" else pt.BLACK
     return v[spec]
-
-
-def from_oklab(L):
-    l_ = L[0] + 0.3963377774 * L[1] + 0.2158037573 * L[2]
-    m_ = L[0] - 0.1055613458 * L[1] - 0.0638541728 * L[2]
-    s_ = L[0] - 0.0894841775 * L[1] - 1.2914855480 * L[2]
-    l, m, s = l_ ** 3, m_ ** 3, s_ ** 3
-    lin = (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-           -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-           -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
-    f = lambda c: 12.92 * c if c <= 0.0031308 else 1.055 * max(c, 0) ** (1 / 2.4) - 0.055
-    return pt.Color(*(f(c) for c in lin))
 
 
 def uniforms(theme, spec):

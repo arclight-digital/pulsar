@@ -199,8 +199,10 @@ def theme_list():
 
 
 def palette(slug, mode):
-    code = ("import json; from importlib.machinery import SourceFileLoader as L; "
-            f"pt=L('pt','{PT[0]}').load_module(); v=pt.load_theme('{slug}').variants['{mode}']; "
+    code = ("import json, importlib.machinery as M, importlib.util as U; "
+            f"ld=M.SourceFileLoader('pt','{PT[0]}'); pt=U.module_from_spec(U.spec_from_loader('pt', ld)); "
+            "ld.exec_module(pt); "
+            f"v=pt.load_theme('{slug}').variants['{mode}']; "
             "print(json.dumps({k: v[k].hex for k in ('background','background_deep','window','view','accent','popover')}))")
     return json.loads(sh("python3", "-c", code, env=ENV).stdout)
 
