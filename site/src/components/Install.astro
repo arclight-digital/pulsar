@@ -35,12 +35,12 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
       ></arc-code-block>
     </div>
     <p class="hint">
-      Then reboot. The nvidia module comes signed —{' '}
+      Then reboot. The nvidia image's driver comes signed —{' '}
       {
         compact ? (
-          <a href="/install#secure-boot">enrol the cert once</a>
+          <a href="/install#secure-boot">enrol its key once</a>
         ) : (
-          <a href="#secure-boot">enrol the cert once</a>
+          <a href="#secure-boot">enrol its key once</a>
         )
       }{' '}
       and keep Secure&nbsp;Boot&nbsp;on.

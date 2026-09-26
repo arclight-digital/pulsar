@@ -12,33 +12,32 @@ const { compact = false } = Astro.props;
 const LAUNCH_OPTION = 'gamescale %command%';
 
 const MODES = [
-  { what: 'The panel itself', res: '2560×1600', cost: 'what the hardware has' },
-  { what: 'XWayland, scale factor 1', res: '1920×1200', cost: 'upscaled to fit; soft' },
-  { what: 'XWayland, scale factor 2', res: '3840×2400', cost: '2.25× the pixels, same image' },
+  { what: 'The screen itself', res: '2560×1600', cost: 'what the hardware has' },
+  { what: 'Scaled, XWayland factor 1', res: '1920×1200', cost: 'stretched to fit, and soft' },
+  { what: 'Scaled, XWayland factor 2', res: '3840×2400', cost: '2.25× the pixels, then shrunk' },
 ];
 ---
 
 <div class="gs">
   <div class="gs-copy">
     <p class="gs-deck">
-      Run a game at&nbsp;1&times; so XWayland hands it the panel&rsquo;s real mode, then put the
-      desktop back when it&nbsp;exits.
+      Games get the screen&rsquo;s real resolution. The desktop gets its scaling back when
+      they&nbsp;quit.
     </p>
     <p class="lede">
-      Under GNOME fractional scaling, XWayland is handed an integer multiple of your{' '}
-      <em>logical</em>{' '}
-      resolution, never the panel&rsquo;s real&nbsp;mode. At 133% on a 2560&times;1600 display no
-      factor lands on the hardware, and a borderless-fullscreen game takes whatever the
-      desktop&nbsp;reports.
+      With GNOME&rsquo;s fractional scaling on, an X11 game is handed a whole-number multiple of
+      your <em>scaled</em> resolution, never the screen&rsquo;s own. At 133% on a
+      2560&times;1600 laptop no multiple lands on the hardware, so a borderless game renders too
+      small and gets stretched, or too big and gets&nbsp;shrunk.
     </p>
 
     <table class="modes">
       <caption class="sr-only">Resolution reported to an XWayland game at each scale factor</caption>
       <thead>
         <tr>
-          <th scope="col">What the game is handed</th>
+          <th scope="col">What the game is given</th>
           <th scope="col">Resolution</th>
-          <th scope="col">Cost</th>
+          <th scope="col">What you see</th>
         </tr>
       </thead>
       <tbody>
@@ -54,7 +53,7 @@ const MODES = [
         <tr class="is-native">
           <th scope="row">With <strong>gamescale</strong></th>
           <td class="res">2560&times;1600</td>
-          <td class="verdict">the panel&rsquo;s real mode</td>
+          <td class="verdict">the screen&rsquo;s own pixels, one to one</td>
         </tr>
       </tbody>
     </table>
@@ -65,16 +64,16 @@ const MODES = [
       class="theme-fixed-dark"
      
       language="bash"
-      filename="steam"
+      filename="Steam launch options"
       code={LAUNCH_OPTION}
     ></arc-code-block>
     <p>
-      Scale goes to 1.0 for the lifetime of that one process, font and cursor sizes are compensated
-      so the desktop stays usable, and everything goes back when the game&nbsp;exits.
+      Scaling drops to 100% for as long as that one game runs. Text and cursor sizes are bumped to
+      match, so the desktop stays usable behind it, and everything goes back when the game&nbsp;exits.
     </p>
     <p>
-      Including when it doesn&rsquo;t exit cleanly: a watchdog, a state file on disk, and a login
-      reconcile unit mean a crash or a <code>SIGKILL</code> still gives you your desktop&nbsp;back.
+      Even when it doesn&rsquo;t exit cleanly: a watchdog, a state file on disk and a check at
+      login mean a crash or a <code>SIGKILL</code> still gives you your desktop&nbsp;back.
     </p>
     {
       compact ? (

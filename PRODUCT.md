@@ -87,7 +87,7 @@ beside the ISOs and committed as `keys/cosign.pub`.
 ## Capabilities and Constraints
 
 - Astro, static output. Components are ARC UI (`@arclux/arc-ui`, Arclight's
-  own Lit web-component library, v4.2.2 as of 2026-09-12), rendered to
+  own Lit web-component library, v4.7.0 as of 2026-09-26), rendered to
   declarative shadow DOM at build time and hydrated on the client, the way
   arcui.dev itself does. This relaxes the earlier zero-client-framework rule
   (user decision, 2026-09-12): the Lit runtime ships. The page must still

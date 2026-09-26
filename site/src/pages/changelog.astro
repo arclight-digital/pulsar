@@ -29,7 +29,7 @@ const JSONLD = [
     <arc-container size="lg">
       <arc-page-header border>
         <h1 slot="heading">What changed last night</h1>
-        <p slot="description">Every build is diffed against the one before it, package by package, from the SBOMs attached to the images themselves.</p>
+        <p slot="description">Each new image compared with the one before it, package by package, from the package list signed into both. Generated, not written.</p>
         <arc-badge slot="aside" variant="primary" class="mono">{version}</arc-badge>
       </arc-page-header>
 
@@ -45,7 +45,7 @@ const JSONLD = [
                 <p class="lead-tx">
                   <span class="lead-pkg">
                     {lead.label}
-                    {extra > 0 && <span class="lead-with">+{extra}</span>}
+                    {extra > 0 && <span class="lead-with">+{extra} related</span>}
                   </span>
                   <span class="lead-ver" aria-hidden="true">
                     <Version delta={lead.delta} from={lead.from} to={lead.to} />
@@ -62,14 +62,14 @@ const JSONLD = [
             {
               digest.fromDigest && digest.toDigest && (
                 <>
+                  <span class="dim">image</span>
                   <span>{digest.fromDigest}</span>
                   <span class="dim" aria-hidden="true">→</span>
                   <span>{digest.toDigest}</span>
-                  <span class="dim" aria-hidden="true">·</span>
                 </>
               )
             }
-            <time datetime={changelog.generated}>{changelog.generated}</time>
+            <span><span class="dim">diffed</span> <time datetime={changelog.generated}>{changelog.generated}</time></span>
           </p>
           {/* Filled by src/scripts/beacon.ts when the newest nightly built
               nothing, which is the night this heading would otherwise be
@@ -81,10 +81,10 @@ const JSONLD = [
       <section class="chapter">
         <Ledger />
         <p class="hint">
-          The full diff is <a href="/changelog.json">changelog.json</a> — one row per package, the
-          way the build wrote it. The SBOM ships attached to the&nbsp;image:{' '}
-          <code>oras discover {IMAGES.vanilla}:latest</code>. On the machine, it is{' '}
-          <code>pulsar changelog</code>.
+          Every row, unsummarised: <a href="/changelog.json">changelog.json</a>. The package list
+          it was computed from ships attached to the&nbsp;image:{' '}
+          <code>oras discover {IMAGES.vanilla}:latest</code>.
+          On a Pulsar machine, <code>pulsar changelog</code> prints the same&nbsp;list.
         </p>
       </section>
     </arc-container>
@@ -128,7 +128,7 @@ const JSONLD = [
   .prov {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-sm);
+    gap: var(--space-sm) var(--space-md);
     font-size: var(--text-xs);
     color: var(--text-secondary);
     margin: 0;

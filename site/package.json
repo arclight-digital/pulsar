@@ -23,7 +23,7 @@
     "esbuild@0.28.1": true
   },
   "dependencies": {
-    "@arclux/arc-ui": "^4.2.2",
+    "@arclux/arc-ui": "^4.7.0",
     "@arclux/arc-ui-icons": "^4.2.0",
     "@astrojs/sitemap": "^3.7.4",
     "@lit-labs/ssr": "^4.1.0",

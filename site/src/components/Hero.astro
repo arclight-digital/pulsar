@@ -35,9 +35,9 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
     </h1>
     <p class="tagline">Your lighthouse in the sky.</p>
     <p class="sub">
-      <span class="sent">An immutable Fedora for gaming and development.</span> Games get the
-      panel&rsquo;s real resolution instead of a fractional-scaled one, the system is the same
-      every&nbsp;boot, and rollback is just a&nbsp;reboot.
+      <span class="sent">An immutable Fedora for gaming and development.</span> Games get your
+      screen&rsquo;s full resolution even with fractional scaling on, every boot runs the same
+      system, and a bad update is one reboot from&nbsp;undone.
     </p>
 
     {/* The one number that proves the nightly is real, worn in the hero. It
@@ -71,10 +71,15 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
       ></arc-code-block>
     </div>
 
+    {/* One button: installing is the action. The other two are places to
+        read, so they are links, and a phone gets one pill instead of two
+        stacked at different widths. */}
     <div class="actions">
       <arc-button href="/install" variant="primary" size="lg">Install</arc-button>
-      <arc-button href="#changelog" variant="secondary" size="lg">What changed last night</arc-button>
-      <a class="srclink" href={REPO}>Browse the source&nbsp;→</a>
+      <p class="links">
+        <a href="#changelog">What changed last night&nbsp;↓</a>
+        <a href={REPO}>Browse the source&nbsp;→</a>
+      </p>
     </div>
   </div>
 </header>
@@ -285,17 +290,28 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
 
   .actions {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
     gap: var(--space-md);
   }
-  .srclink {
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-xs) var(--space-lg);
+    margin: 0;
+  }
+  .links a {
     color: inherit;
     opacity: 0.85;
+    text-decoration: none;
+    border-bottom: 1px solid currentColor;
+    padding-block: var(--space-xs);
+    transition: opacity 0.2s var(--ease-out), text-shadow 0.2s var(--ease-out);
   }
-  .srclink:hover {
+  .links a:hover {
     opacity: 1;
+    text-shadow: var(--glow-xs);
   }
 
   /* The belt to spin.ts's braces: the script never adds the class under

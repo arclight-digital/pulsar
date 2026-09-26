@@ -121,12 +121,18 @@ figcaption {
   font-size: var(--text-lg);
   color: var(--text-secondary);
   max-width: 62ch;
+  margin-bottom: var(--space-lg);
 }
 
 .hint {
   color: var(--text-muted);
   font-size: var(--text-sm);
   max-width: 62ch;
+}
+/* a closing note under a list or a grid is its own beat, not the list's
+   last line */
+.chapter > .hint {
+  margin-top: var(--space-lg);
 }
 
 .mono {
@@ -152,6 +158,13 @@ arc-code-block {
 
 /* Section rhythm: one scale, more air above a heading than below it. The
    line between chapters is ARC's glow hairline, not a border. */
+/* An inner page's h1 sat at ARC's --heading-size (--text-xl), a step BELOW
+   the --text-2xl chapter h2s under it, so every inner page read upside down.
+   The header's own tokens are the knob, not its parts. */
+arc-page-header {
+  --heading-size: var(--text-3xl);
+  --body-size: var(--text-lg);
+}
 .chapter {
   position: relative;
   padding-block: var(--space-2xl) var(--space-xl);

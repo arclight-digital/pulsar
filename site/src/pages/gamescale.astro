@@ -3,7 +3,7 @@ import Gamescale from '../components/Gamescale.astro';
 import Base from '../layouts/Base.astro';
 
 const DESCRIPTION =
-  'gamescale runs a game at 1× so XWayland hands it the panel’s real mode, then puts the desktop back when it exits — including when it doesn’t exit cleanly.';
+  'gamescale gives a game your screen’s real resolution under fractional scaling, then puts the desktop back when it quits — even when it doesn’t quit cleanly.';
 
 const FLATPAK_ERR =
   '$ flatpak run --command=sh --filesystem=/usr/bin/gamescale:ro com.valvesoftware.Steam\nF: Not sharing "/usr/bin/gamescale" with sandbox: Path "/usr" is reserved by Flatpak';
@@ -25,7 +25,7 @@ const SETUP = 'pulsar setup gamescale --platform steam';
       <arc-page-header border>
         <img slot="above" class="gs-icon" src="/assets/gamescale.svg" alt="" width="48" height="48" />
         <h1 slot="heading">gamescale</h1>
-        <p slot="description">The panel’s real resolution, for one game at a time.</p>
+        <p slot="description">Your screen’s real resolution, for one game at a time.</p>
       </arc-page-header>
 
       <section class="chapter">
@@ -55,9 +55,9 @@ const SETUP = 'pulsar setup gamescale --platform steam';
         <div class="two">
           <div>
             <p>
-              For <strong>Flatpak</strong> launchers it is not enough, and the reason is categorical
-              rather than a papercut. Flatpak reserves <code>/usr</code> for the runtime and refuses
-              to share the host's:
+              For <strong>Flatpak</strong> launchers, Steam included, it is not enough, and no
+              setting can make it enough. Flatpak reserves <code>/usr</code> for its own runtime
+              and refuses to share the host's:
             </p>
             <arc-code-block class="theme-fixed-dark" language="bash" filename="flatpak" code={FLATPAK_ERR}></arc-code-block>
             <p>

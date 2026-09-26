@@ -13,11 +13,11 @@ interface Props {
 const { compact = false } = Astro.props;
 
 const STAGES = [
-  { name: 'commit', detail: 'push to main; the next nightly ships it' },
-  { name: 'build', detail: 'both images, every night, on an ephemeral build host' },
-  { name: 'sign', detail: 'the kernel module keyed to the shipped MOK cert; the image digest with cosign' },
-  { name: 'attest', detail: 'SLSA provenance and an SPDX SBOM attached on ghcr' },
-  { name: 'boot', detail: 'bootc switches to the attested image; greenboot checks the boot' },
+  { name: 'commit', detail: 'a change lands in the public repo; that night’s build picks it up' },
+  { name: 'build', detail: 'both images, on a build machine created for the night and destroyed after' },
+  { name: 'sign', detail: 'the NVIDIA driver with the key Secure Boot is told to trust; the image with cosign' },
+  { name: 'attest', detail: 'a build record (SLSA provenance) and a full package list (SPDX SBOM), attached to the image' },
+  { name: 'boot', detail: 'your machine switches to the signed image, and rolls back on its own if the new one fails its boot checks' },
 ];
 
 const shown = [
@@ -41,7 +41,7 @@ const shown = [
     <arc-code-block
       class="theme-fixed-dark"
       language="bash"
-      filename="verify the provenance"
+      filename="check where an image came from"
       code={shown}
     ></arc-code-block>
     {

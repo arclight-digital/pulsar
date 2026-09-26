@@ -116,6 +116,16 @@ const spoken =
   .ver {
     font-size: var(--text-sm);
   }
+  /* A phone cannot fit most name/version pairs on one line, and letting the
+     short ones stay inline made the column jump row to row. Every row takes
+     two lines there, so the versions form one left edge. */
+  @media (max-width: 40rem) {
+    .line {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-xs);
+    }
+  }
   .members {
     list-style: none;
     margin: 0 0 var(--space-sm);

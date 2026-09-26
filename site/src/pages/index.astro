@@ -31,8 +31,8 @@ const DESCRIPTION =
         <h2>What changed last night</h2>
         <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
         <p class="lede">
-          Every build is diffed against the one before it, package by package, from the SBOMs
-          attached to the images themselves. <span class="sent">Nothing here is written by&nbsp;hand.</span>
+          Each new image is compared with the one before it, package by package, using the package
+          list signed into both. <span class="sent">This list is generated, not&nbsp;written.</span>
         </p>
         {/* The night in one line. On a quiet night that line is the news. */}
         <div class="lead">
@@ -41,7 +41,7 @@ const DESCRIPTION =
             {
               lead && !digest.baseline && !digest.quiet && (
                 <>
-                  {extra > 0 && <arc-badge size="sm" class="mono">+{extra} {extra === 1 ? 'package' : 'packages'}</arc-badge>}
+                  {extra > 0 && <arc-badge size="sm" class="mono">+{extra} related {extra === 1 ? 'package' : 'packages'}</arc-badge>}
                   <span class="lead-ver" aria-hidden="true">
                     <Version delta={lead.delta} from={lead.from} to={lead.to} />
                   </span>
@@ -55,13 +55,14 @@ const DESCRIPTION =
             {
               digest.fromDigest && digest.toDigest && (
                 <>
+                  <span class="dim">image</span>
                   <span>{digest.fromDigest}</span>
                   <span class="dim" aria-hidden="true">→</span>
                   <span>{digest.toDigest}</span>
                 </>
               )
             }
-            <arc-time-ago datetime={changelog.generated}></arc-time-ago>
+            <span><span class="dim">diffed</span> <arc-time-ago datetime={changelog.generated}></arc-time-ago></span>
           </p>
           {/* Filled by src/scripts/beacon.ts when the newest nightly built
               nothing, which is the night this heading would otherwise be
@@ -70,8 +71,8 @@ const DESCRIPTION =
         </div>
         <Ledger />
         <p class="hint">
-          The full diff is <a href="/changelog.json">changelog.json</a> — one row per package, the
-          way the build wrote it. On the machine it is <code>pulsar changelog</code>.
+          Every row, unsummarised: <a href="/changelog.json">changelog.json</a>.
+          On a Pulsar machine, <code>pulsar changelog</code> prints the same&nbsp;list.
         </p>
       </section>
 
@@ -79,8 +80,8 @@ const DESCRIPTION =
         <h2>Every image has a paper trail</h2>
         <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
         <p class="lede">
-          That diff was not written. It was computed from the SBOMs attached to two images the
-          build host signed and attested, and you can run the same check on any of them.
+          Every image is built on a throwaway machine, signed, and published with a record of how it
+          was built and what went into it. <span class="sent">You can check any of it from your own&nbsp;terminal.</span>
         </p>
         <Pipeline compact />
         <p class="more"><a href="/provenance">How the pipeline works →</a></p>
@@ -104,9 +105,9 @@ const DESCRIPTION =
     </arc-container>
 
     <arc-cta-banner headline="Your lighthouse in the sky." class="close">
-      One command on Silverblue or Kinoite, one download on a fresh machine, the Secure Boot key
-      enrolled once. The machine that runs it never compiles anything.
-      <arc-button slot="actions" href="/install" variant="primary" size="md">The whole install</arc-button>
+      Already on Silverblue or Kinoite, it is one command. On a new machine, it is one download.
+      The NVIDIA image asks you to trust one Secure Boot key, once.
+      <arc-button slot="actions" href="/install" variant="primary" size="md">Install guide</arc-button>
       <arc-button slot="actions" href="https://github.com/arclight-digital/pulsar" variant="secondary" size="md">Browse the source</arc-button>
     </arc-cta-banner>
   </main>

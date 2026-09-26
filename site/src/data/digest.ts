@@ -366,28 +366,28 @@ export function arithmetic(d: Digest = digest): string {
   const parts: string[] = [];
   if (d.packages > 0) {
     const upstream = d.packages - d.rebuiltPackages;
-    let sentence = `${d.packages} ${plural(d.packages, 'package')} moved`;
+    let sentence = `${d.packages} ${plural(d.packages, 'package')} changed`;
     if (d.transitions !== d.packages) {
-      sentence += `, in ${d.transitions} distinct ${plural(d.transitions, 'transition')}`;
+      sentence += ` in ${d.transitions} distinct ${plural(d.transitions, 'update')}, because related packages move together`;
     }
     if (d.rebuiltPackages > 0) {
       sentence +=
         upstream === 0
           ? d.packages === 1
-            ? ' — a rebuild at the same upstream version'
-            : ' — all of them rebuilds at the same upstream version'
-          : ` — ${upstream} to a new upstream version, ${d.rebuiltPackages} rebuilt at the same one`;
+            ? ' — rebuilt by Fedora with no new version'
+            : ' — all of them rebuilt by Fedora with no new version'
+          : ` — ${upstream} to a new version, ${d.rebuiltPackages} rebuilt by Fedora at the same one`;
     }
     parts.push(`${sentence}.`);
   }
   const joined = d.added.length;
   const left = d.removed.length;
   if (joined > 0 && left > 0) {
-    parts.push(`${joined} ${plural(joined, 'package')} joined the image and ${left} left it.`);
+    parts.push(`${joined} ${plural(joined, 'package was', 'packages were')} added and ${left} removed.`);
   } else if (joined > 0) {
-    parts.push(`${joined} ${plural(joined, 'package')} joined the image.`);
+    parts.push(`${joined} ${plural(joined, 'package was', 'packages were')} added.`);
   } else if (left > 0) {
-    parts.push(`${left} ${plural(left, 'package')} left the image.`);
+    parts.push(`${left} ${plural(left, 'package was', 'packages were')} removed.`);
   }
   return parts.join(' ');
 }

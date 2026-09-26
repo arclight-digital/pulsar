@@ -142,7 +142,7 @@ components:
 
 **Creative North Star: "The Lighthouse Ledger"**
 
-Pulsar's site is a nightly build log wearing the OS's own wallpaper. The world is ARC UI's (Arclight's Lit component library, v4.2.2), handed Pulsar's palette through ARC's two-color contract and its two typefaces through ARC's font roles; everything else, from the glow vocabulary to the spacing scale to the type contexts, is inherited from ARC and not restated here. What is Pulsar's own is the ink ground, the shader sky, the terminal chip family that stays dark in both themes, and the diff typography that makes a version transition readable at a glance.
+Pulsar's site is a nightly build log wearing the OS's own wallpaper. The world is ARC UI's (Arclight's Lit component library, v4.7.0), handed Pulsar's palette through ARC's two-color contract and its two typefaces through ARC's font roles; everything else, from the glow vocabulary to the spacing scale to the type contexts, is inherited from ARC and not restated here. What is Pulsar's own is the ink ground, the shader sky, the terminal chip family that stays dark in both themes, and the diff typography that makes a version transition readable at a glance.
 
 The mood is dry and inspectable. The hero is not a tagline but a package name at display size; proof is shown as terminals and code blocks rendering real commands and real outputs; the ledger is a ruled list of monospace rows, not cards. Emphasis is light rather than weight: the moving part of a version number glows in the accent, the one row that is the answer lifts to primary and then to accent, and everything shared or secondary is thinned toward ghost. Depth is tonal and luminous (ARC's `--glow-*`), never a drop shadow.
 
@@ -246,7 +246,7 @@ About twenty ARC elements are registered (skip-link, top-bar, navigation-menu, n
 ### Buttons
 - **Shape:** ARC's (`--radius-md`).
 - **Primary:** `<arc-button variant="primary" size="lg">` for Install in the hero; accent fill under the contract.
-- **Secondary:** `<arc-button variant="secondary" size="lg">` for "The full diff". Renders outline-first as ARC ships it (open cosmetic item, see Don'ts).
+- **Secondary:** `<arc-button variant="secondary">` for "Browse the source" in the home page's closing section and "How gamescale works". Renders outline-first as ARC ships it (open cosmetic item, see Don'ts). The hero has no secondary button: Install is its one button, and "What changed last night" and "Browse the source" sit under it as text links, so a phone never stacks two pills of different widths.
 - **Tertiary:** a plain `<a>` in inherited colour at 0.85 opacity ("Browse the source →"), and `.more` links under a chapter (accent, underline on hover only).
 - **Icon:** `<arc-icon-button variant="ghost" size="md">` for the GitHub link beside `<arc-theme-toggle icon-only>`.
 

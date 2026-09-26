@@ -5,31 +5,46 @@ import Manifest from './Manifest.astro';
 ---
 
 <div class="inside">
-  <div class="copy">
-    <p>
-      <strong>Gamescope</strong>, gamemode, and MangoHud are in the image; split-lock mitigation is
-      off and the map count is raised because games want both. <strong>ntsync</strong> is loaded and
-      handed to the seat user, so Proton can use it where the build supports it. Flathub
-      comes&nbsp;unfiltered.
-    </p>
-    <p>
-      <span class="sent">Every boot is checked.</span> If the desktop does not come up three times
-      running, the machine rolls itself back to the previous deployment without being&nbsp;asked.
-    </p>
-    <p>
-      <strong>scx_bpfland</strong> takes over scheduling, because 8P+16E with no SMT is exactly where
-      stock EEVDF places threads badly — and it is gated on the kernel actually being able to load
-      it, checked at build and again at&nbsp;boot.
-    </p>
-    <p>
-      For work: distrobox for any userland, libvirt/KVM for real&nbsp;machines. Apps are
-      Flatpaks; <span class="ns">the image is the&nbsp;OS.</span>
-    </p>
-    <p>
-      The NVIDIA open module is compiled against the image's exact kernel and signed, so
-      Secure&nbsp;Boot stays&nbsp;on.
-    </p>
-  </div>
+  {/* A ruled list, the site's house container: each row names what the thing
+      does for you, then how. The manifest beside it is the proof. */}
+  <dl class="facts">
+    <div class="fact">
+      <dt>Games run as they should</dt>
+      <dd>
+        Gamescope, GameMode and MangoHud are built in. ntsync is there for Proton, split-lock
+        mitigation is off and the memory-map limit is raised, because games want all three.
+      </dd>
+    </div>
+    <div class="fact">
+      <dt>A bad update undoes itself</dt>
+      <dd>
+        Every boot is health-checked. If the desktop fails to come up three times running, the
+        machine goes back to the previous version without being&nbsp;asked.
+      </dd>
+    </div>
+    <div class="fact">
+      <dt>Scheduling for hybrid CPUs</dt>
+      <dd>
+        <code>scx_bpfland</code> places threads across performance and efficiency cores where the
+        kernel can load it. Where it cannot, the stock scheduler runs instead of nothing; the
+        manifest's <code>scheduler_btf</code> line says which this build&nbsp;got.
+      </dd>
+    </div>
+    <div class="fact">
+      <dt>Ready for work</dt>
+      <dd>
+        distrobox for any Linux userland, libvirt/KVM for virtual machines. Apps are Flatpaks, with
+        Flathub unfiltered; <span class="ns">the image is the&nbsp;OS.</span>
+      </dd>
+    </div>
+    <div class="fact">
+      <dt>NVIDIA with Secure Boot on</dt>
+      <dd>
+        The open NVIDIA driver is built for the image's exact kernel and signed, so Secure Boot
+        stays&nbsp;on.
+      </dd>
+    </div>
+  </dl>
   <Manifest />
 </div>
 
@@ -37,14 +52,34 @@ import Manifest from './Manifest.astro';
   .inside {
     display: grid;
     grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
-    gap: var(--space-xl);
+    gap: var(--space-2xl);
     align-items: start;
   }
-  .copy {
+  .facts {
+    margin: 0;
     max-width: 58ch;
+    border-bottom: 1px solid var(--border-subtle);
   }
-  .copy p:last-child {
-    margin-bottom: 0;
+  .fact {
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .fact:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  dt {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-md);
+    line-height: var(--heading-lh);
+    color: var(--text-primary);
+    margin-bottom: var(--space-xs);
+  }
+  dd {
+    margin: 0;
+    color: var(--text-secondary);
+    text-wrap: pretty;
   }
   @media (max-width: 56rem) {
     .inside {

@@ -38,9 +38,9 @@ const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'
         <h2>Enrol the key, once</h2>
         <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
         <p class="lede">
-          The nvidia variant's kernel module is signed with Pulsar's key so Secure&nbsp;Boot can
-          stay on. Your firmware has to be told to trust that key, and that is a one-time
-          conversation with MokManager.
+          The nvidia image's driver is signed with Pulsar's key so Secure&nbsp;Boot can stay on.
+          Your firmware has to be told to trust that key once, through a blue screen called
+          MokManager on the next&nbsp;boot.
         </p>
         <ol class="steps">
           <li>
@@ -73,13 +73,13 @@ const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'
           </li>
           <li>
             <div class="step-body">
-            <h3>Take the driver</h3>
+            <h3>Switch to the nvidia image</h3>
             <arc-code-block class="theme-fixed-dark" language="bash" filename="switch" code={TAKE}></arc-code-block>
             </div>
           </li>
           <li>
             <div class="step-body">
-            <h3>Check it</h3>
+            <h3>Check the driver loaded</h3>
             <arc-code-block class="theme-fixed-dark" language="bash" filename="check" code={CHECK}></arc-code-block>
             </div>
           </li>
@@ -100,13 +100,15 @@ const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'
         <div class="two">
           <div>
             <p>
-              Stock Silverblue behaviour, on purpose. GNOME Software notices and tells you; it
-              installs when you choose to restart. bootc's own auto-update timer is left disabled
-              deliberately — it reboots on its own.
+              You are told, and nothing installs itself. A few minutes after you log in, and every
+              six hours after that, Pulsar checks whether a newer build is published and sends one
+              desktop notification per build.
             </p>
             <p>
-              Pulsar rebuilds nightly, so kernels, security updates, and driver bumps arrive as a
-              normal update notification. Impatient: <code>sudo pulsar update</code>.
+              <code>sudo pulsar update</code> fetches it, and it takes effect on your next restart.
+              GNOME Software's automatic updates and bootc's update timer are both off on purpose:
+              the first cannot read an image with layered packages, and the second reboots on
+              its&nbsp;own.
             </p>
           </div>
           <div>

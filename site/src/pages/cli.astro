@@ -27,12 +27,16 @@ const USAGE = [
   '  pulsar rollback          boot the previous deployment     (root)',
   '  pulsar pin | unpin       protect the booted deployment    (root)',
   '',
-  '  pulsar setup <recipe>    apps | devbox | quadlet | gamescale',
+  '  pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale',
   '',
   'Options',
   '  --logo, --no-logo        force or suppress the mark in `manifest`',
   '  --json                   machine-readable output (doctor, status, manifest,',
   '                           changelog); everything else ignores it.',
+  '                           `manifest --json` adds the host facts under a',
+  '                           "host" key, so `jq \'del(.host)\'` is the baked',
+  '                           manifest and two machines on the same build still',
+  '                           compare equal',
   '  --version, --help',
 ];
 
