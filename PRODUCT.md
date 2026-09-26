@@ -26,8 +26,11 @@ the site claims it before it lands. The site's job is to present it well.
 
 ## Positioning
 
-Silverblue+ (repositioned 2026-09-26): Fedora's unbreakable desktop, made
-yours. Four pillars, in this order on the home page:
+**Public line: an agentic, atomic, stylish Linux** (2026-09-26). "Silverblue+"
+and any comparison to other distros are INTERNAL shorthand only and never
+appear on the site, in the README or in release notes; the Fedora Silverblue
+base is stated plainly where it is a technical fact (install, provenance),
+never as the pitch. Four pillars, in this order on the home page:
 
 1. **Make it yours in one command.** Sixteen themes (twelve light-and-dark, plus four single-mode: Dracula,
    Phosphor and Amber dark, Alucard light),

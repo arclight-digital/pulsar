@@ -13,8 +13,9 @@
   <a href="https://pulsar.arclight.digital">pulsar.arclight.digital</a>
 </p>
 
-Fedora Silverblue as a bootc image, rebuilt every night by an ephemeral build
-host, with a signed NVIDIA driver and signed installer ISOs. The machine that runs it never
+An agentic, atomic, stylish Linux desktop: a bootc image built on Fedora
+Silverblue, rebuilt every night by an ephemeral build host, with a signed
+NVIDIA driver and signed installer ISOs. The machine that runs it never
 compiles anything; the last good version is always one reboot away.
 
 ```bash

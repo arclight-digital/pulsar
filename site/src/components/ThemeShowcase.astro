@@ -148,7 +148,13 @@ const FACTS = [
   }
   .cap {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    /* The command is one short line (the longest is `pulsar theme set
+       tokyo-night`), so its column stops at a width that fits it and the
+       copy button rather than stretching the whole figure: a full-width
+       terminal around twenty-odd characters reads as empty chrome. It still
+       shrinks below that on narrow screens (minmax 0). */
+    grid-template-columns: auto minmax(0, 30rem);
+    justify-content: start;
     align-items: center;
     gap: var(--space-md) var(--space-lg);
     margin-top: var(--space-md);
