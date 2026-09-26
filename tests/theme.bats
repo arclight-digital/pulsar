@@ -447,3 +447,12 @@ PY
 @test "no baked scanline raster in either wallpaper shader" {
     ! grep -n 'gl_FragCoord.y \* 2.0944' "${REPO}/assets/shaders/theme.frag" "${REPO}/assets/shaders/pulsar.frag"
 }
+
+@test "each wallpaper look has its own effect in both shaders" {
+    for f in "${REPO}/assets/shaders/theme.frag" "${REPO}/assets/shaders/pulsar.frag"; do
+        for w in wSilk wLeak wSatin wHolo; do
+            grep -q "if (${w} > 0.0)" "$f"
+        done
+        grep -q 'rays' "$f"; grep -q 'thread' "$f"; grep -q 'film' "$f"
+    done
+}

@@ -252,9 +252,9 @@ THEMES = [
          renders=[
              # plasma in a phosphor tube: the strongest treatment of any theme
              R("dark", "silk", c1="#06351a", c2="#1f9e48", c3="bright_green", seed=[7.3, -1.9], fold=2.0,
-               dir=[-0.9, -0.5], stars=0.0, desat=0.15, gain=0.95, glow=1.35, signal=1.7, down=0.04),
+               dir=[-0.9, -0.5], stars=0.0, desat=0.15, gain=0.95, glow=1.15, signal=1.4, down=0.04),
              R("dark", "leak", c1="#0f5a2a", c2="green", c3="yellow", beam=-0.25, stars=0.0, desat=0.0,
-               glow=1.3, signal=1.7, seed=[2.2, 5.4], web=1.0),
+               glow=1.15, signal=1.4, seed=[2.2, 5.4], web=0.8),
          ]),
 
     dict(slug="amber", name="Amber", author="Pulsar; after P3 amber-phosphor terminals", prefer="dark",
@@ -269,9 +269,9 @@ THEMES = [
                 background_raised="#1a1207"),
          renders=[
              R("dark", "leak", c1="#7a3a00", c2="orange", c3="#ffc84a", beam=-0.20, stars=0.0, desat=0.0,
-               glow=1.3, signal=1.7, seed=[-4.1, 3.3], web=1.0),
+               glow=1.15, signal=1.4, seed=[-4.1, 3.3], web=0.8),
              R("dark", "silk", c1="#6a3000", c2="orange", c3="yellow", seed=[-6.2, 2.7], fold=1.9,
-               dir=[-0.7, -0.8], stars=0.0, desat=0.0, gain=1.6, glow=1.35, signal=1.7, down=0.06),
+               dir=[-0.7, -0.8], stars=0.0, desat=0.0, gain=1.6, glow=1.15, signal=1.4, down=0.06),
          ]),
 
     dict(slug="alucard", name="Alucard", author="Dracula Theme (draculatheme.com), MIT", prefer="light",

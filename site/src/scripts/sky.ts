@@ -66,6 +66,9 @@ export function initSky(): void {
     const uTime = gl.getUniformLocation(program, 'u_time');
     const uTheme = gl.getUniformLocation(program, 'u_theme');
     const uLook = gl.getUniformLocation(program, 'u_look');
+    // The live sky runs the luminescence at a hint of its wallpaper strength:
+    // at full strength silk's filaments made the hero text hard to read.
+    const uLive = gl.getUniformLocation(program, 'u_live');
 
     const resize = (): void => {
       const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -90,6 +93,7 @@ export function initSky(): void {
       gl.uniform1f(uTime, seconds);
       gl.uniform1f(uTheme, themeShown);
       gl.uniform1f(uLook, lookShown);
+      gl.uniform1f(uLive, 1);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
 

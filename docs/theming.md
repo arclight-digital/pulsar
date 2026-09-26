@@ -128,18 +128,21 @@ killed; only apps that actually exited are relaunched. Don't ask again is
 
 Every classic theme gets Pulsar's own shader looks (silk, leak, satin,
 holo) rendered in its palette from `assets/shaders/theme.frag`, dark and
-light, two looks each for `bg-next`. On top of each look goes a
-luminescence and signal treatment: emissive cores, thin ion-trail
-filaments with a halo and a hint of chromatic split, a circuit lattice lit
-only by the glow near it (no scanline raster: baked into a wallpaper it
-beats into moire when GNOME scales it to the monitor), all through a soft-knee rolloff so highlights bloom instead of clipping.
-Light variants read as pearl rather than glow. Silk carries the full
-filament web; on the smooth looks (leak, satin, holo) it is thinned to
-about 60% (satin 50%) -- at full strength there it read as electrical
-crackle. The phosphor themes carry it strongest; `glow`, `signal`, `web`
-and `grain` tune it per render. The brand wallpapers (and the site's live
-hero sky, which compiles the same assets/shaders/pulsar.frag in WebGL1)
-carry the same treatment in the brand colours, kept GLSL ES 1.0 and cheap. `scripts/build.sh` renders them as PNG
+light, two looks each for `bg-next`. Each look carries its own quiet
+luminous signature, meant to be noticed on a second look rather than the
+first: silk has ion-trail filaments on the field's isolines with a halo and
+a faint lit circuit lattice; leak has volumetric light -- god-rays through
+the leak, drifting motes, an anamorphic streak with a little dispersion at
+the beam edge; satin has fibre optics -- a few warp threads carrying pulses
+of light, glinting where a lit weft crosses; holo has interference --
+thin-film fringes and a diffraction sheen coloured by wavelength, and one
+faint scan band. Light variants carry each in pearl, low-contrast against
+the paper. Highlights roll off through a soft knee and never outshine the
+theme's highlight colour; no scanline raster is baked in (it beats into
+moire when GNOME scales a wallpaper). `glow`, `signal`, `web` and `grain`
+tune it per render; the phosphor themes run a touch stronger. The brand
+wallpapers (and the site's live hero sky, which compiles the same
+assets/shaders/pulsar.frag in WebGL1) carry the same treatment in the brand colours, kept GLSL ES 1.0 and cheap. `scripts/build.sh` renders them as PNG
 on the builder, like the brand wallpapers; the Containerfile converts them
 to JPEG XL at quality 97 (about 0.6 MB each; below 97 the film grain, which
 is also the dither, goes, and dark gradients band). A `--no-wallpapers`
