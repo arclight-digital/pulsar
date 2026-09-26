@@ -534,7 +534,7 @@ LOGO_ART="system_files/usr/share/pulsar/logo.ansi"
 }
 
 @test "the logo is as tall as a readout, so the two end together" {
-    # 19 rows is the point of the 56-column rasterisation: a typical readout is
+    # 19 rows is the point of the 38-column rasterisation: a typical readout is
     # five header rows, six or seven host rows and seven components, and the
     # art stopping six rows short of that is what this size exists to fix.
     [ "$(wc -l < "${BATS_TEST_DIRNAME}/../${LOGO_ART}")" -eq 19 ]
@@ -575,12 +575,12 @@ PYEOF
 }
 
 @test "the art is pasted at its own width, with no margin in between" {
-    # 36 columns of art, then the two spaces paste_logo adds, then the first
+    # 37 columns of art, then the two spaces paste_logo adds, then the first
     # key. Written as an exact width because the whole point of the trim is
     # that the offset IS the mark: a regression that reinstates the glow
     # padding shows up here as a wider prefix, not as a vaguer one.
     line=$(manifest_first_line 200)
-    [[ "$line" =~ ^.{36}[[:space:]][[:space:]]image ]] || fail "not 36 columns of art: ${line}"
+    [[ "$line" =~ ^.{37}[[:space:]][[:space:]]image ]] || fail "not 37 columns of art: ${line}"
 }
 
 @test "a terminal too narrow for the art gets the readout alone" {
@@ -592,10 +592,10 @@ PYEOF
 
 @test "the trimmed mark is drawn on terminals the untrimmed one lost" {
     # 80 columns is the case that made the trim worth doing rather than
-    # shipping a second, smaller file: the old 38-wide art needed 79 and the
-    # untrimmed 56-wide one would have needed 97.
+    # shipping a second, smaller file: the old 38-wide art needed 79 and an
+    # untrimmed 56-wide one would have needed 97. The v2 mark's 37 needs 72.
     line=$(manifest_first_line 80)
-    [[ "$line" =~ ^.{36}[[:space:]][[:space:]]image ]] || fail "no art at 80 columns: ${line}"
+    [[ "$line" =~ ^.{37}[[:space:]][[:space:]]image ]] || fail "no art at 80 columns: ${line}"
 }
 
 @test "manifest draws the logo when asked and omits it when told not to" {

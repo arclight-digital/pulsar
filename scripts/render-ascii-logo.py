@@ -11,7 +11,7 @@ own color as 24-bit foreground -- so the sweep keeps its cyan-to-violet
 gradient. Transparent pixels are plain spaces, so the art sits on whatever
 theme the user's terminal runs.
 
-    render-ascii-logo.py assets/brand/pulsar-mark.svg -o out.ansi [--cols 26]
+    render-ascii-logo.py assets/brand/svg/pulsar-mark-small.svg -o out.ansi [--cols 38]
 """
 import argparse
 import re

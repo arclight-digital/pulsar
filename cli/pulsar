@@ -1045,7 +1045,7 @@ format_rows() {
     done
 }
 
-# The mark as ASCII, rendered from assets/brand/pulsar-mark.svg by
+# The mark as ASCII, rendered from assets/brand/svg/pulsar-mark-small.svg by
 # scripts/render-ascii-logo.py and shipped at /usr/share/pulsar/logo.ansi.
 # Generated so it cannot drift from the artwork -- see that script for why
 # hand-drawing it failed.

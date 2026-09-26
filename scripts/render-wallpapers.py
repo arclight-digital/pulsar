@@ -44,20 +44,34 @@ void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }
 #
 # The mark is pasted after the render -- it is alpha art with a gaussian glow,
 # and reimplementing that in GLSL to avoid one PIL call would be absurd. Dark
-# cuts carry the full-color mark; light cuts carry the authored color-dark
-# mark (colored arc, near-black cores -- the light-ground family).
+# cuts carry the colour-on-dark mark; light cuts carry the authored -light
+# mark (soft cyan -> violet sweep, deep-violet core -- the light-ground cut,
+# not a recolour).
+#
+# Each PNG is paired with the SVG it was exported from, because the PNG alone
+# does not say where the mark sits in it. The v2 files are cropped to their own
+# art plus 3%, so the dark mark (which carries a glow) and the light one (which
+# does not) have different boxes, and neither is centred on the core. Pasting
+# the boxes at one size would draw the light mark 15% larger than the dark one
+# and put both cores off the optical centre -- the pair would visibly jump when
+# GNOME flips between them. The SVG's viewBox gives the box in the mark's own
+# 256-unit drawing grid, where the core is always at (128, 128), so the paste
+# scales and places by the drawing instead of by the box.
 BRAND = REPO / "assets" / "brand"
 LOOKS = {"silk": 0.0, "leak": 1.0, "satin": 2.0, "holo": 3.0}
+MARKS = {"dark": ("png/pulsar-mark-1024.png", "svg/pulsar-mark.svg"),
+         "light": ("png/pulsar-mark-light-1024.png", "svg/pulsar-mark-light.svg")}
 VARIANTS = [
     (f"pulsar-{name}-{theme}.png",
      dict(u_time=0.0, u_theme=t, u_look=look),
-     BRAND / mark)
+     MARKS[theme])
     for name, look in LOOKS.items()
-    for theme, t, mark in [("dark", 0.0, "pulsar-mark-1024.png"),
-                           ("light", 1.0, "pulsar-mark-color-dark-1024.png")]
+    for theme, t in [("dark", 0.0), ("light", 1.0)]
 ]
 
-LOGO_FRAC = 0.30   # mark height as a fraction of screen height
+GRID = 256.0         # the mark's drawing grid, in SVG user units
+CORE = (128.0, 128.0)  # the core's centre in that grid, in every v2 mark file
+LOGO_FRAC = 0.30   # the 256-unit grid's height as a fraction of screen height
 LOGO_LIFT = 0.02   # optical center: nudge above true center by this much of H
 
 
@@ -90,13 +104,29 @@ def render(width, height, uniforms):
     return img.transpose(Image.FLIP_TOP_BOTTOM)
 
 
+def viewbox(svg):
+    """(x, y, w, h) of an SVG's viewBox -- where its PNG export sits in the grid."""
+    import re
+
+    head = svg.read_text(errors="replace")[:4096]
+    m = re.search(r'viewBox="([^"]+)"', head)
+    if not m:
+        sys.exit(f"render-wallpapers: no viewBox in {svg}")
+    return tuple(float(v) for v in m.group(1).replace(",", " ").split())
+
+
 def composite_logo(img, logo):
     from PIL import Image
 
-    size = round(img.height * LOGO_FRAC)
-    mark = Image.open(logo).convert("RGBA").resize((size, size), Image.LANCZOS)
-    x = (img.width - size) // 2
-    y = (img.height - size) // 2 - round(img.height * LOGO_LIFT)
+    png, svg = (BRAND / f for f in logo)
+    vx, vy, vw, vh = viewbox(svg)
+    unit = img.height * LOGO_FRAC / GRID          # screen px per grid unit
+    w, h = round(vw * unit), round(vh * unit)
+    mark = Image.open(png).convert("RGBA").resize((w, h), Image.LANCZOS)
+    # Put the CORE on the optical centre, not the box: the box is off-core by
+    # a different amount in every file.
+    x = round(img.width / 2 - (CORE[0] - vx) * unit)
+    y = round(img.height / 2 - img.height * LOGO_LIFT - (CORE[1] - vy) * unit)
     img.paste(mark, (x, y), mark)
     return img
 

@@ -2,39 +2,50 @@
 # Derive the image's branding files from assets/.
 #
 # assets/ is the source of truth. Everything this script writes under
-# system_files/ is generated -- re-run it whenever the art or fonts change.
+# system_files/ is generated or copied -- re-run it whenever the art changes.
 #
-# Every cut below is rendered from the SVG art rather than resampled from a
-# finished PNG: each is rasterized well above its target and reduced from
-# there, so the small fixed-size cuts get supersampled edges instead of
-# second-generation pixels. The reduction runs in linear light -- reducing
-# light-on-dark art in sRGB thins the strokes -- and is followed by a soft
-# unsharp pass to put back the edge a reduction costs. The unsharp THRESHOLD
-# is what keeps that pass off the marks' glow gradient, which beads and rings
-# if you sharpen it. Raise the amount and you get a rim on the wordmark long
-# before the glow survives it.
+# assets/brand/ is the designer's v2 package dropped in whole: svg/, png/ and
+# in-os/ keep the package's own layout (and its README.md, which says which
+# file goes where) so the next drop is a copy, not a re-sort. Two rules from
+# that package decide most of what follows:
 #
-# Deliberately does NOT trim the mark art: the marks carry a gaussian glow
-# whose alpha extends past the geometry, and trimming clips it -- which also
-# changes their optical size within the icon grid. The lockups ARE trimmed on
-# purpose, because their cuts are fitted to fixed panel boxes.
+#   * in-os/ is drawn for the OS. The GDM logo, the Plymouth watermark and the
+#     app icon were made at their target sizes by the designer, so they are
+#     INSTALLED as supplied, not re-derived here. Re-deriving them from a
+#     lockup is what this script used to do, and it is exactly the work the
+#     in-os files exist to replace.
+#   * The mark is a responsive family: the large drawing above 56px, the
+#     heavier `-small` drawing from 20 to 56px. A cut that lands at 56px or
+#     below is taken from a small drawing, never shrunk from the large one --
+#     shrinking the large one is what the small drawing was drawn to avoid.
+#
+# The cuts that ARE rendered here (the icon sizes, the About lockups) come
+# from the SVG rather than from a finished PNG: each is rasterized well above
+# its target and reduced from there, so the small fixed-size cuts get
+# supersampled edges instead of second-generation pixels. The reduction runs
+# in linear light -- reducing light-on-dark art in sRGB thins the strokes --
+# and is followed by a soft unsharp pass to put back the edge a reduction
+# costs. The unsharp THRESHOLD is what keeps that pass off the marks' glow
+# gradient, which beads and rings if you sharpen it. Raise the amount and you
+# get a rim on the wordmark long before the glow survives it.
+#
+# The icon art is a full 256 tile and is never trimmed; the lockups ARE
+# trimmed on purpose, because their cuts are fitted to a fixed panel box.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 A="${REPO}/assets"
+B="${A}/brand"
 S="${REPO}/system_files/usr/share"
-
-# The GDM logo and plymouth watermark sizes (below) do not scale at runtime:
-# both are physical-size decisions tied to the panel, sized for 2560x1600.
-# On a 4K panel roughly double them; on 1080p roughly halve them.
 
 command -v magick >/dev/null || { echo "needs ImageMagick 7 (magick)" >&2; exit 1; }
 magick -list format | grep -qi 'SVG.*RSVG' || {
     echo "needs an ImageMagick built against librsvg -- its own MSVG renderer" >&2
     echo "ignores <filter>, which silently drops the marks' glow" >&2; exit 1; }
-for f in pulsar-mark.svg pulsar-mark-mono.svg pulsar-mark-color-dark.svg \
-         pulsar-lockup-horizontal.svg pulsar-lockup-horizontal-color-dark.svg; do
-    [[ -r "${A}/brand/${f}" ]] || { echo "missing asset: ${A}/brand/${f}" >&2; exit 1; }
+for f in svg/pulsar-mark-small.svg svg/pulsar-tile-small.svg \
+         svg/pulsar-lockup-horizontal.svg svg/pulsar-lockup-horizontal-light.svg \
+         in-os/pulsar-logo-icon.svg in-os/pulsar-gdm-logo.png in-os/watermark.png; do
+    [[ -r "${B}/${f}" ]] || { echo "missing asset: ${B}/${f}" >&2; exit 1; }
 done
 
 # Soft by design: enough to recover the edge the reduction costs, not enough to
@@ -42,32 +53,25 @@ done
 SHARPEN="${SHARPEN:-0x0.5+0.30+0.015}"
 SHARP=(); [[ "${SHARPEN}" == none ]] || SHARP=(-unsharp "${SHARPEN}")
 
-# The lockup wordmark is live <text> in Host Grotesk, so the SVG renders
-# through fontconfig. Bind that to the cuts this repo ships instead of whatever
-# happens to be installed: an unresolvable family does not fail the render, it
-# quietly substitutes, and the wordmark ships wrong. With no Host Grotesk
-# visible the lockup rasterizes 292px wide instead of 1284 -- silently, and
-# only the width says so.
+# No fontconfig binding any more. The v1 lockups set PULSAR as live <text>, so
+# an unresolvable Host Grotesk quietly substituted and the wordmark shipped
+# wrong; this script used to pin fontconfig to the repo's cuts for that
+# reason. v2's wordmark is converted to outlines, so the render no longer
+# touches a font at all -- and a check for a font nothing reads would only be
+# a way for this script to fail for no reason.
 WORK="$(mktemp -d)"; trap 'rm -rf "${WORK}"' EXIT
-cat >"${WORK}/fonts.conf" <<EOF
-<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
-<fontconfig>
-  <dir>${A}/fonts/Host_Grotesk/static</dir>
-  <dir>${A}/fonts/JetBrains_Mono/static</dir>
-  <cachedir>${WORK}/fc-cache</cachedir>
-</fontconfig>
-EOF
-export FONTCONFIG_FILE="${WORK}/fonts.conf"
 
 # One high rasterization per source, reused by every cut taken from it.
-# 768dpi puts the 256-unit marks at 2048px (4x the largest icon); 384dpi puts
-# the 382-unit lockup at 1284px trimmed (4x the widest lockup cut).
-magick -background none -density 768 "${A}/brand/pulsar-mark.svg" \
-       -depth 16 "${WORK}/mark.png"
-magick -background none -density 384 "${A}/brand/pulsar-lockup-horizontal.svg" \
+# 768dpi puts the 256-unit icon art at 2048px (4x the largest icon); 384dpi
+# puts the ~883-unit lockups at ~4700px, far past 4x the 279px About cut.
+magick -background none -density 768 "${B}/in-os/pulsar-logo-icon.svg" \
+       -depth 16 "${WORK}/icon.png"
+magick -background none -density 768 "${B}/svg/pulsar-tile-small.svg" \
+       -depth 16 "${WORK}/icon-small.png"
+magick -background none -density 384 "${B}/svg/pulsar-lockup-horizontal.svg" \
        -trim +repage -depth 16 "${WORK}/lockup.png"
-magick -background none -density 384 "${A}/brand/pulsar-lockup-horizontal-color-dark.svg" \
-       -trim +repage -depth 16 "${WORK}/lockup-dark.png"
+magick -background none -density 384 "${B}/svg/pulsar-lockup-horizontal-light.svg" \
+       -trim +repage -depth 16 "${WORK}/lockup-light.png"
 
 # Reduce a master to a target: linear light, Lanczos, soft unsharp. Extra
 # magick arguments (gravity/extent) land after the resize, before the write.
@@ -79,15 +83,33 @@ reduce() { # $1=master $2=resize-geometry $3=destination [extra magick args...]
            "${SHARP[@]}" "$@" -depth 8 -strip "${dst}"
 }
 
+# Install a file the designer drew for its target, and say what it is: these
+# are fixed-size PNGs, so the size printed is the size that ships.
+supplied() { # $1=source $2=destination
+    install -Dm644 "$1" "$2"
+    echo "  $2 ($(magick identify -format '%wx%h' "$2"), as supplied)"
+}
+
 # ---------------------------------------------------------------------------
 # Icons
+#
+# in-os/pulsar-logo-icon.svg is the tile (the mark on a navy rounded square),
+# not the bare mark the v1 icon was: a transparent mark is unreadable on a
+# light launcher grid, and the tile is what the designer handed over as the
+# app/system icon. It is svg/pulsar-tile.svg under the OS's name.
+#
+# The large sizes come from it. 48px is in the small range, so it comes from
+# svg/pulsar-tile-small.svg, the same tile with the heavier small drawing and
+# no star field -- at 48px the stars are only noise, and the large drawing's
+# tapered tail thins to nothing.
 # ---------------------------------------------------------------------------
-echo "GNOME About / icon theme  <- pulsar-mark (color)"
-install -Dm644 "${A}/brand/pulsar-mark.svg" \
+echo "App icon (hicolor)        <- in-os/pulsar-logo-icon (>56px), svg/pulsar-tile-small (<=56px)"
+install -Dm644 "${B}/in-os/pulsar-logo-icon.svg" \
                "${S}/icons/hicolor/scalable/apps/pulsar-logo-icon.svg"
 echo "  ${S}/icons/hicolor/scalable/apps/pulsar-logo-icon.svg"
 for sz in 512 256 128 64 48; do
-    reduce "${WORK}/mark.png" "${sz}x${sz}" \
+    master="${WORK}/icon.png"; (( sz <= 56 )) && master="${WORK}/icon-small.png"
+    reduce "${master}" "${sz}x${sz}" \
            "${S}/icons/hicolor/${sz}x${sz}/apps/pulsar-logo-icon.png"
     echo "  ${S}/icons/hicolor/${sz}x${sz}/apps/pulsar-logo-icon.png (${sz}px)"
 done
@@ -103,37 +125,34 @@ done
 #
 # Using the standard key also gets the placement for free: GDM positions the
 # logo low on the greeter, the way stock Fedora looks, with no theme patch.
-# Sized by width, not a square: this is a horizontal lockup, and 192 square
-# would shrink the wordmark to nothing. If the lockup reads too busy on the
-# greeter, swap the source to pulsar-mark-mono.svg at ~192px square --
-# the mono mark is the contrast-safe fallback.
-GDM_LOGO_W=${GDM_LOGO_W:-320}
-echo "GDM login                 <- pulsar-lockup-horizontal (color, dark-ground)"
-mkdir -p "${S}/pulsar"
-reduce "${WORK}/lockup.png" "${GDM_LOGO_W}x" "${S}/pulsar/pulsar-gdm-logo.png"
-echo "  ${S}/pulsar/pulsar-gdm-logo.png (${GDM_LOGO_W}px wide)"
+#
+# The designer's cut, drawn with the small mark: 320x88, cropped tight to the
+# lockup (v1 shipped 320x77 with margin). Nothing in the override pins a
+# height, so the new crop needs no config change. The key takes ONE file, so
+# in-os/pulsar-gdm-logo-2x.png has no slot here; it stays in assets/brand for
+# the day a HiDPI greeter wants it.
+echo "GDM login                 <- in-os/pulsar-gdm-logo.png"
+supplied "${B}/in-os/pulsar-gdm-logo.png" "${S}/pulsar/pulsar-gdm-logo.png"
 
 # The terminal mark for `pulsar manifest`, from the same SVG as everything
 # else. Generated here so it cannot drift from the artwork: a hand-drawn copy
 # was wrong about the shape within a day of being written.
 #
-# --cols is the RASTER width, not the width of the art that comes out: the
-# renderer trims the SVG's blank margin in both directions, so 56 rasterised
-# lands on 19 rows by 36 columns. 19 rows is the point -- that is the height
-# of a typical readout (5 header rows, 6 or 7 host rows, 7 components), so the
-# art and the information end together instead of the mark stopping six rows
-# short of the values beside it.
+# The SMALL drawing, by the family's own size rule: 38 raster columns is a
+# 38px mark, inside the 20-56px small range. The large drawing's tail tapers
+# to a soft point that falls below one character well before the end of the
+# sweep, which is the part that makes it a sweep and not a ring.
 #
-# The trim is why this could grow at all. Untrimmed, 56 raster columns meant
-# 56 columns of art, of which 20 were the glow's empty margin -- ten columns
-# of indent on the left and ten of gap before the readout on the right. Cut,
-# the taller mark is NARROWER than the 38 this used to ship, so it is drawn on
-# more terminals than the old one was, not fewer.
-python3 "${REPO}/scripts/render-ascii-logo.py" "${A}/brand/pulsar-mark.svg" \
-        --cols 56 -o "${S}/pulsar/logo.ansi"
-
-# Plymouth watermark is generated in the lockup section below -- it needs the
-# wordmark font variables, which are defined there.
+# --cols is the RASTER width, not the width of the art that comes out: the
+# renderer trims the SVG's blank margin in both directions, so 38 rasterised
+# lands on 19 rows by 37 columns. 19 rows is the point -- that is the height
+# of a typical readout (5 header rows, 6 or 7 host rows, 7 components), so the
+# art and the information end together instead of the mark stopping short of
+# the values beside it. The v1 mark needed 56 for the same 19 rows because
+# its SVG carried a wide empty margin; v2's files are cropped to the art plus
+# 3%, so 56 would now draw 26 rows and run seven past the readout.
+python3 "${REPO}/scripts/render-ascii-logo.py" "${B}/svg/pulsar-mark-small.svg" \
+        --cols 38 -o "${S}/pulsar/logo.ansi"
 
 # ---------------------------------------------------------------------------
 # GNOME Settings -> About lockup.
@@ -145,42 +164,41 @@ python3 "${REPO}/scripts/render-ascii-logo.py" "${A}/brand/pulsar-mark.svg" \
 #   fedora_whitelogo_med.png   dark theme
 #   fedora_logo_med.png        light theme
 #
-# So the filenames stay Fedora's, same reasoning as fedora-gdm-logo.png: the
-# path is hardcoded in a binary, and overwriting one file beats patching
-# gnome-control-center. 279x80 is the size Fedora ships; the panel does not
-# scale it.
+# So the filenames stay Fedora's: the path is hardcoded in a binary, and
+# overwriting one file beats patching gnome-control-center. 279x80 is the size
+# Fedora ships; the panel does not scale it.
 #
-# The lockup art is AUTHORED, not generated: assets/brand/pulsar-lockup-*.svg
-# are the design source, and the matching .png files are exports of them kept
-# for consumers that cannot take vector. Render from the SVG here; the PNG
-# exports are a generation behind by definition. The plain cuts carry a white
-# wordmark (dark-ground art); the *-color-dark cuts are the authored
-# light-ground family (colored arc, near-black cores and wordmark). Do not
-# rebuild lockups from mark + font, and do not derive light art by recoloring
-# -- both looks were retired in favor of the authored set.
+# Rendered, because the designer did not draw a 279x80 cut: the plain
+# horizontal lockup for dark, the -light one for light. At 279 wide the mark
+# is ~75px, above 56, so the large drawing the lockups carry is the right one.
+# Do not derive light art by recolouring the dark lockup -- -light is authored
+# with its own gradient direction and a deep-violet core.
 # ---------------------------------------------------------------------------
 fit279() { # $1=master $2=destination -- contain into the panel's fixed box
     reduce "$1" 279x80 "$2" -gravity center -extent 279x80
     echo "  $2 (279x80)"
 }
 
-echo "GNOME About lockup        <- pulsar-lockup-horizontal (color)"
+echo "GNOME About lockup        <- svg/pulsar-lockup-horizontal"
 fit279 "${WORK}/lockup.png" "${S}/pixmaps/fedora_whitelogo_med.png"
-echo "GNOME About lockup (light) <- pulsar-lockup-horizontal-color-dark"
-fit279 "${WORK}/lockup-dark.png" "${S}/pixmaps/fedora_logo_med.png"
+echo "GNOME About lockup (light) <- svg/pulsar-lockup-horizontal-light"
+fit279 "${WORK}/lockup-light.png" "${S}/pixmaps/fedora_logo_med.png"
 
 # ---------------------------------------------------------------------------
-# Plymouth watermark: the authored color lockup, bottom-center via the theme's
-# WatermarkVerticalAlignment. Sized for 2560x1600 like the other physical-size
-# assets.
+# Plymouth watermark: the designer's cut for black, 400x110, bottom-centre via
+# the theme's WatermarkVerticalAlignment (a fraction, not a pixel offset, so
+# the taller crop needs no .plymouth change).
+#
+# two-step loads one watermark.png at whatever scale the framebuffer is and
+# has no @2x lookup, so in-os/watermark-2x.png has no home in the theme. It
+# stays in assets/brand; switching to it is a physical-size decision (twice
+# the size on every panel), not a HiDPI one.
 # ---------------------------------------------------------------------------
-echo "Plymouth watermark        <- pulsar-lockup-horizontal (color)"
-reduce "${WORK}/lockup.png" x96 "${S}/plymouth/themes/pulsar/watermark.png"
-echo "  ${S}/plymouth/themes/pulsar/watermark.png ($(magick identify -format '%wx%h' "${S}/plymouth/themes/pulsar/watermark.png"))"
+echo "Plymouth watermark        <- in-os/watermark.png"
+supplied "${B}/in-os/watermark.png" "${S}/plymouth/themes/pulsar/watermark.png"
 
-# (The site's light-theme mark is authored art too -- site/stage-assets.mjs
-# stages assets/brand/pulsar-mark-color-dark.svg directly; nothing to
-# generate.)
+# (The site's marks are the package's svg/ files, staged directly by
+# site/stage-assets.mjs; nothing to generate.)
 
 # ---------------------------------------------------------------------------
 # Fonts
@@ -213,7 +231,3 @@ EOF
 echo
 echo "family names in use (must match zz0-pulsar.gschema.override):"
 fc-scan --format '  %{family[0]}\n' "${S}/fonts/pulsar" 2>/dev/null | sort -u
-echo
-echo "assets/brand/pulsar-tile* are unused by the image -- that is the"
-echo "rounded-square cut, an app-icon form. Keep them for an ISO or"
-echo "launcher icon later."
