@@ -1868,3 +1868,158 @@ cli_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="cli") | 
     PATH="$(dirname "$PULSAR"):${PATH}" run cli_check
     [[ "$output" == ok* ]]
 }
+
+# ---------------------------------------------------------------------------
+# checkpoint.
+#
+# Run as root inside an unprivileged user namespace, against a fake /etc in
+# the test's tmpdir, with rpm-ostree and ostree stubbed. What is pinned is the
+# undo: changed and deleted files come back, added files are listed and left,
+# a deployment staged since is discarded, and only the pin a checkpoint made
+# is ever taken away.
+# ---------------------------------------------------------------------------
+
+# $1 = the rpm-ostree status JSON. Every non-status rpm-ostree call and every
+# ostree call is logged, so a test can read back what was pinned or discarded.
+checkpoint_stubs() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    printf '%s' "$1" > "${BATS_TEST_TMPDIR}/status.json"
+    cat > "${STUB}/rpm-ostree" <<EOF
+#!/bin/sh
+[ "\$1" = status ] && exec cat "${BATS_TEST_TMPDIR}/status.json"
+echo "rpm-ostree \$*" >> "${OSTREE_LOG}"
+EOF
+    cat > "${STUB}/ostree" <<EOF
+#!/bin/sh
+echo "ostree \$*" >> "${OSTREE_LOG}"
+EOF
+    chmod +x "${STUB}/rpm-ostree" "${STUB}/ostree"
+    case ":${PATH}:" in *":${STUB}:"*) ;; *) PATH="${STUB}:${PATH}"; export PATH ;; esac
+}
+
+checkpoint_env() {
+    [ "$(id -u)" -eq 0 ] || unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"
+    export PULSAR_ETC="${BATS_TEST_TMPDIR}/etc"
+    export PULSAR_CHECKPOINTS="${BATS_TEST_TMPDIR}/checkpoints"
+    mkdir -p "${PULSAR_ETC}/ssh" "${PULSAR_ETC}/sudoers.d"
+    printf 'PermitRootLogin no\n' > "${PULSAR_ETC}/ssh/sshd_config"
+    printf 'keep me\n'            > "${PULSAR_ETC}/hosts"
+    printf 'untouched\n'          > "${PULSAR_ETC}/motd"
+    export OSTREE_LOG="${BATS_TEST_TMPDIR}/ostree.log"
+    : > "$OSTREE_LOG"
+    # booted is index 1: an update is already staged at 0
+    checkpoint_stubs '{"deployments":[
+        {"staged":true,"version":"44.2","checksum":"bbb"},
+        {"booted":true,"version":"44.1","checksum":"aaa","pinned":false}]}'
+}
+
+# Already root: run it straight. A nested namespace would map only uid 0, and
+# root there cannot read a checkout owned by anyone else.
+cp_root() {
+    local ns=(unshare -r)
+    [ "$(id -u)" -ne 0 ] || ns=()
+    run "${ns[@]}" env "PATH=${PATH}" "PULSAR_ETC=${PULSAR_ETC}" \
+        "PULSAR_CHECKPOINTS=${PULSAR_CHECKPOINTS}" "$PULSAR" checkpoint "$@"
+}
+
+latest_checkpoint() { find "$PULSAR_CHECKPOINTS" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tail -1; }
+
+@test "checkpoint refuses to run as a normal user" {
+    [ "$(id -u)" -eq 0 ] && skip "running as root"
+    run "$PULSAR" checkpoint
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"root"* ]]
+    # but its help needs no root
+    run "$PULSAR" checkpoint --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"restore"* ]]
+}
+
+@test "checkpoint snapshots /etc and pins the BOOTED deployment, not index 0" {
+    checkpoint_env
+    cp_root "before the agent"
+    [ "$status" -eq 0 ] || fail "$output"
+    id=$(latest_checkpoint)
+    [ -s "${PULSAR_CHECKPOINTS}/${id}/etc.tar" ]
+    [ -s "${PULSAR_CHECKPOINTS}/${id}/etc.manifest" ]
+    jq -e '.deployment.checksum == "aaa" and .pinned_by_checkpoint == true and .note == "before the agent"' \
+        "${PULSAR_CHECKPOINTS}/${id}/meta.json"
+    grep -qx 'ostree admin pin 1' "$OSTREE_LOG"
+    [ "$(stat -c %a "${PULSAR_CHECKPOINTS}/${id}")" = 700 ]
+}
+
+@test "checkpoint diff names what changed, appeared and vanished in /etc" {
+    checkpoint_env
+    cp_root
+    printf 'PermitRootLogin yes\n' > "${PULSAR_ETC}/ssh/sshd_config"
+    printf 'ALL ALL=(ALL) NOPASSWD: ALL\n' > "${PULSAR_ETC}/sudoers.d/agent"
+    rm "${PULSAR_ETC}/hosts"
+    cp_root diff
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"changed  /etc/ssh/sshd_config"* ]]
+    [[ "$output" == *"added  /etc/sudoers.d/agent"* ]]
+    [[ "$output" == *"removed  /etc/hosts"* ]]
+    [[ "$output" != *"motd"* ]]
+}
+
+@test "checkpoint restore puts back changed and deleted files, and lists added ones" {
+    checkpoint_env
+    cp_root
+    printf 'PermitRootLogin yes\n' > "${PULSAR_ETC}/ssh/sshd_config"
+    printf 'ALL ALL=(ALL) NOPASSWD: ALL\n' > "${PULSAR_ETC}/sudoers.d/agent"
+    rm "${PULSAR_ETC}/hosts"
+    cp_root restore "$(latest_checkpoint)"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat "${PULSAR_ETC}/ssh/sshd_config")" = "PermitRootLogin no" ]
+    [ "$(cat "${PULSAR_ETC}/hosts")" = "keep me" ]
+    # added since: listed, NOT deleted -- it may be the thing you wanted
+    [ -e "${PULSAR_ETC}/sudoers.d/agent" ]
+    [[ "$output" == *"left in place"*"/etc/sudoers.d/agent"* ]]
+    cp_root diff "$(latest_checkpoint)"
+    [[ "$output" != *"changed"* ]]
+    [[ "$output" != *"removed"* ]]
+}
+
+@test "checkpoint restore discards a deployment staged since, and never reboots" {
+    checkpoint_env
+    # checkpoint taken with nothing staged...
+    checkpoint_stubs '{"deployments":[{"booted":true,"version":"44.1","checksum":"aaa"}]}'
+    cp_root
+    id=$(latest_checkpoint)
+    # ...then an agent layers a package
+    checkpoint_stubs '{"deployments":[{"staged":true,"version":"44.1","checksum":"ccc"},
+        {"booted":true,"version":"44.1","checksum":"aaa"}]}'
+    cp_root diff "$id"
+    [[ "$output" == *"staged since the checkpoint"* ]]
+    cp_root restore "$id"
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -q 'rpm-ostree cleanup --pending' "$OSTREE_LOG"
+    run grep -i reboot "$OSTREE_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "checkpoint drop unpins only what the checkpoint pinned" {
+    checkpoint_env
+    cp_root
+    cp_root drop "$(latest_checkpoint)"
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -qx 'ostree admin pin --unpin 1' "$OSTREE_LOG"
+    [ -z "$(latest_checkpoint)" ]
+
+    # a deployment the user had already pinned stays pinned
+    : > "$OSTREE_LOG"
+    checkpoint_stubs '{"deployments":[{"booted":true,"version":"44.1","checksum":"aaa","pinned":true}]}'
+    cp_root
+    [[ "$output" == *"already pinned"* ]]
+    cp_root drop "$(latest_checkpoint)"
+    run grep -- '--unpin' "$OSTREE_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "checkpoint refuses an id that walks out of its directory" {
+    checkpoint_env
+    cp_root restore ../../etc
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not a checkpoint id"* ]]
+}

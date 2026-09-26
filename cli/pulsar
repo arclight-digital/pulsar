@@ -2200,6 +2200,272 @@ cmd_theme() {
     exec "$THEME_ENGINE" "$@"
 }
 
+# ---------------------------------------------------------------------------
+# checkpoint -- "undo what just happened to the system" as one command.
+#
+# The image half of that is already true: every system change is a new
+# deployment, and the old one is a reboot away. What is NOT covered is /etc.
+# It is writable, per-deployment, and merged forward into each new deployment,
+# so an edit there follows you through updates, and rollback is no way to take
+# one back -- it trades ALL /etc changes since for the old deployment's copy.
+# ostree's own config-diff answers "how does /etc differ from the image", not
+# "what changed since this morning", and the second is the question after an
+# agent (or a person) has been at it.
+#
+# A checkpoint is three things, all under /var/lib/pulsar/checkpoints (root
+# only, 0700 -- /etc holds shadow and private keys):
+#
+#   etc.tar        /etc as it was, with owners, modes, ACLs and SELinux labels
+#   etc.manifest   type, mode, owner and sha256 per path, to diff against later
+#   meta.json      the booted deployment, and whether this checkpoint pinned it
+#
+# plus a pin on the booted deployment, so the OS half cannot be garbage
+# collected out from under the checkpoint.
+#
+# restore puts back files that were changed or deleted since, and discards a
+# STAGED deployment that is not the checkpoint's. It deliberately does not
+# delete files added since (it lists them: one of them may be the thing you
+# wanted), does not reboot, and does not touch $HOME, /var or Flatpaks.
+# ---------------------------------------------------------------------------
+CHECKPOINTS=${PULSAR_CHECKPOINTS:-/var/lib/pulsar/checkpoints}
+ETC_ROOT=${PULSAR_ETC:-/etc}
+TAR_META=(--numeric-owner --xattrs --xattrs-include='*' --acls --selinux)
+
+# path <TAB> type <TAB> mode <TAB> uid:gid <TAB> sha256 or link target.
+# mtime is left out on purpose: a file touched but unchanged is not a change.
+etc_manifest() {
+    local sums
+    sums=$(mktemp)
+    ( cd "$ETC_ROOT" && find . -xdev -type f -print0 | sort -z \
+        | xargs -0 -r sha256sum 2>/dev/null ) > "$sums" || true
+    ( cd "$ETC_ROOT" && find . -xdev -printf '%p\t%y\t%m\t%U:%G\t%l\n' 2>/dev/null ) \
+        | awk -F'\t' -v OFS='\t' -v sums="$sums" '
+            BEGIN { while ((getline l < sums) > 0) { h = substr(l, 1, 64); p = substr(l, 67); s[p] = h } }
+            { print $1, $2, $3, $4, ($2 == "f" ? s[$1] : $5) }' \
+        | sort
+    rm -f "$sums"
+}
+
+# changed|added|removed <TAB> path, comparing a saved manifest with /etc now.
+etc_changes() {
+    local now
+    now=$(mktemp)
+    etc_manifest > "$now"
+    awk -F'\t' -v OFS='\t' '
+        NR == FNR { old[$1] = $0; next }
+        { seen[$1] = 1
+          if (!($1 in old)) print "added", $1
+          else if (old[$1] != $0) print "changed", $1 }
+        END { for (p in old) if (!(p in seen)) print "removed", p }' "$1" "$now" | sort -k2
+    rm -f "$now"
+}
+
+checkpoint_dir() {
+    local id=${1:-}
+    if [ -z "$id" ]; then
+        id=$(find "$CHECKPOINTS" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | tail -1)
+        [ -n "$id" ] || die "no checkpoints yet (create one: sudo pulsar checkpoint)"
+    fi
+    case "$id" in */*|.*) die "not a checkpoint id: ${id}" ;; esac
+    [ -r "${CHECKPOINTS}/${id}/meta.json" ] || die "no checkpoint ${id} (see: sudo pulsar checkpoint list)"
+    printf '%s\n' "${CHECKPOINTS}/${id}"
+}
+
+# The index `ostree admin pin` wants for the deployment with checksum $2, in
+# the order rpm-ostree reports -- the same order ostree numbers them in, staged
+# first. NOT a hardcoded 0: with an update staged, 0 is the staged deployment.
+deployment_index() {
+    printf '%s' "$1" | jq -r --arg c "$2" \
+        '[.deployments[]?.checksum] | index($c) // empty' 2>/dev/null
+}
+
+checkpoint_create() {
+    local note=${1:-}
+    [ $# -le 1 ] || die "usage: pulsar checkpoint [create] [note]"
+    local js='{}' checksum="" version="" pinned=false idx=""
+    if have rpm-ostree; then js=$(rpm-ostree status --json 2>/dev/null) || js='{}'; fi
+    checksum=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.booted == true)][0].checksum // ""' 2>/dev/null) || checksum=""
+    version=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.booted == true)][0].version // ""' 2>/dev/null) || version=""
+    local already
+    already=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.booted == true)][0].pinned // false' 2>/dev/null) || already=false
+
+    local id dir
+    id=$(date -u +%Y%m%dT%H%M%SZ)
+    dir="${CHECKPOINTS}/${id}"
+    [ ! -e "$dir" ] || die "checkpoint ${id} already exists; wait a second and retry"
+    ( umask 077; mkdir -p "$dir" ) || die "could not create ${dir}"
+    chmod 0700 "$CHECKPOINTS" "$dir" 2>/dev/null || true
+
+    # tar exits 1 for "file changed as we read it", which on a live /etc is
+    # expected and harmless; 2 is a real failure.
+    local rc=0
+    ( umask 077; tar --create --file "${dir}/etc.tar" "${TAR_META[@]}" -C "$ETC_ROOT" . ) 2>/dev/null || rc=$?
+    [ "$rc" -le 1 ] || { rm -rf "$dir"; die "could not archive ${ETC_ROOT} (tar exit ${rc})"; }
+    ( umask 077; etc_manifest > "${dir}/etc.manifest" )
+    if have ostree; then
+        ( umask 077; ostree admin config-diff > "${dir}/config-diff.txt" 2>/dev/null ) || true
+    fi
+
+    if [ -n "$checksum" ] && [ "$already" != true ] && have ostree; then
+        idx=$(deployment_index "$js" "$checksum")
+        if [ -n "$idx" ] && ostree admin pin "$idx" >/dev/null 2>&1; then pinned=true; fi
+    fi
+
+    ( umask 077; jq -n --arg id "$id" --arg note "$note" --arg c "$checksum" --arg v "$version" \
+        --argjson p "$pinned" \
+        '{id: $id, created: (now | floor | todate), note: $note,
+          deployment: {checksum: $c, version: $v}, pinned_by_checkpoint: $p}' > "${dir}/meta.json" )
+
+    local n; n=$(wc -l < "${dir}/etc.manifest")
+    printf 'checkpoint %s\n' "$id"
+    printf '  /etc      %s paths saved\n' "$n"
+    if [ -n "$checksum" ]; then
+        if [ "$pinned" = true ]; then printf '  deployment %s pinned\n' "${version:-?}"
+        elif [ "$already" = true ]; then printf '  deployment %s was already pinned\n' "${version:-?}"
+        else printf '  deployment %s NOT pinned (ostree refused); it can be garbage collected\n' "${version:-?}"; fi
+    fi
+    printf 'see what changed: sudo pulsar checkpoint diff %s\n' "$id"
+    printf 'undo it:          sudo pulsar checkpoint restore %s\n' "$id"
+}
+
+checkpoint_list() {
+    [ -d "$CHECKPOINTS" ] || { printf 'no checkpoints\n'; return 0; }
+    local m any=0
+    for m in "$CHECKPOINTS"/*/meta.json; do
+        [ -r "$m" ] || continue
+        any=1
+        jq -r '"\(.id)  \(.deployment.version // "?")  \(if .pinned_by_checkpoint then "pinned" else "-" end)  \(.note)"' "$m"
+    done
+    [ "$any" = 1 ] || printf 'no checkpoints\n'
+}
+
+# What happened to the OS since the checkpoint, in one line or none.
+checkpoint_deployment_state() {
+    local dir=$1 want js
+    want=$(jq -r '.deployment.checksum // ""' "${dir}/meta.json")
+    [ -n "$want" ] && have rpm-ostree || return 0
+    js=$(rpm-ostree status --json 2>/dev/null) || return 0
+    printf '%s' "$js" | jq -r --arg c "$want" '
+      ([.deployments[]? | select(.booted == true)][0].checksum // "") as $b
+      | ([.deployments[]? | select(.staged == true)][0] // null) as $s
+      | (if $s != null and $s.checksum != $c then
+           "staged\ta new deployment (\($s.version // "?")) is staged since the checkpoint" else empty end),
+        (if $b != $c then
+           (if any(.deployments[]?; .checksum == $c) then
+              "booted\tthe booted deployment is not the checkpoint'"'"'s; that one is still present"
+            else "gone\tthe checkpoint'"'"'s deployment is no longer on disk" end)
+         else empty end)'
+}
+
+checkpoint_diff() {
+    local dir; dir=$(checkpoint_dir "${1:-}")
+    local changes; changes=$(etc_changes "${dir}/etc.manifest")
+    if [ -z "$changes" ]; then printf '/etc: unchanged since %s\n' "${dir##*/}"
+    else printf '/etc since %s:\n' "${dir##*/}"; printf '%s\n' "$changes" | sed 's|\t\./|  /etc/|; s|^|  |'; fi
+    local dep; dep=$(checkpoint_deployment_state "$dir")
+    if [ -n "$dep" ]; then printf 'deployment:\n'; printf '%s\n' "$dep" | cut -f2 | sed 's/^/  /'; fi
+    return 0
+}
+
+checkpoint_restore() {
+    [ $# -eq 1 ] || die "usage: sudo pulsar checkpoint restore <id>  (ids: sudo pulsar checkpoint list)"
+    local dir; dir=$(checkpoint_dir "$1")
+    local changes; changes=$(etc_changes "${dir}/etc.manifest")
+
+    # Changed and removed paths come back from the archive, and ONLY those:
+    # --no-recursion, so restoring a directory's mode does not also rewrite
+    # everything under it.
+    local list; list=$(mktemp)
+    printf '%s\n' "$changes" | awk -F'\t' '$1 == "changed" || $1 == "removed" { print $2 }' \
+        | tr '\n' '\0' > "$list"
+    if [ -s "$list" ]; then
+        local rc=0
+        tar --extract --file "${dir}/etc.tar" "${TAR_META[@]}" -C "$ETC_ROOT" \
+            --no-recursion --null --files-from "$list" 2>/dev/null || rc=$?
+        rm -f "$list"
+        [ "$rc" -eq 0 ] || die "restoring /etc failed part way (tar exit ${rc}); run: sudo pulsar checkpoint diff ${dir##*/}"
+        printf 'restored in /etc:\n'
+        printf '%s\n' "$changes" | awk -F'\t' '$1 != "added" { sub(/^\.\//, "/etc/", $2); print "  " $1 "  " $2 }'
+    else
+        rm -f "$list"
+        printf '/etc: nothing changed or deleted since %s\n' "${dir##*/}"
+    fi
+    if printf '%s\n' "$changes" | grep -q '^added'; then
+        printf 'added since the checkpoint, left in place (delete by hand if unwanted):\n'
+        printf '%s\n' "$changes" | awk -F'\t' '$1 == "added" { sub(/^\.\//, "/etc/", $2); print "  " $2 }'
+    fi
+
+    local dep; dep=$(checkpoint_deployment_state "$dir")
+    if printf '%s\n' "$dep" | grep -q '^staged'; then
+        # The one OS-side undo that needs no reboot and cannot lose anything
+        # the checkpoint had: the staged deployment was made after it.
+        rpm-ostree cleanup --pending >/dev/null 2>&1 \
+            && printf 'discarded the deployment staged since the checkpoint\n' \
+            || printf 'could not discard the staged deployment; run: sudo rpm-ostree cleanup --pending\n'
+    fi
+    if printf '%s\n' "$dep" | grep -q '^booted'; then
+        printf 'the system has BOOTED a newer deployment since; to go back: sudo pulsar rollback, then reboot\n'
+    elif printf '%s\n' "$dep" | grep -q '^gone'; then
+        printf "the checkpoint's deployment is gone; only /etc could be restored\n"
+    fi
+    printf 'services read /etc when they start: restart what changed, or reboot\n'
+}
+
+checkpoint_drop() {
+    [ $# -eq 1 ] || die "usage: sudo pulsar checkpoint drop <id>"
+    local dir; dir=$(checkpoint_dir "$1")
+    # Unpin only a pin this checkpoint made. One the user set by hand, or one
+    # an older checkpoint made, is not this checkpoint's to take away.
+    if [ "$(jq -r '.pinned_by_checkpoint' "${dir}/meta.json")" = true ] && have ostree && have rpm-ostree; then
+        local c js idx others
+        c=$(jq -r '.deployment.checksum' "${dir}/meta.json")
+        others=$(grep -l "\"${c}\"" "$CHECKPOINTS"/*/meta.json 2>/dev/null | grep -vc "^${dir}/meta.json$" || true)
+        if [ "${others:-0}" -eq 0 ]; then
+            js=$(rpm-ostree status --json 2>/dev/null) || js='{}'
+            idx=$(deployment_index "$js" "$c")
+            if [ -n "$idx" ] && ostree admin pin --unpin "$idx" >/dev/null 2>&1; then
+                printf 'unpinned the deployment this checkpoint pinned\n'
+            fi
+        fi
+    fi
+    rm -rf "$dir"
+    printf 'dropped %s\n' "${dir##*/}"
+}
+
+checkpoint_help() {
+    cat <<'EOF'
+usage: sudo pulsar checkpoint [note]      snapshot /etc and pin the booted deployment
+       sudo pulsar checkpoint list
+       sudo pulsar checkpoint diff [id]    what changed in /etc (and the OS) since
+       sudo pulsar checkpoint restore <id> put back changed and deleted /etc files,
+                                           discard a deployment staged since
+       sudo pulsar checkpoint drop <id>    delete it, unpinning what it pinned
+
+Take one before handing the machine to an agent. restore does not reboot,
+does not delete files added since (it lists them), and never touches $HOME,
+/var or Flatpak data. See docs/AGENTS-SAFETY.md.
+EOF
+}
+
+cmd_checkpoint() {
+    case "${1:-}" in
+        -h|--help|help) checkpoint_help; return 0 ;;
+    esac
+    need_root checkpoint
+    local sub=${1:-create}
+    case "$sub" in
+        create)  shift || true; checkpoint_create "$@" ;;
+        list)    shift; [ $# -eq 0 ] || die "'checkpoint list' takes no arguments"; checkpoint_list ;;
+        diff)    shift; [ $# -le 1 ] || die "usage: sudo pulsar checkpoint diff [id]"; checkpoint_diff "$@" ;;
+        restore) shift; checkpoint_restore "$@" ;;
+        drop)    shift; checkpoint_drop "$@" ;;
+        -*)      die "unknown option: ${sub} (see: pulsar checkpoint --help)" ;;
+        # Anything else is a note for a new checkpoint, so the common case is
+        # `sudo pulsar checkpoint "before the agent"`.
+        *)       checkpoint_create "$@" ;;
+    esac
+}
+
 usage() {
     cat <<'EOF'
 pulsar -- manage a Pulsar system
@@ -2226,6 +2492,9 @@ pulsar -- manage a Pulsar system
   pulsar agents-md         print the guide a coding agent should read first
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
+  pulsar checkpoint        snapshot /etc and pin the booted (root)
+                           deployment; then list | diff | restore | drop.
+                           see: pulsar checkpoint --help
 
   pulsar report            diagnosis bundle to paste: doctor, status,
                            manifest, failed units, warning+ journal lines,
@@ -2312,6 +2581,7 @@ main() {
         setup)     cmd_setup "$@" ;;
         report)    cmd_report "$@" ;;
         agents-md) no_args agents-md "$@"; cmd_agents_md ;;
+        checkpoint) cmd_checkpoint "$@" ;;
         help)      usage ;;
         *)         usage >&2; die "unknown command: ${cmd}" ;;
     esac
