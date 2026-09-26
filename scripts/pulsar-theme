@@ -28,6 +28,7 @@ What it writes, and why each piece exists, is in docs/theming.md.
 import argparse
 import colorsys
 import datetime
+import fcntl
 import hashlib
 import json
 import math
@@ -845,8 +846,8 @@ class Gtk3(Target):
 
     def apply(self, tx, theme, vm):
         # GTK3 has no media queries: it gets the variant for the scheme in
-        # effect NOW. Flipping Dark Style later leaves GTK3 on this one until
-        # the next switch -- the documented GTK3 limit.
+        # effect NOW. A later Dark Style flip is caught by the Shell
+        # extension, which runs follow-scheme to redo just this target.
         mode = (current_scheme() if theme.both else theme.prefer) if vm == "both" else vm
         mode = mode if mode in theme.variants else theme.prefer
         v = theme.variants[mode]
@@ -981,7 +982,12 @@ class Btop(Target):
 
 class Flatpak(Target):
     name, desc, live = "flatpak", "let Flatpak apps read the host gtk.css (global user override)", "per app launch"
-    default = False  # widens every app's sandbox a little; opt-in
+    # On by default: most of the desktop's own apps (Calculator, Calendar,
+    # Text Editor, Loupe, Papers...) are Flatpaks here, and without this they
+    # keep stock colours under every theme. The grant is read-only and names
+    # only the two gtk.css dirs; --without flatpak turns it off and it stays
+    # off across later switches.
+    default = True
 
     def apply(self, tx, theme, vm):
         p = DATA / "flatpak" / "overrides" / "global"
@@ -1442,6 +1448,7 @@ def cmd_notice():
 # `init` still checks the ACCOUNT, because a user may have taken it.
 PICKER_ACCEL = "<Super><Shift>t"
 PICKER_CMD = "/usr/libexec/pulsar/pulsar-theme-picker"
+LOCK = None  # the writer lock main() takes; see there
 MK = "/org/gnome/settings-daemon/plugins/media-keys"
 PICKER_PATH = f"{MK}/custom-keybindings/pulsar-theme-picker/"
 KEYBINDING_SCHEMAS = ["org.gnome.desktop.wm.keybindings", "org.gnome.shell.keybindings",
@@ -1531,18 +1538,38 @@ def cmd_init(theme="pulsar", force=False):
 # --------------------------------------------------------------- commands ----
 
 
+def cmd_follow_scheme():
+    """GTK3 has no media queries, so its gtk.css and gtk-theme are written for
+    the scheme in effect at the switch; everything else follows Dark Style on
+    its own. On a flip, redo just that half. A no-op unless a two-variant
+    theme is applied in "both" mode with gtk3 among its targets."""
+    st = current_state()
+    if not st.get("theme") or st.get("variant", "both") != "both" or "gtk3" not in st.get("targets", []):
+        return
+    try:
+        theme = load_theme(st["theme"])
+    except SystemExit:
+        return
+    if theme.both:
+        cmd_set(theme, "both", ["gtk3"], restart_policy="none")
+
+
 def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask", extra=None,
             without=None):
     """`only` is a subset (bg-next is only=['wallpaper']): stale files and the
     recorded target list are left as they were. `extra` adds opt-in targets
     (--with flatpak) to a full switch, which is still a full switch."""
     extra = list(extra or [])
+    # a default target turned off with --without stays off across every
+    # later full switch (the picker's included) until --with brings it back
+    off = (set(current_state().get("off", [])) | set(without or [])) - set(extra)
     if only is None:
         # an opt-in target that is on stays on across any full switch (the
         # picker's included) until it is turned off with --without
         on = [t.name for t in TARGETS if not t.default and t.name in current_state().get("targets", [])]
         extra += [n for n in on if n not in extra and n not in (without or [])]
-    selected = [t for t in TARGETS if (t.name in only if only else (t.default or t.name in extra))]
+    selected = [t for t in TARGETS
+                if (t.name in only if only else ((t.default and t.name not in off) or t.name in extra))]
     unknown = (set(only or []) | set(extra) | set(without or [])) - {t.name for t in TARGETS}
     if unknown:
         sys.exit(f"pulsar-theme: unknown target(s): {', '.join(sorted(unknown))}")
@@ -1574,6 +1601,7 @@ def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, r
         prev = current_state()
         st = {"theme": theme.slug, "name": theme.name, "variant": variant,
               "targets": applied if only is None else prev.get("targets", applied),
+              "off": sorted(off) if only is None else prev.get("off", []),
               "applied": datetime.datetime.now().isoformat(timespec="seconds"),
               # engine-owned files only: shared ones (gtk.css, btop.conf) are
               # never deleted as "stale", only cleaned by revert
@@ -1583,6 +1611,10 @@ def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, r
               (current_state().get("wallpaper_index", 0) if current_state().get("theme") == theme.slug else 0)}
         atomic_write(STATE / "current.json", json.dumps(st, indent=1).encode())
         if {"gtk4", "gtk3"} & set(applied) and restart_policy != "none":
+            # every write is done: the restart question can wait on a human
+            # without holding up a follow-scheme behind it
+            if LOCK:
+                fcntl.flock(LOCK, fcntl.LOCK_UN)
             after_switch(restart_policy)
 
 
@@ -1826,6 +1858,7 @@ def main(argv=None):
     sub.add_parser("next")
     sub.add_parser("prev")
     sub.add_parser("bg-next")
+    sub.add_parser("follow-scheme", help="re-apply the GTK3 half after a Dark Style flip (the Shell extension calls this)")
     sub.add_parser("current")
     rv = sub.add_parser("revert")
     rv.add_argument("--to", choices=["stock", "image"], default="stock",
@@ -1842,6 +1875,16 @@ def main(argv=None):
     i.add_argument("--into", help="themes root to write into (default: user themes dir)")
     i.add_argument("--set", action="append", help="override a palette key: red=#f7768e (base16)")
     a = ap.parse_args(argv)
+    # One writer at a time. Mostly this orders the extension's follow-scheme
+    # behind a `set` that flips Dark Style itself (Dracula, Alucard): it
+    # waits, then reads the NEW theme's state, instead of rewriting GTK3 for
+    # the old one mid-switch. Held until exit; the fd closes with the process.
+    if a.cmd in ("set", "next", "prev", "bg-next", "follow-scheme", "revert", "init") and \
+            not getattr(a, "dry_run", False):
+        STATE.mkdir(parents=True, exist_ok=True)
+        global LOCK
+        LOCK = open(STATE / ".lock", "a")
+        fcntl.flock(LOCK, fcntl.LOCK_EX)
 
     if a.cmd == "set":
         only = a.only.split(",") if a.only else None
@@ -1886,6 +1929,8 @@ def main(argv=None):
         cmd_cycle(1 if a.cmd == "next" else -1)
     elif a.cmd == "bg-next":
         cmd_bg_next()
+    elif a.cmd == "follow-scheme":
+        cmd_follow_scheme()
     elif a.cmd == "current":
         print(json.dumps(current_state(), indent=1) or "none")
     elif a.cmd == "revert":

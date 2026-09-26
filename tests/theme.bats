@@ -308,14 +308,21 @@ setkey() { python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d[s
     [ ! -e "$XDG_DATA_HOME/flatpak/overrides/global" ]
 }
 
-@test "an opt-in target stays on across a plain set until turned off" {
+@test "flatpak is on by default, and --without keeps it off until --with" {
     fake_dconf
     st="$XDG_STATE_HOME/pulsar-theme/current.json"
-    python3 "$ENGINE" set pulsar --with flatpak --no-restart >/dev/null
-    python3 "$ENGINE" set gruvbox --no-restart >/dev/null
-    grep -q '"flatpak"' "$st"
+    has() { python3 -c 'import json,sys; sys.exit(0 if "flatpak" in json.load(open(sys.argv[1]))["targets"] else 1)' "$st"; }
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    has
+    [ -s "$XDG_DATA_HOME/flatpak/overrides/global" ]
     python3 "$ENGINE" set nord --without flatpak --no-restart >/dev/null
-    ! grep -q '"flatpak"' "$st"
+    ! has
+    python3 "$ENGINE" set gruvbox --no-restart >/dev/null
+    ! has
+    python3 "$ENGINE" set gruvbox --with flatpak --no-restart >/dev/null
+    has
+    python3 "$ENGINE" set nord --no-restart >/dev/null
+    has
 }
 
 @test "init writes no pending marker when it decides to leave an account alone" {
@@ -455,4 +462,33 @@ PY
         done
         grep -q 'rays' "$f"; grep -q 'thread' "$f"; grep -q 'film' "$f"
     done
+}
+
+@test "follow-scheme rewrites only the GTK3 half after a Dark Style flip" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q '(dark)' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+    # gtk-theme is only set where adw-gtk3 is installed (the image; not every build host)
+    adw=; [ -d /usr/share/themes/adw-gtk3 ] && adw=1
+    [ -z "$adw" ] || [ "$(key /org/gnome/desktop/interface/gtk-theme)" = "'adw-gtk3-dark'" ]
+    gtk4_before=$(sha256sum "$XDG_CONFIG_HOME/gtk-4.0/gtk.css")
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme >/dev/null
+    grep -q '(light)' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+    [ -z "$adw" ] || [ "$(key /org/gnome/desktop/interface/gtk-theme)" = "'adw-gtk3'" ]
+    [ "$(sha256sum "$XDG_CONFIG_HOME/gtk-4.0/gtk.css")" = "$gtk4_before" ]
+    # the scheme itself is the user's: follow-scheme never writes it back
+    [ "$(key /org/gnome/desktop/interface/color-scheme)" = "'default'" ]
+}
+
+@test "follow-scheme does nothing with no theme applied, or a single-mode one" {
+    fake_dconf
+    python3 "$ENGINE" follow-scheme
+    [ ! -e "$XDG_CONFIG_HOME/gtk-3.0/gtk.css" ]
+    python3 "$ENGINE" set dracula --no-restart >/dev/null
+    before=$(sha256sum "$XDG_CONFIG_HOME/gtk-3.0/gtk.css")
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme
+    [ "$(sha256sum "$XDG_CONFIG_HOME/gtk-3.0/gtk.css")" = "$before" ]
 }

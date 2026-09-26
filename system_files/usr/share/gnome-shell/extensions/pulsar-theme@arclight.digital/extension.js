@@ -38,7 +38,17 @@ export default class PulsarThemeExtension extends Extension {
                 this._reload();
         });
         this._iface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
-        this._schemeId = this._iface.connect('changed::color-scheme', () => this._reload());
+        this._schemeId = this._iface.connect('changed::color-scheme', () => {
+            this._reload();
+            // GTK3 apps cannot follow the scheme themselves (no media
+            // queries); the engine rewrites their half. Fire and forget.
+            try {
+                Gio.Subprocess.new(['/usr/libexec/pulsar/pulsar-theme', 'follow-scheme'],
+                    Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE);
+            } catch (e) {
+                console.warn(`pulsar-theme: follow-scheme: ${e.message}`);
+            }
+        });
         this._themeCtx = St.ThemeContext.get_for_stage(global.stage);
         this._themeChangedId = this._themeCtx.connect('changed', () => {
             // Our own load/unload emits this too: only a NEW theme object

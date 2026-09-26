@@ -49,7 +49,9 @@ transaction:
   marked block appended to whatever the user already has. Both variants,
   fenced in `@media (prefers-color-scheme)`, so Dark Style keeps working
 - `~/.config/gtk-3.0/gtk.css` + `gtk-theme=adw-gtk3[-dark]`, for the scheme
-  in effect at the switch (GTK3 has no media queries)
+  in effect at the switch (GTK3 has no media queries); when Dark Style
+  flips, the Shell extension runs `pulsar-theme follow-scheme` to redo just
+  this half, so GTK3 apps follow too (open ones on their next window)
 - a Ptyxis palette on every profile, following Dark Style
 - a GtkSourceView scheme pair; Text Editor also recolours its own window
   from it
@@ -58,8 +60,13 @@ transaction:
 - two Shell stylesheets in `~/.local/state/pulsar-theme/shell/`, which the
   extension layers over the stock Shell theme and swaps on Dark Style
 
-It never touches fonts or icons, and never widens a Flatpak sandbox unless
-asked (`--with flatpak`).
+- a read-only grant on `~/.config/gtk-4.0` and `~/.config/gtk-3.0` in the
+  global Flatpak override, so Flatpak apps (most of GNOME's own apps here)
+  read the same gtk.css. It is the one sandbox the engine widens, so it can
+  be turned off: `--without flatpak`, which stays off across later switches
+  until `--with flatpak`. Revert removes exactly the two entries it added.
+
+It never touches fonts or icons.
 
 ## Revert
 
