@@ -105,8 +105,18 @@ pulsar attest        print (and run) the provenance check for this image
 pulsar update        fetch and stage an update      (root)
 pulsar rollback      boot the previous deployment   (root)
 pulsar pin | unpin   protect the booted deployment  (root)
-pulsar setup <recipe>   devbox | quadlet | gamescale
+pulsar report        redacted diagnosis bundle, JSON or --text
+pulsar flatpak-gl    do running Flatpak apps have the NVIDIA driver?
+pulsar agents-md     the briefing a coding agent should read first
+pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale
 ```
+
+**Handing the machine to an agent.** `pulsar agents-md` prints a briefing,
+shipped in the image, that tells a coding agent how this system works:
+toolboxes for dev tools, Flatpaks for apps, never reboot, and what rollback
+does and does not undo. `pulsar report` is the one thing to paste when
+something is broken. What an agent can and cannot break here is in
+[docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md).
 
 `doctor` reads `/sys/kernel/sched_ext/state` and the other places the truth
 lives, because `systemctl is-active` once said the scheduler was running
