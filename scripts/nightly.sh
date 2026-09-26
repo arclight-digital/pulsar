@@ -222,6 +222,23 @@ base_moved() {
   [ -n "${last}" ] \
     || { echo "the published build records no base digest; building" >&2; return 0; }
 
+  # A SPLIT RELEASE IS NOT AN UNCHANGED BASE. build.sh pushes vanilla to
+  # :latest before it builds nvidia, so a night whose nvidia half failed
+  # leaves the two :latest tags on different versions -- and every label
+  # above is read off vanilla, which says the base is already built. Without
+  # this, the next night skips and nvidia stays behind until quay happens to
+  # move, while the healthcheck reports a clean skip. Fails open with the
+  # rest: an nvidia tag that cannot be read is a mismatch, and builds.
+  local version nv_version
+  version="$(label_of "${published}" org.opencontainers.image.version)"
+  if [ -n "${version}" ]; then
+    nv_version="$(label_of "$(image_labels "${IMAGE_NVIDIA}:latest")" org.opencontainers.image.version)"
+    if [ "${nv_version}" != "${version}" ]; then
+      echo "${IMAGE}:latest is ${version} but ${IMAGE_NVIDIA}:latest is ${nv_version:-unreadable}; building" >&2
+      return 0
+    fi
+  fi
+
   local -a now=()
   local d
   while IFS= read -r d; do

@@ -94,10 +94,12 @@ manifest_digest() {
   echo "sha256:$(sha256sum < "${MANIFEST}" | cut -d' ' -f1)"
 }
 
-# The registry, as three answers:
+# The registry, as up to four answers:
 #   $1 the base-digest label on the published image, empty for absent
 #   $2 the base-inputhash label on the published image, empty for absent
 #   $3 the rpmostree.inputhash the base images carry, empty for absent
+#   $4 the version label on the published image, empty for absent (see the
+#      split-release tests at the bottom)
 # An absent label is an absent KEY here, which is what a registry serves and
 # what jq reads as null. The gate no longer asks for one label at a time.
 #
@@ -110,9 +112,10 @@ manifest_digest() {
 # by the time it is asked -- is the point of the second comparison.
 stub_skopeo() {
   local published base
-  published="$(jq -nc --arg d "${1:-}" --arg h "${2:-}" '{Labels: ({}
+  published="$(jq -nc --arg d "${1:-}" --arg h "${2:-}" --arg v "${4:-}" '{Labels: ({}
     | if $d == "" then . else .["digital.arclight.pulsar.base-digest"] = $d end
-    | if $h == "" then . else .["digital.arclight.pulsar.base-inputhash"] = $h end)}')"
+    | if $h == "" then . else .["digital.arclight.pulsar.base-inputhash"] = $h end
+    | if $v == "" then . else .["org.opencontainers.image.version"] = $v end)}')"
   base="$(jq -nc --arg h "${3:-}" '{Labels: ({}
     | if $h == "" then . else .["rpmostree.inputhash"] = $h end)}')"
   cat > "${BIN}/skopeo" <<EOF
@@ -128,6 +131,9 @@ printf '%s\n' "\${ref}" >> '${REFS}'
 case "\${ref}" in
   *pulsar:latest)
     printf '%s\n' '${published}'; exit 0 ;;
+  *pulsar-nvidia:latest)
+    [ -n "\${NV_LABELS:-}" ] || exit 1
+    printf '%s\n' "\${NV_LABELS}"; exit 0 ;;
   *silverblue@sha256:*)
     printf '%s\n' '${base}'; exit 0 ;;
   *silverblue:44)
@@ -460,4 +466,45 @@ night() {
   # And no version: a skip that printed one would be recorded as a build, and
   # run-build.sh trusts the version over the skip line when both are present.
   [[ "$output" != *"this build is "* ]]
+}
+
+# ---------------------------------------------------------------------------
+# A split release. build.sh pushes vanilla before it builds nvidia, and every
+# label the gate reads is off vanilla, so a night whose nvidia half failed
+# looked like a base that was already built -- and nvidia stayed behind,
+# skipped night after night, until quay moved.
+# ---------------------------------------------------------------------------
+
+# $1 vanilla version label, $2 nvidia version label ("" = nvidia unreadable)
+stub_versions() {
+  stub_skopeo "${AMD64_NOW}" "" "" "$1"
+  if [ -n "$2" ]; then
+    NV_LABELS="$(jq -nc --arg v "$2" '{Labels: {"org.opencontainers.image.version": $v}}')"
+    export NV_LABELS
+  else
+    unset NV_LABELS
+  fi
+}
+
+@test "REGRESSION: nvidia behind vanilla builds even when the base is unchanged" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_versions 44.20260927.0 44.20260926.0
+  check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"pulsar-nvidia:latest is 44.20260926.0"* ]]
+}
+
+@test "matching versions and an unchanged base still skip" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_versions 44.20260926.0 44.20260926.0
+  check
+  [ "$status" -eq 3 ]
+}
+
+@test "an unreadable nvidia tag fails open and builds" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_versions 44.20260926.0 ""
+  check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"unreadable"* ]]
 }
