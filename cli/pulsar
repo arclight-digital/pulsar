@@ -1486,10 +1486,15 @@ ${SHIM_MARK}
 real=$(sq "$real")
 prefix=$(sq "$AGENT_PREFIX")
 ${guide}
-# Already inside a container -- the box itself, or another toolbox sharing
-# this \$HOME -- where toolbox cannot nest: run the real thing directly.
+# Inside the agents box itself: run the real thing directly, since toolbox
+# cannot nest. Inside ANY OTHER container that shares this \$HOME (a dev box
+# with no node or uv), the entry point would die on its shebang, so hop back
+# to the host and go through toolbox from there.
 if [ -e /run/.containerenv ]; then
-    NPM_CONFIG_PREFIX="\$prefix" exec "\$real" "\$@"
+    if grep -qx 'name="${AGENT_BOX}"' /run/.containerenv 2>/dev/null; then
+        NPM_CONFIG_PREFIX="\$prefix" exec "\$real" "\$@"
+    fi
+    exec flatpak-spawn --host toolbox run -c $(sq "$AGENT_BOX") env NPM_CONFIG_PREFIX="\$prefix" "\$real" "\$@"
 fi
 exec toolbox run -c $(sq "$AGENT_BOX") env NPM_CONFIG_PREFIX="\$prefix" "\$real" "\$@"
 EOF
@@ -1910,7 +1915,10 @@ journal_json() {
     local out err note=""
     err=$(mktemp)
     out=$(journalctl "${args[@]}" 2>"$err") || true
-    if grep -qi 'insufficient permissions\|permission denied' "$err"; then
+    # A user outside wheel/adm/systemd-journal does not get an error: journalctl
+    # opens their own journal and only hints that the rest is hidden. That
+    # hint counts too, or an empty section reads as "no warnings".
+    if grep -qi 'insufficient permissions\|permission denied\|not seeing messages from other users' "$err"; then
         note="the ${scope} journal is not readable by this user; run as root or join the wheel, adm or systemd-journal group"
     fi
     rm -f "$err"
@@ -1986,7 +1994,15 @@ JQ_REDACT='
         lit("/var/home/" + $u; "~") | lit("/home/" + $u; "~")
         | if ($u | length) >= 3 and ($u | test("^[a-z_][a-z0-9_-]*$"))
           then gsub("\\b" + $u + "\\b"; "<user>") else . end)
-    | lit($host; "<hostname>")
+    # The hostname as a whole name only, never inside another word: a machine
+    # called "pulsar" must not turn "pulsar-nvidia" into "<hostname>-nvidia".
+    # Names that identify nobody and occur all over this report (the Fedora
+    # fallback "fedora", localhost) are not redacted at all: on a stock
+    # install they mangled the base image, the remotes and the manifest.
+    | if ($host | length) == 0 or ($host | ascii_downcase | IN("fedora", "localhost", "localhost.localdomain", "pulsar", "silverblue", "toolbox"))
+      then .
+      else gsub("(?<![A-Za-z0-9_-])" + ($host | gsub("(?<c>[.*+?^${}()|\\[\\]\\\\])"; "\\\(.c)")) + "(?![A-Za-z0-9_-])"; "<hostname>")
+      end
     | gsub("(?<k>(token|secret|passw(or)?d|api[_-]?key|authorization|bearer)[\"'"'"'=: ]+)[^\\s\"'"'"',;]+"; "\(.k)<redacted>"; "i")
     | gsub("\\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\\b"; "<mac>")
     | gsub("\\b(?!127\\.)([0-9]{1,3}\\.){3}[0-9]{1,3}\\b"; "<ipv4>");
@@ -1997,7 +2013,7 @@ cmd_report() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --text) text=1 ;;
-            --lines) shift; lines=${1:-} ;;
+            --lines) [ $# -ge 2 ] || die "--lines wants a number"; shift; lines=$1 ;;
             --lines=*) lines=${1#--lines=} ;;
             -h|--help) report_help; return 0 ;;
             *) die "'report' does not take '$1' (see: pulsar report --help)" ;;
@@ -2032,9 +2048,11 @@ cmd_report() {
     fp=$(flatpak_json)
 
     local host users
-    host=$(cat /proc/sys/kernel/hostname 2>/dev/null) || host=""
+    host=${PULSAR_REPORT_HOSTNAME:-$(cat /proc/sys/kernel/hostname 2>/dev/null || true)}
+    # Never "root": under sudo it is id -un, and redacting the word turned
+    # `root=UUID=...` on the kernel command line into `<user>=UUID=...`.
     users=$(printf '%s\n%s\n' "$(id -un 2>/dev/null || true)" "${SUDO_USER:-}" \
-            | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+            | jq -R -s -c 'split("\n") | map(select(length > 0 and . != "root")) | unique')
 
     local js
     js=$(jq -n -c \

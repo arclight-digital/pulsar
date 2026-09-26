@@ -1543,6 +1543,11 @@ case "$1" in
 esac
 EOF
     chmod +x "${STUB}/toolbox"
+    # The shim hops to the host with flatpak-spawn when it runs inside a
+    # container other than the agents box -- which is where these tests run
+    # when bats itself is in a toolbox. Pass straight through to the stub.
+    printf '#!/bin/sh\n[ "$1" = --host ] && shift\nexec "$@"\n' > "${STUB}/flatpak-spawn"
+    chmod +x "${STUB}/flatpak-spawn"
     # A clean PATH, not the caller's: setup agent looks for native installs
     # on PATH, and a developer's own ~/.local/bin/claude would otherwise be
     # found and every install test would see "already installed".
@@ -1737,4 +1742,33 @@ EOF
 @test "setup --help lists the agent recipe" {
     run "$PULSAR" setup --help
     [[ "$output" == *"agent"* ]]
+}
+
+@test "report: a generic hostname like 'fedora' is not redacted out of image names" {
+    PULSAR_REPORT_HOSTNAME=fedora run "$PULSAR" report
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"<hostname>-silverblue"* ]]
+    [[ "$output" != *"quay.io/<hostname>"* ]]
+}
+
+@test "report: a hostname is redacted as a whole name, never inside another word" {
+    PULSAR_REPORT_HOSTNAME=pulsar-nvidia run "$PULSAR" report
+    [ "$status" -eq 0 ]
+    PULSAR_REPORT_HOSTNAME=nvidia run "$PULSAR" report
+    [[ "$output" != *"pulsar-<hostname>"* ]]
+}
+
+@test "report: --lines with no value says so" {
+    run "$PULSAR" report --lines
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--lines wants a number"* ]]
+}
+
+@test "the shim hops to the host from any container but the agents box" {
+    # From the user's dev box, which shares $HOME but has no node or uv,
+    # running the entry point directly died on its shebang.
+    agent_env
+    "$PULSAR" setup agent claude >/dev/null
+    grep -q 'name="agents"' "${HOME}/.local/bin/claude"
+    grep -q 'exec flatpak-spawn --host toolbox run -c' "${HOME}/.local/bin/claude"
 }
