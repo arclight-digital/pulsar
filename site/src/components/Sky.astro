@@ -8,27 +8,15 @@
 // #skyfade holds a snapshot of the outgoing look so backdrop switches
 // crossfade directly instead of sweeping u_look through the intermediate ones.
 //
-// The deck is the WALLPAPER picker, and it is independent of the theme: a
-// visitor can wear Nord's colours over Pulsar's Silk. Two parts, side by side:
-//   - the palette: "Pulsar, live" (the shader) or any theme's own rendered
-//     wallpaper -- the same shader, rendered in that palette, shown as a still
-//     over the canvas;
-//   - the looks row: Silk / Leak / Satin / Holo, driving the SAME u_look
-//     uniform the OS wallpapers are rendered with. Shown for the live palette.
-// Picking a theme suggests its wallpaper until the visitor picks one; from
-// then on theme changes leave the wallpaper alone (src/scripts/wallpaper.ts).
-// Site-only: the OS's own engine pairs each theme with its wallpapers.
+// The deck is the quick way to the live looks. The full wallpaper choice --
+// any theme's rendered wallpaper, independent of the theme -- lives in the
+// site-wide picker (ThemePicker.astro, scripts/wallpaper.ts), which shows a
+// theme's still in the .wallstill layer over the canvas.
 //
 // Hidden until a GL context actually exists -- a visitor without WebGL must
 // never see buttons that silently do nothing. Light/dark is the top bar's
 // toggle, not the deck's.
-import { THEMES, label, variant } from '../data/themes';
-
 const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
-
-// Every theme that has its own rendered wallpaper. Pulsar's own is the live
-// shader; Pulsar Holo's shipped wallpaper is the live Holo look plus the mark.
-const WALLS = THEMES.filter((t) => !['pulsar', 'pulsar-holo'].includes(t.slug) && variant(t, 'dark').wall);
 
 // Hero option (a) trades this deck for its theme deck in the same spot.
 interface Props {
@@ -43,36 +31,16 @@ const { deck = true } = Astro.props;
 <div class="wallstill" aria-hidden="true" data-wallstill-layer></div>
 
 {deck && (
-<div class="deck" role="group" aria-label="Wallpaper" id="lookSeg" hidden>
-  <span class="deck-note">wallpaper, independent of the theme</span>
-  <div class="row">
-    <label class="pal">
-      <span class="sr-only">Wallpaper palette</span>
-      <select data-wall-palette>
-        <option value="pulsar">Pulsar, live</option>
-        <optgroup label="A theme’s wallpaper">
-          {
-            WALLS.map((t) => (
-              // Only the variants the theme really has: a light-only theme's
-              // wallpaper under dark-mode text is unreadable, so in the other
-              // mode the sky stays live (wallpaper.ts).
-              <option value={t.slug} data-dark={t.variants.dark?.wall} data-light={t.variants.light?.wall}>
-                {label(t)}
-              </option>
-            ))
-          }
-        </optgroup>
-      </select>
-    </label>
-    <div class="picker" data-looks>
-      {
-        LOOKS.map((name, index) => (
-          <button type="button" data-look={index} aria-pressed={index === 0 ? 'true' : 'false'}>
-            {name}
-          </button>
-        ))
-      }
-    </div>
+<div class="deck" role="group" aria-label="Backdrop" id="lookSeg" hidden>
+  <span class="deck-note">the shipped wallpapers, live · more in the theme picker</span>
+  <div class="picker">
+    {
+      LOOKS.map((name, index) => (
+        <button type="button" data-look={index} data-wall="pulsar" aria-pressed={index === 0 ? 'true' : 'false'}>
+          {name}
+        </button>
+      ))
+    }
   </div>
 </div>
 )}
@@ -130,36 +98,6 @@ const { deck = true } = Astro.props;
     letter-spacing: 0.04em;
     color: var(--on-chip);
   }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-  }
-  .pal select {
-    appearance: auto;
-    font: inherit;
-    font-family: var(--font-label);
-    font-weight: var(--label-weight);
-    font-size: var(--label-size);
-    letter-spacing: 0.04em;
-    color: var(--on-chip);
-    background: var(--chip);
-    border: 1px solid var(--chip-line);
-    border-radius: var(--radius-full);
-    padding: var(--space-sm) var(--space-md);
-    min-height: 2.75rem;
-    backdrop-filter: blur(12px);
-    cursor: pointer;
-  }
-  .pal select:focus-visible {
-    outline: 2px solid var(--cyan);
-    outline-offset: 2px;
-  }
-  .pal option,
-  .pal optgroup {
-    color: initial;
-    background: initial;
-  }
   .picker {
     display: inline-flex;
     padding: var(--space-xs);
@@ -195,7 +133,8 @@ const { deck = true } = Astro.props;
     color: var(--star);
   }
   .picker button[aria-pressed='true'] {
-    color: var(--ink);
+    /* --pulsar-on-accent is set with a theme; Pulsar's own cyan takes ink */
+    color: var(--pulsar-on-accent, var(--ink));
     background: var(--cyan);
     box-shadow: var(--glow-sm);
   }
@@ -210,9 +149,6 @@ const { deck = true } = Astro.props;
     }
     .deck-note {
       display: none;
-    }
-    .row {
-      flex-direction: column;
     }
   }
   @media (prefers-reduced-motion: reduce) {

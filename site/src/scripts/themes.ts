@@ -1,22 +1,15 @@
-// Picking a theme on the page: the showcase preview swaps to that theme's
-// desktop, the command follows it, and the page itself takes the theme's
-// accent through ARC's two-colour contract -- the same two tokens every ARC
-// component reads, so nothing's parts are restyled, only re-fed.
+// Picking a theme -- from the floating picker, the showcase tiles or a hero
+// control -- recolours the WHOLE site (scripts/sitetheme.ts), swaps the
+// showcase preview to that theme's desktop, and follows it with the command.
 //
 // One source of truth for "which theme is showing": a pulsar:theme event on
-// document. The showcase tiles and the hero options (sky stills, the split
-// hero's switcher) both dispatch it and both listen, so they cannot drift.
-//
-// Nothing here is persisted. A visitor recolouring the page is looking, not
-// choosing; a reload is Pulsar again.
+// document. Everything that picks dispatches it and everything that shows
+// listens, so the picker, the tiles and the hero cannot drift. The choice is
+// remembered per visitor (sitetheme.ts); a reset is Pulsar again.
+import { applySiteTheme, storedTheme } from './sitetheme';
 
 type Variant = { accent: string; desktop?: string; wall?: string };
 export type ThemeDetail = { slug: string; name: string; dark: Variant; light: Variant };
-
-const rgb = (hex: string) => {
-  const n = parseInt(hex.replace('#', ''), 16);
-  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
-};
 
 // Mirrors the page's own theme resolution: an explicit data-theme wins,
 // `auto` follows the OS.
@@ -28,26 +21,18 @@ export const mode = (): 'dark' | 'light' => {
 
 let current: ThemeDetail | null = null;
 
-function recolour(detail: ThemeDetail | null) {
-  const root = document.documentElement.style;
-  if (!detail || detail.slug === 'pulsar') {
-    // Pulsar is the page's own palette: drop the overrides, let tokens.css
-    // speak, so light mode keeps its violet rather than a borrowed accent.
-    for (const p of ['--accent-primary', '--accent-primary-rgb', '--accent-secondary', '--accent-secondary-rgb'])
-      root.removeProperty(p);
-    return;
-  }
-  const a = detail[mode()].accent;
-  root.setProperty('--accent-primary', a);
-  root.setProperty('--accent-primary-rgb', rgb(a));
-  root.setProperty('--accent-secondary', a);
-  root.setProperty('--accent-secondary-rgb', rgb(a));
-}
-
 function show(detail: ThemeDetail) {
   current = detail;
-  recolour(detail);
-  const v = detail[mode()];
+  applySiteTheme(detail.slug);
+  preview(detail);
+}
+
+// The parts that depend on the page's mode as well as the theme. Kept apart
+// from show() so the light/dark observer can refresh them without
+// re-applying the theme -- which, for a single-mode theme, sets the mode, and
+// would feed the observer forever.
+function preview(detail: ThemeDetail) {
+  const v = detail[mode()] ?? detail.dark ?? detail.light;
   // A theme with no desktop screenshot yet shows its wallpaper instead, so the
   // preview never keeps showing the previous theme under the new one's name.
   const src = v.desktop ?? v.wall;
@@ -82,6 +67,29 @@ export const detailOf = (el: HTMLElement): ThemeDetail => ({
 
 export function pick(detail: ThemeDetail) {
   document.dispatchEvent(new CustomEvent<ThemeDetail>('pulsar:theme', { detail }));
+  if (detail.slug !== 'pulsar') tellOnce(detail.slug);
+}
+
+// Once a session, the first time someone picks a theme: where the same thing
+// lives on a real Pulsar desktop. First login binds Super+Shift+T only when
+// the key is free, so the line names the command too, which always works.
+function tellOnce(slug: string) {
+  try {
+    if (sessionStorage.getItem('pulsar-theme-told')) return;
+    sessionStorage.setItem('pulsar-theme-told', '1');
+  } catch {
+    /* no session storage: say it anyway, once per page */
+  }
+  const toast = document.querySelector<HTMLElement & { show?: (o: object) => void }>('[data-theme-toast]');
+  const cmd = `pulsar theme set ${slug}`;
+  toast?.show?.({
+    message: `In Pulsar: Super+Shift+T, or ${cmd}`,
+    duration: 9000,
+    actionLabel: 'Copy command',
+    action: () => {
+      navigator.clipboard?.writeText(cmd).catch(() => {});
+    },
+  });
 }
 
 export function initThemes(): void {
@@ -103,8 +111,36 @@ export function initThemes(): void {
   // The page's own light/dark toggle changes which accent and which shot is
   // right for the theme on show; re-apply it rather than leave a dark accent
   // on a light page.
-  new MutationObserver(() => current && show(current)).observe(document.documentElement, {
+  new MutationObserver(() => current && preview(current)).observe(document.documentElement, {
     attributes: true,
     attributeFilter: ['data-theme'],
   });
+
+  // A theme remembered from an earlier page: the pre-paint script already put
+  // its colours on; this re-applies (a new build may have refined them) and
+  // brings the picker, tiles and preview into line. No toast -- nothing was
+  // picked just now.
+  const stored = storedTheme();
+  const tile = stored && document.querySelector<HTMLElement>(`[data-theme-tile="${CSS.escape(stored)}"]`);
+  if (tile) show(detailOf(tile));
+
+  // the floating picker: open it, and "Back to Pulsar"
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-picker-open]')) {
+      const sheet = document.querySelector<HTMLElement & { open: boolean }>('[data-picker]');
+      if (sheet) sheet.open = true;
+    }
+    if (target.closest('[data-picker-reset]')) {
+      const home = document.querySelector<HTMLElement>('[data-theme-tile="pulsar"]');
+      if (home) show(detailOf(home));
+      document.dispatchEvent(new Event('pulsar:reset'));
+    }
+  });
+
+  // for the review screenshots and the audit: window.pulsarTheme('nord')
+  (window as unknown as { pulsarTheme: (s: string) => void }).pulsarTheme = (s: string) => {
+    const t = document.querySelector<HTMLElement>(`[data-theme-tile="${CSS.escape(s)}"]`);
+    if (t) show(detailOf(t));
+  };
 }

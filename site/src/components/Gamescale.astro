@@ -151,6 +151,10 @@ const MODES = [
     color: var(--accent-primary);
     text-shadow: var(--glow-xs);
   }
+  /* on a pale ground the glow only blurs the figure */
+  :global(:root[data-theme='light']) .is-native .res {
+    text-shadow: none;
+  }
   .is-native .verdict {
     color: var(--text-primary);
   }
