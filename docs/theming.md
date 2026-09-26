@@ -133,8 +133,13 @@ luminescence and signal treatment: emissive cores, thin ion-trail
 filaments with a halo and a hint of chromatic split, a circuit lattice lit
 only by the glow near it, and a 3-pixel raster you feel more than see,
 all through a soft-knee rolloff so highlights bloom instead of clipping.
-Light variants read as pearl rather than glow. The phosphor themes carry
-it strongest; `glow`, `signal` and `grain` tune it per render. `scripts/build.sh` renders them as PNG
+Light variants read as pearl rather than glow. Silk carries the full
+filament web; on the smooth looks (leak, satin, holo) it is thinned to
+about 60% (satin 50%) -- at full strength there it read as electrical
+crackle. The phosphor themes carry it strongest; `glow`, `signal`, `web`
+and `grain` tune it per render. The brand wallpapers (and the site's live
+hero sky, which compiles the same assets/shaders/pulsar.frag in WebGL1)
+carry the same treatment in the brand colours, kept GLSL ES 1.0 and cheap. `scripts/build.sh` renders them as PNG
 on the builder, like the brand wallpapers; the Containerfile converts them
 to JPEG XL at quality 97 (about 0.6 MB each; below 97 the film grain, which
 is also the dither, goes, and dark gradients band). A `--no-wallpapers`

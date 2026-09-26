@@ -40,6 +40,7 @@ uniform float u_quiet;            // how hard the top-right (quick settings) cor
 uniform float u_glow;             // luminescence: emissive cores, filaments, halos (0 = the plain look)
 uniform float u_signal;           // signal treatment: lit lattice, raster, edge aberration (0 = none)
 uniform float u_grain;            // grain multiplier (it is also the 8-bit dither: never 0)
+uniform float u_web;              // filament + lattice density/brightness (silk 1, other looks 0.6)
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -243,10 +244,13 @@ void main() {
     float inten = clamp(dot(night - mix(u_ga, u_gb, 0.5), vec3(0.3333)) * 2.6, 0.0, 1.0);
     float ca = 0.0022 * u_signal;
     vec3 fil = vec3(line(g2 - 0.52 - ca, 0.0042), line(g2 - 0.52, 0.0042), line(g2 - 0.52 + ca, 0.0042))
-             + 0.55 * vec3(line(f - 0.63 - ca, 0.0036), line(f - 0.63, 0.0036), line(f - 0.63 + ca, 0.0036));
-    float halo = line(g2 - 0.52, 0.040) + 0.5 * line(f - 0.63, 0.030);
+             + 0.55 * u_web * vec3(line(f - 0.63 - ca, 0.0036), line(f - 0.63, 0.0036), line(f - 0.63 + ca, 0.0036));
+    float halo = line(g2 - 0.52, 0.040) + 0.5 * u_web * line(f - 0.63, 0.030);
+    fil *= u_web;
+    halo *= u_web;
     float carry = 0.07 + 0.93 * smoothstep(0.05, 0.7, inten);    // trails live in the lit mass
-    float tr = lattice(uv, 26.0);
+    // fewer lit cells as well as dimmer ones: the web thins, not just fades
+    float tr = lattice(uv, 26.0) * step(1.0 - u_web, hash(floor(uv * 26.0) + 41.0) * 1.0) * u_web;
     vec3 emit = u_c3 * fil * 0.95 * carry
               + mixo(u_c2, u_c3, 0.5) * halo * 0.16 * carry
               + u_c3 * pow(inten, 3.0) * 0.30

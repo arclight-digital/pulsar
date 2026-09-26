@@ -20,7 +20,10 @@
 //   u_theme 0.0 = night   1.0 = dawn (same field, high-key, ink-mark-friendly)
 //
 // LOCKED: the silk field is approved as-is -- do not retune its constants or
-// math. The only post-approval addition is the downlight, which sits on top.
+// math. Post-approval additions sit on top of it and leave it untouched: the
+// downlight, and the luminescence + signal pass at the end of main() (glowing
+// cores, ion-trail filaments, a lit circuit lattice, a faint raster; approved
+// 2026-09-26, at full strength on silk and thinned on the smooth looks).
 uniform vec2  u_resolution;
 uniform float u_time;   // fixed per render for stills, live for WebGL
 uniform float u_theme;  // 0 = dark variant, 1 = light variant
@@ -56,6 +59,35 @@ float starLayer(vec2 uv, float scale, float density, float size) {
     float d = length(fract(g) - pos);
     float lit = step(1.0 - density, hash(id));
     return lit * exp(-d * d * size) * (0.4 + 0.6 * hash(id + vec2(5.5, 2.2)));
+}
+
+// ---- luminescence helpers ------------------------------------------------
+// Kept cheap on purpose: this file also runs live, per frame, in WebGL1 as the
+// site's hero sky (site/src/scripts/sky.ts), phones included. The extra field
+// is a 3-octave fbm, the lattice is one hash lookup per cell, no loops beyond
+// fbm's, GLSL ES 1.0 only.
+float fbm3(vec2 p) {
+    float a = 0.5, s = 0.0;
+    for (int i = 0; i < 3; i++) { s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; }
+    return s / 0.875;
+}
+float glowLine(float d, float w) { return exp(-(d * d) / (w * w)); }
+// circuit lattice: at most one trace segment (or a rare node) per cell
+float lattice(vec2 uv, float scale) {
+    vec2 g = uv * scale;
+    vec2 id = floor(g), f = fract(g);
+    float h = hash(id + 17.0);
+    float lh = 1.0 - smoothstep(0.0225, 0.045, abs(f.y - 0.5));
+    float lv = 1.0 - smoothstep(0.0225, 0.045, abs(f.x - 0.5));
+    float seg = h < 0.30 ? lh : (h < 0.52 ? lv : 0.0);
+    float node = step(0.94, hash(id + 3.1)) * (1.0 - smoothstep(0.07, 0.11, length(f - 0.5)));
+    return max(seg * (0.55 + 0.45 * hash(id + 9.7)), node);
+}
+// soft-knee rolloff: identity below the knee (the grounds keep their exact
+// values), an exponential shoulder above (cores bloom, never clip flat)
+vec3 knee(vec3 x) {
+    vec3 over = max(x - 0.62, 0.0);
+    return min(x, vec3(0.62)) + 0.38 * (1.0 - exp(-over / 0.38));
 }
 
 // holo's column ramp: indigo | rose | periwinkle | teal | indigo. Split out
@@ -251,6 +283,47 @@ void main() {
     dawn = mix(dawn, dawnL, clamp(look, 0.0, 1.0));
     dawn = mix(dawn, dawnS, clamp(look - 1.0, 0.0, 1.0));
     dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
+
+
+    // ---- luminescence + signal --------------------------------------------
+    // Light that glows from within, over every look: emissive cores where the
+    // look is brightest, thin cyan ion trails on isolines of a second field
+    // with a periwinkle halo and a slight chromatic split, a violet circuit
+    // lattice lit only by the glow near it, and a 3-pixel raster. Silk
+    // carries the full web; the smooth looks (leak, satin, holo) a thinner
+    // one -- at full strength there it read as electrical crackle. The
+    // top-right, where quick settings open, stays quiet.
+    float web = mix(1.0, 0.30, clamp(look, 0.0, 1.0));      // silk 1, leak/satin/holo 0.30
+    // and on those looks the trails ride the lit mass more gently too
+    float carryMax = mix(1.0, 0.55, clamp(look, 0.0, 1.0));
+    float g2 = fbm3(uv * 2.7 + w * 1.8 + 4.1 + look * 1.37);
+    float inten = clamp(dot(night - vec3(0.012, 0.014, 0.034), vec3(0.3333)) * 2.6, 0.0, 1.0);
+    float ca = 0.0022;
+    vec3 fil = (vec3(glowLine(g2 - 0.52 - ca, 0.0042), glowLine(g2 - 0.52, 0.0042), glowLine(g2 - 0.52 + ca, 0.0042))
+             + 0.55 * vec3(glowLine(f - 0.63 - ca, 0.0036), glowLine(f - 0.63, 0.0036), glowLine(f - 0.63 + ca, 0.0036)))
+             * web;
+    float halo = (glowLine(g2 - 0.52, 0.040) + 0.5 * glowLine(f - 0.63, 0.030)) * web;
+    float carry = (0.07 + 0.93 * smoothstep(0.05, 0.7, inten)) * carryMax;
+    vec2 cell = floor(uv * 26.0);
+    float tr = lattice(uv, 26.0) * step(1.0 - web, hash(cell + 41.0)) * web;
+    float aspect = u_resolution.x / u_resolution.y;
+    vec2 qc = (uv - vec2(0.5 * aspect, 0.5)) * vec2(0.8, 1.2);
+    float quiet = 1.0 - exp(-dot(qc, qc) * 2.2) * 0.85;
+    vec3 emit = CYAN * fil * 0.95 * carry
+              + PERI * halo * 0.16 * carry
+              + CYAN * pow(inten, 3.0) * 0.30
+              + mix(VIOLET, PERI, 0.5) * tr * (0.015 + 0.30 * inten);
+    night = knee(night + emit * quiet);
+    // dawn: luminous on light reads as pearl, not glow
+    float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
+    vec3 pearl = 0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67)));
+    pearl = mix(pearl, mix(PERI, vec3(1.0), 0.3), 0.75);
+    dawn = mix(dawn, pearl, intenD * 0.22 * quiet);
+    dawn = mix(dawn, vec3(1.0), clamp(fil.g * 0.40 * (0.10 + 0.90 * intenD) * quiet, 0.0, 1.0));
+    dawn *= 1.0 - tr * 0.035;
+    float scan = 0.5 + 0.5 * sin(gl_FragCoord.y * 2.0944);
+    night *= 1.0 - 0.045 * scan;
+    dawn *= 1.0 - 0.012 * scan;
 
     vec3 col = mix(night, dawn, theme);
 

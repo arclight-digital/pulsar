@@ -51,6 +51,7 @@ desat = 0.0
 glow = 1.3
 signal = 1.7
 seed = [-4.1, 3.3]
+web = 1.0
 
 [[wallpaper.render]]
 variant = "dark"

@@ -44,7 +44,7 @@ PREAMBLE = "#version 330 core\nout vec4 _o;\n#define gl_FragColor _o\n"
 VERTEX = "#version 330 core\nin vec2 in_pos;\nvoid main(){gl_Position=vec4(in_pos,0.0,1.0);}\n"
 
 DEFAULTS = dict(desat=0.18, gain=1.0, stars=1.0, down=0.17, wash=0.35, fold=2.2,
-                seed=[0.0, 0.0], dir=[-0.8, -0.6], bloom=[0.42, -0.06], beam=-0.35, time=0.0, quiet=1.0, glow=1.0, signal=1.0, grain=1.0)
+                seed=[0.0, 0.0], dir=[-0.8, -0.6], bloom=[0.42, -0.06], beam=-0.35, time=0.0, quiet=1.0, glow=1.0, signal=1.0, grain=1.0, web=None)
 
 
 def color(v, spec):
@@ -66,6 +66,11 @@ def color(v, spec):
 def uniforms(theme, spec):
     v = theme.variants[spec["variant"]]
     s = {**DEFAULTS, **spec}
+    if s["web"] is None:
+        # Silk carries its filament web well; on the smooth looks (leak, satin,
+        # holo) a full-strength web read as electrical crackle. A render can
+        # still ask for more -- the phosphor themes do.
+        s["web"] = {"silk": 1.0, "satin": 0.5}.get(spec["look"], 0.6)
     if "seed" not in spec:
         # Looks other than silk take the seed only for their filament field and
         # sky; without one, every theme on the same look drew the same trails.
@@ -91,7 +96,7 @@ def uniforms(theme, spec):
         "u_da": rgb(color(v, s.get("dawn_bottom", "background"))),
         "u_db": rgb(color(v, s.get("dawn_top", "background~muted@0.16"))),
     }
-    for k in ("desat", "gain", "stars", "down", "wash", "fold", "beam", "quiet", "glow", "signal", "grain"):
+    for k in ("desat", "gain", "stars", "down", "wash", "fold", "beam", "quiet", "glow", "signal", "grain", "web"):
         u["u_" + k] = float(s[k])
     for k in ("seed", "dir", "bloom"):
         u["u_" + k] = tuple(float(x) for x in s[k])
