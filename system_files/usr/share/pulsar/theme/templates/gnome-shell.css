@@ -97,6 +97,18 @@ StEntry { selection-background-color: rgba({{accent_rgb}}, 0.35); }
 .search-section-content, .app-folder-dialog, .workspace-switcher, .resize-popup {
   background-color: {{popover}}; color: {{foreground}}; }
 
+/* The dash's items are .overview-tile too, but there the tile is the whole
+   column and only its .overview-icon should light up (the rules near the
+   top). Without this the app-grid hover above paints a full-height strip. */
+#dash .dash-item-container .overview-tile,
+#dash .dash-item-container .overview-tile:hover,
+#dash .dash-item-container .overview-tile:active,
+#dash .dash-item-container .overview-tile:highlighted,
+#dash .dash-item-container .show-apps,
+#dash .dash-item-container .show-apps:hover,
+#dash .dash-item-container .show-apps:active,
+#dash .dash-item-container .show-apps:checked { background-color: transparent; }
+
 /* Restated last: the tints above match these selectors' specificity and
    would otherwise win on order. */
 .calendar .calendar-day.calendar-today, .calendar .calendar-day.calendar-today:hover,
