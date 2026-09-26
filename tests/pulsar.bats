@@ -1420,3 +1420,50 @@ EOF
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.units.failed_system | length == 1'
 }
+
+# ---------------------------------------------------------------------------
+# agents-md: the machine's own briefing for a coding agent. What is worth
+# pinning is that it is there, that it says nothing false about this CLI, and
+# that the image stays vendor-neutral.
+# ---------------------------------------------------------------------------
+REPO_AGENTS_MD="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/AGENTS.md"
+
+@test "agents-md prints the guide the image ships" {
+    PULSAR_AGENTS_MD="$REPO_AGENTS_MD" run "$PULSAR" agents-md
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pulsar doctor --json"* ]]
+    [[ "$output" == *"toolbox run -c"* ]]
+}
+
+@test "agents-md fails honestly on an image without the guide" {
+    PULSAR_AGENTS_MD="${BATS_TEST_TMPDIR}/nope.md" run "$PULSAR" agents-md
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no agent guide"* ]]
+}
+
+@test "the guide names only commands this CLI actually has" {
+    # An agent will run what the guide says. Every `pulsar <verb>` in it must
+    # be a verb main() dispatches, or the first thing it learns is wrong.
+    local verbs v
+    verbs=$(grep -o 'pulsar [a-z-]*' "$REPO_AGENTS_MD" | awk 'NF == 2 { print $2 }' | sort -u)
+    [ -n "$verbs" ]
+    for v in $verbs; do
+        grep -qE "^        ${v}\)" "$PULSAR" || fail "AGENTS.md names 'pulsar ${v}', which main() does not dispatch"
+    done
+}
+
+@test "no coding agent is installed or enabled by the image" {
+    # Vendor-neutral is a property of the build, not of the prose: no agent's
+    # package may appear in either Containerfile.
+    run grep -nE 'claude-code|@openai/codex|gemini-cli|opencode-ai|aider-chat|copilot' \
+        "${BATS_TEST_DIRNAME}/../Containerfile" "${BATS_TEST_DIRNAME}/../Containerfile.nvidia"
+    [ "$status" -ne 0 ]
+}
+
+
+@test "--help lists report and agents-md" {
+    run "$PULSAR" --help
+    for v in "pulsar report" "pulsar agents-md"; do
+        [[ "$output" == *"$v"* ]] || fail "usage() does not mention ${v}"
+    done
+}

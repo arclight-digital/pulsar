@@ -579,6 +579,8 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       > /usr/share/pulsar/manifest.json && \
     jq -e '.version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \
     pulsar --version && \
+    { pulsar agents-md | grep -q 'pulsar doctor --json' || \
+      { echo "FATAL: /usr/share/pulsar/AGENTS.md is missing or gutted; an agent told to read it would learn nothing about this machine"; exit 1; }; } && \
     for t in jq skopeo notify-send; do \
       command -v "$t" >/dev/null || \
         { echo "FATAL: ${t} is gone from the base image; pulsar-update-check.timer would fail every six hours and this system would go stale in silence, which is the exact failure it exists to prevent"; exit 1; }; \

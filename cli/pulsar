@@ -1292,6 +1292,22 @@ cmd_flatpak_gl() {
     mkdir -p "$UPDATE_STATE" && printf '%s\n' "$FGL_IDS" > "$state_file"
 }
 
+# ---------------------------------------------------------------------------
+# agents-md -- the machine's own briefing for a coding agent.
+#
+# One vendor-neutral file in the image, at a path that moves with every update,
+# so the guide can never describe a system older than the one it ships in.
+# This command is the discovery path that works for every agent, including the
+# ones that read nothing on their own: "run `pulsar agents-md`" is one line to
+# put in any prompt.
+# ---------------------------------------------------------------------------
+AGENTS_MD=${PULSAR_AGENTS_MD:-/usr/share/pulsar/AGENTS.md}
+
+cmd_agents_md() {
+    [ -r "$AGENTS_MD" ] || die "no agent guide at ${AGENTS_MD} (this image predates it)"
+    cat "$AGENTS_MD"
+}
+
 cmd_rollback() { need_root rollback; need bootc; exec bootc rollback "$@"; }
 
 cmd_pin() {
@@ -1731,6 +1747,7 @@ pulsar -- manage a Pulsar system
   pulsar flatpak-gl        do running Flatpak apps have the NVIDIA driver?
                            an app started before its GL extension arrived
                            renders games on the iGPU. --notify says so once
+  pulsar agents-md         print the guide a coding agent should read first
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
 
@@ -1777,7 +1794,7 @@ main() {
     shift || true
     # jq is needed by nearly everything -- but not by help, which is how you
     # find out what this is on a box that lacks jq.
-    case "$cmd" in help) ;; *) need jq ;; esac
+    case "$cmd" in help|agents-md) ;; *) need jq ;; esac
     # update/rollback pass their arguments through to the upgrade tool (which
     # has flags worth passing, --check among them); setup hands them to its
     # recipe.
@@ -1796,6 +1813,7 @@ main() {
         attest)    no_args attest "$@";    cmd_attest ;;
         setup)     cmd_setup "$@" ;;
         report)    cmd_report "$@" ;;
+        agents-md) no_args agents-md "$@"; cmd_agents_md ;;
         help)      usage ;;
         *)         usage >&2; die "unknown command: ${cmd}" ;;
     esac
