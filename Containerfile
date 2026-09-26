@@ -592,6 +592,12 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # The fix is a comparison rpm-ostree already has both halves for, so the timer
 # stays small: see cmd_update_check in cli/pulsar.
 #
+# pulsar-gl-check.path is --global for the same notification reason. It
+# watches flatpak's change marker and tells the user to restart an app that
+# is running without the NVIDIA driver's GL extension (see flatpak_gl_scan in
+# cli/pulsar). On the vanilla image it wakes up, finds no nvidia module, and
+# exits.
+#
 # Still deliberately NOT enabled: bootc's fetch-apply-updates.timer, which
 # runs `bootc upgrade --apply` and reboots on its own, and would additionally
 # drop the layers on any system that has them. Notifying is the policy;
@@ -622,13 +628,15 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable podman-auto-update.timer && \
     systemctl --global enable gamescale-reconcile.service && \
     systemctl --global enable pulsar-update-check.timer && \
+    systemctl --global enable pulsar-gl-check.path && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service \
              pulsar-gamemode-group.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \
-    for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer; do \
+    for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
+             pulsar-gl-check.path; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

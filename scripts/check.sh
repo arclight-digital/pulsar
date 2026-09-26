@@ -41,6 +41,7 @@ shellcheck \
   scripts/diff-chunk-metadata.sh \
   scripts/flatpak-defaults.sh \
   scripts/gamemode-group.sh \
+  scripts/gl-nvidia.sh \
   scripts/lint-containerfile.sh \
   scripts/next-version.sh \
   scripts/nightly.sh \

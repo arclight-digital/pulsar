@@ -1,5 +1,8 @@
 # The nvidia variant's counterpart of 50-pulsar.preset, under the same rules:
-# presets are policy, not symlinks. The enablement itself is written by the
-# finalize step in Containerfile.nvidia, which asserts this list agrees with
-# it, so a full `systemctl preset-all` cannot quietly disarm the unit.
+# presets are policy, not symlinks. The enablements themselves are written in
+# Containerfile.nvidia -- phase 6 (the akmods cert) and phase 7 (the Flatpak GL
+# extensions) -- and each asserts its units are listed here, so a full
+# `systemctl preset-all` cannot quietly disarm them.
 enable pulsar-akmods-cert.service
+enable pulsar-gl-nvidia.service
+enable pulsar-gl-nvidia.path

@@ -1,0 +1,22 @@
+# Runs pulsar-gl-check.service whenever flatpak changes the system
+# installation. flatpak touches /var/lib/flatpak/.changed at the end of every
+# install, update and uninstall, whichever tool ran it (GNOME Software,
+# `flatpak update`, pulsar-gl-nvidia.service). Those are the moments a
+# running app's GL extension can stop matching the driver.
+#
+# A USER unit because it ends in a desktop notification, and because the
+# instance records it reads live in this user's $XDG_RUNTIME_DIR. It ships in
+# the base image and is harmless there: with no nvidia module loaded the
+# check has nothing to look at and exits.
+[Unit]
+Description=Check running Flatpak apps against the NVIDIA driver when flatpak changes
+
+[Path]
+PathChanged=/var/lib/flatpak/.changed
+# The user installation has its own marker, for an app or extension
+# installed with --user.
+PathChanged=%h/.local/share/flatpak/.changed
+Unit=pulsar-gl-check.service
+
+[Install]
+WantedBy=default.target

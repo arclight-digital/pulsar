@@ -1,0 +1,20 @@
+# Starts pulsar-gl-nvidia.service when a deployment is staged, whoever
+# staged it: `pulsar update`, rpm-ostree, bootc, or GNOME Software.
+# /run/ostree/staged-deployment is ostree's own record of the staged
+# deployment and exists exactly while one is pending.
+#
+# PathChanged, not PathExists. PathExists re-fires every time the service
+# exits while the file is still there, which is the whole time until the
+# reboot. That loop trips the trigger limit and leaves this unit failed.
+# PathChanged fires when the file is written, which covers a second update
+# staged over the first, and again when it is removed. The script is
+# idempotent, so an extra run costs one `flatpak list`.
+[Unit]
+Description=Fetch the next NVIDIA driver's Flatpak GL extensions when an update is staged
+
+[Path]
+PathChanged=/run/ostree/staged-deployment
+Unit=pulsar-gl-nvidia.service
+
+[Install]
+WantedBy=multi-user.target

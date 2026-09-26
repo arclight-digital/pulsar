@@ -426,6 +426,27 @@ RUN chmod 0755 /usr/libexec/pulsar/akmods-cert.sh && \
     { grep -qx "enable pulsar-akmods-cert.service" /usr/lib/systemd/system-preset/50-pulsar-nvidia.preset || \
       { echo "FATAL: pulsar-akmods-cert.service is enabled here but missing from the nvidia preset; a full preset-all would disable it"; exit 1; }; }
 
+# Phase 7: the Flatpak GL extensions for the driver this image ships.
+#
+# Flatpak apps do not use this image's NVIDIA userspace. They use
+# GL.nvidia-<driver version> from flathub and mount it once, at app start,
+# and every image update changes the version. On 2026-09-26 the new
+# extension arrived 16 seconds after Steam autostarted, and that Steam's games
+# ran black on the iGPU with no error anywhere. The script installs it when the
+# update is STAGED, from the staged tree's manifest, so it is present
+# before the reboot; see its header.
+#
+# The manifest key it reads is written below (nvidia_driver). This step comes
+# first, but the key is asserted at the end of the file, so an image whose
+# staged-time lookup would find nothing fails the build there.
+COPY scripts/gl-nvidia.sh /usr/libexec/pulsar/gl-nvidia.sh
+RUN chmod 0755 /usr/libexec/pulsar/gl-nvidia.sh && \
+    systemctl enable pulsar-gl-nvidia.service pulsar-gl-nvidia.path && \
+    for u in pulsar-gl-nvidia.service pulsar-gl-nvidia.path; do \
+      grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar-nvidia.preset || \
+        { echo "FATAL: ${u} is enabled here but missing from the nvidia preset; a full preset-all would disable it"; exit 1; }; \
+    done
+
 # Same rule as the base image: /var is machine-local, ship it empty (plus
 # the same sticky /var/tmp the base restores -- see Containerfile).
 RUN dnf5 clean all && \

@@ -319,6 +319,128 @@ check_nvidia() {
     fi
 }
 
+# Flatpak apps do not see the host's NVIDIA userspace. Each one mounts
+# org.freedesktop.Platform.GL.nvidia-<driver version> once, when it starts,
+# and keeps whatever it got until it exits. Two ways that goes wrong were
+# both seen on cherenkov on 2026-09-26, and neither reports an error:
+#
+#   - the app started before the matching extension was installed (Steam
+#     autostarted at login; GNOME Software installed the extension 16s
+#     later), so its sandbox has no NVIDIA driver at all;
+#   - the extension was redeployed under a running app, which kept the
+#     directory name and lost the files: every game launch after that logged
+#     "nvidia_icd.json: No such file or directory".
+#
+# Either way the app's games enumerate only the iGPU and llvmpipe. On a laptop
+# whose panel hangs off the NVIDIA GPU that is a black window, and the only
+# fix is to quit the app and start it again.
+#
+# The evidence is flatpak's own record of each running instance,
+# $XDG_RUNTIME_DIR/.flatpak/<instance>/info, which names every extension the
+# instance mounted and the COMMIT it mounted. An instance is healthy when it
+# has GL.nvidia-<running driver> and that commit is still deployed. It is
+# stale when the extension is absent, or when the commit it holds has since
+# been replaced and deleted. Multiarch apps (Steam) are held to the same test
+# for GL32. Not a look inside /proc/<pid>/root: Steam's pressure-vessel
+# sub-sandboxes carry empty GL skeletons there and get the driver another way,
+# so the look reads a healthy Steam as broken.
+#
+# Sets FGL_STATUS (skip|missing|stale|ok), FGL_DRIVER and FGL_APPS/FGL_IDS
+# (the stale apps' short names and instance ids).
+flatpak_gl_scan() {
+    FGL_STATUS=skip; FGL_DRIVER=""; FGL_APPS=""; FGL_IDS=""
+    have flatpak || return 0
+    # Instances are per user and sudo drops XDG_RUNTIME_DIR, so as root this
+    # would look at root's (empty) set and call it healthy. Say nothing.
+    [ "$(id -u)" -ne 0 ] || return 0
+    local variant; variant=$(mf variant)
+    case "$variant" in
+        *nvidia*|"") ;;
+        *) return 0 ;;
+    esac
+    local ver
+    ver=$(tr -d '[:space:]' < "${PULSAR_NVIDIA_VERSION_FILE:-/sys/module/nvidia/version}" 2>/dev/null) || true
+    # No loaded module is check_nvidia's finding, not this one's.
+    [[ "$ver" =~ ^[0-9]+(\.[0-9]+)+$ ]] || return 0
+    FGL_DRIVER=$ver
+    local ext="nvidia-${ver//./-}"
+
+    local runtimes gl32_installed=0 need_gl32=0
+    runtimes=$(flatpak list --runtime --columns=application 2>/dev/null) || true
+    if ! printf '%s\n' "$runtimes" | grep -Fxq "org.freedesktop.Platform.GL.${ext}"; then
+        FGL_STATUS=missing; return 0
+    fi
+    # GL32 lands in its own transaction after GL, ~100MB later. An app that
+    # needs it before then is waiting on an install, not on a restart, and
+    # telling the user to restart it got them a second Steam with the same
+    # problem.
+    printf '%s\n' "$runtimes" | grep -Fxq "org.freedesktop.Platform.GL32.${ext}" && gl32_installed=1
+
+    local run=${PULSAR_FLATPAK_RUN:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/.flatpak}
+    local -a roots
+    if [ -n "${PULSAR_FLATPAK_ROOTS:-}" ]; then
+        read -r -a roots <<<"$PULSAR_FLATPAK_ROOTS"
+    else
+        roots=(/var/lib/flatpak "${XDG_DATA_HOME:-$HOME/.local/share}/flatpak")
+    fi
+    local inst app info exts short
+    local -a apps=()
+
+    # <GL|GL32>: does this instance hold a still-deployed nvidia extension?
+    gl_live() {
+        local commit r d
+        commit=$(printf '%s\n' "$exts" | sed -n "s/^org\.freedesktop\.Platform\.$1\.${ext}=//p" | head -1)
+        [ -n "$commit" ] || return 1
+        for r in "${roots[@]}"; do
+            for d in "${r}/runtime/org.freedesktop.Platform.$1.${ext}"/*/*/"${commit}"; do
+                [ -d "$d" ] && return 0
+            done
+        done
+        return 1
+    }
+
+    while IFS=$'\t' read -r inst app; do
+        info="${run}/${inst}/info"
+        [ -r "$info" ] || continue
+        exts=$(sed -n 's/^\(runtime\|app\)-extensions=//p' "$info" | tr ';' '\n')
+        # Only apps on a runtime with the GL extension point: freedesktop,
+        # and GNOME and KDE, which reuse it.
+        printf '%s\n' "$exts" | grep -q '^org\.freedesktop\.Platform\.GL\.default=' || continue
+        if gl_live GL; then
+            printf '%s\n' "$exts" | grep -q '^org\.freedesktop\.Platform\.GL32\.default=' || continue
+            gl_live GL32 && continue
+            [ "$gl32_installed" = 1 ] || { need_gl32=1; continue; }
+        fi
+        FGL_IDS+="${inst} "
+        short=${app##*.}
+        case " ${apps[*]-} " in *" ${short} "*) ;; *) apps+=("$short") ;; esac
+    done < <(flatpak ps --columns=instance,application 2>/dev/null || true)
+
+    if [ ${#apps[@]} -gt 0 ]; then
+        FGL_STATUS=stale
+        FGL_APPS=$(printf '%s\n' "${apps[@]}" | paste -sd, - | sed 's/,/, /g')
+    elif [ "$need_gl32" = 1 ]; then
+        FGL_STATUS=missing
+    else
+        FGL_STATUS=ok
+    fi
+}
+
+check_flatpak_gl() {
+    flatpak_gl_scan
+    case "$FGL_STATUS" in
+        skip) return 0 ;;
+        missing)
+            record flatpak-gl warn "Flatpak GL driver for nvidia ${FGL_DRIVER} is missing or incomplete; Flatpak games run on the wrong GPU" \
+                   "sudo systemctl start pulsar-gl-nvidia.service" ;;
+        stale)
+            record flatpak-gl warn "${FGL_APPS} started without the NVIDIA ${FGL_DRIVER} driver" \
+                   "quit fully and reopen; until then its games get the iGPU and can show a black window" ;;
+        ok)
+            record flatpak-gl ok "running Flatpak apps have the NVIDIA ${FGL_DRIVER} driver" ;;
+    esac
+}
+
 check_flathub() {
     have flatpak || { record flathub warn "flatpak is not installed"; return; }
     local opts
@@ -452,6 +574,7 @@ cmd_doctor() {
     check_mangohud
     check_greenboot
     check_nvidia
+    check_flatpak_gl
     check_flathub
     check_fedora
     check_origin
@@ -1040,6 +1163,53 @@ cmd_update() {
     exec rpm-ostree upgrade ${a[@]+"${a[@]}"}
 }
 
+# ---------------------------------------------------------------------------
+# flatpak-gl -- the doctor check above, on its own, for pulsar-gl-check.path
+# to run every time flatpak changes something. A stale app is the one
+# finding here worth interrupting someone for: the next game it launches is
+# black, and nothing else says why.
+#
+# Notifies only on `stale`. A `missing` extension is pulsar-gl-nvidia.service's
+# to install, and telling the user to restart Steam before it lands would
+# get them a second Steam with the same problem. When it lands, flatpak
+# touches its change marker, this runs again, and the scan reads `stale`.
+# ---------------------------------------------------------------------------
+cmd_flatpak_gl() {
+    local notify=0 f
+    for f in "$@"; do
+        case "$f" in
+            --notify) notify=1 ;;
+            *) die "'flatpak-gl' takes only --notify (got: ${f})" ;;
+        esac
+    done
+    flatpak_gl_scan
+    case "$FGL_STATUS" in
+        skip)    printf 'no NVIDIA driver loaded, or no flatpak; nothing to check\n' ;;
+        missing) printf 'missing: no GL.nvidia extension for driver %s\n' "$FGL_DRIVER" ;;
+        ok)      printf 'ok: running Flatpak apps have the NVIDIA %s driver\n' "$FGL_DRIVER" ;;
+        stale)   printf 'stale: %s started without the NVIDIA %s driver\n' "$FGL_APPS" "$FGL_DRIVER" ;;
+    esac
+    [ "$notify" = 1 ] && [ "$FGL_STATUS" = stale ] || return 0
+
+    # Once per app instance, not once per run: flatpak touches its marker
+    # several times per transaction, and every one of those runs would see the
+    # same stale Steam. An instance id is fresh each time an app starts, so a
+    # restarted Steam that is somehow stale again still gets its warning.
+    local state_file="${UPDATE_STATE}/gl-notified" seen="" id fresh=0
+    if [ -r "$state_file" ]; then seen=$(cat "$state_file"); fi
+    for id in $FGL_IDS; do
+        case " ${seen} " in *" ${id} "*) ;; *) fresh=1 ;; esac
+    done
+    [ "$fresh" = 1 ] || return 0
+    if have notify-send; then
+        notify-send --app-name="Pulsar" --icon=dialog-warning \
+            "Restart ${FGL_APPS} to use the NVIDIA GPU" \
+            "It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it fully and reopen it." \
+            || true
+    fi
+    mkdir -p "$UPDATE_STATE" && printf '%s\n' "$FGL_IDS" > "$state_file"
+}
+
 cmd_rollback() { need_root rollback; need bootc; exec bootc rollback "$@"; }
 
 cmd_pin() {
@@ -1215,6 +1385,9 @@ pulsar -- manage a Pulsar system
                            exit 0 up to date or already staged, 10 available,
                            1 could not tell. add --notify for a desktop
                            notification, once per published build
+  pulsar flatpak-gl        do running Flatpak apps have the NVIDIA driver?
+                           an app started before its GL extension arrived
+                           renders games on the iGPU. --notify says so once
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
 
@@ -1265,6 +1438,7 @@ main() {
         doctor)    no_args doctor "$@";    cmd_doctor ;;
         status)    no_args status "$@";    cmd_status ;;
         update)    cmd_update "$@" ;;
+        flatpak-gl) cmd_flatpak_gl "$@" ;;
         rollback)  cmd_rollback "$@" ;;
         pin)       no_args pin "$@";       cmd_pin ;;
         unpin)     no_args unpin "$@";     cmd_unpin ;;

@@ -1,0 +1,30 @@
+# Installs org.freedesktop.Platform.GL(32).nvidia-<version> for the running
+# driver and for the staged update's driver, so a Flatpak app never starts
+# without the GPU driver it needs. The whole story is in the script's
+# header.
+#
+# Started two ways: at boot (the [Install] below) and by
+# pulsar-gl-nvidia.path whenever a deployment is staged. The staging trigger
+# is the one that does the real work. It fetches the next driver's extension
+# while the user is still on the old boot, so it is already present when the
+# new boot's autostarted Steam mounts its extensions.
+#
+# Same retry shape as pulsar-flatpaks.service and for the same reason: at
+# boot the network is often not up yet, and this image disables
+# NetworkManager-wait-online. The script exits 0 when there is nothing it can
+# do (all present, nothing on flathub yet, no flathub), so Restart= only
+# loops on the failures that waiting fixes.
+[Unit]
+Description=Install the Flatpak GL extensions for the NVIDIA driver
+Documentation=file:///usr/libexec/pulsar/gl-nvidia.sh
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/gl-nvidia.sh
+Restart=on-failure
+RestartSec=120
+
+[Install]
+WantedBy=multi-user.target

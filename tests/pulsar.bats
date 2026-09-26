@@ -920,3 +920,170 @@ mh_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="mangohud"
     run "$PULSAR" doctor --json
     [ "$status" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# doctor / flatpak-gl: running Flatpak apps against the NVIDIA driver.
+#
+# A Flatpak app mounts GL.nvidia-<driver version> once, at start. On
+# 2026-09-26 Steam autostarted 16s before the new driver's extension landed,
+# and an earlier in-place redeploy of the extension had deleted the files out
+# from under the previous Steam. Both left games black on the iGPU with no
+# error. The check reads flatpak's per-instance info file, which names the
+# extension COMMIT each instance holds, and asks whether that commit is still
+# deployed.
+# ---------------------------------------------------------------------------
+
+# $1 = installed runtimes, space separated
+stub_gl() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    jq '.variant = "nvidia-open"' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    export PULSAR_NVIDIA_VERSION_FILE="${BATS_TEST_TMPDIR}/nvidia-version"
+    printf '615.71.09\n' > "$PULSAR_NVIDIA_VERSION_FILE"
+    export PULSAR_FLATPAK_RUN="${BATS_TEST_TMPDIR}/run"
+    export PULSAR_FLATPAK_ROOTS="${BATS_TEST_TMPDIR}/flatpak"
+    export GL_RUNTIMES="$1"
+    mkdir -p "$PULSAR_FLATPAK_RUN"
+    : > "${BATS_TEST_TMPDIR}/ps"
+    cat > "${STUB}/flatpak" <<EOF
+#!/bin/sh
+case "\$1" in
+    list) printf '%s\n' \$GL_RUNTIMES ;;
+    ps)   cat "${BATS_TEST_TMPDIR}/ps" ;;
+esac
+exit 0
+EOF
+    chmod +x "${STUB}/flatpak"
+    PATH="${STUB}:${PATH}"
+    export PATH
+}
+
+# deploy <GL|GL32> <commit>: the commit exists on disk
+deploy() { mkdir -p "${PULSAR_FLATPAK_ROOTS}/runtime/org.freedesktop.Platform.$1.nvidia-615-71-09/x86_64/1.4/$2"; }
+
+# instance <id> <app> <extensions...>: a running instance holding these
+# name=commit extensions
+instance() {
+    local id=$1 app=$2; shift 2
+    mkdir -p "${PULSAR_FLATPAK_RUN}/${id}"
+    local IFS=';'
+    printf '[Application]\nname=%s\n\n[Instance]\nruntime-extensions=%s\n' "$app" "$*" \
+        > "${PULSAR_FLATPAK_RUN}/${id}/info"
+    printf '%s\t%s\n' "$id" "$app" >> "${BATS_TEST_TMPDIR}/ps"
+}
+
+GL_DEF=org.freedesktop.Platform.GL.default=d1
+GL32_DEF=org.freedesktop.Platform.GL32.default=d2
+GL_NV=org.freedesktop.Platform.GL.nvidia-615-71-09
+GL32_NV=org.freedesktop.Platform.GL32.nvidia-615-71-09
+
+gl_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="flatpak-gl") | .status + " " + .summary + " " + .detail'; }
+
+@test "doctor: an app holding the live extension is ok" {
+    stub_gl "$GL_NV"
+    deploy GL c1
+    instance 1 com.discordapp.Discord "$GL_DEF" "${GL_NV}=c1"
+    run gl_check
+    [[ "$output" == ok* ]]
+}
+
+@test "REGRESSION: an app that started before the extension landed is stale" {
+    stub_gl "$GL_NV"
+    deploy GL c1
+    instance 1 com.valvesoftware.Steam "$GL_DEF"
+    run gl_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"Steam started without the NVIDIA 615.71.09 driver"* ]]
+    [[ "$output" == *"quit fully and reopen"* ]]
+}
+
+@test "REGRESSION: an app holding a redeployed-and-deleted commit is stale" {
+    # Same directory name as the live extension, files gone: the 11:07 case.
+    stub_gl "$GL_NV"
+    deploy GL c2
+    instance 1 com.valvesoftware.Steam "$GL_DEF" "${GL_NV}=c1"
+    run gl_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"Steam"* ]]
+}
+
+@test "doctor: a multiarch app is held to GL32 as well" {
+    stub_gl "$GL_NV $GL32_NV"
+    deploy GL c1
+    instance 1 com.valvesoftware.Steam "$GL_DEF" "$GL32_DEF" "${GL_NV}=c1"
+    run gl_check
+    [[ "$output" == warn* ]]
+    deploy GL32 c3
+    instance 1 com.valvesoftware.Steam "$GL_DEF" "$GL32_DEF" "${GL_NV}=c1" "${GL32_NV}=c3"
+    run gl_check
+    [[ "$output" == ok* ]]
+}
+
+@test "doctor: an app with no GL extension point is not judged" {
+    stub_gl "$GL_NV"
+    instance 1 org.example.NoGL "org.fedoraproject.Platform.GL.default=x"
+    run gl_check
+    [[ "$output" == ok* ]]
+}
+
+@test "doctor: a missing extension names the unit that installs it" {
+    stub_gl ""
+    instance 1 com.valvesoftware.Steam "$GL_DEF"
+    run gl_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"missing or incomplete"* ]]
+    [[ "$output" == *"pulsar-gl-nvidia.service"* ]]
+}
+
+@test "doctor: the vanilla image has no flatpak-gl finding at all" {
+    stub_gl "$GL_NV"
+    jq '.variant = "vanilla"' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    run gl_check
+    [ -z "$output" ]
+}
+
+@test "doctor: flatpak-gl never fails the exit code, it only warns" {
+    stub_gl "$GL_NV"
+    instance 1 com.valvesoftware.Steam "$GL_DEF"
+    run "$PULSAR" doctor --json
+    [ "$status" -eq 0 ]
+}
+
+@test "flatpak-gl --notify says so once per stale instance, and again for a new one" {
+    stub_gl "$GL_NV"
+    stub_notify
+    deploy GL c1
+    instance 111 com.valvesoftware.Steam "$GL_DEF"
+    run "$PULSAR" flatpak-gl --notify
+    [ "$status" -eq 0 ]
+    run "$PULSAR" flatpak-gl --notify
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
+    grep -q "Restart Steam" "$NOTIFY_LOG"
+    # a second stale instance is news
+    instance 222 com.valvesoftware.Steam "$GL_DEF"
+    run "$PULSAR" flatpak-gl --notify
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 2 ]
+}
+
+@test "flatpak-gl --notify stays quiet while the extension is still missing" {
+    # Restarting before it lands would get a second Steam with the same
+    # problem; the install touches flatpak's marker and the check runs again.
+    stub_gl ""
+    stub_notify
+    instance 1 com.valvesoftware.Steam "$GL_DEF"
+    run "$PULSAR" flatpak-gl --notify
+    [ "$status" -eq 0 ]
+    [ ! -s "$NOTIFY_LOG" ]
+}
+
+@test "flatpak-gl: GL32 still to land is missing, not a reason to restart" {
+    # gl-nvidia.sh installs GL, then GL32 in a second transaction. Between
+    # the two a restarted Steam would still lack GL32.
+    stub_gl "$GL_NV"
+    stub_notify
+    deploy GL c1
+    instance 1 com.valvesoftware.Steam "$GL_DEF" "$GL32_DEF" "${GL_NV}=c1"
+    run "$PULSAR" flatpak-gl --notify
+    [[ "$output" == missing* ]]
+    [ ! -s "$NOTIFY_LOG" ]
+}

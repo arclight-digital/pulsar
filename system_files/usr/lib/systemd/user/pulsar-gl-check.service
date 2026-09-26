@@ -1,0 +1,21 @@
+[Unit]
+# Tells the user to restart a Flatpak app (in practice Steam) that is running
+# without the NVIDIA driver's GL extension, so its games get the iGPU and a
+# black window. See flatpak_gl_scan in /usr/bin/pulsar for what "without"
+# means and how it is read.
+Description=Check running Flatpak apps against the NVIDIA driver
+# The vanilla image ships this unit too. Without a loaded nvidia module there
+# is nothing to compare, so skip before the twenty-second wait below.
+ConditionPathExists=/sys/module/nvidia
+
+[Service]
+Type=oneshot
+# flatpak touches its marker per operation, and one update is several
+# operations. The old deployment an app still holds is removed near the end,
+# after an earlier touch has already started this unit. A check that ran
+# mid-transaction would see the files still there and stay quiet, and while
+# this unit is active later touches do not start it again. Twenty seconds
+# lets the transaction finish first. The 2026-09-26 install that left Steam
+# without a driver took seventeen.
+ExecStartPre=/usr/bin/sleep 20
+ExecStart=/usr/bin/pulsar flatpak-gl --notify
