@@ -21,7 +21,12 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-Type=oneshot
+# exec, not oneshot. A oneshot wanted by multi-user.target holds that target
+# until it exits, and scx.service is ordered after multi-user.target -- so a
+# boot that has to fetch ~1GB of GL extensions over a slow link would start
+# the scheduler only when the download finished. As exec the unit is up the
+# moment the script starts, and the download runs beside the boot.
+Type=exec
 ExecStart=/usr/libexec/pulsar/gl-nvidia.sh
 Restart=on-failure
 RestartSec=120

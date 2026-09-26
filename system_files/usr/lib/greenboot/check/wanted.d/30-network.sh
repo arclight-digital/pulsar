@@ -14,23 +14,31 @@
 # plane -- and a REQUIRED network check would roll back a perfectly healthy
 # deployment for it, repeatedly, with no way to stop it from the air.
 #
-# WAITS UP TO A MINUTE FIRST. greenboot runs about eight seconds into boot,
-# and with NetworkManager-wait-online disabled nothing holds it for Wi-Fi, so
-# a single look failed on every boot on cherenkov: the check ran at 11:18:33
-# and the link came up at 11:18:36. A warning that fires on every healthy boot
-# teaches everyone to ignore it. Nothing waits on greenboot except
-# boot-complete.target -- not the display manager, not login -- so the wait
-# costs nothing visible.
+# WAITS FOR NETWORKMANAGER TO FINISH STARTING, NOT FOR A ROUTE. greenboot runs
+# about eight seconds into boot and, with NetworkManager-wait-online disabled,
+# nothing holds it for Wi-Fi: a single look failed on every boot on cherenkov
+# (check at 11:18:33, link up at 11:18:36), and a warning that fires on every
+# healthy boot teaches everyone to ignore it.
+#
+# But this check is NOT off the boot path. greenboot-healthcheck.service is
+# wanted by multi-user.target, so the target waits for it, and scx.service is
+# ordered after multi-user.target -- a long wait here delays the scheduler.
+# An earlier version polled for a route for up to a minute, which an offline
+# laptop paid in full on every boot. `nm-online -s` returns as soon as
+# NetworkManager reports startup complete: right after the link comes up when
+# there is one, and almost at once when there is nothing to connect to. The
+# 10s cap bounds the rare slow case.
 set -euo pipefail
 
-for _ in $(seq 1 30); do
-    if [ -n "$(ip route show default 2>/dev/null)" ]; then
-        echo "default route present:"
-        ip route show default
-        exit 0
-    fi
-    sleep 2
-done
+if command -v nm-online >/dev/null 2>&1; then
+    nm-online -s -q -t 10 || true
+fi
 
-echo "no default route after 60s -- system booted without usable networking"
+if [ -n "$(ip route show default 2>/dev/null)" ]; then
+    echo "default route present:"
+    ip route show default
+    exit 0
+fi
+
+echo "no default route once NetworkManager finished starting -- system booted without usable networking"
 exit 1
