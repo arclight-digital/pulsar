@@ -1,0 +1,1 @@
+{"uuid": "gate-harness@local", "name": "Theme gate harness", "description": "HARNESS ONLY: unsafe mode so the scenario can Eval and screenshot.", "shell-version": ["50"]}

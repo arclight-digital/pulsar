@@ -1,0 +1,24 @@
+# The theme gate's container: a built Pulsar image, plus the apps the gate
+# screenshots and a harness-only extension. Nothing here ships.
+#
+#   podman build --build-arg IMAGE=ghcr.io/arclight-digital/pulsar:latest \
+#       -t localhost/pulsar-theme-gate -f tests/theme-gate/Containerfile tests/theme-gate
+ARG IMAGE=ghcr.io/arclight-digital/pulsar:latest
+FROM ${IMAGE}
+
+# Text Editor and the demos are Flatpaks (or absent) on a real Pulsar; the gate
+# wants them as host GTK apps reading the host gtk.css, which is the thing
+# under test. dbus-daemon for the private buses, procps for pgrep.
+RUN dnf5 install -y --setopt=install_weak_deps=False \
+      gnome-text-editor gtk4-devel-tools gtk3-devel btop libadwaita-demo \
+      python3-gobject dbus-daemon procps-ng && \
+    dnf5 clean all
+
+COPY gate-harness@local /usr/share/gnome-shell/extensions/gate-harness@local
+COPY zz9-gate.gschema.override /usr/share/glib-2.0/schemas/
+# The harness extension must declare whatever Shell this image carries, or it
+# is never loaded and every Eval in the gate fails.
+RUN SHELL_MAJOR="$(gnome-shell --version | sed 's/[^0-9.]//g' | cut -d. -f1)" && \
+    printf '{"uuid": "gate-harness@local", "name": "Theme gate harness", "description": "GATE ONLY: unsafe mode, so the scenario can Eval and screenshot.", "shell-version": ["%s"]}\n' \
+      "${SHELL_MAJOR}" > /usr/share/gnome-shell/extensions/gate-harness@local/metadata.json && \
+    glib-compile-schemas /usr/share/glib-2.0/schemas
