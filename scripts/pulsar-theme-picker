@@ -43,8 +43,8 @@ class Picker(Adw.ApplicationWindow):
         sb.set_key_capture_widget(self)
         self.searchbar = sb
         tv.add_top_bar(sb)
-        flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE, max_children_per_line=4,
-                           min_children_per_line=1, row_spacing=22, column_spacing=22,
+        flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE, max_children_per_line=2,
+                           min_children_per_line=2, row_spacing=22, column_spacing=22,
                            margin_top=22, margin_bottom=28, margin_start=28, margin_end=28,
                            activate_on_single_click=True, homogeneous=True, valign=Gtk.Align.START)
         flow.connect("child-activated", self.on_pick)
@@ -57,7 +57,7 @@ class Picker(Adw.ApplicationWindow):
         for slug, th in pt.ordered_themes():
             if th is None:
                 continue
-            card = cards.ThemeCard(pt, th, current=(slug == cur), width=240)
+            card = cards.ThemeCard(pt, th, current=(slug == cur), width=400)
             child = Gtk.FlowBoxChild(child=card, css_classes=["pt-child"])
             child.slug, child.card = slug, card
             child.set_tooltip_text(f"pulsar theme set {slug}")
