@@ -2,6 +2,11 @@
 // cannot leave half the page pointing at the old thing.
 export const REPO = 'https://github.com/arclight-digital/pulsar';
 
+// TODO(getpulsar.dev): the site is moving to getpulsar.dev once that domain is
+// registered and live. Until then everything -- astro.config's `site`, the
+// canonical tags, the sitemap and every link -- stays on
+// pulsar.arclight.digital; change them together, in one commit, on the day.
+
 export const IMAGES = {
   vanilla: 'ghcr.io/arclight-digital/pulsar',
   nvidia: 'ghcr.io/arclight-digital/pulsar-nvidia',
@@ -29,3 +34,12 @@ export const ISOS = {
 // is also committed to the repo as keys/cosign.pub, and the build verifies
 // every signature against the committed copy before publishing.
 export const COSIGN_PUB = `${ISO_BASE}/cosign.pub`;
+
+// Where "Support Pulsar" points. Pulsar is free to download; this is the tip
+// jar, run on Open Collective and hosted by Arclight Digital LLC. Tips are
+// that company's income, not a charitable gift, so the page says "support",
+// never "donate" or anything about tax.
+// TODO(support): set this once the collective exists. Until then the footer
+// shows the line without a link rather than guess at a URL someone else may
+// own.
+export const SUPPORT_URL: string | null = null;

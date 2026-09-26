@@ -2,10 +2,11 @@
 // The close. Pinned dark in both themes, the way the terminals are: the page
 // ends on ink, under a spectrum line that is the palette read left to right.
 import ByArclight from './ByArclight.astro';
-import { REPO } from '../data/site';
+import { REPO, SUPPORT_URL } from '../data/site';
 
 const SITE = [
   { label: 'Install', href: '/install' },
+  { label: 'Themes', href: '/#themes' },
   { label: 'gamescale', href: '/gamescale' },
   { label: 'Provenance', href: '/provenance' },
   { label: 'Changelog', href: '/changelog' },
@@ -38,7 +39,7 @@ const MACHINE = [
       />
       <div>
         <p class="word">PULSAR</p>
-        <p class="brandline">An immutable Fedora spin</p>
+        <p class="brandline">Silverblue+</p>
       </div>
     </div>
 
@@ -64,11 +65,23 @@ const MACHINE = [
     </div>
 
     <div slot="legal" class="legal">
+      <div class="colophons">
+      <p class="colophon made">
+        Free to download and MIT licensed. Made by Arclight Digital&nbsp;LLC.
+        {
+          SUPPORT_URL ? (
+            <a href={SUPPORT_URL}>Like it? Support Pulsar&nbsp;→</a>
+          ) : (
+            <span class="soon">Support Pulsar: coming&nbsp;soon.</span>
+          )
+        }
+      </p>
       <p class="colophon">
         Set in Host&nbsp;Grotesk and JetBrains&nbsp;Mono, on ARC&nbsp;UI. One fragment shader
         renders the home page's sky live and the OS wallpapers in&nbsp;CI. No analytics,
         no&nbsp;cookies.
       </p>
+      </div>
       <ByArclight />
     </div>
   </arc-footer>
@@ -139,6 +152,20 @@ const MACHINE = [
     justify-content: space-between;
     gap: var(--space-lg);
     flex-wrap: wrap;
+  }
+  .colophons {
+    display: grid;
+    gap: var(--space-xs);
+  }
+  .made {
+    color: var(--text-secondary);
+  }
+  .made a,
+  .soon {
+    white-space: nowrap;
+  }
+  .soon {
+    color: var(--text-muted);
   }
   .colophon {
     margin: 0;

@@ -1,59 +1,40 @@
 ---
-// Prose against the manifest, not three orphan cards: the claims on the left
-// are answered by the image's own readout on the right.
+// A ruled list of facts, each saying what a thing does for you and then how.
+// Used by two pillars: gaming, and the base that cannot rot -- where the
+// image's own manifest readout sits beside the list as the proof.
 import Manifest from './Manifest.astro';
+
+export type Fact = { t: string; d: string };
+interface Props {
+  facts: Fact[];
+  manifest?: boolean;
+}
+const { facts, manifest = false } = Astro.props;
 ---
 
-<div class="inside">
-  {/* A ruled list, the site's house container: each row names what the thing
-      does for you, then how. The manifest beside it is the proof. */}
+<div class={manifest ? 'inside with-manifest' : 'inside'}>
   <dl class="facts">
-    <div class="fact">
-      <dt>Games run as they should</dt>
-      <dd>
-        Gamescope, GameMode and MangoHud are built in. ntsync is there for Proton, split-lock
-        mitigation is off and the memory-map limit is raised, because games want all three.
-      </dd>
-    </div>
-    <div class="fact">
-      <dt>A bad update undoes itself</dt>
-      <dd>
-        Every boot is health-checked. If the desktop fails to come up three times running, the
-        machine goes back to the previous version without being&nbsp;asked.
-      </dd>
-    </div>
-    <div class="fact">
-      <dt>Scheduling for hybrid CPUs</dt>
-      <dd>
-        <code>scx_bpfland</code> places threads across performance and efficiency cores where the
-        kernel can load it. Where it cannot, the stock scheduler runs instead of nothing; the
-        manifest's <code>scheduler_btf</code> line says which this build&nbsp;got.
-      </dd>
-    </div>
-    <div class="fact">
-      <dt>Ready for work</dt>
-      <dd>
-        distrobox for any Linux userland, libvirt/KVM for virtual machines. Apps are Flatpaks, with
-        Flathub unfiltered; <span class="ns">the image is the&nbsp;OS.</span>
-      </dd>
-    </div>
-    <div class="fact">
-      <dt>NVIDIA with Secure Boot on</dt>
-      <dd>
-        The open NVIDIA driver is built for the image's exact kernel and signed, so Secure Boot
-        stays&nbsp;on.
-      </dd>
-    </div>
+    {
+      facts.map((f) => (
+        <div class="fact">
+          <dt>{f.t}</dt>
+          <dd set:html={f.d} />
+        </div>
+      ))
+    }
   </dl>
-  <Manifest />
+  {manifest && <Manifest />}
 </div>
 
 <style>
   .inside {
     display: grid;
-    grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2xl);
     align-items: start;
+  }
+  .with-manifest {
+    grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
   }
   .facts {
     margin: 0;
@@ -82,7 +63,7 @@ import Manifest from './Manifest.astro';
     text-wrap: pretty;
   }
   @media (max-width: 56rem) {
-    .inside {
+    .with-manifest {
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-xl);
     }

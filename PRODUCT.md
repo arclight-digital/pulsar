@@ -17,26 +17,38 @@ secondary.
 
 ## Product Purpose
 
-Pulsar is a personal immutable Fedora Silverblue spin (bootc image) tuned
-for gaming and development, built and signed entirely in CI and published to
-ghcr.io with provenance attestations. The site's job is to present it well.
+Pulsar is an immutable Fedora Silverblue image (bootc), made by Arclight
+Digital LLC, free to download and MIT licensed. It is built nightly on a
+throwaway machine and published to ghcr.io with an SPDX SBOM attached. The
+images are not signed yet (the installer ISOs and the NVIDIA module are);
+image signing with the ISOs' cosign release key is coming, and nothing on
+the site claims it before it lands. The site's job is to present it well.
 
 ## Positioning
 
-Lead claim (user-confirmed 2026-09-12): gamescale — games get the panel's
-real resolution instead of a fractional-scaled one, and the desktop scale is
-put back when the game exits, even when it does not exit cleanly. The site's
-hero copy and its first section carry this claim.
+Silverblue+ (repositioned 2026-09-26): Fedora's unbreakable desktop, made
+yours. Four pillars, in this order on the home page:
 
-Supporting claims, in order: the gaming + development stack (gamescope,
-gamemode, mangohud, ntsync, scx_bpfland scheduling, distrobox, libvirt/KVM,
-signed nvidia-open for Blackwell, greenboot auto-rollback); then the supply
-chain — the machine that runs it never compiles anything; CI builds, signs,
-and attests every image nightly, and the weekly ISO is built from the
-published image and signed with the release key.
+1. **Make it yours in one command.** Sixteen themes (twelve light-and-dark, plus four single-mode: Dracula,
+   Phosphor and Amber dark, Alucard light),
+   recolouring the whole desktop at once; shipped in the image, exact revert,
+   graceful restarts, on by default.
+2. **The safest machine to hand to an agent.** AGENTS.md in the image,
+   `pulsar setup agent`, `pulsar report`, GPU containers; the limit (rollback
+   covers the OS, not $HOME) is stated on the page.
+3. **Games that just work.** gamescale (formerly the lead claim), the gaming
+   stack, the Flatpak GPU-driver fix, the default launchers.
+4. **It can't rot.** Read-only image, automatic rollback, nightly package
+   diff, the paper trail -- with the changelog as the proof.
 
-Honesty is part of the voice: it is one person's laptop OS, over-engineered
-on purpose, MIT-licensed to fork.
+Other opinionated desktops exist and readers will compare. The site never
+names, links or alludes to any of them, and never argues "X but better": it
+shows Pulsar on its own terms (signed ISOs, exact revert, a base that cannot
+rot, agents that cannot break the OS, a desktop that stays GNOME) and lets
+the reader draw the comparison.
+
+Honesty is part of the voice: over-engineered on purpose, MIT-licensed to
+fork, and exact about what is and is not protected or signed.
 
 ## Operating Context
 
@@ -150,8 +162,10 @@ beside the ISOs and committed as `keys/cosign.pub`.
 
 ## Evidence on Hand
 
-Everything real: public repo (github.com/arclight-digital/pulsar), green CI
-with provenance attestations, signed images on ghcr, the nightly changelog
+Everything real: public repo (github.com/arclight-digital/pulsar), nightly
+images on ghcr with an SPDX SBOM attached (not signed yet), the signed NVIDIA
+module, the theme harness's screenshots and wallpaper renders, the measured
+GPU-container result (307 vs 58 tok/s, one small model), the nightly changelog
 and manifest committed by the build host, the weekly signed ISOs on
 lighthouse.arclight.digital, the live beacon, and the shader-rendered
 wallpaper set. NO testimonials, user counts, or benchmarks exist — never

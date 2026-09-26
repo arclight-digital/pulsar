@@ -6,10 +6,16 @@ import { initBeacon } from './beacon';
 import { initSky } from './sky';
 import { initSpin } from './spin';
 import { initTheme } from './theme';
+import { initHeroThemes } from './herothemes';
+import { initThemes } from './themes';
+import { initWallpaper } from './wallpaper';
 
 initTheme();
 initSpin();
 initSky();
+initThemes();
+initWallpaper();
+initHeroThemes();
 
 // Last, and not awaited: the only thing here that touches the network. It
 // resolves after the page is already usable, and its failure mode is silence.

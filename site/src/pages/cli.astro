@@ -2,42 +2,59 @@
 import Base from '../layouts/Base.astro';
 
 const DESCRIPTION =
-  'The pulsar command: doctor, manifest, status, changelog, sbom, attest, update, rollback, pin, and setup recipes. Reads work unprivileged; only the commands that change the system ask for root.';
+  'The pulsar command: themes, health checks, a diagnosis report, agent setup, updates and rollback. Reads work unprivileged; only the commands that change the system ask for root.';
 
 // The CLI's own usage text, verbatim from cli/pulsar. A transcript, not a
 // retyping: if the help changes, this is the place that has to change with it.
 const USAGE = [
-  'pulsar -- manage a Pulsar system',
-  '',
-  '  pulsar manifest          what is in this image, and what it is running on',
-  '  pulsar doctor            health snapshot (exit 1 if a check fails);',
-  '                           the default when no command is given',
-  '  pulsar status            deployments: booted, staged, rollback, pins',
-  '  pulsar changelog         packages that moved in the latest published build',
-  '  pulsar sbom              this system\'s packages as SPDX 2.3',
-  '  pulsar attest            print (and run) the provenance check for this image',
-  '',
-  '  pulsar update            fetch and stage an update        (root)',
-  '                           through bootc, or through rpm-ostree if you have',
-  '                           layered packages, which bootc would drop',
-  '  pulsar update --check    is a newer image published? no root needed.',
-  '                           exit 0 up to date or already staged, 10 available,',
-  '                           1 could not tell. add --notify for a desktop',
-  '                           notification, once per published build',
-  '  pulsar rollback          boot the previous deployment     (root)',
-  '  pulsar pin | unpin       protect the booted deployment    (root)',
-  '',
-  '  pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale',
-  '',
-  'Options',
-  '  --logo, --no-logo        force or suppress the mark in `manifest`',
-  '  --json                   machine-readable output (doctor, status, manifest,',
-  '                           changelog); everything else ignores it.',
-  '                           `manifest --json` adds the host facts under a',
-  '                           "host" key, so `jq \'del(.host)\'` is the baked',
-  '                           manifest and two machines on the same build still',
-  '                           compare equal',
-  '  --version, --help',
+  "pulsar -- manage a Pulsar system",
+  "",
+  "  pulsar manifest          what is in this image, and what it is running on",
+  "  pulsar doctor            health snapshot (exit 1 if a check fails);",
+  "                           the default when no command is given",
+  "  pulsar status            deployments: booted, staged, rollback, pins",
+  "  pulsar changelog         packages that moved in the latest published build",
+  "  pulsar sbom              this system's packages as SPDX 2.3",
+  "  pulsar attest            print (and run) the provenance check for this image",
+  "",
+  "  pulsar update            fetch and stage an update        (root)",
+  "                           through bootc, or through rpm-ostree if you have",
+  "                           layered packages, which bootc would drop",
+  "  pulsar update --check    is a newer image published? no root needed.",
+  "                           exit 0 up to date or already staged, 10 available,",
+  "                           1 could not tell. add --notify for a desktop",
+  "                           notification, once per published build",
+  "  pulsar flatpak-gl        do running Flatpak apps have the NVIDIA driver?",
+  "                           an app started before its GL extension arrived",
+  "                           renders games on the iGPU. --notify says so once",
+  "  pulsar agents-md         print the guide a coding agent should read first",
+  "  pulsar rollback          boot the previous deployment     (root)",
+  "  pulsar pin | unpin       protect the booted deployment    (root)",
+  "",
+  "  pulsar report            diagnosis bundle to paste: doctor, status,",
+  "                           manifest, failed units, warning+ journal lines,",
+  "                           graphics, flatpak. JSON; --text for people.",
+  "                           redacted; see: pulsar report --help",
+  "",
+  "  pulsar theme <command>   re-colour the whole desktop in one step:",
+  "                           list | set <theme> | revert | ...  see: pulsar theme",
+  "",
+  "  pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale",
+  "  pulsar setup agent <name>",
+  "                           a coding agent CLI in a toolbox, run from the",
+  "                           host: claude | codex | gemini | opencode | aider.",
+  "                           none by default; --list, --remove <name>",
+  "",
+  "Options",
+  "  --logo, --no-logo        force or suppress the mark in `manifest`",
+  "  --json                   machine-readable output (doctor, status, manifest,",
+  "                           changelog; report is JSON already); everything",
+  "                           else ignores it.",
+  "                           `manifest --json` adds the host facts under a",
+  "                           \"host\" key, so `jq 'del(.host)'` is the baked",
+  "                           manifest and two machines on the same build still",
+  "                           compare equal",
+  "  --version, --help",
 ];
 
 const usage = USAGE.join('\n');
@@ -48,7 +65,7 @@ const JSONLD = [
     headline: 'The pulsar command',
     description: DESCRIPTION,
     about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
-    author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+    author: { '@type': 'Organization', name: 'Arclight Digital LLC', url: 'https://arclight.build' },
   },
 ];
 const DEVBOX = 'pulsar setup devbox    # distrobox assemble from /usr/share/pulsar/distrobox.ini';
@@ -59,11 +76,50 @@ const DEVBOX = 'pulsar setup devbox    # distrobox assemble from /usr/share/puls
     <arc-container size="lg">
       <arc-page-header border>
         <h1 slot="heading">The pulsar command</h1>
-        <p slot="description">One command for the questions you actually ask an immutable system: what is this, is it healthy, what changed, and can I prove it.</p>
+        <p slot="description">One command for everything you do with an immutable system: make it look like yours, check it’s healthy, see what changed, hand it to an agent, and undo it if you need to.</p>
       </arc-page-header>
 
       <section class="chapter">
         <arc-code-block class="theme-fixed-dark usage" filename="pulsar --help" code={usage}></arc-code-block>
+      </section>
+
+      <section class="chapter" id="theme">
+        <h2>theme: the whole desktop, one step</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <p>
+            <code>pulsar theme set nord</code> re-colours the accent, the apps, the terminal, the
+            text editor, btop, the top bar, quick settings and the wallpaper together, as one change.
+            <code>pulsar theme list</code> shows what ships; any base16 scheme imports beside them.
+          </p>
+          <p>
+            <code>pulsar theme revert</code> puts stock GNOME back exactly. Apps that were already
+            open are offered a restart, and each is asked to quit the way Ctrl+Q asks, so unsaved
+            work keeps its dialog. Nothing is ever killed.
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="agents">
+        <h2>For coding agents</h2>
+        <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+        <div class="two">
+          <p>
+            <code>pulsar agents-md</code> prints the briefing the image ships for coding agents: how
+            this system differs from a mutable one, and what not to touch.{' '}
+            <code>pulsar setup agent claude</code> (or <code>codex</code>, <code>gemini</code>,{' '}
+            <code>opencode</code>, <code>aider</code>) installs that agent into its own toolbox and
+            runs it from any terminal. None ships by default, and one you installed yourself is left
+            alone.
+          </p>
+          <p>
+            <code>pulsar report</code> is the one thing to paste when something is broken: health
+            checks, failed services, recent warnings, the GPU and Flatpak state, as JSON or{' '}
+            <code>--text</code>, with hostname, username and addresses redacted. What an agent can
+            and cannot break is written down in{' '}
+            <a href="https://github.com/arclight-digital/pulsar/blob/main/docs/AGENTS-SAFETY.md">AGENTS-SAFETY.md</a>.
+          </p>
+        </div>
       </section>
 
       <section class="chapter" id="doctor">

@@ -9,6 +9,7 @@ import '@arclux/arc-ui/base.css';
 import '../styles/tokens.css';
 import '../styles/base.css';
 import SiteFooter from '../components/SiteFooter.astro';
+import ThemePicker from '../components/ThemePicker.astro';
 import SiteTopBar from '../components/SiteTopBar.astro';
 import { version } from '../data/build';
 
@@ -24,9 +25,19 @@ interface Props {
   immersive?: boolean;
   /** extra JSON-LD objects for this page, merged into the graph */
   jsonLd?: Record<string, unknown>[];
+  /** preview routes (the hero options) stay out of search and the sitemap */
+  noindex?: boolean;
 }
 
-const { title, description, ogTitle = title, path = '/', immersive = false, jsonLd = [] } = Astro.props;
+const {
+  title,
+  description,
+  ogTitle = title,
+  path = '/',
+  immersive = false,
+  jsonLd = [],
+  noindex = false,
+} = Astro.props;
 
 // Absolute, always: crawlers resolve nothing relative.
 const canonical = new URL(path, Astro.site).href;
@@ -46,13 +57,13 @@ const app = {
   operatingSystem: 'Linux',
   softwareVersion: version,
   description:
-    'An immutable Fedora spin tuned for gaming and development, built and signed in CI, published nightly with SBOMs and provenance attestations.',
+    'Silverblue+: Fedora Silverblue made yours. Sixteen desktop themes in one command, a system safe to hand to a coding agent, and games that just run, on nightly images with automatic rollback.',
   url: home,
   image: ogImage,
   downloadUrl: 'https://lighthouse.arclight.digital/pulsar/iso/pulsar-latest-x86_64.iso',
   license: 'https://github.com/arclight-digital/pulsar/blob/main/LICENSE',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-  author: { '@type': 'Organization', name: 'Arclight', url: 'https://arclight.build' },
+  author: { '@type': 'Organization', name: 'Arclight Digital LLC', url: 'https://arclight.build' },
   sameAs: ['https://github.com/arclight-digital/pulsar'],
 };
 
@@ -92,6 +103,7 @@ const structuredData = {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
     <link rel="canonical" href={canonical} />
 
     <meta property="og:type" content="website" />
@@ -154,10 +166,25 @@ const structuredData = {
         flash the system theme, so this cannot be bundled and deferred. The key
         and the attribute are ARC UI's -- arc-theme-toggle reads and writes the
         same ones, so the two never disagree. */}
+    {/* Then the visitor's Pulsar theme, if they picked one: the finished
+        stylesheet and any mode a single-mode theme forces, stored by
+        src/scripts/sitetheme.ts, applied here so no page ever paints in
+        Pulsar first. Its selectors outrank the stylesheets that load after. */}
     <script is:inline>
       try {
         const t = localStorage.getItem('arc-theme');
         if (t === 'dark' || t === 'light' || t === 'auto') document.documentElement.dataset.theme = t;
+      } catch {}
+      try {
+        const css = localStorage.getItem('pulsar-site-theme-css');
+        if (css) {
+          const s = document.createElement('style');
+          s.id = 'pulsar-site-theme';
+          s.textContent = css;
+          document.head.appendChild(s);
+          const m = localStorage.getItem('pulsar-site-theme-mode');
+          if (m === 'dark' || m === 'light') document.documentElement.dataset.theme = m;
+        }
       } catch {}
     </script>
 
@@ -199,6 +226,7 @@ const structuredData = {
     <SiteTopBar path={path} immersive={immersive} />
     <slot />
     <SiteFooter />
+    <ThemePicker />
     <arc-scroll-to-top threshold="900"></arc-scroll-to-top>
 
     {/* One script block, and hydrate first inside it: Lit must adopt the
@@ -236,6 +264,8 @@ const structuredData = {
       import '@arclux/arc-ui/timeline';
       import '@arclux/arc-ui/timeline-item';
       import '@arclux/arc-ui/cta-banner';
+      import '@arclux/arc-ui/sheet';
+      import '@arclux/arc-ui/toast';
       import '../scripts/main';
     </script>
   </body>

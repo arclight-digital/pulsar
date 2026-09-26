@@ -8,28 +8,42 @@
 // #skyfade holds a snapshot of the outgoing look so backdrop switches
 // crossfade directly instead of sweeping u_look through the intermediate ones.
 //
-// The deck drives the SAME u_look uniform the OS wallpapers are rendered with:
-// four looks x two themes = the shipped set. It is hidden until a GL context
-// actually exists -- a visitor without WebGL must never see buttons that
-// silently do nothing. Theme is the top bar's toggle, not the deck's.
+// The deck is the quick way to the live looks. The full wallpaper choice --
+// any theme's rendered wallpaper, independent of the theme -- lives in the
+// site-wide picker (ThemePicker.astro, scripts/wallpaper.ts), which shows a
+// theme's still in the .wallstill layer over the canvas.
+//
+// Hidden until a GL context actually exists -- a visitor without WebGL must
+// never see buttons that silently do nothing. Light/dark is the top bar's
+// toggle, not the deck's.
 const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
+
+// Hero option (a) trades this deck for its theme deck in the same spot.
+interface Props {
+  deck?: boolean;
+}
+const { deck = true } = Astro.props;
 ---
 
 <canvas id="sky" aria-hidden="true"></canvas>
 <canvas id="skyfade" aria-hidden="true"></canvas>
+{/* empty until a theme's wallpaper is chosen; wallpaper.ts adds the image */}
+<div class="wallstill" aria-hidden="true" data-wallstill-layer></div>
 
+{deck && (
 <div class="deck" role="group" aria-label="Backdrop" id="lookSeg" hidden>
-  <span class="deck-note">the shipped wallpapers, live</span>
+  <span class="deck-note">the shipped wallpapers, live · more in the theme picker</span>
   <div class="picker">
     {
       LOOKS.map((name, index) => (
-        <button type="button" data-look={index} aria-pressed={index === 0 ? 'true' : 'false'}>
+        <button type="button" data-look={index} data-wall="pulsar" aria-pressed={index === 0 ? 'true' : 'false'}>
           {name}
         </button>
       ))
     }
   </div>
 </div>
+)}
 
 <style>
   #sky,
@@ -43,6 +57,22 @@ const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
   #skyfade {
     pointer-events: none;
     opacity: 0;
+  }
+  .wallstill {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.7s var(--ease-out);
+  }
+  .wallstill[data-on] {
+    opacity: 1;
+  }
+  .wallstill :global(img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .deck {
@@ -77,6 +107,9 @@ const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
     border: 1px solid var(--chip-line);
     backdrop-filter: blur(12px);
   }
+  .picker[hidden] {
+    display: none;
+  }
   .picker button {
     appearance: none;
     border: 0;
@@ -100,7 +133,8 @@ const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
     color: var(--star);
   }
   .picker button[aria-pressed='true'] {
-    color: var(--ink);
+    /* --pulsar-on-accent is set with a theme; Pulsar's own cyan takes ink */
+    color: var(--pulsar-on-accent, var(--ink));
     background: var(--cyan);
     box-shadow: var(--glow-sm);
   }
@@ -115,6 +149,11 @@ const LOOKS = ['Silk', 'Leak', 'Satin', 'Holo'];
     }
     .deck-note {
       display: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wallstill {
+      transition: none;
     }
   }
 </style>

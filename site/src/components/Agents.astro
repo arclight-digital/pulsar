@@ -1,0 +1,131 @@
+---
+// Pillar two: the machine you can hand to an agent. Headings are the jobs, not
+// the features, and every one maps to a command that ships in the image. The
+// limit is stated on the page, not buried: rollback covers the OS, never the
+// home folder -- docs/AGENTS-SAFETY.md is the long version, linked below.
+import { REPO } from '../data/site';
+
+const JOBS = [
+  {
+    t: 'It reads the manual first',
+    d: 'The image ships a briefing for coding agents: tools go in a toolbox, apps are Flatpaks, never reboot, and what rollback does and doesn’t undo. pulsar agents-md prints it, and setup puts it where each agent already looks.',
+  },
+  {
+    t: 'Add an agent in one line',
+    d: 'Claude Code, Codex, Gemini, opencode or aider, each installed into its own toolbox and run from any terminal. None ships by default, and one you installed yourself is left alone.',
+  },
+  {
+    t: 'Something broke? Paste one thing',
+    d: 'pulsar report gathers health checks, failed services, recent warnings, the GPU and Flatpak state into one document, with your hostname, username and addresses taken out.',
+  },
+  {
+    t: 'Run models on your own GPU',
+    d: 'On the NVIDIA image, any container can ask for the graphics card by name. A small model generated 307 tokens a second on the GPU, 58 on the CPU.',
+  },
+  {
+    t: 'Let it try things',
+    d: 'The system is read-only and every change to it is a new version you can boot out of. A bad update rolls itself back before you notice.',
+  },
+];
+
+const EXAMPLE = [
+  'pulsar setup agent claude',
+  'pulsar report --text',
+  'podman run --device nvidia.com/gpu=all IMAGE',
+].join('\n');
+---
+
+<section class="chapter" id="agents">
+  <h2>The safest machine to hand to an agent</h2>
+  <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+  <p class="lede">
+    An agent on Pulsar can build, test and experiment all day.
+    {' '}<span class="sent">The one thing it cannot do is leave you with a broken&nbsp;system.</span>
+  </p>
+
+  <div class="split">
+    <dl class="jobs">
+      {
+        JOBS.map((j) => (
+          <div class="job">
+            <dt>{j.t}</dt>
+            <dd>{j.d}</dd>
+          </div>
+        ))
+      }
+    </dl>
+    <div class="side">
+      <arc-code-block class="theme-fixed-dark" language="bash" filename="terminal" code={EXAMPLE}></arc-code-block>
+      <p class="limit">
+        <strong>What it can’t protect:</strong> your home folder. Rollback covers the operating
+        system, not your files, so git and backups still do their usual job.
+        <a href={`${REPO}/blob/main/docs/AGENTS-SAFETY.md`}>Exactly what an agent can and can’t touch&nbsp;→</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: var(--space-2xl);
+    align-items: start;
+    margin-top: var(--space-lg);
+  }
+  .jobs {
+    margin: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .job {
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .job:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  dt {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-md);
+    color: var(--text-primary);
+    margin-bottom: var(--space-xs);
+  }
+  dd {
+    margin: 0;
+    color: var(--text-secondary);
+    text-wrap: pretty;
+  }
+  .side {
+    display: grid;
+    gap: var(--space-lg);
+    position: sticky;
+    top: calc(var(--space-3xl) + var(--space-md));
+  }
+  .side arc-code-block {
+    display: block;
+    min-width: 0;
+  }
+  .limit {
+    margin: 0;
+    color: var(--text-secondary);
+    text-wrap: pretty;
+  }
+  .limit strong {
+    color: var(--text-primary);
+  }
+  .limit a {
+    display: inline-block;
+    margin-top: var(--space-xs);
+  }
+  @media (max-width: 56rem) {
+    .split {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-xl);
+    }
+    .side {
+      position: static;
+    }
+  }
+</style>

@@ -50,6 +50,10 @@ const { delta } = Astro.props;
     color: var(--accent-primary);
     text-shadow: var(--glow-xs);
   }
+  /* on a pale ground the glow only muddies the digits */
+  :global(:root[data-theme='light']) .v-to {
+    text-shadow: none;
+  }
   .v-arrow {
     padding: 0 0.12em;
   }
