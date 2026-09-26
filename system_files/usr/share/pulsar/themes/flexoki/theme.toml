@@ -2,7 +2,7 @@
 name = "Flexoki"
 author = "Steph Ango (stephango.com/flexoki), MIT"
 source = "dark: base16-flexoki-dark; light: base16-flexoki-light"
-prefer = "light"
+prefer = "dark"
 
 [dark]
 accent = "#4385be"

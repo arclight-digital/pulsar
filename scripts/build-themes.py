@@ -29,23 +29,14 @@ in the table -- they are written by hand from DESIGN.md.
 import json
 import pathlib
 import sys
-import importlib.machinery
-import importlib.util
-
-
-def _load_engine(path):
-    """Import the engine (a script with no .py suffix) the non-deprecated way:
-    SourceFileLoader.load_module goes away in Python 3.15."""
-    loader = importlib.machinery.SourceFileLoader("pulsar_theme", str(path))
-    spec = importlib.util.spec_from_loader("pulsar_theme", loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
-    return mod
 
 
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-pt = _load_engine(REPO / "scripts" / "pulsar-theme")
+sys.path.insert(0, str(REPO / "scripts"))
+import pulsar_theme_engine  # noqa: E402
+
+pt = pulsar_theme_engine.load()
 IMP = REPO / "assets" / "themes" / "imports"
 OUT = REPO / "system_files" / "usr" / "share" / "pulsar" / "themes"
 
@@ -243,13 +234,10 @@ THEMES = [
                dawn_bottom="#fdf6e3", dawn_top="#eee8d5"),
          ]),
 
-    dict(slug="dracula", name="Dracula", author="Dracula Theme (draculatheme.com), MIT; light is Alucard", prefer="dark",
-         # Dracula's own ANSI: blue slot is purple, magenta is pink.
-         dark=V("base24-dracula", accent="#bd93f9",
-                background_deep="#191a21", background_sunken="#1e1f29", window="#282a36", view="#21222c",
-                headerbar="#21222c", sidebar="#21222c", card="#343746", popover="#343746"),
-         # Alucard: the light variant from the Dracula spec (draculatheme.com/spec),
-         # no base16 port, so by hand; the contrast fit below does the rest
+    dict(slug="alucard", name="Alucard", author="Dracula Theme (draculatheme.com), MIT", prefer="light",
+         # Dracula's light theme, from the Dracula spec (draculatheme.com/spec):
+         # light only, its own theme, and it sets Light Style when chosen.
+         # No base16 port, so by hand; the contrast fit below does the rest.
          light=V(pal=dict(background="#fffbeb", foreground="#1f1f1f", muted="#6c664b", selection="#cfcfde",
                           red="#cb3a2a", orange="#a34d14", yellow="#846e15", green="#14710a", cyan="#036a96",
                           blue="#644ac9", magenta="#a3144d", brown="#6c664b", foreground_dim="#4f4b38"),
@@ -257,15 +245,26 @@ THEMES = [
                  view="#fffdf5", headerbar="#f4efdd", sidebar="#f4efdd", card="#fffdf5", popover="#ffffff",
                  background_raised="#f4efdd"),
          renders=[
-             R("dark", "leak", c1="blue", c2="magenta", c3="cyan", beam=-0.40, stars=0.5, desat=0.0),
-             R("dark", "silk", c1="blue", c2="magenta", c3="cyan", seed=[1.1, -2.6], fold=1.8, dir=[-1.0, -0.1], stars=0.7, desat=0.0, gain=2.3),
              R("light", "leak", c1="#644ac9", c2="#a3144d", c3="#036a96", beam=-0.40, wash=0.4,
                dawn_bottom="#fffbeb", dawn_top="#ece7d5"),
              R("light", "silk", c1="#644ac9", c2="#a3144d", c3="#036a96", seed=[1.1, -2.6], fold=1.8,
                dir=[-1.0, -0.1], wash=0.3, gain=1.4, stars=0.2, dawn_bottom="#fffbeb", dawn_top="#ece7d5"),
          ]),
 
-    dict(slug="flexoki", name="Flexoki", author="Steph Ango (stephango.com/flexoki), MIT", prefer="light",
+    dict(slug="dracula", name="Dracula", author="Dracula Theme (draculatheme.com), MIT", prefer="dark",
+         # Dracula's own ANSI: blue slot is purple, magenta is pink. Dark only,
+         # as upstream ships it; its light counterpart is Alucard (the entry above), a
+         # separate theme on purpose -- choosing one is choosing its mood,
+         # not a variant that flips with Dark Style.
+         dark=V("base24-dracula", accent="#bd93f9",
+                background_deep="#191a21", background_sunken="#1e1f29", window="#282a36", view="#21222c",
+                headerbar="#21222c", sidebar="#21222c", card="#343746", popover="#343746"),
+         renders=[
+             R("dark", "leak", c1="blue", c2="magenta", c3="cyan", beam=-0.40, stars=0.5, desat=0.0),
+             R("dark", "silk", c1="blue", c2="magenta", c3="cyan", seed=[1.1, -2.6], fold=1.8, dir=[-1.0, -0.1], stars=0.7, desat=0.0, gain=2.3),
+         ]),
+
+    dict(slug="flexoki", name="Flexoki", author="Steph Ango (stephango.com/flexoki), MIT", prefer="dark",
          dark=V("base16-flexoki-dark", accent="#4385be", muted="#878580",
                 background_deep="#0b0a0a", background_sunken="#100f0f", window="#100f0f", view="#0b0a0a",
                 headerbar="#1c1b1a", sidebar="#1c1b1a", card="#1c1b1a", popover="#282726"),

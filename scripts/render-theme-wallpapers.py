@@ -26,24 +26,15 @@ import argparse
 import os
 import pathlib
 import sys
-import importlib.machinery
-import importlib.util
-
-
-def _load_engine(path):
-    """Import the engine (a script with no .py suffix) the non-deprecated way:
-    SourceFileLoader.load_module goes away in Python 3.15."""
-    loader = importlib.machinery.SourceFileLoader("pulsar_theme", str(path))
-    spec = importlib.util.spec_from_loader("pulsar_theme", loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
-    return mod
 
 
 
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 REPO = pathlib.Path(__file__).resolve().parent.parent
-pt = _load_engine(REPO / "scripts" / "pulsar-theme")
+sys.path.insert(0, str(REPO / "scripts"))
+import pulsar_theme_engine  # noqa: E402
+
+pt = pulsar_theme_engine.load()
 SHADER = (REPO / "assets" / "shaders" / "theme.frag").read_text()
 THEMES = REPO / "system_files" / "usr" / "share" / "pulsar" / "themes"
 PREVIEW = REPO / ".preview"

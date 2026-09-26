@@ -623,7 +623,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # adw-gtk3 is what lets GTK3 apps take the palette at all: stock Adwaita GTK3
 # reads different colour names and no light/dark pairing.
 # ---------------------------------------------------------------------------
-COPY scripts/pulsar-theme scripts/pulsar-theme-picker /usr/libexec/pulsar/
+COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py /usr/libexec/pulsar/
 RUN set -eu; \
     chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker; \
     free_kb=$(df --output=avail -k / | tail -1); \
@@ -652,7 +652,7 @@ RUN set -eu; \
         { echo "FATAL: theme template ${t} is missing; every 'pulsar theme set' would die rendering it"; exit 1; }; \
     done; \
     themes=$(find /usr/share/pulsar/themes -name theme.toml | wc -l); \
-    [ "${themes}" -ge 13 ] || \
+    [ "${themes}" -ge 14 ] || \
       { echo "FATAL: only ${themes} themes under /usr/share/pulsar/themes"; exit 1; }; \
     if /usr/libexec/pulsar/pulsar-theme list | grep -q '^!'; then \
       /usr/libexec/pulsar/pulsar-theme list; echo "FATAL: a shipped theme does not parse"; exit 1; \

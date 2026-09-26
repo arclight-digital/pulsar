@@ -22,5 +22,17 @@ here=$(cd "$(dirname "$0")" && pwd)
 image=${1:-ghcr.io/arclight-digital/pulsar:latest}
 podman build -q --build-arg IMAGE="${image}" -t localhost/pulsar-theme-gate:latest \
     -f "${here}/Containerfile" "${here}" >/dev/null || { echo "gate: could not build the gate container" >&2; exit 1; }
+out=${GATE_OUT:-$(cd "${here}/../.." && pwd)/.preview/theme-gate}
+rm -f "${out}/gate-report.json"
 "${here}/run.sh" gate 2>"${GATE_LOG:-/tmp/theme-gate.log}" | grep -v -E '^\s*$'
-exit "${PIPESTATUS[0]}"
+rc=${PIPESTATUS[0]}
+# A Shell that dies mid-run writes no report. That is a FAIL whatever the
+# exit status says -- a dead gate must never read as a pass.
+if [ ! -s "${out}/gate-report.json" ]; then
+  echo "GATE FAIL: no gate-report.json was written (the headless Shell died?); see ${GATE_LOG:-/tmp/theme-gate.log}"
+  exit 1
+fi
+if ! python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1]))["ok"] else 1)' "${out}/gate-report.json"; then
+  [ "${rc}" -ne 0 ] || rc=1
+fi
+exit "${rc}"

@@ -17,23 +17,13 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
+
+
+
 sys.path.insert(0, str(HERE))
-import importlib.machinery  # noqa: E402
-import importlib.util  # noqa: E402
+import pulsar_theme_engine  # noqa: E402
 
-
-def _load_engine(path):
-    """Import the engine (a script with no .py suffix) the non-deprecated way:
-    SourceFileLoader.load_module goes away in Python 3.15."""
-    loader = importlib.machinery.SourceFileLoader("pulsar_theme", str(path))
-    spec = importlib.util.spec_from_loader("pulsar_theme", loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
-    return mod
-
-
-
-pt = _load_engine(HERE / "pulsar-theme")
+pt = pulsar_theme_engine.load(HERE / "pulsar-theme")
 
 CSS = b"""
 .theme-card { border-radius: 14px; padding: 0; }
@@ -63,7 +53,9 @@ class Picker(Adw.ApplicationWindow):
         flow.connect("child-activated", self.on_pick)
         cur = pt.current_state().get("theme")
         first = None
-        for slug, path in pt.find_themes().items():
+        paths = pt.find_themes()
+        for slug in pt.ordered_themes():
+            path = paths[slug]
             try:
                 th = pt.Theme(path)
             except Exception:
@@ -154,6 +146,10 @@ class Picker(Adw.ApplicationWindow):
         GLib.idle_add(self._ask, restart, manual)
 
     def _ask(self, restart, manual):
+        # the switch is done: the window, and the dialog it is about to
+        # present, answer again
+        self.set_sensitive(True)
+        self._busy = False
         if not restart or pt.conf_get("restart-prompt") != "on":
             if restart or manual:
                 self.toast(pt.NOTE)
@@ -178,7 +174,9 @@ class Picker(Adw.ApplicationWindow):
                 # waits for each app to exit, and the picker (a libadwaita
                 # window holding the old palette itself) closes right away
                 # rather than showing a half-switched self.
-                Gio.Subprocess.new([str(HERE / "pulsar-theme"), "restart-apps", "--yes"], Gio.SubprocessFlags.NONE)
+                # exactly the apps the user just confirmed: no second scan
+                Gio.Subprocess.new([str(HERE / "pulsar-theme"), "restart-apps", "--yes",
+                                    "--ids", ",".join(a["id"] for a in restart)], Gio.SubprocessFlags.NONE)
             elif resp == "never":
                 pt.conf_put("restart-prompt", "off")
             GLib.timeout_add(300, self.close)

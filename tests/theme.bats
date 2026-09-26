@@ -60,12 +60,17 @@ setup() {
     [[ "$output" == *"pulsar theme <command>"* ]]
 }
 
-@test "engine lists every shipped theme, none broken, all following Dark Style" {
+@test "engine lists every shipped theme, brand first and dark-leading, none broken" {
     run python3 "$ENGINE" list
     [ "$status" -eq 0 ]
-    [ "$(printf '%s\n' "$output" | wc -l)" -ge 13 ]
+    [ "$(printf '%s\n' "$output" | wc -l)" -ge 14 ]
     ! printf '%s\n' "$output" | grep -q '^!'
-    [ "$(printf '%s\n' "$output" | grep -c '\[dark+light\]')" -eq "$(printf '%s\n' "$output" | wc -l)" ]
+    # every theme follows Dark Style except the two upstream ships one-sided
+    [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 2 ]
+    printf '%s\n' "$output" | grep -q '^  dracula .*\[dark\]$'
+    printf '%s\n' "$output" | grep -q '^  alucard .*\[light\]$'
+    [ "$(printf '%s\n' "$output" | head -1 | awk '{print $1}')" = pulsar ]
+    [ "$(printf '%s\n' "$output" | tail -1 | awk '{print $1}')" = alucard ]
 }
 
 @test "every shipped theme passes the WCAG AA audit" {
@@ -269,4 +274,68 @@ setkey() { python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d[s
 
 @test "nothing imports the engine through the deprecated load_module" {
     ! grep -rn 'load_module(' "${REPO}/scripts" "${REPO}/tests/theme-gate"
+}
+
+@test "Dracula and Alucard are separate one-sided themes, and choosing one sets Dark Style" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    python3 "$ENGINE" set alucard --no-restart >/dev/null
+    [ "$(key /org/gnome/desktop/interface/color-scheme)" = "'default'" ]
+    python3 "$ENGINE" set dracula --no-restart >/dev/null
+    [ "$(key /org/gnome/desktop/interface/color-scheme)" = "'prefer-dark'" ]
+    run python3 "$ENGINE" audit dracula alucard
+    [ "$status" -eq 0 ]
+}
+
+@test "revert keeps a btop theme the user picked after theming" {
+    fake_dconf
+    mkdir -p "$XDG_CONFIG_HOME/btop"
+    printf 'color_theme = "Default"\n' > "$XDG_CONFIG_HOME/btop/btop.conf"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    sed -i 's|^color_theme = .*|color_theme = "gruvbox_dark"|' "$XDG_CONFIG_HOME/btop/btop.conf"
+    python3 "$ENGINE" revert --to image >/dev/null
+    grep -qx 'color_theme = "gruvbox_dark"' "$XDG_CONFIG_HOME/btop/btop.conf"
+}
+
+@test "a keyfile the engine created is gone after revert, not left as an empty group" {
+    fake_dconf
+    python3 "$ENGINE" set pulsar --with flatpak --no-restart >/dev/null
+    [ -s "$XDG_DATA_HOME/flatpak/overrides/global" ]
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ ! -e "$XDG_DATA_HOME/flatpak/overrides/global" ]
+}
+
+@test "an opt-in target stays on across a plain set until turned off" {
+    fake_dconf
+    st="$XDG_STATE_HOME/pulsar-theme/current.json"
+    python3 "$ENGINE" set pulsar --with flatpak --no-restart >/dev/null
+    python3 "$ENGINE" set gruvbox --no-restart >/dev/null
+    grep -q '"flatpak"' "$st"
+    python3 "$ENGINE" set nord --without flatpak --no-restart >/dev/null
+    ! grep -q '"flatpak"' "$st"
+}
+
+@test "init writes no pending marker when it decides to leave an account alone" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/accent-color "'red'"
+    python3 "$ENGINE" init >/dev/null
+    [ ! -e "$XDG_STATE_HOME/pulsar-theme/init.pending" ]
+    grep -q '"skipped"' "$XDG_STATE_HOME/pulsar-theme/init.json"
+}
+
+@test "restart-apps --ids looks only at the named apps" {
+    run python3 "$ENGINE" restart-apps --ids org.example.NotRunning --json
+    [ "$status" -eq 0 ]
+    [ "$output" = '{"restart": [], "manual": []}' ]
+}
+
+@test "the engine loads through the one shared loader" {
+    run python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import pulsar_theme_engine as m; e = m.load(); print(len(e.ordered_themes()))' "${REPO}/scripts"
+    [ "$status" -eq 0 ]
+    [ "$output" -ge 14 ]
+    [ "$(grep -l 'def _load_engine\|SourceFileLoader(' "${REPO}"/scripts/* "${REPO}"/tests/theme-gate/*.py | grep -vc pulsar_theme_engine.py)" -eq 0 ]
+}
+
+@test "the gate fails when no report is written" {
+    grep -q 'no gate-report.json was written' "${REPO}/tests/theme-gate/gate.sh"
 }

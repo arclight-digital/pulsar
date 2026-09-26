@@ -337,6 +337,20 @@ def find_themes():
     return seen
 
 
+def ordered_themes():
+    """Slugs in presentation order -- `list`, the picker, next/prev: the
+    brand first, then dark-leading themes, then light-only ones, each by
+    name. Dark first because that is this desktop's default."""
+    rank = {}
+    for slug, path in find_themes().items():
+        try:
+            t = Theme(path)
+            rank[slug] = (slug not in ("pulsar", "pulsar-holo"), t.prefer != "dark", t.name.lower())
+        except Exception:
+            rank[slug] = (True, True, slug)
+    return sorted(rank, key=rank.get)
+
+
 def load_theme(name):
     themes = find_themes()
     if name in themes:
@@ -476,10 +490,6 @@ class Transaction:
         for k in self.keys:
             if k not in base["keys"]:
                 base["keys"][k] = dconf_read(k)
-        # what the engine last wrote: revert leaves a key alone if the user has
-        # changed it since, and init can tell its own writes from the user's
-        for k, v in self.keys.items():
-            base["wrote"][k] = v
         atomic_write(self.base_manifest, json.dumps(base, indent=1).encode())
         # 2. pre-images for rollback of THIS transaction
         pre_files = {p: (p.read_bytes() if p.is_file() else None) for p in self.files}
@@ -506,6 +516,19 @@ class Transaction:
             for k in done_k:
                 dconf_write(k, pre_keys[k])
             raise
+        # What the engine last wrote, recorded only once it has landed, and as
+        # read BACK (dconf's own printing, file values as they now stand), so
+        # the comparison later is like with like. revert leaves anything the
+        # user has changed since alone, and init tells its own writes from
+        # the user's choices.
+        base["wrote"].update({k: dconf_read(k) for k in self.keys})
+        for p, undo in self.shared.items():
+            if undo["kind"] in ("conf", "keyfile"):
+                text = p.read_text(errors="replace") if p.exists() else ""
+                rec = base["shared"][str(p)].setdefault("wrote", {})
+                for k in undo["keys"]:
+                    rec[k] = conf_value(text, k) if undo["kind"] == "conf" else _kf_get(text, undo["group"], k)
+        atomic_write(self.base_manifest, json.dumps(base, indent=1).encode())
         for desc, fn in self.after:
             try:
                 fn()
@@ -587,15 +610,20 @@ def revert(to="stock"):
         p = pathlib.Path(sp)
         if not p.exists():
             continue
-        text = p.read_text()
+        text = p.read_text(errors="replace")
         if rec["kind"] == "block":
             text = strip_block(text)
-        elif rec["kind"] == "conf":
+        elif rec["kind"] in ("conf", "keyfile"):
             for k, v in rec["orig"].items():
-                text = conf_unset(text, k) if v is None else conf_set_text(text, k, v)
-        elif rec["kind"] == "keyfile":
-            for k, v in rec["orig"].items():
-                text = _kf_remove(text, rec["group"], k) if v is None else _kf_edit(text, rec["group"], k, lambda _o, v=v: v)
+                now = conf_value(text, k) if rec["kind"] == "conf" else _kf_get(text, rec["group"], k)
+                if k in rec.get("wrote", {}) and now != rec["wrote"][k]:
+                    print(f"  kept     {p}: {k} (changed since the theme set it)")
+                    continue
+                if rec["kind"] == "conf":
+                    text = conf_unset(text, k) if v is None else conf_set_text(text, k, v)
+                else:
+                    text = (_kf_remove(text, rec["group"], k) if v is None
+                            else _kf_edit(text, rec["group"], k, lambda _o, v=v: v))
         elif rec["kind"] == "list":
             cur = [x for x in (_kf_get(text, rec["group"], rec["key"]) or "").split(";") if x]
             keep = [x for x in cur if x not in rec.get("added", [])]
@@ -989,6 +1017,8 @@ def _kf_get(text, group, key):
 
 
 def _kf_remove(text, group, key):
+    """Remove one key; a group left with no keys goes too, so a keyfile the
+    engine created can end up empty and be deleted."""
     out, in_g = [], False
     for ln in text.splitlines():
         m = re.match(r"^\[(.*)\]\s*$", ln)
@@ -997,7 +1027,23 @@ def _kf_remove(text, group, key):
         elif in_g and "=" in ln and ln.split("=", 1)[0].strip() == key:
             continue
         out.append(ln)
-    return "\n".join(out) + ("\n" if out else "")
+    # drop headers whose group now has no key lines (blank lines don't count)
+    kept, i = [], 0
+    while i < len(out):
+        if re.match(r"^\[(.*)\]\s*$", out[i]):
+            j = i + 1
+            while j < len(out) and not re.match(r"^\[(.*)\]\s*$", out[j]):
+                j += 1
+            body = out[i + 1:j]
+            if any(b.strip() and not b.lstrip().startswith("#") for b in body):
+                kept += out[i:j]
+            i = j
+        else:
+            kept.append(out[i])
+            i += 1
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join(kept) + ("\n" if kept else "")
 
 
 def conf_set_many(path, kv):
@@ -1112,33 +1158,42 @@ def desktop_file(app_id):
     return None
 
 
-def open_gtk_apps():
+def app_entry(n, flatpak_on):
+    """One bus name -> ("restart"|"manual", entry), or None if it is not a GTK
+    app on the host palette."""
+    if n in NEVER_RESTART or n.startswith(("org.freedesktop.", "org.gtk.", "org.gnome.Shell", "org.gnome.SettingsDaemon",
+                                           "org.a11y.", "ca.desrt.", "org.gnome.evolution", "org.gnome.OnlineAccounts")):
+        return None
+    df = desktop_file(n)
+    if not df:
+        return None                         # a service or helper, not an app
+    path = "/" + n.replace(".", "/").replace("-", "_")
+    intro = _gdbus(dest=n, path=path, method="org.freedesktop.DBus.Introspectable.Introspect")
+    if not intro or "org.gtk.Application" not in intro:
+        return None
+    pid = re.search(r"uint32 (\d+)", _bus("GetConnectionUnixProcessID", n) or "")
+    sandboxed = bool(pid) and pathlib.Path(f"/proc/{pid.group(1)}/root/.flatpak-info").exists()
+    if sandboxed and not flatpak_on:
+        return None
+    label = next((ln.split("=", 1)[1] for ln in df.read_text(errors="replace").splitlines() if ln.startswith("Name=")), n)
+    acts = _gdbus(dest=n, path=path, method="org.gtk.Actions.List") or ""
+    entry = {"id": n, "path": path, "name": label, "flatpak": sandboxed, "desktop": str(df),
+             "pid": int(pid.group(1)) if pid else None}
+    return ("restart" if "'quit'" in acts else "manual"), entry
+
+
+def open_gtk_apps(ids=None):
     """(restartable, manual) GApplications on the session bus that paint with
     the host gtk.css. Flatpaks count only if the flatpak target is on --
-    otherwise they never read gtk.css and a restart changes nothing."""
-    names = re.findall(r"'([A-Za-z][\w-]*(?:\.[\w-]+){2,})'", _bus("ListNames") or "")
+    otherwise they never read gtk.css and a restart changes nothing. With
+    `ids`, only those names are looked at: no bus-wide scan."""
+    names = ids if ids is not None else re.findall(r"'([A-Za-z][\w-]*(?:\.[\w-]+){2,})'", _bus("ListNames") or "")
     flatpak_on = "flatpak" in current_state().get("targets", [])
     restart, manual = [], []
     for n in sorted(set(names)):
-        if n in NEVER_RESTART or n.startswith(("org.freedesktop.", "org.gtk.", "org.gnome.Shell", "org.gnome.SettingsDaemon",
-                                               "org.a11y.", "ca.desrt.", "org.gnome.evolution", "org.gnome.OnlineAccounts")):
-            continue
-        df = desktop_file(n)
-        if not df:
-            continue                        # a service or helper, not an app
-        path = "/" + n.replace(".", "/").replace("-", "_")
-        intro = _gdbus(dest=n, path=path, method="org.freedesktop.DBus.Introspectable.Introspect")
-        if not intro or "org.gtk.Application" not in intro:
-            continue
-        pid = re.search(r"uint32 (\d+)", _bus("GetConnectionUnixProcessID", n) or "")
-        sandboxed = bool(pid) and pathlib.Path(f"/proc/{pid.group(1)}/root/.flatpak-info").exists()
-        if sandboxed and not flatpak_on:
-            continue
-        label = next((ln.split("=", 1)[1] for ln in df.read_text(errors="ignore").splitlines() if ln.startswith("Name=")), n)
-        acts = _gdbus(dest=n, path=path, method="org.gtk.Actions.List") or ""
-        entry = {"id": n, "path": path, "name": label, "flatpak": sandboxed, "desktop": str(df),
-                 "pid": int(pid.group(1)) if pid else None}
-        (restart if "'quit'" in acts else manual).append(entry)
+        got = app_entry(n, flatpak_on)
+        if got:
+            (restart if got[0] == "restart" else manual).append(got[1])
     return restart, manual
 
 
@@ -1278,7 +1333,7 @@ def customised():
     why = []
     ours = engine_wrote()
     for f in (CONFIG / "gtk-4.0" / "gtk.css", CONFIG / "gtk-3.0" / "gtk.css"):
-        if f.exists() and f.read_text(errors="ignore").strip() and MARK_BEGIN not in f.read_text(errors="ignore"):
+        if f.exists() and f.read_text(errors="replace").strip() and MARK_BEGIN not in f.read_text(errors="replace"):
             why.append(f"own {f.relative_to(HOME)}")
     for k, label in [("/org/gnome/desktop/interface/accent-color", "chose an accent colour"),
                      ("/org/gnome/desktop/interface/gtk-theme", "set a GTK theme"),
@@ -1293,7 +1348,7 @@ def customised():
             why.append("chose a terminal palette")
             break
     bt = CONFIG / "btop" / "btop.conf"
-    if bt.exists() and re.search(r'^color_theme\s*=\s*"(?!Default|TTY|.*pulsar-)', bt.read_text(), re.M):
+    if bt.exists() and re.search(r'^color_theme\s*=\s*"(?!Default|TTY|.*pulsar-)', bt.read_text(errors="replace"), re.M):
         why.append("chose a btop theme")
     return why
 
@@ -1380,8 +1435,10 @@ def cmd_init(theme="pulsar", force=False):
     # What it wrote is the engine's, not the user's: finish the job rather
     # than mistake it for customisation.
     resumed = pending.exists()
-    atomic_write(pending, b"")
     why = [] if resumed else customised()
+    if not why:
+        # the decision is "apply": only now does a crash mean "finish this"
+        atomic_write(pending, json.dumps({"decision": "apply", "theme": theme}).encode())
     rec = {"at": datetime.datetime.now().isoformat(timespec="seconds"), "resumed": resumed}
     if why:
         rec.update(result="skipped", reasons=why)
@@ -1411,13 +1468,19 @@ def cmd_init(theme="pulsar", force=False):
 # --------------------------------------------------------------- commands ----
 
 
-def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask", extra=None):
+def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask", extra=None,
+            without=None):
     """`only` is a subset (bg-next is only=['wallpaper']): stale files and the
     recorded target list are left as they were. `extra` adds opt-in targets
     (--with flatpak) to a full switch, which is still a full switch."""
     extra = list(extra or [])
+    if only is None:
+        # an opt-in target that is on stays on across any full switch (the
+        # picker's included) until it is turned off with --without
+        on = [t.name for t in TARGETS if not t.default and t.name in current_state().get("targets", [])]
+        extra += [n for n in on if n not in extra and n not in (without or [])]
     selected = [t for t in TARGETS if (t.name in only if only else (t.default or t.name in extra))]
-    unknown = (set(only or []) | set(extra)) - {t.name for t in TARGETS}
+    unknown = (set(only or []) | set(extra) | set(without or [])) - {t.name for t in TARGETS}
     if unknown:
         sys.exit(f"pulsar-theme: unknown target(s): {', '.join(sorted(unknown))}")
     if variant != "both" and variant not in theme.variants:
@@ -1474,11 +1537,10 @@ def cmd_render(theme, out):
 
 
 def cmd_cycle(step):
-    themes = sorted(find_themes())
+    themes = ordered_themes()
     cur = current_state().get("theme")
     i = (themes.index(cur) + step) % len(themes) if cur in themes else 0
-    on = [t.name for t in TARGETS if not t.default and t.name in current_state().get("targets", [])]
-    cmd_set(load_theme(themes[i]), extra=on)
+    cmd_set(load_theme(themes[i]))
 
 
 def cmd_bg_next():
@@ -1494,7 +1556,9 @@ def cmd_bg_next():
 
 def cmd_list():
     cur = current_state().get("theme")
-    for slug, path in find_themes().items():
+    paths = find_themes()
+    for slug in ordered_themes():
+        path = paths[slug]
         try:
             t = Theme(path)
             vs = "+".join(m for m in ("dark", "light") if m in t.variants)
@@ -1671,7 +1735,8 @@ def main(argv=None):
     s.add_argument("theme")
     s.add_argument("--variant", choices=["both", "dark", "light"], default="both")
     s.add_argument("--only", help="comma-separated targets")
-    s.add_argument("--with", dest="extra", help="also apply these opt-in targets (e.g. flatpak)")
+    s.add_argument("--with", dest="extra", help="also apply these opt-in targets (e.g. flatpak); they stay on")
+    s.add_argument("--without", help="turn these opt-in targets off again")
     s.add_argument("--dry-run", action="store_true")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--restart", dest="restart", action="store_const", const="restart",
@@ -1681,6 +1746,7 @@ def main(argv=None):
     ra = sub.add_parser("restart-apps", help="list (or with --yes, gracefully restart) GTK apps holding the old palette")
     ra.add_argument("--yes", action="store_true")
     ra.add_argument("--json", action="store_true")
+    ra.add_argument("--ids", help="only these app ids, comma-separated (the picker passes what the user confirmed)")
     cf = sub.add_parser("config", help="show or change preferences (~/.config/pulsar/theme.conf)")
     cf.add_argument("key", nargs="?")
     cf.add_argument("value", nargs="?")
@@ -1716,9 +1782,10 @@ def main(argv=None):
         if only and extra:
             only = only + extra
             extra = None
-        cmd_set(load_theme(a.theme), a.variant, only, a.dry_run, restart_policy=a.restart or "ask", extra=extra)
+        cmd_set(load_theme(a.theme), a.variant, only, a.dry_run, restart_policy=a.restart or "ask", extra=extra,
+                without=a.without.split(",") if a.without else None)
     elif a.cmd == "restart-apps":
-        restart, manual = open_gtk_apps()
+        restart, manual = open_gtk_apps(a.ids.split(",") if a.ids else None)
         if a.json and not a.yes:
             print(json.dumps({"restart": restart, "manual": manual}))
         elif a.yes:

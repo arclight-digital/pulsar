@@ -70,7 +70,7 @@ echo "pulsar-signer: compiles"
 # desktop that stays stock forever (the unit fails, the stamp is never
 # written, it fails again next login). The rest are build and gate tooling.
 say "compile-check the theme engine and its tooling"
-for f in scripts/pulsar-theme scripts/pulsar-theme-picker scripts/build-themes.py \
+for f in scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/build-themes.py \
          scripts/render-theme-wallpapers.py tests/theme-gate/scenario.py \
          tests/theme-gate/fixtures/notes.py; do
   python3 - "$f" <<'PY'

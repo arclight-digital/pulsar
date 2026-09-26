@@ -199,9 +199,8 @@ def theme_list():
 
 
 def palette(slug, mode):
-    code = ("import json, importlib.machinery as M, importlib.util as U; "
-            f"ld=M.SourceFileLoader('pt','{PT[0]}'); pt=U.module_from_spec(U.spec_from_loader('pt', ld)); "
-            "ld.exec_module(pt); "
+    code = ("import json, sys; sys.path.insert(0, '/usr/libexec/pulsar'); import pulsar_theme_engine; "
+            "pt = pulsar_theme_engine.load(); "
             f"v=pt.load_theme('{slug}').variants['{mode}']; "
             "print(json.dumps({k: v[k].hex for k in ('background','background_deep','window','view','accent','popover')}))")
     return json.loads(sh("python3", "-c", code, env=ENV).stdout)
