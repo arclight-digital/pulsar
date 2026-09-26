@@ -630,58 +630,60 @@
   {
     "slug": "phosphor",
     "name": "Phosphor",
-    "author": "Pulsar",
+    "author": "Pulsar; after P1 green-phosphor terminals",
     "prefer": "dark",
     "variants": {
       "dark": {
         "swatch": [
           "#050a06",
-          "#0b140d",
+          "#0b1a10",
           "#33ff66",
-          "#6bff8f",
-          "#b8ff9e",
+          "#e38a6d",
+          "#c8ff5c",
           "#33ff66",
-          "#5cffa8",
-          "#2ee07a",
-          "#88ffb8",
-          "#9dffb0"
+          "#66ffd0",
+          "#57c8e0",
+          "#cf94b8",
+          "#5dff8a"
         ],
         "accent": "#33ff66",
         "bg": "#050a06",
         "deep": "#020503",
-        "raised": "#0b140d",
-        "fg": "#9dffb0"
+        "raised": "#0b1a10",
+        "fg": "#5dff8a",
+        "wall": "/assets/themes/phosphor/wall-dark.webp",
+        "desktop": "/assets/themes/phosphor/desktop-dark.webp"
       }
-    },
-    "placeholder": true
+    }
   },
   {
     "slug": "amber",
     "name": "Amber",
-    "author": "Pulsar",
+    "author": "Pulsar; after P3 amber-phosphor terminals",
     "prefer": "dark",
     "variants": {
       "dark": {
         "swatch": [
-          "#0c0802",
-          "#171004",
+          "#0a0703",
+          "#1a1207",
           "#ffb000",
-          "#ff9a1f",
-          "#ffc233",
-          "#ffb000",
-          "#ffcf66",
-          "#e89a00",
-          "#ffbe4d",
-          "#ffd27a"
+          "#ff6a3d",
+          "#ffd24a",
+          "#b8c94a",
+          "#a8d4b0",
+          "#a3b8cc",
+          "#e38aa0",
+          "#ffb000"
         ],
         "accent": "#ffb000",
-        "bg": "#0c0802",
-        "deep": "#060401",
-        "raised": "#171004",
-        "fg": "#ffd27a"
+        "bg": "#0a0703",
+        "deep": "#050301",
+        "raised": "#1a1207",
+        "fg": "#ffb000",
+        "wall": "/assets/themes/amber/wall-dark.webp",
+        "desktop": "/assets/themes/amber/desktop-dark.webp"
       }
-    },
-    "placeholder": true
+    }
   },
   {
     "slug": "alucard",
@@ -707,7 +709,8 @@
         "deep": "#ece7d5",
         "raised": "#f4efdd",
         "fg": "#1f1f1f",
-        "wall": "/assets/themes/alucard/wall-light.webp"
+        "wall": "/assets/themes/alucard/wall-light.webp",
+        "desktop": "/assets/themes/alucard/desktop-light.webp"
       }
     }
   }

@@ -10,9 +10,6 @@
 // Alucard light only, so neither follows the Dark Style toggle and choosing
 // either is a full switch. A single-variant theme shows the variant it has
 // whichever mode the page is in.
-//
-// TODO(alucard-shot): no harness screenshot of Alucard exists yet, so its
-// preview shows its wallpaper; add desktop-light.webp when one is taken.
 import raw from './themes.json';
 
 export type Variant = {
@@ -31,7 +28,7 @@ export type Theme = {
   name: string;
   author: string;
   prefer: string;
-  /** TODO(phosphor-amber-assets): a provisional palette with no pictures yet */
+  /** A theme listed before its pictures exist: shows placeholder tiles. */
   placeholder?: boolean;
   variants: { dark?: Variant; light?: Variant };
 };
