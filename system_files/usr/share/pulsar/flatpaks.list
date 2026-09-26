@@ -55,14 +55,29 @@ org.fedoraproject.MediaWriter   fedora
 # Curation rules: the launchers and daily drivers a fresh install is actually
 # missing, nothing Microsoft-owned, nothing an average boot does not use.
 
+# media -- GNOME's own video and audio players. The Silverblue set above has
+# neither, so a fresh install could not open a video or a song it downloaded.
+# Listed first among the additions: opening a file you double-clicked is part
+# of a usable desktop, not the gaming stack.
+org.gnome.Showtime
+org.gnome.Decibels
+
 # launchers -- the out-of-box gap between a fresh image and a playable one
 com.valvesoftware.Steam
 io.github.Faugus.faugus-launcher
+# Epic, GOG and Amazon libraries, which Steam and Faugus do not reach
+com.heroicgameslauncher.hgl
 
 # plumbing -- proton management, sandbox permissions, wine prefixes
 com.vysp3r.ProtonPlus
 com.github.tchx84.Flatseal
 com.usebottles.bottles
+# winetricks for a Steam game's Proton prefix -- the fix for "needs vcrun2019"
+com.github.Matoking.protontricks
+# The GUI half of the libvirt + qemu stack the image layers (see the package
+# rationale in the Containerfile). Talks to the host's socket-activated
+# virtqemud; without it the virtualization stack had nothing to drive it.
+org.virt_manager.virt-manager
 
 # The MangoHud Vulkan layer, for Flatpak games.
 #

@@ -76,6 +76,47 @@ RUN for attempt in 1 2 3; do \
     dnf5 swap -y ffmpeg-free ffmpeg --allowerasing
 
 # ---------------------------------------------------------------------------
+# Hardware video decode on AMD. Fedora builds Mesa with the H.264, HEVC and
+# VC-1 VA-API codecs switched off, so on a Radeon every browser video and
+# every host-side encode falls back to the CPU. rpmfusion's
+# mesa-va-drivers-freeworld is the same Mesa with them on. Flatpak apps are
+# unaffected either way -- they use their runtime's Mesa -- so this is for
+# Firefox, which is an RPM here, and anything else on the host. Intel and
+# NVIDIA decode through their own VA-API drivers and never touch this one.
+#
+# PINNED TO THE MESA ALREADY INSTALLED, AND SKIPPED WHEN IT CANNOT BE. The
+# package requires mesa-filesystem at its own exact version, and rpmfusion
+# rebuilds it some hours or days after Fedora ships a Mesa update. Asked for
+# by bare name in that window, dnf has two ways out and both are bad: fail the
+# night, or -- with updates-archive enabled -- quietly downgrade the whole
+# Mesa stack to match. So it is asked for at the installed Mesa's version.
+# When rpmfusion has not caught up, that build skips it, says so in the log,
+# and the manifest records `fedora` rather than `freeworld`. A night of CPU
+# video decode on AMD is a far smaller cost than a night with no build.
+#
+# Retried like every other rpmfusion fetch, and for the same reason. Missing
+# is not retried: an absent version will not appear in the next 45 seconds.
+# ---------------------------------------------------------------------------
+RUN mesa="$(rpm -q --qf '%{VERSION}' mesa-filesystem.x86_64)" && \
+    echo "installed Mesa: ${mesa}" && \
+    for attempt in 1 2 3; do \
+      if dnf5 install -y "mesa-va-drivers-freeworld-${mesa}"; then \
+        echo "mesa-va-drivers-freeworld ${mesa}: installed"; break; \
+      fi; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
+      if dnf5 repoquery -q --available "mesa-va-drivers-freeworld" >/dev/null 2>&1 && \
+         ! dnf5 repoquery -q --available "mesa-va-drivers-freeworld-${mesa}" 2>/dev/null | grep -q .; then \
+        echo "WARNING: rpmfusion has no mesa-va-drivers-freeworld for Mesa ${mesa} yet; AMD video decode stays on the CPU this build" >&2; \
+        break; \
+      fi; \
+      [ "${attempt}" -lt 3 ] || { echo "mesa-va-drivers-freeworld unreachable after 3 attempts" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (rpmfusion free); retrying" >&2; \
+      sleep $((attempt * 15)); \
+    done
+
+# ---------------------------------------------------------------------------
 # sched_ext. Arrow Lake-HX is 8 P-cores + 16 E-cores with no SMT, which is
 # exactly where stock EEVDF placement underperforms.
 #
@@ -523,13 +564,16 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       --arg gamemode  "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamemode)" \
       --arg mangohud  "$(rpm -q --qf '%{VERSION}-%{RELEASE}' mangohud)" \
       --arg mesa      "$(rpm -q --qf '%{VERSION}-%{RELEASE}' mesa-dri-drivers)" \
+      --arg mesava    "$(rpm -qa --qf '%{VERSION}' mesa-va-drivers-freeworld)" \
       --arg gamescale "${GAMESCALE_VERSION}" \
       --arg changelog "${PULSAR_CHANGELOG_URL}" \
       '{image:$image, variant:$variant, version:$version, base:$base, built:$built, \
         kernel:$kernel, \
         components:{scheduler:$scheduler, scheduler_btf:$scxbtf, \
                     gamescope:$gamescope, gamemode:$gamemode, mangohud:$mangohud, \
-                    mesa:$mesa, gamescale:$gamescale}, \
+                    mesa:$mesa, \
+                    mesa_va:(if $mesava == "" then "fedora" else "freeworld" end), \
+                    gamescale:$gamescale}, \
         changelog_url:$changelog, \
         attestation:"gh attestation verify oci://ghcr.io/arclight-digital/pulsar --owner arclight-digital"}' \
       > /usr/share/pulsar/manifest.json && \
