@@ -21,9 +21,9 @@
 //
 // LOCKED: the silk field is approved as-is -- do not retune its constants or
 // math. Post-approval additions sit on top of it and leave it untouched: the
-// downlight, and the luminescence + signal pass at the end of main() (glowing
-// cores, ion-trail filaments, a lit circuit lattice; approved
-// 2026-09-26, at full strength on silk and thinned on the smooth looks).
+// downlight, and the per-look luminescence pass at the end of main() (silk's
+// ion trails, leak's volumetric light, satin's fibre optics, holo's
+// interference; approved 2026-09-26, kept subtle).
 uniform vec2  u_resolution;
 uniform float u_time;   // fixed per render for stills, live for WebGL
 uniform float u_theme;  // 0 = dark variant, 1 = light variant
@@ -285,48 +285,97 @@ void main() {
     dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
 
 
-    // ---- luminescence + signal --------------------------------------------
-    // Light that glows from within, over every look: emissive cores where the
-    // look is brightest, thin cyan ion trails on isolines of a second field
-    // with a periwinkle halo and a slight chromatic split, a violet circuit
-    // lattice lit only by the glow near it. Silk
-    // carries the full web; the smooth looks (leak, satin, holo) a thinner
-    // one -- at full strength there it read as electrical crackle. The
-    // top-right, where quick settings open, stays quiet.
-    float web = mix(1.0, 0.30, clamp(look, 0.0, 1.0));      // silk 1, leak/satin/holo 0.30
-    // and on those looks the trails ride the lit mass more gently too
-    float carryMax = mix(1.0, 0.55, clamp(look, 0.0, 1.0));
-    float g2 = fbm3(uv * 2.7 + w * 1.8 + 4.1 + look * 1.37);
+    // ---- each look's own luminescence --------------------------------------
+    // One signature effect per look, all quiet enough to be noticed on a
+    // second look rather than the first; nothing outshines the look's own
+    // core, nothing runs brighter than cyan. The top-right stays quiet.
+    //   silk  -- ion trails on the field's isolines, with a halo, over a
+    //            faint violet circuit lattice lit only by the glow near it
+    //   leak  -- volumetric light: god-rays through the leak, drifting motes,
+    //            an anamorphic streak with a little dispersion at the beam edge
+    //   satin -- fibre optics: a few warp threads carry travelling pulses
+    //            (they travel on the site's live sky), with glints at crossings
+    //   holo  -- interference: thin-film fringes and a diffraction sheen,
+    //            coloured by wavelength, and one faint hologram scan band
+    // Only the active look's block runs (the branches are on uniforms), so
+    // the live sky pays for one effect, not four. GLSL ES 1.0 throughout.
+    float wSilk = 1.0 - clamp(look, 0.0, 1.0);
+    float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
+    float wSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
+    float wHolo = clamp(look - 2.0, 0.0, 1.0);
     float inten = clamp(dot(night - vec3(0.012, 0.014, 0.034), vec3(0.3333)) * 2.6, 0.0, 1.0);
-    float ca = 0.0022;
-    vec3 fil = (vec3(glowLine(g2 - 0.52 - ca, 0.0042), glowLine(g2 - 0.52, 0.0042), glowLine(g2 - 0.52 + ca, 0.0042))
-             + 0.55 * vec3(glowLine(f - 0.63 - ca, 0.0036), glowLine(f - 0.63, 0.0036), glowLine(f - 0.63 + ca, 0.0036)))
-             * web;
-    float halo = (glowLine(g2 - 0.52, 0.040) + 0.5 * glowLine(f - 0.63, 0.030)) * web;
-    float carry = (0.07 + 0.93 * smoothstep(0.05, 0.7, inten)) * carryMax;
-    vec2 cell = floor(uv * 26.0);
-    float tr = lattice(uv, 26.0) * step(1.0 - web, hash(cell + 41.0)) * web;
+    float carry = 0.05 + 0.95 * smoothstep(0.05, 0.7, inten);
+    vec3 emit = CYAN * pow(inten, 3.0) * 0.16;
+    float g2 = 0.0;
+    vec3 dawnFx = vec3(0.0);
+    float dawnInk = 0.0;
+    if (wSilk > 0.0) {
+        g2 = fbm3(uv * 2.7 + w * 1.8 + 4.1);
+        float ca = 0.0020;
+        vec3 f3 = vec3(glowLine(g2 - 0.52 - ca, 0.0060), glowLine(g2 - 0.52, 0.0060), glowLine(g2 - 0.52 + ca, 0.0060))
+                + 0.5 * vec3(glowLine(f - 0.63 - ca, 0.0050), glowLine(f - 0.63, 0.0050), glowLine(f - 0.63 + ca, 0.0050));
+        float halo = glowLine(g2 - 0.52, 0.050) + 0.5 * glowLine(f - 0.63, 0.040);
+        float tr = lattice(uv, 26.0);
+        emit += wSilk * (CYAN * f3 * 0.55 * carry + PERI * halo * 0.12 * carry
+                         + mix(VIOLET, PERI, 0.5) * tr * (0.010 + 0.18 * inten));
+        dawnFx += wSilk * vec3(f3.g * 0.28 * (0.1 + 0.9 * carry));
+        dawnInk += wSilk * tr * 0.025;
+    }
+    if (wLeak > 0.0) {
+        vec2 rel = lq - vec2(-1.25, -0.05);
+        float ang = atan(rel.y, rel.x);
+        float rays = vnoise(vec2(ang * 34.0, 1.7)) * 0.65 + vnoise(vec2(ang * 91.0, 4.2)) * 0.35;
+        rays = smoothstep(0.35, 0.95, rays) * smoothstep(2.3, 0.4, length(rel));
+        float motes = starLayer(uv, 46.0, 0.035, 140.0) + starLayer(uv + 7.3, 19.0, 0.03, 60.0);
+        float edge = -0.14;
+        vec3 streak = vec3(glowLine(lq.y - edge - 0.0035, 0.010), glowLine(lq.y - edge, 0.010),
+                           glowLine(lq.y - edge + 0.0035, 0.010)) * smoothstep(0.55, -0.6, lq.x);
+        emit += wLeak * (PERI * rays * inten * 0.06 + CYAN * motes * inten * 0.28 + CYAN * streak * 0.10);
+        dawnFx += wLeak * vec3(rays * 0.05 + streak.g * 0.08);
+        dawnInk -= wLeak * motes * 0.06;
+    }
+    if (wSatin > 0.0) {
+        float tid = floor(sdiag * 48.0);
+        float lit = step(0.80, hash(vec2(tid, 7.0)));
+        float thread = glowLine(fract(sdiag * 48.0) - 0.5, 0.09) * lit;
+        float pulse = pow(0.5 + 0.5 * sin(su * 9.0 - u_time * 0.6 + hash(vec2(tid, 3.0)) * 6.2831), 10.0);
+        float weftLit = step(0.90, hash(vec2(floor(su * 30.0), 11.0)));
+        float glint = thread * weftLit * glowLine(fract(su * 30.0) - 0.5, 0.10);
+        float satinLit = exp(-sd * 2.2);
+        emit += wSatin * (CYAN * thread * (0.10 + 0.35 * pulse) * satinLit
+                          + mix(CYAN, vec3(1.0), 0.2) * glint * 0.30 * satinLit);
+        dawnFx += wSatin * vec3(thread * (0.04 + 0.12 * pulse) * satinLit + glint * 0.12 * satinLit);
+    }
+    if (wHolo > 0.0) {
+        g2 = fbm3(uv * 1.9 + 2.3);
+        float thick = g2 * 2.4 + uv.x * 0.35 + 0.15 * sin(uv.y * 3.1);
+        vec3 film = 0.5 + 0.5 * cos(6.2831 * (thick + vec3(0.0, 0.33, 0.67)));
+        float gd = dot(uv, normalize(vec2(0.8, 0.45)));
+        vec3 grating = (0.5 + 0.5 * cos(6.2831 * (gd * 3.0 + vec3(0.0, 0.33, 0.67))))
+                     * exp(-pow((gd - 0.05) / 0.22, 2.0));
+        float scanBand = glowLine(uv.y - 0.14, 0.035);
+        emit += wHolo * (mix(film, CYAN, 0.45) * inten * 0.12 + grating * inten * 0.08
+                         + PERI * scanBand * (0.02 + 0.08 * inten));
+        dawnFx += wHolo * (film * 0.06 + grating * 0.05 + vec3(scanBand * 0.04));
+    }
+    emit = min(emit, CYAN * 0.85 + 0.03);
     float aspect = u_resolution.x / u_resolution.y;
     vec2 qc = (uv - vec2(0.5 * aspect, 0.5)) * vec2(0.8, 1.2);
     float quiet = 1.0 - exp(-dot(qc, qc) * 2.2) * 0.85;
-    vec3 emit = CYAN * fil * 0.95 * carry
-              + PERI * halo * 0.16 * carry
-              + CYAN * pow(inten, 3.0) * 0.30
-              + mix(VIOLET, PERI, 0.5) * tr * (0.015 + 0.30 * inten);
     night = knee(night + emit * quiet);
-    // dawn: luminous on light reads as pearl, not glow
-    // "lit" is measured against each look's own ground: satin's cloth is its
-    // own gradient and weave, and measured against dawnBase all of it read
-    // as lit and took the pearl and filaments over plain cloth
+    // dawn: the same effects in pearl, low-contrast against the paper, with
+    // "lit" measured against each look's own ground (satin's is its cloth)
     vec3 groundS = mix(vec3(0.800, 0.818, 0.900), vec3(0.862, 0.880, 0.940), smoothstep(-0.60, 0.70, sdiag))
                  * (1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.12);
-    float onSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
-    float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, onSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
-    vec3 pearl = 0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67)));
-    pearl = mix(pearl, mix(PERI, vec3(1.0), 0.3), 0.75);
-    dawn = mix(dawn, pearl, intenD * 0.22 * quiet);
-    dawn = mix(dawn, vec3(1.0), clamp(fil.g * 0.40 * (0.10 + 0.90 * intenD) * quiet, 0.0, 1.0));
-    dawn *= 1.0 - tr * 0.035;
+    float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, wSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
+    if (wSilk > 0.0) {
+        vec3 pearl = mix(0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67))),
+                         mix(PERI, vec3(1.0), 0.3), 0.8);
+        dawn = mix(dawn, pearl, wSilk * intenD * 0.14 * quiet);
+    }
+    dawn = mix(dawn, vec3(1.0), clamp(dawnFx * (0.15 + 0.85 * intenD) * quiet, 0.0, 0.6));
+    dawn *= 1.0 - clamp(dawnInk, -0.2, 0.2);
+
     // No raster: a fine scanline beats into moire when GNOME scales a baked
     // wallpaper to the monitor, and shimmers in the live sky; the lattice and
     // the grain carry the texture.

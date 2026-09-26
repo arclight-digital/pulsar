@@ -233,46 +233,108 @@ void main() {
     dawn = mix(dawn, dawnS, clamp(look - 1.0, 0.0, 1.0));
     dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
 
-    // ---- luminescence + signal (both variants) -------------------------------
-    // Light that glows from within: the look above is the ground-glow; on it
-    // go emissive cores where the look is brightest, ion-trail filaments on
-    // isolines of a second warped field with a halo falloff and a touch of
-    // chromatic split, and a circuit lattice lit only by the glow around it.
-    // All of it is emission (added), tonemapped through a soft knee so the
-    // highlights bloom rather than clip.
-    float g2 = fbm(uv * 2.7 + w * 1.8 + u_seed * 0.73 + 4.1);
+    // ---- each look's own luminescence (both variants) ----------------------
+    // One signature effect per look, all quiet enough to be noticed on a
+    // second look rather than the first: soft peaks, wide falloffs, more of
+    // the calm ground showing. Nothing outshines the look's own emissive
+    // core, and no effect runs brighter than the theme's highlight colour.
+    //   silk  -- ion trails: filaments on isolines of the field, with a halo
+    //   leak  -- volumetric light: god-rays through the leak, drifting motes,
+    //            an anamorphic streak with a little dispersion at the beam edge
+    //   satin -- fibre optics: a few warp threads carry travelling pulses of
+    //            light, with a glint where a lit weft crosses them
+    //   holo  -- interference: thin-film fringes and a diffraction sheen,
+    //            coloured by wavelength, and one faint hologram scan band
+    // u_web scales them all (the phosphor themes ask for more); u_signal the
+    // hacker-ish parts (lattice on silk, dispersion, the scan band).
+    float wSilk = 1.0 - clamp(look, 0.0, 1.0);
+    float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
+    float wSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
+    float wHolo = clamp(look - 2.0, 0.0, 1.0);
     float inten = clamp(dot(night - mix(u_ga, u_gb, 0.5), vec3(0.3333)) * 2.6, 0.0, 1.0);
-    float ca = 0.0022 * u_signal;
-    vec3 fil = vec3(line(g2 - 0.52 - ca, 0.0042), line(g2 - 0.52, 0.0042), line(g2 - 0.52 + ca, 0.0042))
-             + 0.55 * vec3(line(f - 0.63 - ca, 0.0036), line(f - 0.63, 0.0036), line(f - 0.63 + ca, 0.0036));
-    float halo = line(g2 - 0.52, 0.040) + 0.5 * line(f - 0.63, 0.030);
-    fil *= u_web;     // once: the web strength scales every trail and its halo
-    halo *= u_web;
-    float carry = 0.07 + 0.93 * smoothstep(0.05, 0.7, inten);    // trails live in the lit mass
-    // fewer lit cells as well as dimmer ones: the web thins, not just fades
-    float tr = lattice(uv, 26.0) * step(1.0 - u_web, hash(floor(uv * 26.0) + 41.0) * 1.0) * u_web;
-    vec3 emit = u_c3 * fil * 0.95 * carry
-              + mixo(u_c2, u_c3, 0.5) * halo * 0.16 * carry
-              + u_c3 * pow(inten, 3.0) * 0.30
-              + mixo(u_c2, u_c3, 0.4) * tr * (0.015 + 0.30 * inten) * u_signal / max(u_glow, 0.001);
+    float carry = 0.05 + 0.95 * smoothstep(0.05, 0.7, inten);   // effects live in the lit mass
+    vec3 emit = u_c3 * pow(inten, 3.0) * 0.16;                  // the core itself, gently
+    vec3 soft = mixo(u_c2, u_c3, 0.5);
+    float g2 = 0.0, fil = 0.0, halo = 0.0, tr = 0.0;
+    vec3 dawnFx = vec3(0.0);        // light-variant additions, as a tint amount per channel
+    float dawnInk = 0.0;
+
+    if (wSilk > 0.0) {
+        g2 = fbm(uv * 2.7 + w * 1.8 + u_seed * 0.73 + 4.1);
+        float ca = 0.0020 * u_signal;
+        vec3 f3 = vec3(line(g2 - 0.52 - ca, 0.0060), line(g2 - 0.52, 0.0060), line(g2 - 0.52 + ca, 0.0060))
+                + 0.5 * vec3(line(f - 0.63 - ca, 0.0050), line(f - 0.63, 0.0050), line(f - 0.63 + ca, 0.0050));
+        halo = (line(g2 - 0.52, 0.050) + 0.5 * line(f - 0.63, 0.040)) * u_web;
+        fil = f3.g * u_web;
+        tr = lattice(uv, 26.0) * step(1.0 - u_web, hash(floor(uv * 26.0) + 41.0)) * u_web * u_signal;
+        emit += wSilk * (u_c3 * f3 * u_web * 0.55 * carry + soft * halo * 0.12 * carry
+                         + mixo(u_c2, u_c3, 0.4) * tr * (0.010 + 0.18 * inten));
+        dawnFx += wSilk * vec3(fil * 0.28 * (0.1 + 0.9 * carry));
+        dawnInk += wSilk * tr * 0.025;
+    }
+    if (wLeak > 0.0) {
+        // rays fan out from a source beyond the left edge, along the beams
+        vec2 rel = lq - vec2(-1.25, -0.05);
+        float ang = atan(rel.y, rel.x);
+        float rays = vnoise(vec2(ang * 34.0, 1.7)) * 0.65 + vnoise(vec2(ang * 91.0, 4.2)) * 0.35;
+        rays = smoothstep(0.35, 0.95, rays) * smoothstep(2.3, 0.4, length(rel));
+        float motes = starLayer(uv + u_seed, 46.0, 0.035, 140.0) + starLayer(uv - u_seed, 19.0, 0.03, 60.0);
+        float edge = -0.28 + 0.14;              // the upper edge of the brightest beam
+        float disp = 0.0035 * u_signal;
+        vec3 streak = vec3(line(lq.y - edge - disp, 0.010), line(lq.y - edge, 0.010), line(lq.y - edge + disp, 0.010))
+                    * smoothstep(0.55, -0.6, lq.x);
+        emit += wLeak * u_web * (soft * rays * inten * 0.09 + u_c3 * motes * inten * 0.28
+                                 + u_c3 * streak * 0.10);
+        dawnFx += wLeak * u_web * vec3(rays * 0.05 + streak.g * 0.08);
+        dawnInk -= wLeak * u_web * motes * 0.06;      // motes on paper: pale specks catching light
+    }
+    if (wSatin > 0.0) {
+        // warp threads run along the weave; a sparse few are lit fibres
+        float n = 48.0;
+        float tid = floor(sdiag * n);
+        float across = fract(sdiag * n) - 0.5;
+        float lit = step(0.80, hash(vec2(tid, 7.0)));
+        float thread = line(across, 0.09) * lit;
+        float pulse = pow(0.5 + 0.5 * sin(su * 9.0 - u_time * 0.6 + hash(vec2(tid, 3.0)) * 6.2831), 10.0);
+        // a lit weft thread crossing a lit warp thread: a small glint
+        float wid = floor(su * 30.0);
+        float weftLit = step(0.90, hash(vec2(wid, 11.0)));
+        float glint = thread * weftLit * line(fract(su * 30.0) - 0.5, 0.10);
+        float satinLit = exp(-sd * 2.2);           // the bloom is where the light runs
+        emit += wSatin * u_web * (u_c3 * thread * (0.10 + 0.35 * pulse) * satinLit
+                                  + mixo(u_c3, vec3(1.0), 0.2) * glint * 0.30 * satinLit);
+        dawnFx += wSatin * u_web * vec3(thread * (0.04 + 0.12 * pulse) * satinLit + glint * 0.12 * satinLit);
+    }
+    if (wHolo > 0.0) {
+        g2 = fbm(uv * 1.9 + u_seed * 0.51 + 2.3);
+        // thin film: hue follows optical thickness, fringes drift across it
+        float thick = g2 * 2.4 + uv.x * 0.35 + 0.15 * sin(uv.y * 3.1);
+        vec3 film = 0.5 + 0.5 * cos(6.2831 * (thick + vec3(0.0, 0.33, 0.67)));
+        // grating: a broad diagonal band whose colour runs with angle
+        float gd = dot(uv, normalize(vec2(0.8, 0.45)));
+        vec3 grating = (0.5 + 0.5 * cos(6.2831 * (gd * 3.0 + vec3(0.0, 0.33, 0.67))))
+                     * exp(-pow((gd - 0.05) / 0.22, 2.0));
+        float scanBand = line(uv.y - 0.14, 0.035) * u_signal;
+        emit += wHolo * u_web * (mixo(film, u_c3, 0.45) * inten * 0.12 + grating * inten * 0.08
+                                 + soft * scanBand * (0.02 + 0.08 * inten));
+        dawnFx += wHolo * u_web * (film * 0.06 + grating * 0.05 + vec3(scanBand * 0.04));
+    }
+    // never brighter than the highlight colour, however they stack
+    emit = min(emit, u_c3 * 0.85 + 0.03);
     night = knee(night + emit * u_glow);
 
-    // light: luminous on paper reads as pearl -- a thin-film sheen where the
-    // look has colour, white-hot filaments with a tinted halo, and the
-    // lattice as the faintest ink, never glow
+    // light: the same effects in pearl, low-contrast against the paper.
     // "lit" is measured against each look's OWN ground: satin's cloth is its
     // own gradient and weave, and measured against dawnBase all of it read as
-    // lit and took the pearl and the filaments over plain cloth
+    // lit and took the effects over plain cloth.
     vec3 groundS = mix(u_db, u_da, smoothstep(-0.60, 0.70, sdiag)) * (1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.10);
-    float onSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
-    float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, onSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
-    vec3 pearl = 0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67)));
-    pearl = mixo(pearl, l2, 0.75);
-    dawn = mixo(dawn, pearl, intenD * 0.22 * u_glow);
-    float carryD = 0.10 + 0.90 * intenD;
-    dawn = mix(dawn, vec3(1.0), clamp(fil.g * 0.40 * carryD * u_glow, 0.0, 1.0));
-    dawn = mixo(dawn, l3, clamp(halo * 0.10 * carryD * u_glow, 0.0, 1.0));
-    dawn *= 1.0 - tr * 0.035 * u_signal;
+    float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, wSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
+    if (wSilk > 0.0) {
+        vec3 pearl = mixo(0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67))), l2, 0.8);
+        dawn = mixo(dawn, pearl, wSilk * intenD * 0.14 * u_glow);
+    }
+    dawn = mix(dawn, vec3(1.0), clamp(dawnFx * (0.15 + 0.85 * intenD) * u_glow, 0.0, 0.6));
+    dawn *= 1.0 - clamp(dawnInk, -0.2, 0.2) * u_signal;
 
     // No baked raster. A 3-pixel scanline looked right at 1:1 and beat into
     // moire the moment GNOME scaled the wallpaper to the monitor (3840->1920,
