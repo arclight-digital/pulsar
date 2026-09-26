@@ -27,10 +27,11 @@ export default class PulsarThemeExtension extends Extension {
         this._iface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         this._schemeId = this._iface.connect('changed::color-scheme', () => this._reload());
         this._themeCtx = St.ThemeContext.get_for_stage(global.stage);
-        this._themeChangedId = this._themeCtx.connect('changed', () => {
-            if (this._loaded && this._loaded.theme !== this._themeCtx.get_theme())
-                this._reload();
-        });
+        // Dark Style and high contrast make the Shell build a NEW St.Theme,
+        // and Main.loadTheme copies every custom stylesheet across -- ours
+        // included. So on every swap, reload onto the new theme: _reload
+        // first strips every sheet of ours it finds there, whoever put it.
+        this._themeChangedId = this._themeCtx.connect('changed', () => this._reload());
         this._reload();
     }
 
@@ -41,8 +42,8 @@ export default class PulsarThemeExtension extends Extension {
         this._iface?.disconnect(this._schemeId);
         this._iface = null;
         this._themeCtx?.disconnect(this._themeChangedId);
-        this._themeCtx = null;
         this._unload();
+        this._themeCtx = null;
     }
 
     _path() {
@@ -55,13 +56,21 @@ export default class PulsarThemeExtension extends Extension {
         return null;
     }
 
+    // Every stylesheet of ours on the CURRENT theme, found by directory, not
+    // by the GFile we happened to load: sheets carried over from an old
+    // theme, or loaded before a file was renamed, are ours too and must go.
     _unload() {
-        if (this._loaded) {
-            try {
-                this._loaded.theme.unload_stylesheet(this._loaded.file);
-            } catch (e) {}
+        const theme = this._themeCtx?.get_theme();
+        if (!theme)
+            return;
+        for (const f of theme.get_custom_stylesheets()) {
+            const path = f.get_path();
+            if (path && GLib.path_get_dirname(path) === this._dir) {
+                try {
+                    theme.unload_stylesheet(f);
+                } catch (e) {}
+            }
         }
-        this._loaded = null;
     }
 
     _reload() {
@@ -69,12 +78,8 @@ export default class PulsarThemeExtension extends Extension {
         const path = this._path();
         if (!path)
             return;
-        // A fresh GFile each time: St.Theme caches parsed sheets per GFile.
-        const file = Gio.File.new_for_path(path);
-        const theme = this._themeCtx.get_theme();
         try {
-            theme.load_stylesheet(file);
-            this._loaded = {theme, file};
+            this._themeCtx.get_theme().load_stylesheet(Gio.File.new_for_path(path));
         } catch (e) {
             console.warn(`pulsar-theme: ${e.message}`);
         }
