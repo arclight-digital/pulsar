@@ -629,6 +629,30 @@ check_updates() {
     fi
 }
 
+# The Pulsar code editor (the Atom fork) also ships a command called
+# `pulsar`. As a Flatpak -- the normal way on this OS -- it exports only its
+# app id and nothing collides. Its RPM writes /usr/bin/pulsar itself, and its
+# AppImage is often linked into ~/.local/bin/pulsar, which sits earlier on PATH.
+# Either way "pulsar doctor" quietly opens an editor, and an agent told by
+# AGENTS.md to run `pulsar doctor --json` reads whatever that prints. Units call
+# /usr/bin/pulsar by absolute path, so only an overwrite breaks them.
+PULSAR_SELF_MARK="# pulsar -- the front door to a Pulsar system."
+check_cli() {
+    local sys=${PULSAR_SYSTEM_CLI:-/usr/bin/pulsar} first
+    if [ -e "$sys" ] && ! grep -qxF "$PULSAR_SELF_MARK" "$sys" 2>/dev/null; then
+        record cli fail "${sys} is not the Pulsar CLI (a layered Pulsar editor RPM?)" \
+               "the update checks call it; remove the package that replaced it (rpm-ostree status)"
+        return
+    fi
+    first=$(command -v pulsar 2>/dev/null) || first=""
+    if [ -n "$first" ] && [ "$first" != "$sys" ] && ! grep -qxF "$PULSAR_SELF_MARK" "$first" 2>/dev/null; then
+        record cli warn "another 'pulsar' comes first on PATH: ${first}" \
+               "probably the Pulsar code editor; typing 'pulsar' runs it. use ${sys}, or rename that one"
+        return
+    fi
+    record cli ok "'pulsar' is this system's CLI"
+}
+
 check_disk() {
     local root=/sysroot
     [ -d "$root" ] || root=/
@@ -662,6 +686,7 @@ cmd_doctor() {
     check_origin
     check_updates
     check_disk
+    check_cli
     if [ "${JSON:-0}" = 1 ]; then
         printf '{"checks":[%s],"ok":%s}\n' "${CHECK_JSON%,}" "$([ "$RC" -eq 0 ] && echo true || echo false)"
     else

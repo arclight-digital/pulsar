@@ -1772,3 +1772,32 @@ EOF
     grep -q 'name="agents"' "${HOME}/.local/bin/claude"
     grep -q 'exec flatpak-spawn --host toolbox run -c' "${HOME}/.local/bin/claude"
 }
+
+# ---------------------------------------------------------------------------
+# doctor: the Pulsar code editor also ships a `pulsar` command.
+# ---------------------------------------------------------------------------
+cli_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="cli") | .status + " " + .summary'; }
+
+@test "doctor: an editor's 'pulsar' earlier on PATH is a warning that names it" {
+    local stub="${BATS_TEST_TMPDIR}/editorbin"
+    mkdir -p "$stub"
+    printf '#!/bin/sh\necho "Pulsar editor"\n' > "${stub}/pulsar"; chmod +x "${stub}/pulsar"
+    export PULSAR_SYSTEM_CLI="$PULSAR"
+    PATH="${stub}:${PATH}" run cli_check
+    [[ "$output" == warn* ]]
+    [[ "$output" == *"${stub}/pulsar"* ]]
+}
+
+@test "doctor: a /usr/bin/pulsar that is not ours fails" {
+    local fake="${BATS_TEST_TMPDIR}/usr-bin-pulsar"
+    printf '#!/bin/sh\necho "Pulsar editor"\n' > "$fake"; chmod +x "$fake"
+    export PULSAR_SYSTEM_CLI="$fake"
+    run cli_check
+    [[ "$output" == fail* ]]
+}
+
+@test "doctor: our own CLI first on PATH is ok" {
+    export PULSAR_SYSTEM_CLI="$PULSAR"
+    PATH="$(dirname "$PULSAR"):${PATH}" run cli_check
+    [[ "$output" == ok* ]]
+}

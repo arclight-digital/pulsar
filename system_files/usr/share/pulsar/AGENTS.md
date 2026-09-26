@@ -40,6 +40,12 @@ with it. `pulsar agents-md` prints it.
 
 Run these before assuming anything about this machine. None needs root.
 
+Call the CLI as **`/usr/bin/pulsar`** when you script it. The Pulsar code
+editor also ships a command named `pulsar`, and if the user installed it
+outside Flatpak it may come first on `PATH`. `/usr/bin/pulsar doctor --json`
+always reaches this system's CLI, and its `cli` check says when another
+`pulsar` is shadowing it.
+
 | Command | Answers |
 |---|---|
 | `pulsar doctor --json` | Health checks. Exit 1 if one fails. |
