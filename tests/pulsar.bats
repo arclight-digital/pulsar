@@ -1480,3 +1480,261 @@ EOF
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.units' >/dev/null
 }
+
+# ---------------------------------------------------------------------------
+# setup agent. The contract worth pinning is mostly about what does NOT
+# happen: nothing is installed until an agent is named, nothing runs as root,
+# nothing the user already has is replaced, and a vendor's own install is
+# kept rather than refused. toolbox is stubbed and plays the box.
+# ---------------------------------------------------------------------------
+agent_env() {
+    export HOME="${BATS_TEST_TMPDIR}/home"
+    mkdir -p "$HOME"
+    unset XDG_DATA_HOME XDG_CONFIG_HOME CODEX_HOME
+    export PULSAR_AGENTS_MD="$REPO_AGENTS_MD"
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    export TOOLBOX_LOG="${BATS_TEST_TMPDIR}/toolbox.log"
+    export BOX_FLAG="${BATS_TEST_TMPDIR}/box-exists"
+    export RUNTIME_FLAG="${BATS_TEST_TMPDIR}/runtime-exists"
+    : > "$TOOLBOX_LOG"
+    cat > "${STUB}/toolbox" <<'EOF'
+#!/bin/bash
+echo "toolbox $*" >> "$TOOLBOX_LOG"
+fake_bin() { mkdir -p "$1"; printf '#!/bin/sh\necho "real %s $*"\n' "$2" > "$1/$2"; chmod +x "$1/$2"; }
+case "$1" in
+    list)
+        printf 'CONTAINER ID  CONTAINER NAME  CREATED  STATUS  IMAGE NAME\n'
+        [ -e "$BOX_FLAG" ] && printf 'c0ffee  agents  now  running  fedora-toolbox:44\n'
+        exit 0 ;;
+    --assumeyes) touch "$BOX_FLAG"; exit 0 ;;
+    run)
+        shift 3   # run -c <box>
+        case "$1" in
+            sh)   [ -e "$RUNTIME_FLAG" ] ;;
+            sudo) touch "$RUNTIME_FLAG" ;;
+            npm)
+                prefix=""; last=""
+                while [ $# -gt 0 ]; do
+                    if [ "$1" = --prefix ]; then prefix=$2; shift; fi
+                    last=$1; shift
+                done
+                case "$last" in
+                    @anthropic-ai/claude-code*) b=claude ;;
+                    @openai/codex*) b=codex ;;
+                    @google/gemini-cli*) b=gemini ;;
+                    opencode-ai*) b=opencode ;;
+                    *) b=unknown ;;
+                esac
+                case "$*" in *uninstall*) exit 0 ;; esac
+                fake_bin "$prefix/bin" "$b" ;;
+            env)
+                bindir=""
+                for a in "$@"; do
+                    case "$a" in UV_TOOL_BIN_DIR=*) bindir=${a#UV_TOOL_BIN_DIR=} ;; esac
+                done
+                if printf '%s\n' "$@" | grep -qx uv; then
+                    [ -n "$bindir" ] && fake_bin "$bindir" aider
+                    exit 0
+                fi
+                exec "$@" ;;
+            *) exec "$@" ;;
+        esac ;;
+esac
+EOF
+    chmod +x "${STUB}/toolbox"
+    # A clean PATH, not the caller's: setup agent looks for native installs
+    # on PATH, and a developer's own ~/.local/bin/claude would otherwise be
+    # found and every install test would see "already installed".
+    PATH="${STUB}:/usr/bin:/bin"
+    export PATH
+}
+
+@test "setup agent --list shows every agent and installs nothing" {
+    agent_env
+    run "$PULSAR" setup agent --list
+    [ "$status" -eq 0 ]
+    for n in claude codex gemini opencode aider; do [[ "$output" == *"$n"* ]]; done
+    # the STATE column, not the prose under the table
+    [ -z "$(echo "$output" | awk '$4 == "installed"')" ]
+    [[ "$output" == *"none is installed by default"* ]]
+    [ ! -s "$TOOLBOX_LOG" ]
+}
+
+@test "setup agent carries no Microsoft-owned default" {
+    agent_env
+    run "$PULSAR" setup agent --list
+    [[ "$output" != *[Cc]opilot* ]]
+    [[ "$output" != *GitHub* ]]
+}
+
+@test "setup agent rejects an unknown agent and names the known ones" {
+    agent_env
+    run "$PULSAR" setup agent definitely-not-an-agent
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"known: claude codex gemini opencode aider"* ]]
+    [ ! -s "$TOOLBOX_LOG" ]
+}
+
+@test "setup agent refuses to run as root" {
+    agent_env
+    unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"
+    run unshare -r env "PATH=${PATH}" "HOME=${HOME}" "$PULSAR" setup agent claude
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"must not run as root"* ]]
+    [ ! -s "$TOOLBOX_LOG" ]
+}
+
+@test "setup agent creates the box, the runtime, the package and a shim" {
+    agent_env
+    run "$PULSAR" setup agent claude
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -q 'toolbox --assumeyes create agents' "$TOOLBOX_LOG"
+    grep -q 'run -c agents sudo dnf install -y nodejs npm' "$TOOLBOX_LOG"
+    # the vendor's npm package, into a prefix in $HOME -- never the box's /usr
+    grep -q "run -c agents npm install -g --prefix ${HOME}/.local/share/pulsar/agents @anthropic-ai/claude-code@latest" "$TOOLBOX_LOG"
+    shim="${HOME}/.local/bin/claude"
+    [ -x "$shim" ]
+    grep -qx '# pulsar-agent-shim' "$shim"
+}
+
+@test "the generated shim is clean POSIX sh" {
+    # It is written by a heredoc full of escapes and parsed by /bin/sh long
+    # after this CLI has exited, so it gets linted like any shipped script.
+    command -v shellcheck >/dev/null || skip "shellcheck not installed"
+    agent_env
+    "$PULSAR" setup agent claude >/dev/null
+    "$PULSAR" setup agent aider >/dev/null
+    shellcheck -s sh "${HOME}/.local/bin/claude" "${HOME}/.local/bin/aider"
+}
+
+@test "the shim runs the agent in the box, with its arguments intact" {
+    agent_env
+    "$PULSAR" setup agent codex >/dev/null
+    : > "$TOOLBOX_LOG"
+    run "${HOME}/.local/bin/codex" --version "two words"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"real codex --version two words"* ]]
+    # Inside a container (CI in a toolbox) the shim runs the binary directly,
+    # because toolbox cannot nest; on a host it must go through the box.
+    if [ ! -e /run/.containerenv ]; then
+        grep -q 'toolbox run -c agents env NPM_CONFIG_PREFIX=' "$TOOLBOX_LOG"
+    fi
+}
+
+@test "a second agent reuses the box and the runtime" {
+    agent_env
+    "$PULSAR" setup agent claude >/dev/null
+    : > "$TOOLBOX_LOG"
+    run "$PULSAR" setup agent gemini
+    [ "$status" -eq 0 ]
+    run grep -E 'create|dnf install' "$TOOLBOX_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "a native install is supported: kept, not reinstalled, and given the guide" {
+    # Claude Code's own install.sh puts its launcher at exactly this path, and
+    # people install agents that way whatever the docs say.
+    agent_env
+    mkdir -p "${HOME}/.local/bin"
+    printf '#!/bin/sh\necho mine\n' > "${HOME}/.local/bin/claude"
+    run "$PULSAR" setup agent claude
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already installed by its own installer"* ]]
+    grep -qx 'echo mine' "${HOME}/.local/bin/claude"
+    # the guide still lands where Claude Code reads it
+    [ "$(readlink "${HOME}/.claude/rules/pulsar.md")" = "$REPO_AGENTS_MD" ]
+    # and no box, runtime or second copy was touched
+    [ ! -s "$TOOLBOX_LOG" ]
+}
+
+@test "--list marks a native install as native, with its path" {
+    agent_env
+    mkdir -p "${HOME}/.local/bin"
+    printf '#!/bin/sh\necho mine\n' > "${HOME}/.local/bin/claude"
+    run "$PULSAR" setup agent --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"claude"*"native"* ]]
+    [[ "$output" == *"${HOME}/.local/bin/claude"* ]]
+}
+
+@test "--remove on a native install takes back only the guide link" {
+    agent_env
+    mkdir -p "${HOME}/.local/bin"
+    printf '#!/bin/sh\necho mine\n' > "${HOME}/.local/bin/claude"
+    "$PULSAR" setup agent claude >/dev/null
+    run "$PULSAR" setup agent --remove claude
+    [ "$status" -eq 0 ]
+    grep -qx 'echo mine' "${HOME}/.local/bin/claude"
+    [ ! -e "${HOME}/.claude/rules/pulsar.md" ]
+    [ ! -s "$TOOLBOX_LOG" ]
+}
+
+@test "the aider shim reads the guide whenever the image has it, not only at install" {
+    agent_env
+    export PULSAR_AGENTS_MD="${BATS_TEST_TMPDIR}/not-yet.md"
+    "$PULSAR" setup agent aider >/dev/null
+    # written on an image without the guide ...
+    grep -q -- "--read" "${HOME}/.local/bin/aider"
+    # ... and passes it once the file exists
+    cp "$REPO_AGENTS_MD" "$PULSAR_AGENTS_MD"
+    run sh -c '. /dev/null; grep -n "set -- --read" "$1"' _ "${HOME}/.local/bin/aider"
+    [ "$status" -eq 0 ]
+}
+
+@test "setup agent links the machine guide where the agent reads it" {
+    agent_env
+    "$PULSAR" setup agent claude >/dev/null
+    "$PULSAR" setup agent codex >/dev/null
+    "$PULSAR" setup agent opencode >/dev/null
+    [ "$(readlink "${HOME}/.claude/rules/pulsar.md")" = "$REPO_AGENTS_MD" ]
+    [ "$(readlink "${HOME}/.codex/AGENTS.md")" = "$REPO_AGENTS_MD" ]
+    [ "$(readlink "${HOME}/.config/opencode/AGENTS.md")" = "$REPO_AGENTS_MD" ]
+}
+
+@test "setup agent leaves an existing instructions file alone" {
+    agent_env
+    mkdir -p "${HOME}/.codex"
+    printf 'my own rules\n' > "${HOME}/.codex/AGENTS.md"
+    run "$PULSAR" setup agent codex
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"left alone"* ]]
+    [ "$(cat "${HOME}/.codex/AGENTS.md")" = "my own rules" ]
+}
+
+@test "setup agent aider installs through uv and reads the guide from its shim" {
+    agent_env
+    run "$PULSAR" setup agent aider
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -q 'sudo dnf install -y uv' "$TOOLBOX_LOG"
+    grep -q "UV_TOOL_BIN_DIR=${HOME}/.local/share/pulsar/agents/bin UV_PYTHON_INSTALL_DIR=${HOME}/.local/share/pulsar/agents/python uv tool install --force --python python3.12 --with pip aider-chat@latest" "$TOOLBOX_LOG"
+    grep -qF -- "--read '${REPO_AGENTS_MD}'" "${HOME}/.local/bin/aider"
+}
+
+@test "setup agent --remove takes back what it made and nothing else" {
+    agent_env
+    "$PULSAR" setup agent claude >/dev/null
+    printf 'mine\n' > "${HOME}/.claude/rules/other.md"
+    : > "$TOOLBOX_LOG"
+    run "$PULSAR" setup agent --remove claude
+    [ "$status" -eq 0 ]
+    [ ! -e "${HOME}/.local/bin/claude" ]
+    [ ! -L "${HOME}/.claude/rules/pulsar.md" ]
+    [ -e "${HOME}/.claude/rules/other.md" ]
+    grep -q 'npm uninstall -g --prefix' "$TOOLBOX_LOG"
+    [[ "$output" == *"left in place"* ]]
+}
+
+@test "setup agent --remove leaves a foreign command at the shim path" {
+    agent_env
+    mkdir -p "${HOME}/.local/bin"
+    printf 'mine\n' > "${HOME}/.local/bin/claude"
+    run "$PULSAR" setup agent --remove claude
+    [ "$status" -eq 0 ]
+    [ "$(cat "${HOME}/.local/bin/claude")" = mine ]
+}
+
+@test "setup --help lists the agent recipe" {
+    run "$PULSAR" setup --help
+    [[ "$output" == *"agent"* ]]
+}

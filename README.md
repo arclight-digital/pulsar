@@ -108,13 +108,16 @@ pulsar pin | unpin   protect the booted deployment  (root)
 pulsar report        redacted diagnosis bundle, JSON or --text
 pulsar flatpak-gl    do running Flatpak apps have the NVIDIA driver?
 pulsar agents-md     the briefing a coding agent should read first
-pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale
+pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale | agent <name>
 ```
 
 **Handing the machine to an agent.** `pulsar agents-md` prints a briefing,
 shipped in the image, that tells a coding agent how this system works:
 toolboxes for dev tools, Flatpaks for apps, never reboot, and what rollback
-does and does not undo. `pulsar report` is the one thing to paste when
+does and does not undo. `pulsar setup agent claude` (or `codex`, `gemini`,
+`opencode`, `aider`) installs that agent into its own toolbox and runs it from
+any terminal; none is installed by default, and one you installed yourself is
+left alone. `pulsar report` is the one thing to paste when
 something is broken. What an agent can and cannot break here is in
 [docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md).
 

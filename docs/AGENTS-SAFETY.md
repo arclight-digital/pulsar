@@ -83,9 +83,10 @@ Be exact about this when you make the pitch:
 
 ## The toolbox is not a sandbox
 
-Installing an agent into a toolbox keeps Node, Python and the agent itself
-out of the image and off the host's package database, and `toolbox rm`
-deletes all of it. It is **not** an isolation boundary. The box shares your `$HOME`, your session bus and your
+`pulsar setup agent` installs each agent into a toolbox named `agents`. That
+keeps Node, Python and the agent itself out of the image and off the host's
+package database, and `toolbox rm -f agents` deletes all of it. It is **not**
+an isolation boundary. The box shares your `$HOME`, your session bus and your
 UID, and `flatpak-spawn --host` runs anything on the host. Treat an agent in
 the box as an agent on the host. Anything the box does to `$HOME` is done.
 
@@ -124,13 +125,30 @@ for apps, `pulsar doctor/status/manifest --json` and `pulsar report` for
 facts, staging vs. rebooting, rollback and its limits, where the logs are, and
 what not to touch.
 
-Today they discover it one way, and it works for every agent:
-**`pulsar agents-md`** prints it. Put "run `pulsar agents-md` first" in a
-prompt, or in an agent's own global instructions file.
+Agents discover it in two ways:
 
-Coming next: a `pulsar setup agent <name>` recipe that installs an agent's
-CLI into a toolbox and links the guide into the one global instructions path
-that agent reads by itself, only if that path is free.
+1. **`pulsar agents-md`** prints it. This works for every agent, including one
+   that reads no instruction files at all: put "run `pulsar agents-md` first"
+   in a prompt.
+2. **`pulsar setup agent <name>`** links it into the one global instructions
+   path the chosen agent reads by itself, **only if that path is free**. It
+   uses a symlink, so the link follows image updates:
+   - Claude Code: `~/.claude/rules/pulsar.md`. User-level rules load in every
+     project with no import approval, and it leaves the user's own
+     `~/.claude/CLAUDE.md` alone.
+   - Codex CLI: `$CODEX_HOME/AGENTS.md` (default `~/.codex`).
+   - opencode: `~/.config/opencode/AGENTS.md`.
+   - Gemini CLI: a printed one-line hint (`@/usr/share/pulsar/AGENTS.md` for
+     `~/.gemini/GEMINI.md`). Its only global file is the one `/memory add`
+     writes to, and a symlink into read-only `/usr` would break that.
+   - aider: the shim passes `--read /usr/share/pulsar/AGENTS.md` whenever the
+     image has it, because aider reads nothing unless asked.
+
+   **An agent installed its own way is supported too.** If a vendor's
+   installer already put the command on `PATH` (Claude Code's `install.sh`
+   writes `~/.local/bin/claude`), `setup agent` leaves it exactly as it is,
+   never installs a second copy, and still links the guide. `--list` marks it
+   `native`, and `--remove` takes back only the link.
 
 Rejected alternatives:
 

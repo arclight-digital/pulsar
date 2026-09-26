@@ -1299,13 +1299,354 @@ cmd_flatpak_gl() {
 # so the guide can never describe a system older than the one it ships in.
 # This command is the discovery path that works for every agent, including the
 # ones that read nothing on their own: "run `pulsar agents-md`" is one line to
-# put in any prompt.
+# put in any prompt. The per-vendor pointers live in `setup agent`, written
+# only for the agent the user actually chose.
 # ---------------------------------------------------------------------------
 AGENTS_MD=${PULSAR_AGENTS_MD:-/usr/share/pulsar/AGENTS.md}
 
 cmd_agents_md() {
     [ -r "$AGENTS_MD" ] || die "no agent guide at ${AGENTS_MD} (this image predates it)"
     cat "$AGENTS_MD"
+}
+# ---------------------------------------------------------------------------
+# setup agent -- a coding agent CLI, in a toolbox, on demand.
+#
+# Nothing here runs until somebody asks for a named agent. The image installs
+# no agent and favours none: the table below is the whole of the opinion, and
+# every row uses the install its vendor documents (checked 2026-09-26), not a
+# packaging of ours that would need maintaining.
+#
+# WHERE THINGS GO, and why each is where it is:
+#
+#   the runtime   node/npm or uv, inside the `agents` toolbox via its own
+#                 passwordless sudo. That is container root, not host root:
+#                 the image and the host's rpm database never see it.
+#   the agent     $XDG_DATA_HOME/pulsar/agents, one npm/uv prefix, written as
+#                 the user. It is in $HOME, which the box shares, so an
+#                 upgrade or a removed box leaves it where it was.
+#   the command   ~/.local/bin/<cli>, a shim that runs the agent in the box,
+#                 so `claude` or `codex` works from any host terminal.
+#
+# Every agent goes through npm or uv even where the vendor ALSO offers a curl
+# script, because those scripts install their own launcher at exactly
+# ~/.local/bin/<cli> -- the path the shim needs -- and $HOME is shared, so
+# running one inside the box would overwrite the shim from the host's point of
+# view. npm is a documented method for all four npm-shipped agents, and uv is
+# aider's own recommended installer.
+#
+# The toolbox is a TIDINESS boundary, not a security one. It shares $HOME, the
+# session bus and (through flatpak-spawn) a way out to the host. What keeps an
+# agent from breaking the OS is the OS: /usr is read-only, and every change
+# to it becomes a NEW deployment with the old one still bootable -- including
+# the `rpm-ostree install` that stock polkit lets a wheel desktop session run
+# without a password. See docs/AGENTS-SAFETY.md.
+# ---------------------------------------------------------------------------
+AGENT_BOX=${PULSAR_AGENT_BOX:-agents}
+AGENT_PREFIX=${PULSAR_AGENT_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/pulsar/agents}
+AGENT_SHIMS=${PULSAR_AGENT_SHIMS:-$HOME/.local/bin}
+SHIM_MARK="# pulsar-agent-shim"
+
+# name <TAB> command <TAB> installer <TAB> package <TAB> description. Deliberately
+# nothing Microsoft-owned: GitHub Copilot's CLI is a fine opt-in for anyone who
+# wants it, but a row here is a default suggestion, and that is not one.
+AGENTS_TABLE='claude	claude	npm	@anthropic-ai/claude-code	Claude Code (Anthropic)
+codex	codex	npm	@openai/codex	Codex CLI (OpenAI)
+gemini	gemini	npm	@google/gemini-cli	Gemini CLI (Google)
+opencode	opencode	npm	opencode-ai	opencode (open source, any provider)
+aider	aider	uv	aider-chat	aider (open source, any provider)'
+
+# Loads one row into A_NAME A_BIN A_METHOD A_PKG A_DESC; fails on an unknown name.
+agent_row() {
+    local line
+    line=$(printf '%s\n' "$AGENTS_TABLE" | awk -F'\t' -v n="$1" '$1 == n') || true
+    [ -n "$line" ] || return 1
+    IFS=$'\t' read -r A_NAME A_BIN A_METHOD A_PKG A_DESC <<<"$line"
+}
+
+agent_names() { printf '%s\n' "$AGENTS_TABLE" | cut -f1 | paste -sd' ' -; }
+
+# Single-quoted for sh, whatever the path holds. The shim is a file other
+# shells will parse long after this one has exited.
+sq() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
+
+box_exists() {
+    toolbox list --containers 2>/dev/null | awk 'NR > 1 { print $2 }' | grep -Fxq "$AGENT_BOX"
+}
+
+in_box() { toolbox run -c "$AGENT_BOX" "$@"; }
+
+# Ours means it carries the marker. Anything else at that path -- a native
+# installer's launcher, a user's own wrapper -- is not ours to replace.
+is_our_shim() { [ -f "$1" ] && grep -qxF "$SHIM_MARK" "$1" 2>/dev/null; }
+
+# An install this recipe did not make: the vendor's own installer (Claude
+# Code's install.sh puts a launcher at ~/.local/bin/claude), npm -g in some
+# other prefix, a distro package. People install agents that way whatever
+# the docs say, and it is a perfectly good way to run one, so it is
+# SUPPORTED, not refused: this recipe will not install a second copy over it
+# or remove it, but it still gives it the machine guide. Prints the path.
+native_launcher() {
+    local b=$1 shim="${AGENT_SHIMS}/$1" found
+    if { [ -e "$shim" ] || [ -L "$shim" ]; } && ! is_our_shim "$shim"; then
+        printf '%s\n' "$shim"; return 0
+    fi
+    found=$(command -v "$b" 2>/dev/null) || return 1
+    [ "$found" != "$shim" ] || return 1
+    printf '%s\n' "$found"
+}
+
+# Where each agent looks for machine-wide guidance of its own accord, and only
+# where the file there would be one this recipe can OWN outright:
+#
+#   claude    ~/.claude/rules/*.md load in every project, need no import
+#             approval, and a rules file is a file of its own -- unlike
+#             ~/.claude/CLAUDE.md, which is the user's and which /memory edits.
+#   codex     $CODEX_HOME/AGENTS.md is Codex's global instruction file.
+#   opencode  ~/.config/opencode/AGENTS.md is opencode's global rules file.
+#
+# A symlink rather than a copy, so the guide follows the image through every
+# update instead of freezing at the version that happened to be booted here.
+# gemini gets a hint instead: its only global file is ~/.gemini/GEMINI.md, which
+# `/memory add` writes to, and a link into read-only /usr would break that.
+# aider reads nothing on its own, so its shim passes --read.
+agent_context_path() {
+    case "$1" in
+        claude)   printf '%s\n' "$HOME/.claude/rules/pulsar.md" ;;
+        codex)    printf '%s\n' "${CODEX_HOME:-$HOME/.codex}/AGENTS.md" ;;
+        opencode) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/AGENTS.md" ;;
+        *)        return 1 ;;
+    esac
+}
+
+link_agent_context() {
+    local target
+    if ! target=$(agent_context_path "$A_NAME"); then
+        case "$A_NAME" in
+            gemini) printf 'to give it the machine guide, add this line to ~/.gemini/GEMINI.md:\n  @%s\n' "$AGENTS_MD" ;;
+            aider)
+                if [ "${1:-}" = native ]; then
+                    printf 'to give it the machine guide, add this to ~/.aider.conf.yml:\n  read: %s\n' "$AGENTS_MD"
+                else
+                    printf 'the shim passes --read %s whenever the image has it, so aider starts with the machine guide\n' "$AGENTS_MD"
+                fi ;;
+        esac
+        return 0
+    fi
+    [ -r "$AGENTS_MD" ] || {
+        printf 'this image has no %s yet; after the next update, rerun this to link the guide\n' "$AGENTS_MD"
+        return 0
+    }
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$AGENTS_MD" ]; then
+        printf 'machine guide already linked at %s\n' "$target"
+    elif [ -e "$target" ] || [ -L "$target" ]; then
+        # Never overwritten: it is the user's file, and a guide is not worth
+        # losing someone's instructions over.
+        printf '%s already exists; left alone. The machine guide is %s (or: pulsar agents-md)\n' \
+            "$target" "$AGENTS_MD"
+    else
+        mkdir -p "$(dirname "$target")"
+        ln -s "$AGENTS_MD" "$target"
+        printf 'linked the machine guide at %s\n' "$target"
+    fi
+}
+
+unlink_agent_context() {
+    local target
+    target=$(agent_context_path "$A_NAME") || return 0
+    # Only the link this recipe made. A file the user wrote there stays.
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$AGENTS_MD" ]; then
+        rm -f "$target"
+        printf 'removed the guide link at %s\n' "$target"
+    fi
+}
+
+write_agent_shim() {
+    local shim="${AGENT_SHIMS}/${A_BIN}" real="${AGENT_PREFIX}/bin/${A_BIN}" guide=""
+    # aider reads nothing unless told. Decided each time the shim runs, not
+    # when it is written: a shim written on an image without the guide would
+    # otherwise never pass it, even after an update ships one.
+    if [ "$A_NAME" = aider ]; then
+        guide="[ -r $(sq "$AGENTS_MD") ] && set -- --read $(sq "$AGENTS_MD") \"\$@\""
+    fi
+    mkdir -p "$AGENT_SHIMS"
+    # NPM_CONFIG_PREFIX travels on the command line because toolbox forwards
+    # only a fixed list of variables. It is what keeps a self-updating agent
+    # (`claude update`, gemini's updater) writing to the prefix it was
+    # installed in, rather than to the box's /usr, which needs sudo and fails.
+    cat > "$shim" <<EOF
+#!/bin/sh
+${SHIM_MARK}
+# ${A_DESC}, run inside the '${AGENT_BOX}' toolbox.
+# Written by \`pulsar setup agent ${A_NAME}\`; remove with
+# \`pulsar setup agent --remove ${A_NAME}\`. Edits here are overwritten by a rerun.
+#
+# toolbox forwards only a fixed set of environment variables, so an API key
+# exported in this shell does not reach the agent. Log in through the agent
+# instead (its credentials live in \$HOME, which the box shares).
+real=$(sq "$real")
+prefix=$(sq "$AGENT_PREFIX")
+${guide}
+# Already inside a container -- the box itself, or another toolbox sharing
+# this \$HOME -- where toolbox cannot nest: run the real thing directly.
+if [ -e /run/.containerenv ]; then
+    NPM_CONFIG_PREFIX="\$prefix" exec "\$real" "\$@"
+fi
+exec toolbox run -c $(sq "$AGENT_BOX") env NPM_CONFIG_PREFIX="\$prefix" "\$real" "\$@"
+EOF
+    chmod 0755 "$shim"
+    printf 'wrote %s\n' "$shim"
+}
+
+agent_list() {
+    printf '%-9s %-9s %-34s %-10s %s\n' NAME COMMAND INSTALL STATE DESCRIPTION
+    local n b m p d state native notes=""
+    while IFS=$'\t' read -r n b m p d; do
+        state=-
+        if is_our_shim "${AGENT_SHIMS}/${b}"; then
+            state=installed
+        elif native=$(native_launcher "$b"); then
+            state=native
+            notes+="  ${n}: ${native} (its own installer; Pulsar leaves it alone)"$'\n'
+        fi
+        printf '%-9s %-9s %-34s %-10s %s\n' "$n" "$b" "${m} ${p}" "$state" "$d"
+    done <<<"$AGENTS_TABLE"
+    [ -z "$notes" ] || printf '\nnative installs:\n%s' "$notes"
+    printf '\nnone is installed by default. box: %s  prefix: %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
+}
+
+agent_install() {
+    local native
+    # Checked BEFORE anything is created or downloaded. A native install is
+    # not an error: it is the agent the user already chose to run. Installing
+    # a second copy in the box would put two versions on PATH, one shadowing
+    # the other, so it gets the guide and nothing else.
+    if native=$(native_launcher "$A_BIN"); then
+        printf '%s is already installed by its own installer at %s\n' "$A_DESC" "$native"
+        printf 'leaving it as it is: it runs on the host, not in the %s toolbox\n' "$AGENT_BOX"
+        link_agent_context native
+        printf 'done: nothing installed\n'
+        return 0
+    fi
+    need toolbox
+
+    if box_exists; then
+        printf 'using toolbox %s\n' "$AGENT_BOX"
+    else
+        # No --image: toolbox picks fedora-toolbox for the host's own release,
+        # which is the choice a pin here would only ever lag behind.
+        printf 'creating toolbox %s\n' "$AGENT_BOX"
+        toolbox --assumeyes create "$AGENT_BOX" || die "could not create toolbox ${AGENT_BOX}"
+    fi
+
+    # The runtime is installed lazily and once: the second agent in the box
+    # finds npm already there. `nodejs npm` rather than a versioned name, so
+    # the box follows Fedora's default stream (Node 22 on F44, above every
+    # agent's floor) instead of a number this file would have to chase.
+    local tool
+    case "$A_METHOD" in
+        npm) tool=npm ;;
+        uv)  tool=uv ;;
+        *)   die "internal error: unknown installer '${A_METHOD}'" ;;
+    esac
+    if ! in_box sh -c "command -v ${tool}" >/dev/null 2>&1; then
+        printf 'installing %s inside %s\n' "$tool" "$AGENT_BOX"
+        case "$tool" in
+            npm) in_box sudo dnf install -y nodejs npm ;;
+            uv)  in_box sudo dnf install -y uv ;;
+        esac || die "could not install ${tool} inside ${AGENT_BOX}"
+    fi
+
+    mkdir -p "$AGENT_PREFIX"
+    printf 'installing %s (%s %s) into %s\n' "$A_DESC" "$A_METHOD" "$A_PKG" "$AGENT_PREFIX"
+    case "$A_METHOD" in
+        npm)
+            in_box npm install -g --prefix "$AGENT_PREFIX" "${A_PKG}@latest" \
+                || die "npm could not install ${A_PKG}" ;;
+        uv)
+            # aider's documented uv line, with every directory uv would write
+            # pointed into the prefix, so removal has one place to clean.
+            in_box env "UV_TOOL_DIR=${AGENT_PREFIX}/uv-tools" \
+                       "UV_TOOL_BIN_DIR=${AGENT_PREFIX}/bin" \
+                       "UV_PYTHON_INSTALL_DIR=${AGENT_PREFIX}/python" \
+                uv tool install --force --python python3.12 --with pip "${A_PKG}@latest" \
+                || die "uv could not install ${A_PKG}" ;;
+    esac
+    [ -x "${AGENT_PREFIX}/bin/${A_BIN}" ] \
+        || die "the installer reported success, but ${AGENT_PREFIX}/bin/${A_BIN} is not there"
+
+    write_agent_shim
+    link_agent_context
+    case ":${PATH}:" in
+        *":${AGENT_SHIMS}:"*) ;;
+        *) printf 'note: %s is not on PATH in this shell; a new login shell adds it on Fedora\n' "$AGENT_SHIMS" ;;
+    esac
+    printf "done: run \`%s\` from any terminal\n" "$A_BIN"
+}
+
+agent_remove() {
+    local shim="${AGENT_SHIMS}/${A_BIN}" native
+    if is_our_shim "$shim"; then
+        rm -f "$shim"
+        printf 'removed %s\n' "$shim"
+    elif native=$(native_launcher "$A_BIN"); then
+        printf '%s was installed by its own installer; remove it with that installer\n' "$native"
+        unlink_agent_context
+        return 0
+    fi
+    unlink_agent_context
+    if have toolbox && box_exists; then
+        case "$A_METHOD" in
+            npm) in_box npm uninstall -g --prefix "$AGENT_PREFIX" "$A_PKG" || true ;;
+            uv)  in_box env "UV_TOOL_DIR=${AGENT_PREFIX}/uv-tools" \
+                            "UV_TOOL_BIN_DIR=${AGENT_PREFIX}/bin" \
+                     uv tool uninstall "$A_PKG" || true ;;
+        esac
+    else
+        printf 'toolbox %s is gone; the package files, if any, are under %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
+    fi
+    # Said out loud, because "removed" would otherwise read as "gone": the
+    # agent's logins, history and settings are the user's data, not ours.
+    printf "left in place: the agent's own config and credentials in \$HOME, and the %s toolbox (toolbox rm -f %s)\n" \
+        "$AGENT_BOX" "$AGENT_BOX"
+}
+
+agent_help() {
+    cat <<EOF
+usage: pulsar setup agent <name>          install one coding agent CLI
+       pulsar setup agent --list          the supported agents, and which are installed
+       pulsar setup agent --remove <name> remove its command and package
+
+Agents: $(agent_names). None is installed by default.
+
+Each runs in the '${AGENT_BOX}' toolbox (created on first use), installed with
+its vendor's documented npm or uv method into ${AGENT_PREFIX},
+and gets a command in ${AGENT_SHIMS} that works from any host terminal.
+Nothing is layered onto the host and nothing needs root.
+Where the agent reads a global instructions file this recipe can own, it links
+${AGENTS_MD} there, and never overwrites a file that exists.
+EOF
+}
+
+setup_agent() {
+    local arg=${1:-}
+    case "$arg" in
+        ""|-h|--help) agent_help; return 0 ;;
+    esac
+    need_user agent
+    case "$arg" in
+        --list)
+            [ $# -eq 1 ] || die "'setup agent --list' takes no arguments"
+            agent_list ;;
+        --remove)
+            [ $# -eq 2 ] || die "usage: pulsar setup agent --remove <name>"
+            agent_row "$2" || die "unknown agent: $2 (known: $(agent_names))"
+            agent_remove ;;
+        -*) die "unknown option: ${arg} (see: pulsar setup agent --help)" ;;
+        *)
+            [ $# -eq 1 ] || die "'setup agent' installs one agent at a time (got: $*)"
+            agent_row "$arg" || die "unknown agent: ${arg} (known: $(agent_names))"
+            agent_install ;;
+    esac
 }
 
 cmd_rollback() { need_root rollback; need bootc; exec bootc rollback "$@"; }
@@ -1461,8 +1802,12 @@ cmd_setup() {
         printf 'running the staged gamescale installer (offline, pinned)\n'
         "$src" "$@"
         ;;
+    agent)
+        shift || true
+        setup_agent "$@"
+        ;;
     ""|-h|--help)
-        printf 'usage: pulsar setup <recipe>\n\n  apps        install the default Flatpaks (root)\n  devbox      create the default distrobox\n  gamemode    enrol accounts in the gamemode group, for renice (root)\n  quadlet     install the quadlet template and enable auto-update\n  gamescale   grant flatpak launchers, from the staged copy\n'
+        printf 'usage: pulsar setup <recipe>\n\n  apps        install the default Flatpaks (root)\n  devbox      create the default distrobox\n  gamemode    enrol accounts in the gamemode group, for renice (root)\n  quadlet     install the quadlet template and enable auto-update\n  gamescale   grant flatpak launchers, from the staged copy\n  agent       install a coding agent CLI into a toolbox (see: setup agent --help)\n'
         ;;
     *) die "unknown recipe: ${recipe} (try: pulsar setup --help)" ;;
     esac
@@ -1761,6 +2106,10 @@ pulsar -- manage a Pulsar system
                            redacted; see: pulsar report --help
 
   pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
+  pulsar setup agent <name>
+                           a coding agent CLI in a toolbox, run from the
+                           host: claude | codex | gemini | opencode | aider.
+                           none by default; --list, --remove <name>
 
 Options
   --logo, --no-logo        force or suppress the mark in `manifest`
