@@ -24,6 +24,79 @@ FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 # open source and only the userspace is proprietary.
 # ===========================================================================
 
+# Phase 0: GPU containers -- the NVIDIA Container Toolkit, for CDI.
+#
+# What it buys: `podman run --device nvidia.com/gpu=all IMAGE` hands a
+# container the GPU, so ollama / llama.cpp / vLLM run in podman on the 5080
+# instead of being layered onto the host. Podman speaks CDI natively; all it
+# needs is a spec in /etc/cdi or /var/run/cdi describing the device nodes and
+# the driver's userspace libraries. nvidia-ctk writes that spec. Nothing else
+# from the toolkit is used -- no nvidia-container-runtime, no OCI hook, no
+# libnvidia-container: CDI replaced all of that.
+#
+# WHERE IT COMES FROM: NVIDIA's own repo, nvidia.github.io/libnvidia-container.
+# Fedora's package (golang-github-nvidia-container-toolkit) stops at F43,
+# 1.17.4, orphaned; F44 has nothing that provides nvidia-ctk in fedora,
+# updates or updates-testing, and rpmfusion does not carry it either. On an
+# image whose whole point is NVIDIA's driver, NVIDIA's container tooling is
+# the baseline, not an exotic extra -- the same vendor, the same release
+# train. (The Fedora AI/ML SIG's COPR was the other candidate; one more
+# single-host COPR bought nothing over the vendor.)
+#
+# WHAT IS AND IS NOT SIGNED, stated plainly. NVIDIA signs the repository
+# METADATA (repo_gpgcheck=1) but not the packages (gpgcheck=0, their own repo
+# file says so). So the trust chain is: this key's full fingerprint asserted
+# before the repo is written, then dnf verifying the signed metadata, whose
+# checksums pin the package bytes. Same shape as mise above -- fetch retried,
+# the fingerprint assertion NOT: a clean import of the wrong key is a
+# supply-chain answer, not a flake.
+#
+# ONLY nvidia-container-toolkit-base: nvidia-ctk, the CDI hook and the
+# nvidia-cdi-refresh units. Not the full nvidia-container-toolkit, which pulls
+# libnvidia-container and the legacy runtime hook that CDI replaced.
+#
+# NOT the -selinux subpackage either, which the full toolkit drags in as a
+# weak dep: its %post compiles a policy module into the store (/etc/selinux on
+# ostree, so every local policy change becomes a three-way /etc merge of
+# binary policy) and flips a persistent boolean, all to get one thing:
+# container_use_xserver_devices=on, because the nvidia nodes are labelled
+# xserver_misc_device_t and container_t may not open them.
+# pulsar-gpu-containers.service sets that boolean at runtime every boot
+# instead -- same effect, nothing persisted, nothing to merge. -base does not
+# pull it; the assertion below is there for the day that changes.
+#
+# FIRST, not beside the rest of the userspace in phase 4: a single-host repo
+# flake here should cost the nightly one minute, not the forty the akmod
+# build has already spent by phase 4. The toolkit depends on nothing but
+# glibc, so installing it before the driver exists is fine -- the spec is
+# generated at boot, never here (see phase 8).
+RUN for attempt in 1 2 3; do \
+      rpm --import https://nvidia.github.io/libnvidia-container/gpgkey && break; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
+      [ "${attempt}" -lt 3 ] || { echo "FATAL: could not fetch the NVIDIA container toolkit key" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (nvidia key); retrying" >&2; \
+      sleep $((attempt * 15)); \
+    done; \
+    if ! rpm -qa 'gpg-pubkey*' | grep -qi '^gpg-pubkey-c95b321b61e88c1809c4f759ddcae044f796ecb0-'; then \
+      echo "FATAL: NVIDIA container toolkit key is not C95B321B61E88C1809C4F759DDCAE044F796ECB0"; exit 1; \
+    fi && \
+    printf '[nvidia-container-toolkit]\nname=nvidia-container-toolkit\nbaseurl=https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch\nenabled=1\nrepo_gpgcheck=1\ngpgcheck=0\ngpgkey=https://nvidia.github.io/libnvidia-container/gpgkey\n' \
+      > /etc/yum.repos.d/nvidia-container-toolkit.repo && \
+    for attempt in 1 2 3; do \
+      dnf5 install -y nvidia-container-toolkit-base && break; \
+      free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
+      [ "${free_kb:-0}" -gt 262144 ] || \
+        { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
+      [ "${attempt}" -lt 3 ] || { echo "nvidia.github.io unreachable after 3 attempts" >&2; exit 1; }; \
+      echo "attempt ${attempt} failed (nvidia container toolkit repo); retrying" >&2; \
+      sleep $((attempt * 15)); \
+    done && \
+    nvidia-ctk --version && \
+    { ! rpm -q nvidia-container-toolkit-selinux >/dev/null 2>&1 || \
+      { echo "FATAL: nvidia-container-toolkit-selinux got installed; its %post rewrites the SELinux policy store"; exit 1; }; }
+
 # Phase 1: build toolchain, and neutralize the on-install build hook.
 #
 # akmod-nvidia-open's %post runs:
@@ -446,6 +519,54 @@ RUN chmod 0755 /usr/libexec/pulsar/gl-nvidia.sh && \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar-nvidia.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the nvidia preset; a full preset-all would disable it"; exit 1; }; \
     done
+# Phase 8: the CDI spec is made at BOOT, and this phase proves that will work.
+#
+# Not at build time, for three reasons, any one of which is enough:
+#   - nvidia-ctk discovers GPUs through NVML, and NVML needs a loaded nvidia
+#     module and /dev/nvidia*. The build container has the userspace libraries
+#     but no GPU, no module and no device nodes; generation fails outright.
+#   - The spec is host-specific: GPU UUIDs, and which /dev/dri/cardN and
+#     renderD1xx belong to the dGPU (card2/renderD129 on the reference laptop,
+#     behind the iGPU) -- facts about the machine, not the image.
+#   - A spec baked into /usr would need /usr/share/containers/cdi, which
+#     podman does NOT read (its default is /etc/cdi + /var/run/cdi), so it
+#     would also mean overriding cdi_spec_dirs -- pinning an upstream default.
+#
+# So the toolkit's own nvidia-cdi-refresh.service does it, every boot, into
+# /var/run/cdi/nvidia.yaml. /var/run is tmpfs: the spec cannot outlive the
+# boot it describes, and since the driver only ever changes across a reboot
+# into a new deployment, "regenerate when the driver changes" is "regenerate
+# every boot" -- no staleness logic to get wrong. Its .path unit watches
+# modules.dep, which on a read-only /usr never changes mid-boot; harmless.
+# (NVIDIA #1982: the unit used to race /dev/nvidia-modeset at boot and write a
+# spec missing it; 1.20.0 creates the control nodes itself before generating.)
+#
+# The assertions are the ways this can silently do nothing:
+#   - ExecCondition greps modules.dep for /nvidia.ko. Ours lives at
+#     extra/nvidia-open/nvidia.ko.xz; if a packaging change moved or renamed
+#     it, the unit would skip every boot and say only "condition failed".
+#   - The output path must be a directory podman actually reads, and nothing
+#     in the image may override cdi_spec_dirs away from it.
+#   - Both units enabled, and in the nvidia preset, for the same preset-all
+#     reason as phase 6 -- the toolkit's own 90- preset is not ours to rely on.
+RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
+    { grep -qE '/(nvidia|nvidia-current)[.]ko' "/lib/modules/${KV}/modules.dep" || \
+      { echo "FATAL: modules.dep has no /nvidia.ko; nvidia-cdi-refresh.service's ExecCondition would skip every boot"; exit 1; }; } && \
+    { grep -qx 'Environment=NVIDIA_CTK_CDI_OUTPUT_FILE_PATH=/var/run/cdi/nvidia.yaml' \
+        /usr/lib/systemd/system/nvidia-cdi-refresh.service && \
+      ! grep -qsE '^[[:space:]]*NVIDIA_CTK_CDI_OUTPUT_FILE_PATH=' /etc/nvidia-container-toolkit/nvidia-cdi-refresh.env && \
+      ! grep -rqs 'NVIDIA_CTK_CDI_OUTPUT_FILE_PATH' /usr/lib/systemd/system/nvidia-cdi-refresh.service.d || \
+      { echo "FATAL: nvidia-cdi-refresh.service may no longer write /var/run/cdi/nvidia.yaml (unit, env file or drop-in changed);"; \
+        echo "       re-check that podman reads where it writes and that pulsar doctor looks there"; exit 1; }; } && \
+    { ! grep -rqsE '^[[:space:]]*cdi_spec_dirs' /usr/share/containers /etc/containers || \
+      { echo "FATAL: something in the image sets cdi_spec_dirs; podman may no longer read /var/run/cdi"; exit 1; }; } && \
+    for u in nvidia-cdi-refresh.service nvidia-cdi-refresh.path pulsar-gpu-containers.service; do \
+      systemctl enable "$u" && \
+      { grep -qx "enable $u" /usr/lib/systemd/system-preset/50-pulsar-nvidia.preset || \
+        { echo "FATAL: $u is enabled here but missing from the nvidia preset; a full preset-all would disable it"; exit 1; }; } || exit 1; \
+    done && \
+    { [ -x /usr/sbin/setsebool ] || { echo "FATAL: no setsebool; pulsar-gpu-containers.service cannot open the GPU to containers"; exit 1; }; } && \
+    echo "GPU containers: $(nvidia-ctk --version | head -1); spec generated at boot into /var/run/cdi"
 
 # Same rule as the base image: /var is machine-local, ship it empty (plus
 # the same sticky /var/tmp the base restores -- see Containerfile).

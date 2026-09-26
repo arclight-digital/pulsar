@@ -161,6 +161,21 @@ own Secure Boot prompt re-enrols the right key, because
 `pulsar-akmods-cert.service` keeps `/etc/pki/akmods/certs/public_key.der`
 equal to `MOK.der` on every boot.
 
+**GPU containers** (nvidia image). Local models run in podman, not on the
+host: every boot writes a CDI spec for the running driver to
+`/var/run/cdi/nvidia.yaml`, so any container can ask for the GPU by name.
+
+```bash
+podman run --rm --device nvidia.com/gpu=all registry.fedoraproject.org/fedora nvidia-smi
+podman run -d --device nvidia.com/gpu=all -p 11434:11434 \
+  -v ollama:/root/.ollama docker.io/ollama/ollama
+```
+
+The image brings the driver and `libcuda`; the container brings the CUDA
+runtime. Don't write your own
+spec to `/etc/cdi` — it goes stale at the next driver update, and
+`pulsar doctor` will say so.
+
 **Updates** are stock Silverblue: GNOME Software notices, you restart when
 you choose. Kernels, security fixes and driver bumps arrive nightly that way;
 `sudo pulsar update` if you are impatient. It hands off to `rpm-ostree` when

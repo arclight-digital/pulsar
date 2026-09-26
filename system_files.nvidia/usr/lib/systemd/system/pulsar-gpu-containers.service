@@ -1,0 +1,27 @@
+# Lets a confined container open the NVIDIA device nodes CDI hands it.
+#
+# The nodes are labelled xserver_misc_device_t, and container_t may only open
+# those with container_use_xserver_devices on. Off (Fedora's default), a
+# `podman run --device nvidia.com/gpu=all` gets the nodes and the libraries
+# and then dies in nvidia-smi with "Failed to initialize NVML: Insufficient
+# Permissions" -- which reads like a driver fault and is not one.
+#
+# What it widens is narrow: the boolean lets container_t USE a device node
+# that is already inside the container. Which nodes those are is still
+# decided per container, by --device and CDI; a container not given the GPU
+# has no /dev/nvidia0 to open. It is what the toolkit's own -selinux
+# subpackage turns on, minus the policy module and minus persisting it --
+# a runtime boolean resets every boot, so it is set every boot, and nothing
+# lands in /etc/selinux to three-way merge on the next deployment.
+[Unit]
+Description=Allow containers to use the NVIDIA GPU devices they are given
+Documentation=file:///usr/share/doc/nvidia-container-toolkit/README.md
+ConditionPathExists=/sys/fs/selinux/booleans/container_use_xserver_devices
+Before=nvidia-cdi-refresh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/setsebool container_use_xserver_devices on
+
+[Install]
+WantedBy=multi-user.target

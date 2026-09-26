@@ -1,8 +1,14 @@
 # The nvidia variant's counterpart of 50-pulsar.preset, under the same rules:
 # presets are policy, not symlinks. The enablements themselves are written in
-# Containerfile.nvidia -- phase 6 (the akmods cert) and phase 7 (the Flatpak GL
-# extensions) -- and each asserts its units are listed here, so a full
-# `systemctl preset-all` cannot quietly disarm them.
+# Containerfile.nvidia -- phase 6 (the akmods cert), phase 7 (the Flatpak GL
+# extensions) and phase 8 (GPU containers) -- and each asserts its units are
+# listed here, so a full `systemctl preset-all` cannot quietly disarm them.
 enable pulsar-akmods-cert.service
 enable pulsar-gl-nvidia.service
 enable pulsar-gl-nvidia.path
+# GPU containers (Containerfile.nvidia phases 0 and 8). The toolkit ships its
+# own 90- preset for the two nvidia-cdi-refresh units; they are restated here
+# so the image's policy does not hang on a third-party file staying put.
+enable nvidia-cdi-refresh.service
+enable nvidia-cdi-refresh.path
+enable pulsar-gpu-containers.service
