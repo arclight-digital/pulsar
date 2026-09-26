@@ -14,7 +14,8 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -82,15 +83,29 @@ class Picker(Adw.ApplicationWindow):
         key.connect("key-pressed", lambda _c, kv, *_: kv == Gdk.KEY_Escape and (self.close() or True))
         self.add_controller(key)
 
+    @staticmethod
+    def _thumb(pic, path):
+        try:
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, 640, -1, True)
+        except GLib.Error:
+            return
+        GLib.idle_add(lambda: pic.set_paintable(Gdk.Texture.new_for_pixbuf(pb)) and False)
+
     def card(self, th):
         v = th.variants[th.prefer]
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["card", "theme-card"])
         wp = (th.wallpapers[th.prefer] or th.wallpapers["dark"] or th.wallpapers["light"] or [None])[0]
         if wp and wp.exists():
-            pic = Gtk.Picture.new_for_filename(str(wp))
+            pic = Gtk.Picture()
             pic.set_content_fit(Gtk.ContentFit.COVER)
             pic.set_size_request(260, 146)
             box.append(pic)
+            # Not Gtk.Picture.new_for_filename: GTK's own loaders stop at
+            # PNG/JPEG/TIFF and show a blank for the theme wallpapers, which
+            # are JPEG XL. gdk-pixbuf hands those to glycin. Decoded off the
+            # main thread at card size, so sixteen of them do not hold up the
+            # window.
+            threading.Thread(target=self._thumb, args=(pic, str(wp)), daemon=True).start()
         strip = Gtk.Box(homogeneous=True)
         for k in ("background", "foreground", "accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta"):
             sw = Gtk.DrawingArea(content_height=12, hexpand=True)

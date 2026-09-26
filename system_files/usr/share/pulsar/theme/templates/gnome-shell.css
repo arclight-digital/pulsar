@@ -19,8 +19,89 @@
 .toggle-switch:checked { background-color: {{accent}}; }
 .modal-dialog, .notification-banner, .osd-window, .switcher-list { background-color: {{popover}}; color: {{foreground}}; }
 #dash .dash-background { background-color: rgba({{popover_rgb}}, 0.92); }
+/* Stock paints each dash icon in the dash's own grey so the square vanishes
+   against it; with the dash recoloured that grey shows as a box per app.
+   Rest transparent, and tint hover/press from the theme instead. Focus keeps
+   stock's accent ring. */
+#dash .dash-item-container .show-apps .overview-icon,
+#dash .dash-item-container .overview-tile .overview-icon { background-color: transparent; color: {{foreground}}; }
+#dash .dash-item-container .show-apps:hover .overview-icon,
+#dash .dash-item-container .overview-tile:hover .overview-icon { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+#dash .dash-item-container .show-apps:active .overview-icon,
+#dash .dash-item-container .overview-tile:active .overview-icon,
+#dash .dash-item-container .show-apps:checked .overview-icon { background-color: rgba({{foreground_rgb}}, 0.14); color: {{foreground}}; }
 #overviewGroup { background-color: {{background_deep}}; }
 .search-entry { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; selection-background-color: rgba({{accent_rgb}}, 0.35); }
 .search-entry:focus { box-shadow: inset 0 0 0 2px {{accent}}; }
 .ws-switcher-indicator:active, .workspace-dot:active { background-color: {{accent}}; }
 StEntry { selection-background-color: rgba({{accent_rgb}}, 0.35); }
+
+/* Stock hard-codes its own greys (#36363a popovers, #38383b dash and search,
+   #222226 overview, #2e2e33 switchers) into the controls that sit ON those
+   surfaces, matched so they vanish or read as a faint lift. Recolour the
+   surface and the grey shows as a box per control -- calendar days, dash
+   icons, folder tiles. So every such control is restated here relative to
+   the theme: flat ones transparent, raised ones a foreground tint, and hover
+   and press as tints too, which reads right on dark and light alike. */
+.calendar .calendar-day-heading, .calendar .calendar-day,
+.calendar .calendar-month-header .calendar-month-label,
+.button.flat, .icon-button.flat,
+.message .message-header .flat.message-expand-button,
+.message .message-header .flat.message-close-button,
+.message-notification-group .flat.message-collapse-button,
+.datemenu-today-button,
+.overview-tile, .grid-search-result, .list-search-result, .search-provider-icon,
+.app-folder-dialog .overview-tile, .app-folder-dialog .grid-search-result,
+.switcher-list .item-box,
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device {
+  background-color: transparent; }
+.calendar .calendar-day:hover, .calendar .calendar-day-heading:hover,
+.calendar .calendar-month-header .calendar-month-label:hover,
+.button.flat:hover, .icon-button.flat:hover, .datemenu-today-button:hover,
+.overview-tile:hover, .overview-tile:highlighted, .grid-search-result:hover, .grid-search-result:highlighted,
+.list-search-result:hover, .list-search-result:highlighted,
+.search-provider-icon:hover, .search-provider-icon:highlighted,
+.app-folder-dialog .overview-tile:hover, .app-folder-dialog .overview-tile:highlighted,
+.switcher-list .item-box:hover,
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device:hover {
+  background-color: rgba({{foreground_rgb}}, 0.08); }
+.calendar .calendar-day:selected, .calendar .calendar-day:active,
+.button.flat:active, .icon-button.flat:active, .datemenu-today-button:active,
+.overview-tile:active, .grid-search-result:active, .list-search-result:active, .search-provider-icon:active,
+.app-folder-dialog .overview-tile:active,
+.switcher-list .item-box:selected, .switcher-list .item-box:highlighted,
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device:active {
+  background-color: rgba({{foreground_rgb}}, 0.14); }
+
+.button, .calendar .calendar-month-header .pager-button,
+.notification-button, .modal-dialog .modal-dialog-button-box .modal-dialog-button,
+.message .message-header .message-expand-button, .message .message-header .message-close-button,
+.message-notification-group .message-collapse-button,
+.quick-settings-system-item .power-item, .page-navigation-arrow, .app-folder {
+  background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+.button:hover, .calendar .calendar-month-header .pager-button:hover,
+.notification-button:hover, .modal-dialog .modal-dialog-button-box .modal-dialog-button:hover,
+.message .message-header .message-expand-button:hover, .message .message-header .message-close-button:hover,
+.message-notification-group .message-collapse-button:hover,
+.quick-settings-system-item .power-item:hover, .page-navigation-arrow:hover,
+.app-folder:hover, .app-folder:highlighted, .icon-button:hover {
+  background-color: rgba({{foreground_rgb}}, 0.13); }
+.button:active, .calendar .calendar-month-header .pager-button:active,
+.notification-button:active, .modal-dialog .modal-dialog-button-box .modal-dialog-button:active,
+.quick-settings-system-item .power-item:active, .page-navigation-arrow:active,
+.app-folder:active, .icon-button:active {
+  background-color: rgba({{foreground_rgb}}, 0.18); }
+
+.calendar:hover, .calendar:active, .events-button:hover, .world-clocks-button:hover,
+.weather-button:hover, .message:hover { background-color: st-mix({{foreground}}, {{background_raised}}, 6%); }
+.search-section-content, .app-folder-dialog, .workspace-switcher, .resize-popup {
+  background-color: {{popover}}; color: {{foreground}}; }
+
+/* Restated last: the tints above match these selectors' specificity and
+   would otherwise win on order. */
+.calendar .calendar-day.calendar-today, .calendar .calendar-day.calendar-today:hover,
+.calendar .calendar-day.calendar-today:selected, .button.default {
+  background-color: {{accent}}; color: {{accent_fg}}; }
+.quick-toggle:checked:active, .quick-toggle-has-menu:checked .quick-toggle-menu-button:active {
+  background-color: {{accent}}; color: {{accent_fg}}; }
+.button.default:hover, .calendar .calendar-day.calendar-today:selected:hover { background-color: {{accent_hover}}; color: {{accent_fg}}; }
