@@ -1291,3 +1291,132 @@ gpu_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gpu-ctr"
     run gpu_check
     [ -z "$output" ]
 }
+
+# ---------------------------------------------------------------------------
+# report.
+#
+# What is pinned is the privacy contract: bounded journal reads, redaction of
+# the machine's and the user's identity, nothing from the environment. The
+# journal stub hands back lines stuffed with exactly the things that must not
+# survive, and records every argv it was given.
+# ---------------------------------------------------------------------------
+report_env() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    export JOURNAL_LOG="${BATS_TEST_TMPDIR}/journal.log"
+    : > "$JOURNAL_LOG"
+    export R_HOST R_USER R_HOME
+    R_HOST=$(cat /proc/sys/kernel/hostname 2>/dev/null || echo somehost)
+    R_USER=$(id -un)
+    R_HOME=$HOME
+    cat > "${STUB}/journalctl" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$JOURNAL_LOG"
+case " $* " in *" --user "*) unit=gamescale-reconcile.service; key=USER_UNIT ;; *) unit=broken.service; key=UNIT ;; esac
+printf '{"__REALTIME_TIMESTAMP":"1790000000000000","%s":"%s","PRIORITY":"3","MESSAGE":"%s: failed for %s in %s/project token=hunter2 from 192.168.1.20 via aa:bb:cc:dd:ee:ff"}\n' \
+    "$key" "$unit" "$R_HOST" "$R_USER" "$R_HOME"
+EOF
+    cat > "${STUB}/systemctl" <<'EOF'
+#!/bin/sh
+case " $* " in
+    *" --failed "*)
+        case " $* " in *" --user "*) echo "gamescale-reconcile.service loaded failed failed x" ;;
+                       *) echo "broken.service loaded failed failed Broken" ;; esac ;;
+    *" is-enabled "*) echo not-found; exit 1 ;;
+    *) exit 0 ;;
+esac
+EOF
+    chmod +x "${STUB}/journalctl" "${STUB}/systemctl"
+    PATH="${STUB}:${PATH}"
+    export PATH
+    stub_ostree "$CHECK_STATUS"
+}
+
+@test "report is one JSON document with every section" {
+    report_env
+    run "$PULSAR" report
+    [ "$status" -eq 0 ] || fail "$output"
+    echo "$output" | jq -e '.report.schema == 1'
+    for k in doctor status manifest units journal graphics flatpak; do
+        echo "$output" | jq -e --arg k "$k" 'has($k)' >/dev/null || fail "no .${k}"
+    done
+    echo "$output" | jq -e '.units.failed_system == ["broken.service"]'
+    echo "$output" | jq -e '.units.failed_user == ["gamescale-reconcile.service"]'
+    echo "$output" | jq -e '.status.deployments[0].version == "44.1"'
+    echo "$output" | jq -e '.journal.system.lines[0].unit == "broken.service"'
+}
+
+@test "report never reads the journal unbounded or outside the image's units" {
+    report_env
+    run "$PULSAR" report
+    [ "$status" -eq 0 ]
+    [ -s "$JOURNAL_LOG" ]
+    while IFS= read -r line; do
+        [[ "$line" == *"-n 50"* ]]       || fail "unbounded journal read: $line"
+        [[ "$line" == *"-p warning"* ]]  || fail "not filtered by priority: $line"
+        [[ "$line" == *" -b "* ]]        || fail "not limited to this boot: $line"
+        [[ "$line" == *"pulsar-*"* ]]    || fail "no unit filter: $line"
+    done < "$JOURNAL_LOG"
+    grep -q -- '-u broken.service' "$JOURNAL_LOG"
+    grep -q -- '--user-unit gamescale-reconcile.service' "$JOURNAL_LOG"
+}
+
+@test "report --lines bounds the journal, and is capped" {
+    report_env
+    run "$PULSAR" report --lines 7
+    [ "$status" -eq 0 ]
+    grep -q -- '-n 7' "$JOURNAL_LOG"
+    run "$PULSAR" report --lines 100000
+    [ "$status" -ne 0 ]
+    run "$PULSAR" report --lines lots
+    [ "$status" -ne 0 ]
+}
+
+@test "report redacts the hostname, the user, the home path and secrets" {
+    report_env
+    run "$PULSAR" report
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"$R_HOST"* ]]  || fail "hostname leaked"
+    [[ "$output" != *"$R_HOME"* ]]  || fail "home path leaked"
+    [[ "$output" != *"hunter2"* ]]  || fail "token leaked"
+    [[ "$output" != *"192.168.1.20"* ]] || fail "address leaked"
+    [[ "$output" != *"aa:bb:cc:dd:ee:ff"* ]] || fail "MAC leaked"
+    msg=$(echo "$output" | jq -r '.journal.system.lines[0].message')
+    [[ "$msg" == *"<hostname>"* ]]
+    [[ "$msg" == *"~/project"* ]]
+    [[ "$msg" == *"token=<redacted>"* ]]
+}
+
+@test "report carries nothing from the environment" {
+    report_env
+    SOME_API_TOKEN=do-not-print-me-7f3a run "$PULSAR" report
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"do-not-print-me-7f3a"* ]]
+}
+
+@test "report --text is for people, from the same data" {
+    report_env
+    run "$PULSAR" report --text
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"failed units"* ]]
+    [[ "$output" == *"broken.service"* ]]
+    [[ "$output" != *"$R_HOST"* ]]
+    [[ "$output" != "{"* ]]
+}
+
+@test "report --help says what is and is not included" {
+    run "$PULSAR" report --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Not included"* ]]
+    [[ "$output" == *"environment variables"* ]]
+    [[ "$output" == *"Redacted"* ]]
+}
+
+@test "report still reports when a source is missing" {
+    # no rpm-ostree: that section goes null, the rest stand
+    report_env
+    rm -f "${STUB}/rpm-ostree"
+    run env PATH="${STUB}:/usr/bin:/bin" "$PULSAR" report
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.units.failed_system | length == 1'
+}

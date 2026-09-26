@@ -98,6 +98,9 @@ say "degrade honestly on a non-Pulsar host"
 ./cli/pulsar --version
 ./cli/pulsar doctor --json | jq -e '.checks | length > 0' >/dev/null
 ./cli/pulsar doctor --json | jq -e 'all(.checks[]; .summary | length > 0)' >/dev/null
+# report is what gets pasted from a machine that is misbehaving, so it has to
+# assemble whatever sources are missing -- here, most of them.
+./cli/pulsar report | jq -e '.report.schema == 1 and (.units | type == "object")' >/dev/null
 echo "no manifest here, so this must fail cleanly rather than crash:"
 # Pointed at a path that exists nowhere, because "here" is not always a
 # non-Pulsar host: run on an actual Pulsar machine, the bare command finds

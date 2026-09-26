@@ -1452,6 +1452,263 @@ cmd_setup() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# report -- one bundle to paste, for an agent or a human.
+#
+# Every "what does your system say?" round trip in a bug thread asks for the
+# same seven things. This gathers them once, in a shape a model can read
+# without scraping terminal art, and it is built around what it LEAVES OUT:
+#
+#   - the journal is never dumped: only warning-and-worse lines, only from the
+#     units this image ships or that are failed right now, and only the last N
+#   - no environment variables are read beyond USER and HOME, and those only to
+#     know what to redact
+#   - the hostname, the username and the home path are rewritten out of every
+#     string, followed by a best-effort pass over secret-shaped text
+#
+# The redaction runs over the finished document, not per source, so a source
+# added later cannot forget it. It is still best effort -- a journal message is
+# free text -- and --help says so rather than promising what it cannot check.
+# ---------------------------------------------------------------------------
+SELF=${BASH_SOURCE[0]}
+
+report_help() {
+    cat <<'EOF'
+usage: pulsar report [--text] [--lines N]
+
+A diagnosis bundle to paste into an issue or hand to a coding agent. JSON by
+default; --text renders the same data for people. No root needed, though
+without it (or wheel, adm or systemd-journal membership) the system journal may be
+unreadable, which the report then says.
+
+Included
+  doctor      `pulsar doctor --json`
+  status      deployments from `rpm-ostree status --json`, trimmed to the
+              fields that matter (version, digest, pins, layered packages)
+  manifest    `pulsar manifest --json`, host facts included
+  units       failed system units and failed user units, by name
+  journal     this boot's warning+ lines, last N (default 50, max 500), from
+              pulsar-*, greenboot*, akmods*, gamescale* and the failed units:
+              time, unit, priority and message only
+  graphics    kernel release, taint, command line, loaded nvidia version,
+              display devices and the driver bound to each, Secure Boot state
+  flatpak     remotes with their options, app IDs with branch and origin,
+              runtime count
+
+Not included
+  the full journal, anything from a previous boot, environment variables,
+  tokens, the machine ID, file contents from $HOME or /etc, Flatpak app data
+
+Redacted, best effort
+  the hostname, your username and home path (as ~), MAC and IPv4 addresses,
+  and values after words like token=, password:, api_key=, Authorization.
+  Journal messages are free text: read the report before posting it.
+EOF
+}
+
+# A JSON value from a command, or null when the command fails or prints
+# something that is not JSON. One broken source must not cost the other six.
+json_or_null() {
+    local out
+    out=$("$@" 2>/dev/null) || true
+    if [ -n "$out" ] && printf '%s' "$out" | jq -e . >/dev/null 2>&1; then
+        printf '%s' "$out"
+    else
+        printf 'null'
+    fi
+}
+
+# Failed units as a JSON array of names. --plain drops the bullet, so the name
+# is the first field; --no-legend drops the header and footer.
+failed_units_json() {
+    have systemctl || { printf '[]'; return 0; }
+    systemctl "$@" --failed --plain --no-legend --no-pager 2>/dev/null \
+        | awk '$1 ~ /\./ { print $1 }' | jq -R -s -c 'split("\n") | map(select(length > 0))'
+}
+
+# $1 = system|user, $2 = line cap, $3 = JSON array of extra units.
+# -o json and a field pick rather than -o short: the short format leads every
+# line with the hostname, and redacting it afterwards would be cleaning up a
+# leak this can simply not make.
+journal_json() {
+    local scope=$1 lines=$2 extra=$3
+    have journalctl || { printf '{"lines":[],"note":"journalctl not available"}'; return 0; }
+    local -a args=(--no-pager -b -p warning -n "$lines" -o json)
+    # -u matches the SYSTEM unit field; a user unit's lines carry its name in
+    # _SYSTEMD_USER_UNIT, which only --user-unit matches.
+    local sel=-u u
+    if [ "$scope" = user ]; then args+=(--user); sel=--user-unit; fi
+    for u in 'pulsar-*' 'greenboot*' 'akmods*' 'gamescale*'; do args+=("$sel" "$u"); done
+    while IFS= read -r u; do
+        if [ -n "$u" ]; then args+=("$sel" "$u"); fi
+    done < <(printf '%s' "$extra" | jq -r '.[]')
+    local out err note=""
+    err=$(mktemp)
+    out=$(journalctl "${args[@]}" 2>"$err") || true
+    if grep -qi 'insufficient permissions\|permission denied' "$err"; then
+        note="the ${scope} journal is not readable by this user; run as root or join the wheel, adm or systemd-journal group"
+    fi
+    rm -f "$err"
+    printf '%s' "$out" | jq -s -c --arg note "$note" '{
+        lines: map({
+            time: ((.__REALTIME_TIMESTAMP // "0") | tonumber / 1000000 | floor | todate),
+            # UNIT/USER_UNIT name the unit a systemd message is ABOUT; without
+            # them every "Failed to start x" is attributed to init.scope.
+            unit: (.UNIT // .USER_UNIT // ._SYSTEMD_USER_UNIT // ._SYSTEMD_UNIT // .SYSLOG_IDENTIFIER // "?"),
+            priority: ((.PRIORITY // "?") | tostring),
+            message: (.MESSAGE | if type == "string" then . else "<binary message>" end)
+        })
+      } + (if $note == "" then {} else {note: $note} end)' 2>/dev/null \
+      || printf '{"lines":[],"note":"journal output could not be parsed"}'
+}
+
+graphics_json() {
+    local kernel taint cmdline nv sb=""
+    kernel=$(uname -r 2>/dev/null) || kernel=""
+    taint=$(cat /proc/sys/kernel/tainted 2>/dev/null) || taint=""
+    cmdline=$(cat /proc/cmdline 2>/dev/null) || cmdline=""
+    nv=$(cat /sys/module/nvidia/version 2>/dev/null) || nv=""
+    if have mokutil; then sb=$(mokutil --sb-state 2>/dev/null | head -1) || sb=""; fi
+    # One entry per display-class device with the driver actually bound to it,
+    # which is the fact lspci alone does not give and the first question in
+    # every "which GPU is rendering" thread.
+    local d devs="" cls
+    for d in /sys/bus/pci/devices/*; do
+        cls=$(cat "$d/class" 2>/dev/null) || continue
+        case "$cls" in
+            0x03*)
+                devs+=$(jq -n -c --arg slot "${d##*/}" \
+                    --arg id "$(cat "$d/vendor" 2>/dev/null):$(cat "$d/device" 2>/dev/null)" \
+                    --arg drv "$(basename "$(readlink "$d/driver" 2>/dev/null)" 2>/dev/null)" \
+                    '{slot: $slot, id: $id, driver: $drv}'),
+                ;;
+        esac
+    done
+    local names
+    names=$(gpu_names 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length > 0))') || names='[]'
+    jq -n -c --arg k "$kernel" --arg t "$taint" --arg c "$cmdline" --arg nv "$nv" --arg sb "$sb" \
+          --argjson devs "[${devs%,}]" --argjson names "${names:-[]}" '
+        { kernel: $k, tainted: ($t | tonumber? // $t), cmdline: $c,
+          nvidia_driver: (if $nv == "" then null else $nv end),
+          secure_boot: (if $sb == "" then null else $sb end),
+          gpu_names: $names, display_devices: $devs }'
+}
+
+flatpak_json() {
+    have flatpak || { printf 'null'; return 0; }
+    local remotes apps runtimes
+    remotes=$(flatpak remotes --columns=name,url,options 2>/dev/null | jq -R -s -c '
+        split("\n") | map(select(length > 0) | split("\t")
+          | {name: .[0], url: (.[1] // ""), options: (.[2] // "")})') || remotes='[]'
+    apps=$(flatpak list --app --columns=application,branch,origin,installation 2>/dev/null | jq -R -s -c '
+        split("\n") | map(select(length > 0) | split("\t")
+          | {id: .[0], branch: (.[1] // ""), origin: (.[2] // ""), installation: (.[3] // "")})') || apps='[]'
+    runtimes=$(flatpak list --runtime --columns=application 2>/dev/null | grep -c . || true)
+    jq -n -c --argjson r "${remotes:-[]}" --argjson a "${apps:-[]}" --argjson n "${runtimes:-0}" \
+        '{remotes: $r, apps: $a, app_count: ($a | length), runtime_count: $n}'
+}
+
+# The redaction pass, over every string in the finished document. Literal
+# split/join rather than regex for the identifying values: a hostname carries
+# dots, and a regex built from one would match more than the hostname.
+# shellcheck disable=SC2016  # a jq program: its $names are jq's, not the shell's
+JQ_REDACT='
+  def lit(a; b): if (a | length) == 0 then . else split(a) | join(b) end;
+  def scrub:
+      # a HOME of "/" would otherwise turn every slash into a tilde
+      lit(if ($home | length) > 1 then $home else "" end; "~")
+    | reduce ($users[] | select(length > 0)) as $u (.;
+        lit("/var/home/" + $u; "~") | lit("/home/" + $u; "~")
+        | if ($u | length) >= 3 and ($u | test("^[a-z_][a-z0-9_-]*$"))
+          then gsub("\\b" + $u + "\\b"; "<user>") else . end)
+    | lit($host; "<hostname>")
+    | gsub("(?<k>(token|secret|passw(or)?d|api[_-]?key|authorization|bearer)[\"'"'"'=: ]+)[^\\s\"'"'"',;]+"; "\(.k)<redacted>"; "i")
+    | gsub("\\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\\b"; "<mac>")
+    | gsub("\\b(?!127\\.)([0-9]{1,3}\\.){3}[0-9]{1,3}\\b"; "<ipv4>");
+  walk(if type == "string" then scrub else . end)'
+
+cmd_report() {
+    local text=0 lines=50
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --text) text=1 ;;
+            --lines) shift; lines=${1:-} ;;
+            --lines=*) lines=${1#--lines=} ;;
+            -h|--help) report_help; return 0 ;;
+            *) die "'report' does not take '$1' (see: pulsar report --help)" ;;
+        esac
+        shift
+    done
+    case "$lines" in ''|*[!0-9]*) die "--lines wants a number" ;; esac
+    # A cap, not a default: the point is a summary someone will read, and a
+    # thousand lines of journal is where tokens and addresses hide.
+    [ "$lines" -ge 1 ] && [ "$lines" -le 500 ] || die "--lines must be 1..500"
+
+    local doctor status manifest fsys fusr jsys jusr gfx fp
+    doctor=$(json_or_null env NO_COLOR=1 "$SELF" doctor --json)
+    if have rpm-ostree; then
+        status=$(json_or_null rpm-ostree status --json)
+        status=$(printf '%s' "$status" | jq -c 'if . == null then null else
+            { deployments: [ .deployments[]? | with_entries(select(.key | IN(
+                "booted", "staged", "pinned", "version", "timestamp", "checksum",
+                "container-image-reference", "container-image-reference-digest",
+                "requested-packages", "requested-local-packages",
+                "requested-base-removals", "requested-base-local-replacements"))) ] }
+            end')
+    else
+        status=null
+    fi
+    manifest=$(json_or_null "$SELF" manifest --json --no-logo)
+    fsys=$(failed_units_json)
+    fusr=$(failed_units_json --user)
+    jsys=$(journal_json system "$lines" "$fsys")
+    jusr=$(journal_json user "$lines" "$fusr")
+    gfx=$(graphics_json)
+    fp=$(flatpak_json)
+
+    local host users
+    host=$(cat /proc/sys/kernel/hostname 2>/dev/null) || host=""
+    users=$(printf '%s\n%s\n' "$(id -un 2>/dev/null || true)" "${SUDO_USER:-}" \
+            | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+
+    local js
+    js=$(jq -n -c \
+        --arg version "$VERSION" --argjson lines "$lines" \
+        --argjson doctor "$doctor" --argjson status "$status" --argjson manifest "$manifest" \
+        --argjson fsys "$fsys" --argjson fusr "$fusr" \
+        --argjson jsys "$jsys" --argjson jusr "$jusr" \
+        --argjson gfx "$gfx" --argjson fp "$fp" '
+        { report: { schema: 1, tool: ("pulsar " + $version),
+                    generated: (now | floor | todate), journal_lines: $lines,
+                    note: "hostname, username, home path, MAC/IPv4 and secret-shaped values are redacted; best effort" },
+          doctor: $doctor, status: $status, manifest: $manifest,
+          units: { failed_system: $fsys, failed_user: $fusr },
+          journal: { system: $jsys, user: $jusr },
+          graphics: $gfx, flatpak: $fp }' \
+      | jq -c --arg home "${HOME:-}" --arg host "$host" --argjson users "$users" "$JQ_REDACT") \
+      || die "could not assemble the report"
+
+    if [ "$text" = 0 ]; then printf '%s\n' "$js" | jq .; return 0; fi
+    printf '%s\n' "$js" | jq -r '
+      def rows(f): if (f | length) == 0 then "  (none)" else (f[] | "  " + .) end;
+      "pulsar report  \(.report.generated)  (\(.report.tool))",
+      "", "doctor: \(if .doctor.ok then "no failures" elif .doctor == null then "unavailable" else "FAILURES" end)",
+      rows([.doctor.checks[]? | "\(.status)\t\(.id)\t\(.summary)"]),
+      "", "deployments",
+      rows([.status.deployments[]? | "\(if .booted then "booted" elif .staged then "staged" else "-" end)\t\(.version // "?")\t\(if .pinned then "pinned" else "" end)"]),
+      "", "image: \(.manifest.image // "?") \(.manifest.variant // "") \(.manifest.version // "?")",
+      "kernel: \(.graphics.kernel)  tainted: \(.graphics.tainted)  nvidia: \(.graphics.nvidia_driver // "-")",
+      rows([.graphics.display_devices[]? | "\(.slot)  \(.id)  driver=\(.driver)"]),
+      "", "failed units",
+      rows([(.units.failed_system[]? | "system  " + .), (.units.failed_user[]? | "user    " + .)]),
+      "", "journal (warning+, this boot)",
+      rows([(.journal.system.lines[]?, .journal.user.lines[]?) | "\(.time)  \(.unit)  \(.message)"]),
+      (if .journal.system.note then "  note: \(.journal.system.note)" else empty end),
+      "", "flatpak: \(.flatpak.app_count // 0) apps, \(.flatpak.runtime_count // 0) runtimes",
+      rows([.flatpak.remotes[]? | "remote \(.name)  \(.url)  \(.options)"]),
+      "", .report.note'
+}
+
 usage() {
     cat <<'EOF'
 pulsar -- manage a Pulsar system
@@ -1477,12 +1734,18 @@ pulsar -- manage a Pulsar system
   pulsar rollback          boot the previous deployment     (root)
   pulsar pin | unpin       protect the booted deployment    (root)
 
+  pulsar report            diagnosis bundle to paste: doctor, status,
+                           manifest, failed units, warning+ journal lines,
+                           graphics, flatpak. JSON; --text for people.
+                           redacted; see: pulsar report --help
+
   pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
 
 Options
   --logo, --no-logo        force or suppress the mark in `manifest`
   --json                   machine-readable output (doctor, status, manifest,
-                           changelog); everything else ignores it.
+                           changelog; report is JSON already); everything
+                           else ignores it.
                            `manifest --json` adds the host facts under a
                            "host" key, so `jq 'del(.host)'` is the baked
                            manifest and two machines on the same build still
@@ -1532,6 +1795,7 @@ main() {
         sbom)      no_args sbom "$@";      cmd_sbom ;;
         attest)    no_args attest "$@";    cmd_attest ;;
         setup)     cmd_setup "$@" ;;
+        report)    cmd_report "$@" ;;
         help)      usage ;;
         *)         usage >&2; die "unknown command: ${cmd}" ;;
     esac
