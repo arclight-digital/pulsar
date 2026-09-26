@@ -355,7 +355,7 @@ RUN for attempt in 1 2 3; do \
 # seven round trips here -- seven chances for one blip to cost the build. The
 # sha256sum block below is unchanged and still decides what is acceptable, so
 # retrying can only affect whether bytes arrive, never which bytes count.
-ARG GAMESCALE_VERSION=v2.0.0
+ARG GAMESCALE_VERSION=v2.0.2
 ARG GAMESCALE_UUID=gamescale@arclight.digital
 RUN set -eux; \
     REL="https://github.com/arclight-digital/gamescale/releases/download/${GAMESCALE_VERSION}"; \
@@ -372,10 +372,10 @@ RUN set -eux; \
     get "${RAW}/icons/gamescale-symbolic.svg" "${SRC}/extension/icons/gamescale-symbolic.svg"; \
     get "${RAW}/icons/gamescale.svg"          "${SRC}/extension/icons/gamescale.svg"; \
     ( cd "${SRC}" && printf '%s\n' \
-      "5f0ef1f338ea915fb6f5f141e625b813ac57fdbc4a7333b7b7d0094518dc5f91  gamescale.sh" \
-      "6a2bafdde0e3589c8e0d3a8ffcde41181fdfef18ce5f487d36ec0ef62410775f  install.sh" \
-      "99d4e239a212c3ad90118eaf3a609c2ca582c9df2cf490c7580358c03f242890  extension/extension.js" \
-      "e49e9bf6fc9956bfc0c9f31b0457fa9bd1bc6c42e11a1b6804abea0c28ee430f  extension/metadata.json" \
+      "165fc54c623ba3b39c4128b21a877f3870df3487c7414f7de083ed0fd2c5f597  gamescale.sh" \
+      "f1e0e12089d3b6d94f39b321ff7fcae8663623c63f8d4c406f5ec93d07e7bd6f  install.sh" \
+      "81487974e5d143f6833b9d95fa78c7a1181e7d1eb963cd451f030a4c527f9a7f  extension/extension.js" \
+      "b0a56f889360a350ab316a7cc7e382ae8c9877ca31d1ebac2c669d369cf3ddc4  extension/metadata.json" \
       "7c41ae899869994c5056c2ed6e0ce939c46333e90fe355f26cf7e3e580f79e27  extension/stylesheet.css" \
       "57e345929be538ed1542c5c7b1d7a25b9c8551d3c5de193f4883416ec00ba708  extension/icons/gamescale-symbolic.svg" \
       "ddea876638fca8e25dfd4508385a881e529de9b1c0f4db65585e26aaacdca206  extension/icons/gamescale.svg" \
