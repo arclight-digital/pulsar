@@ -228,6 +228,9 @@ const first = THEMES[0];
 
   .inner {
     position: relative;
+    /* its own stacking context, so the readability wash below sits behind
+       the words but above the live sky */
+    isolation: isolate;
     width: min(100% - 2 * var(--space-lg), 44rem);
     min-width: 0;
     /* the fixed bar above; below, room for the look picker pinned to the
@@ -238,6 +241,27 @@ const first = THEMES[0];
     flex-direction: column;
     align-items: center;
     text-align: center;
+  }
+
+  /* A soft wash of the page's deepest ground behind the text column. The live
+     sky runs the wallpaper shader, whose luminous filaments are bright enough
+     to fight the tagline and the pitch where they cross it; the wash calms the
+     centre and fades out long before the edges, so the sky still reads as
+     alive around the words. --bg-deep follows the page theme (ink on dark,
+     star on light) and the site-wide theme picker, so it never shows as a
+     dark box on a light page. */
+  .inner::before {
+    content: '';
+    position: absolute;
+    inset: 4% -35% 12%;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(
+      ellipse 50% 50% at 50% 55%,
+      color-mix(in oklab, var(--bg-deep) 78%, transparent) 0%,
+      color-mix(in oklab, var(--bg-deep) 52%, transparent) 45%,
+      transparent 100%
+    );
   }
 
   .mark {
