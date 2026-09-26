@@ -1,0 +1,63 @@
+# The Pulsar brand palette (DESIGN.md), as a desktop theme.
+# Ink ground, cyan on dark / violet on light (contrast, not taste), periwinkle
+# as the secondary. Surfaces are the site's tonal ramp: ink -> surface -> card
+# -> elevated. The terminal ANSI hues are new here, picked to sit on ink.
+name = "Pulsar"
+author = "Arclight"
+source = "pulsar/DESIGN.md"
+prefer = "dark"
+
+[dark]
+background = "#0b0e1a"          # ink
+background_deep = "#070912"
+background_raised = "#141830"  # card-dark
+foreground = "#e9edf7"          # star
+foreground_dim = "#b9bfd3"
+foreground_bright = "#ffffff"
+muted = "#8a90a8"
+selection = "#241f3d"           # deep
+accent = "#3ecbff"              # cyan
+blue = "#8fa8ff"                # peri
+cyan = "#3ecbff"
+magenta = "#b69cff"             # violet, lifted for ink
+red = "#ff6b8b"
+orange = "#ffa26b"
+yellow = "#ffd479"
+green = "#5ee6a8"
+brown = "#c7a27a"
+window = "#0f1222"              # surface-dark
+view = "#0b0e1a"
+headerbar = "#141830"
+sidebar = "#0f1222"
+card = "#141830"
+popover = "#1a1e38"             # elevated-dark
+
+[light]
+background = "#f1f3fa"          # surface-light
+background_raised = "#e6e9f5"
+foreground = "#241f3d"          # deep
+foreground_dim = "#4a4566"
+muted = "#6d6887"
+selection = "#d9dcf5"
+accent = "#4b3fd4"              # violet
+blue = "#3b5bdb"
+cyan = "#00769f"
+magenta = "#7a3fd4"
+red = "#c42b52"
+orange = "#b15012"
+yellow = "#8a6a00"
+green = "#017e4f"
+brown = "#8a5a3a"
+window = "#f1f3fa"
+view = "#ffffff"
+headerbar = "#e6e9f5"
+sidebar = "#e9ecf6"
+card = "#ffffff"
+popover = "#ffffff"
+
+# The four shipped shader looks, light/dark pairs; `bg-next` walks them.
+[wallpaper]
+dark = ["/usr/share/backgrounds/pulsar/pulsar-silk-dark.png", "/usr/share/backgrounds/pulsar/pulsar-leak-dark.png",
+        "/usr/share/backgrounds/pulsar/pulsar-satin-dark.png", "/usr/share/backgrounds/pulsar/pulsar-holo-dark.png"]
+light = ["/usr/share/backgrounds/pulsar/pulsar-silk-light.png", "/usr/share/backgrounds/pulsar/pulsar-leak-light.png",
+         "/usr/share/backgrounds/pulsar/pulsar-satin-light.png", "/usr/share/backgrounds/pulsar/pulsar-holo-light.png"]

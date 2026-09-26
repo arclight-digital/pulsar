@@ -1,0 +1,153 @@
+#!/usr/bin/python3
+"""pulsar-theme-picker -- pick a theme from cards; bound to a GNOME custom shortcut.
+
+A libadwaita window of theme cards (wallpaper + palette strip). Enter or a
+click applies through `pulsar-theme set`; Escape closes. Meant to be bound to
+a GNOME custom keybinding (see REPORT.md). PyGObject ships in the image.
+"""
+import os
+import pathlib
+import subprocess
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from importlib.machinery import SourceFileLoader  # noqa: E402
+
+pt = SourceFileLoader("pulsar_theme", str(HERE / "pulsar-theme")).load_module()
+
+CSS = b"""
+.theme-card { border-radius: 14px; padding: 0; }
+.theme-card picture { border-radius: 14px 14px 0 0; }
+.swatch { min-width: 22px; min-height: 10px; }
+.swatch:first-child { border-bottom-left-radius: 0; }
+.card-name { font-weight: 700; }
+.current { outline: 3px solid var(--accent-bg-color); outline-offset: 2px; }
+"""
+
+
+class Picker(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Themes", default_width=1180, default_height=720)
+        prov = Gtk.CssProvider()
+        prov.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), prov, 700)
+        tv = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        self.status = Gtk.Label(css_classes=["dim-label"])
+        hb.set_title_widget(Adw.WindowTitle(title="Themes", subtitle="Enter to apply · Esc to close"))
+        tv.add_top_bar(hb)
+        flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE, max_children_per_line=4,
+                           min_children_per_line=2, row_spacing=18, column_spacing=18,
+                           margin_top=18, margin_bottom=18, margin_start=18, margin_end=18,
+                           activate_on_single_click=True, homogeneous=True)
+        flow.connect("child-activated", self.on_pick)
+        cur = pt.current_state().get("theme")
+        first = None
+        for slug, path in pt.find_themes().items():
+            try:
+                th = pt.Theme(path)
+            except Exception:
+                continue
+            child = Gtk.FlowBoxChild(child=self.card(th))
+            child.slug = slug
+            if slug == cur:
+                child.add_css_class("current")
+                first = child
+            flow.append(child)
+        sc = Gtk.ScrolledWindow(child=flow, vexpand=True)
+        tv.set_content(sc)
+        self.set_content(tv)
+        if first:
+            flow.select_child(first)
+            GLib.idle_add(first.grab_focus)
+        # test hook for tests/theme-gate: act as if this card were clicked
+        auto = os.environ.get("PULSAR_PICKER_AUTOPICK")
+        if auto:
+            def autopick():
+                for ch in list(flow):
+                    if getattr(ch, "slug", None) == auto:
+                        flow.select_child(ch)
+                        self.on_pick(flow, ch)
+                return False
+            GLib.timeout_add(2500, autopick)
+        key = Gtk.EventControllerKey()
+        key.connect("key-pressed", lambda _c, kv, *_: kv == Gdk.KEY_Escape and (self.close() or True))
+        self.add_controller(key)
+
+    def card(self, th):
+        v = th.variants[th.prefer]
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["card", "theme-card"])
+        wp = (th.wallpapers[th.prefer] or th.wallpapers["dark"] or th.wallpapers["light"] or [None])[0]
+        if wp and wp.exists():
+            pic = Gtk.Picture.new_for_filename(str(wp))
+            pic.set_content_fit(Gtk.ContentFit.COVER)
+            pic.set_size_request(260, 146)
+            box.append(pic)
+        strip = Gtk.Box(homogeneous=True)
+        for k in ("background", "foreground", "accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta"):
+            sw = Gtk.DrawingArea(content_height=12, hexpand=True)
+            c = v[k]
+            sw.set_draw_func(lambda _a, cr, w, h, c=c: (cr.set_source_rgb(c.r, c.g, c.b), cr.paint()))
+            strip.append(sw)
+        box.append(strip)
+        meta = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin_top=10, margin_bottom=12, margin_start=12, margin_end=12)
+        meta.append(Gtk.Label(label=th.name, xalign=0, css_classes=["card-name"]))
+        modes = " + ".join(m for m in ("dark", "light") if m in th.variants)
+        meta.append(Gtk.Label(label=f"{modes} · {th.author or 'unknown'}", xalign=0, css_classes=["dim-label", "caption"],
+                              ellipsize=3))
+        box.append(meta)
+        return box
+
+    def on_pick(self, _flow, child):
+        # the switch itself never prompts from here; the picker owns the question
+        subprocess.run([str(HERE / "pulsar-theme"), "set", child.slug, "--no-restart"])
+        restart, manual = pt.open_gtk_apps()
+        if not restart or pt.conf_get("restart-prompt") != "on":
+            if restart or manual:
+                self.toast(pt.NOTE)
+            GLib.timeout_add(1200, self.close)
+            return
+        names = ", ".join(a["name"] for a in restart)
+        body = f"{names} will quit and reopen. Apps with unsaved work will ask first."
+        if manual:
+            body += f"\n\nReopen these yourself: {', '.join(a['name'] for a in manual)}."
+        d = Adw.AlertDialog(heading=f"Restart {len(restart)} open app{'s' if len(restart) != 1 else ''} to apply the theme?",
+                            body=body)
+        d.add_response("never", "Don't Ask Again")
+        d.add_response("later", "Later")
+        d.add_response("restart", "Restart")
+        d.set_response_appearance("restart", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("restart")
+        d.set_close_response("later")
+
+        def done(_d, resp):
+            if resp == "restart":
+                pt.restart_apps(restart)
+            elif resp == "never":
+                pt.conf_put("restart-prompt", "off")
+            # libadwaita windows (this one included) take gtk.css at startup,
+            # so the picker closes rather than showing a half-switched self
+            self.close()
+        d.connect("response", done)
+        d.present(self)
+
+    def toast(self, text):
+        print(f"pulsar-theme: {text}")
+
+
+def main():
+    app = Adw.Application(application_id="digital.arclight.Pulsar.ThemePicker",
+                          flags=Gio.ApplicationFlags.NON_UNIQUE)
+    app.connect("activate", lambda a: Picker(a).present())
+    app.run([])
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,1576 @@
+#!/usr/bin/python3
+"""pulsar-theme -- one-command whole-desktop theming for GNOME on Pulsar.
+
+Installed as /usr/libexec/pulsar/pulsar-theme; `pulsar theme ...` execs it.
+
+
+  pulsar-theme list                     themes on the search path
+  pulsar-theme set <name> [--variant dark|light|both] [--only t1,t2] [--dry-run]
+  pulsar-theme next | prev              cycle through themes
+  pulsar-theme bg-next                  cycle the current theme's wallpapers
+  pulsar-theme current                  what is applied, and what it touched
+  pulsar-theme revert [--to stock|image] put back everything; default is upstream GNOME
+  pulsar-theme init                     first login (run once by pulsar-theme-init.service)
+  pulsar-theme audit [theme...]         WCAG contrast checks
+  pulsar-theme restart-apps [--yes]     GTK apps still holding the old palette
+  pulsar-theme config [key [value]]     e.g. restart-prompt on|off
+  pulsar-theme render <name> <dir>      render every target into <dir>, touch nothing
+  pulsar-theme import base16 <file|url> [--name slug]
+  pulsar-theme targets                  list targets and whether each is available here
+
+Stdlib only (python3 ships in the Pulsar image; there is no pip on an atomic
+host). Every path comes from HOME / XDG_* and every setting goes through the
+`dconf` CLI on the session bus, so pointing those at a scratch tree and a
+private D-Bus sandboxes it completely -- tests/theme-gate/ does exactly that.
+
+What it writes, and why each piece exists, is in docs/theming.md.
+"""
+import argparse
+import colorsys
+import datetime
+import hashlib
+import json
+import math
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+import xml.etree.ElementTree as ET
+import urllib.request
+
+HERE = pathlib.Path(__file__).resolve().parent
+HOME = pathlib.Path(os.environ.get("HOME", "~")).expanduser()
+
+
+def xdg(var, default):
+    return pathlib.Path(os.environ.get(var) or (HOME / default))
+
+
+CONFIG = xdg("XDG_CONFIG_HOME", ".config")
+DATA = xdg("XDG_DATA_HOME", ".local/share")
+STATE = xdg("XDG_STATE_HOME", ".local/state") / "pulsar-theme"
+
+# Search path, highest priority first. A user theme with the same slug as an
+# image-shipped one shadows it, the same layering as /usr vs /etc on the host.
+# The last entries are the repo checkout, so scripts/pulsar-theme runs from a
+# clone without installing anything.
+REPO_SHARE = HERE.parent / "system_files" / "usr" / "share" / "pulsar"
+THEME_PATH = [pathlib.Path(p) for p in os.environ.get("PULSAR_THEME_PATH", "").split(":") if p] or [
+    DATA / "pulsar" / "themes",
+    pathlib.Path("/usr/share/pulsar/themes"),
+    REPO_SHARE / "themes",
+]
+TEMPLATE_PATH = [pathlib.Path(p) for p in os.environ.get("PULSAR_THEME_TEMPLATES", "").split(":") if p] or [
+    pathlib.Path("/usr/share/pulsar/theme/templates"),
+    REPO_SHARE / "theme" / "templates",
+]
+# What a theme falls back to when its own renders are absent (a
+# --no-wallpapers build): the brand pair, which zz0 already points at.
+BRAND_WALLPAPER = {"dark": pathlib.Path("/usr/share/backgrounds/pulsar/pulsar-silk-dark.png"),
+                   "light": pathlib.Path("/usr/share/backgrounds/pulsar/pulsar-silk-light.png")}
+
+# ---------------------------------------------------------------- colour ----
+
+
+class Color:
+    __slots__ = ("r", "g", "b")
+
+    def __init__(self, r, g, b):
+        self.r, self.g, self.b = (max(0.0, min(1.0, v)) for v in (r, g, b))
+
+    @classmethod
+    def parse(cls, s):
+        s = str(s).strip().lstrip("#")
+        if s.startswith("0x"):
+            s = s[2:]
+        if len(s) == 3:
+            s = "".join(c * 2 for c in s)
+        if not re.fullmatch(r"[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", s):
+            raise ValueError(f"not a colour: {s!r}")
+        return cls(*(int(s[i:i + 2], 16) / 255 for i in (0, 2, 4)))
+
+    @property
+    def hex(self):
+        return "#%02x%02x%02x" % tuple(round(v * 255) for v in (self.r, self.g, self.b))
+
+    @property
+    def rgb(self):
+        return "%d, %d, %d" % tuple(round(v * 255) for v in (self.r, self.g, self.b))
+
+    def mix(self, other, t):
+        return Color(*(a + (b - a) * t for a, b in zip((self.r, self.g, self.b), (other.r, other.g, other.b))))
+
+    def lum(self):
+        def lin(c):
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        return 0.2126 * lin(self.r) + 0.7152 * lin(self.g) + 0.0722 * lin(self.b)
+
+    def contrast(self, other):
+        a, b = sorted((self.lum(), other.lum()), reverse=True)
+        return (a + 0.05) / (b + 0.05)
+
+    def oklab(self):
+        def lin(c):
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        r, g, b = lin(self.r), lin(self.g), lin(self.b)
+        l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3)
+        m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3)
+        s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3)
+        return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+
+    def __str__(self):
+        return self.hex
+
+
+BLACK, WHITE = Color(0, 0, 0), Color(1, 1, 1)
+
+
+def from_oklab(L, a, b):
+    l_, m_, s_ = (L + 0.3963377774 * a + 0.2158037573 * b, L - 0.1055613458 * a - 0.0638541728 * b,
+                  L - 0.0894841775 * a - 1.2914855480 * b)
+    l, m, s = l_ ** 3, m_ ** 3, s_ ** 3
+    lin = (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+           -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+           -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+    f = lambda c: 12.92 * c if c <= 0.0031308 else 1.055 * max(c, 0) ** (1 / 2.4) - 0.055
+    return Color(*(f(max(0.0, c)) for c in lin))
+
+
+def fit_contrast(c, bg, target):
+    """Move c's OKLab lightness away from bg -- hue and chroma kept -- until it
+    clears `target` against bg. Returns c unchanged if it already does."""
+    if c.contrast(bg) >= target:
+        return c
+    L, a, b = c.oklab()
+    step = -0.01 if bg.lum() > 0.18 else 0.01
+    for _ in range(100):
+        L += step
+        n = from_oklab(L, a, b)
+        if n.contrast(bg) >= target or not 0 < L < 1:
+            return n
+    return n
+
+# libadwaita's nine system accents (AdwAccentColor). The Shell and every
+# Flatpak (through the settings portal) only ever see one of these, so the
+# nearest one is always set alongside the exact hex that gtk.css carries.
+GNOME_ACCENTS = {
+    "blue": "#3584e4", "teal": "#2190a4", "green": "#3a944a", "yellow": "#c88800",
+    "orange": "#ed5b00", "red": "#e62d42", "pink": "#d56199", "purple": "#9141ac",
+    "slate": "#6f8396",
+}
+
+
+def nearest_gnome_accent(c):
+    L, a, b = c.oklab()
+    chroma = math.hypot(a, b)
+    best, bd = None, 1e9
+    for name, hx in GNOME_ACCENTS.items():
+        L2, a2, b2 = Color.parse(hx).oklab()
+        # hue matters far more than lightness here: weight L down
+        d = (0.3 * (L - L2)) ** 2 + (a - a2) ** 2 + (b - b2) ** 2
+        if chroma < 0.04 and name != "slate":
+            d += 1  # a grey accent is slate, whatever its lightness
+        if d < bd:
+            best, bd = name, d
+    return best
+
+
+def readable_on(bg, *candidates):
+    return max(candidates, key=lambda c: c.contrast(bg))
+
+
+def ensure_contrast(fg, bg, target, toward):
+    """Walk fg toward `toward` until it clears `target` against bg."""
+    c = fg
+    for i in range(21):
+        if c.contrast(bg) >= target:
+            return c
+        c = fg.mix(toward, i / 20)
+    return c
+
+# ---------------------------------------------------------------- themes ----
+
+# Pulsar's palette vocabulary: the ANSI hues, plus a tonal ramp named after
+# DESIGN.md's (deep -> sunken -> background -> raised) and three text weights.
+# base16/base24 map onto it slot by slot (see base16_to_palette). The optional
+# GNOME surface keys are last.
+PALETTE_KEYS = [
+    "accent", "selection", "muted",
+    "background", "background_sunken", "background_deep", "background_raised",
+    "foreground", "foreground_dim", "foreground_bright",
+    "red", "orange", "yellow", "green", "cyan", "blue", "magenta", "brown",
+    "bright_red", "bright_yellow", "bright_green", "bright_cyan", "bright_blue", "bright_magenta",
+]
+SURFACE_KEYS = ["window", "view", "headerbar", "sidebar", "card", "popover"]
+
+
+class Variant:
+    """One resolved palette (dark or light) with every derived value filled in."""
+
+    def __init__(self, mode, raw):
+        self.mode = mode
+        p = {}
+        for k, v in raw.items():
+            if isinstance(v, str) and (v.startswith("#") or re.fullmatch(r"[0-9a-fA-F]{6}", v)):
+                p[k] = Color.parse(v)
+        need = {"background", "foreground"}
+        if not need <= p.keys():
+            raise ValueError(f"{mode} palette needs at least background and foreground")
+        bg, fg = p["background"], p["foreground"]
+        dark = mode == "dark"
+        # "deeper" means darker in both modes: on dark toward black, on light
+        # a step toward the ink (base24's base10/base11 read the same way).
+        away = BLACK if dark else fg
+        toward = fg                              # lifted toward the text
+        d = p.setdefault
+        d("background_sunken", bg.mix(away, 0.18 if dark else 0.04))
+        d("background_deep", bg.mix(away, 0.34 if dark else 0.09))
+        d("background_raised", bg.mix(toward, 0.08))
+        d("selection", bg.mix(toward, 0.2))
+        d("muted", bg.mix(toward, 0.45))
+        d("foreground_dim", bg.mix(toward, 0.7))
+        d("foreground_bright", fg.mix(WHITE if dark else BLACK, 0.4))
+        defaults = {"red": "#e0535c", "orange": "#e8864a", "yellow": "#e0b44c", "green": "#5ab57a",
+                    "cyan": "#4fb8c8", "blue": "#5a8ee6", "magenta": "#b877db", "brown": "#a0775a"}
+        for k, v in defaults.items():
+            d(k, Color.parse(v))
+        for k in ("red", "yellow", "green", "cyan", "blue", "magenta"):
+            d("bright_" + k, p[k].mix(WHITE if dark else BLACK, 0.12))
+        d("accent", p["blue"])
+        # GNOME surfaces: a tonal ladder derived from bg/fg unless the theme
+        # pins them (Pulsar does; imported schemes usually do not).
+        if dark:
+            d("window", bg)
+            d("view", bg.mix(BLACK, 0.2))
+            d("headerbar", bg.mix(fg, 0.07))
+            d("sidebar", bg.mix(fg, 0.05))
+            d("card", bg.mix(fg, 0.05))
+            d("popover", bg.mix(fg, 0.09))
+        else:
+            d("window", bg)
+            d("view", bg.mix(WHITE, 0.65))
+            d("headerbar", bg.mix(fg, 0.05))
+            d("sidebar", bg.mix(fg, 0.035))
+            d("card", bg.mix(WHITE, 0.75))
+            d("popover", bg.mix(WHITE, 0.85))
+        acc = p["accent"]
+        d("accent_fg", readable_on(acc, WHITE, Color.parse("#101014")))
+        d("accent_hover", acc.mix(WHITE if dark else BLACK, 0.12))
+        # --accent-color is the accent used AS TEXT on the window ground: it
+        # must clear 4.5:1 (libadwaita's own rule), so nudge it if needed.
+        d("accent_text", ensure_contrast(acc, p["window"], 4.5, fg))
+        # Legacy 16-colour terminal slots, unless the theme gives them.
+        ansi = [p["selection"] if dark else p["foreground_dim"], p["red"], p["green"], p["yellow"],
+                p["blue"], p["magenta"], p["cyan"], p["foreground"] if dark else p["selection"],
+                p["muted"], p["bright_red"], p["bright_green"], p["bright_yellow"],
+                p["bright_blue"], p["bright_magenta"], p["bright_cyan"],
+                p["foreground_bright"] if dark else p["background_raised"]]
+        for i, c in enumerate(ansi):
+            d(f"color{i}", c)
+        self.p = p
+        self.gnome_accent = raw.get("gnome_accent") or nearest_gnome_accent(acc)
+
+    def __getitem__(self, k):
+        return self.p[k]
+
+    def ctx(self):
+        """Template context: name -> '#rrggbb', name_rgb -> 'r, g, b', name_strip -> 'rrggbb'."""
+        c = {}
+        for k, v in self.p.items():
+            c[k] = v.hex
+            c[k + "_rgb"] = v.rgb
+            c[k + "_strip"] = v.hex[1:]
+        c["mode"] = self.mode
+        c["gnome_accent"] = self.gnome_accent
+        return c
+
+
+class Theme:
+    def __init__(self, path):
+        self.dir = path.parent
+        self.file = path
+        with open(path, "rb") as f:
+            raw = tomllib.load(f)
+        self.raw = raw
+        self.slug = raw.get("slug") or self.dir.name
+        self.name = raw.get("name", self.slug)
+        self.author = raw.get("author", "")
+        self.source = raw.get("source", "")
+        self.variants = {m: Variant(m, raw[m]) for m in ("dark", "light") if m in raw}
+        if not self.variants:
+            raise ValueError(f"{path}: needs a [dark] and/or [light] palette")
+        self.prefer = raw.get("prefer", "dark" if "dark" in self.variants else "light")
+        if self.prefer not in self.variants:
+            self.prefer = next(iter(self.variants))
+        wp = raw.get("wallpaper", {})
+        self.wallpapers = {}
+        for m in ("dark", "light"):
+            items = wp.get(m, [])
+            items = [items] if isinstance(items, str) else items
+            self.wallpapers[m] = [self._resolve(x) for x in items]
+
+    def _resolve(self, p):
+        p = pathlib.Path(os.path.expandvars(p))
+        return p if p.is_absolute() else (self.dir / p)
+
+    @property
+    def both(self):
+        return len(self.variants) == 2
+
+
+def find_themes():
+    seen = {}
+    for root in THEME_PATH:
+        if not root.is_dir():
+            continue
+        for t in sorted(root.glob("*/theme.toml")):
+            slug = t.parent.name
+            if slug not in seen:
+                seen[slug] = t
+    return seen
+
+
+def load_theme(name):
+    themes = find_themes()
+    if name in themes:
+        return Theme(themes[name])
+    p = pathlib.Path(name)
+    if p.is_dir() and (p / "theme.toml").exists():
+        return Theme(p / "theme.toml")
+    if p.name == "theme.toml" and p.exists():
+        return Theme(p)
+    close = [s for s in themes if name.lower() in s.lower()]
+    if len(close) == 1:
+        return Theme(themes[close[0]])
+    sys.exit(f"pulsar-theme: no theme '{name}'" + (f" (did you mean: {', '.join(close)})" if close else ""))
+
+# --------------------------------------------------------------- dconf ----
+
+
+def dconf_read(key):
+    r = subprocess.run(["dconf", "read", key], capture_output=True, text=True)
+    v = r.stdout.strip()
+    return v or None
+
+
+def dconf_write(key, value):
+    if value is None:
+        subprocess.run(["dconf", "reset", key], check=True)
+    else:
+        subprocess.run(["dconf", "write", key, value], check=True, stderr=subprocess.DEVNULL)
+
+
+def gv_str(s):
+    return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+# ---------------------------------------------------------- transaction ----
+
+
+class Transaction:
+    """Stage everything, then commit. Each file is replaced with rename(2);
+    each dconf key is written once. The first time any path or key is ever
+    touched, its original state goes into the BASELINE, which `revert`
+    restores. If the commit fails part-way, this transaction's own pre-images
+    are put back, so a failed `set` leaves the desktop as it found it."""
+
+    def __init__(self, dry=False):
+        self.files = {}      # path -> bytes | None (None = delete)
+        self.keys = {}       # dconf key -> gvariant text | None (reset)
+        self.after = []      # (description, callable) run after commit; failures are warnings
+        self.dry = dry
+        self.base_dir = STATE / "baseline"
+        self.base_manifest = self.base_dir / "manifest.json"
+
+    def write(self, path, content):
+        if isinstance(content, str):
+            content = content.encode()
+        self.files[pathlib.Path(path)] = content
+
+    def remove(self, path):
+        self.files[pathlib.Path(path)] = None
+
+    def set(self, key, value):
+        self.keys[key] = value
+
+    def hook(self, desc, fn):
+        self.after.append((desc, fn))
+
+    def _load_baseline(self):
+        if self.base_manifest.exists():
+            return json.loads(self.base_manifest.read_text())
+        return {"created": datetime.datetime.now().isoformat(timespec="seconds"), "files": {}, "keys": {}}
+
+    def commit(self):
+        if self.dry:
+            for p, c in self.files.items():
+                print(f"  would write {p} ({'delete' if c is None else len(c)} bytes)")
+            for k, v in self.keys.items():
+                print(f"  would set   {k} = {v}")
+            return
+        base = self._load_baseline()
+        (self.base_dir / "files").mkdir(parents=True, exist_ok=True)
+        # 1. baseline: remember originals we have never seen before
+        for p in self.files:
+            sp = str(p)
+            if sp not in base["files"]:
+                if p.exists() or p.is_symlink():
+                    blob = self.base_dir / "files" / hashlib.sha256(sp.encode()).hexdigest()[:16]
+                    shutil.copy2(p, blob, follow_symlinks=False)
+                    base["files"][sp] = {"existed": True, "backup": blob.name}
+                else:
+                    base["files"][sp] = {"existed": False}
+        for k in self.keys:
+            if k not in base["keys"]:
+                base["keys"][k] = dconf_read(k)
+        atomic_write(self.base_manifest, json.dumps(base, indent=1).encode())
+        # 2. pre-images for rollback of THIS transaction
+        pre_files = {p: (p.read_bytes() if p.is_file() else None) for p in self.files}
+        pre_keys = {k: dconf_read(k) for k in self.keys}
+        done_f, done_k = [], []
+        try:
+            for p, c in self.files.items():
+                if c is None:
+                    if p.exists():
+                        p.unlink()
+                else:
+                    atomic_write(p, c)
+                done_f.append(p)
+            for k, v in self.keys.items():
+                dconf_write(k, v)
+                done_k.append(k)
+        except Exception as e:
+            print(f"pulsar-theme: commit failed ({e}); rolling back", file=sys.stderr)
+            for p in done_f:
+                if pre_files[p] is None:
+                    p.unlink(missing_ok=True)
+                else:
+                    atomic_write(p, pre_files[p])
+            for k in done_k:
+                dconf_write(k, pre_keys[k])
+            raise
+        for desc, fn in self.after:
+            try:
+                fn()
+            except Exception as e:  # a reload hint failing never undoes a theme
+                print(f"  note: {desc} failed: {e}", file=sys.stderr)
+
+
+def atomic_write(path, data):
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+EXT_UUID = "pulsar-theme@arclight.digital"
+
+
+def gsettings_get(schema, key, path=None):
+    r = subprocess.run(["gsettings", "get", f"{schema}:{path}" if path else schema, key],
+                       capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def key_schema(key):
+    """dconf key -> (schema id, path or None, key name)."""
+    d, _, name = key.rpartition("/")
+    if d.startswith("/org/gnome/Ptyxis/Profiles/"):
+        return "org.gnome.Ptyxis.Profile", d + "/", name
+    return d.strip("/").replace("/", "."), None, name
+
+
+def upstream_default(schema, name):
+    """The default in the schema XML itself -- i.e. before any vendor
+    override (Fedora's, Pulsar's zz0). That is what 'stock GNOME' means."""
+    dirs = [pathlib.Path(p) / "glib-2.0" / "schemas"
+            for p in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":")]
+    for d in dirs:
+        for x in sorted(d.glob("*.gschema.xml")) if d.is_dir() else []:
+            if f'id="{schema}"' not in x.read_text(errors="ignore"):
+                continue
+            for sch in ET.parse(x).getroot().iter("schema"):
+                if sch.get("id") != schema:
+                    continue
+                for k in sch.iter("key"):
+                    if k.get("name") == name and k.find("default") is not None:
+                        return k.find("default").text.strip()
+    return None
+
+
+def revert(to="stock"):
+    """Put back everything the engine changed. Files come back byte-for-byte.
+    Keys the user had set come back to their value. Keys that were unset --
+    i.e. showing the IMAGE default, which on Pulsar is the Pulsar look -- are
+    written to GNOME's upstream default (to="stock"), or just reset to the
+    image default (to="image")."""
+    man = STATE / "baseline" / "manifest.json"
+    base = json.loads(man.read_text()) if man.exists() else {"files": {}, "keys": {}}
+    for sp, info in base["files"].items():
+        p = pathlib.Path(sp)
+        if info["existed"]:
+            atomic_write(p, (STATE / "baseline" / "files" / info["backup"]).read_bytes())
+            print(f"  restored {p}")
+        elif p.exists():
+            p.unlink()
+            print(f"  removed  {p}")
+    keys = dict(base["keys"])
+    if to == "stock":
+        # image-default keys the engine never wrote still wear the Pulsar look
+        for k in STOCK_KEYS:
+            keys.setdefault(k, dconf_read(k))
+    for k, v in keys.items():
+        if k == "/org/gnome/shell/enabled-extensions":
+            continue
+        if v is not None:
+            dconf_write(k, v)
+            print(f"  restored {k} = {v}")
+            continue
+        dconf_write(k, None)
+        if to != "stock":
+            print(f"  reset    {k}")
+            continue
+        schema, path, name = key_schema(k)
+        up, eff = upstream_default(schema, name), gsettings_get(schema, name, path)
+        if up is not None and eff is not None and up.replace(" ", "") != eff.replace(" ", "").replace("@as", ""):
+            up = "@as []" if up.replace(" ", "") == "[]" else up   # untyped [] is not valid GVariant text
+            try:
+                dconf_write(k, up)
+                print(f"  stock    {k} = {up}  (image default was {eff})")
+            except subprocess.CalledProcessError:
+                print(f"  reset    {k}  (could not write upstream {up})")
+        else:
+            print(f"  reset    {k}")
+    # the extension: keep whatever else is enabled, drop ours
+    ext_before = base["keys"].get("/org/gnome/shell/enabled-extensions")
+    if ext_before is not None:
+        dconf_write("/org/gnome/shell/enabled-extensions", ext_before)
+    else:
+        dconf_write("/org/gnome/shell/enabled-extensions", None)
+    eff = parse_gv_list(gsettings_get("org.gnome.shell", "enabled-extensions"))
+    if to == "stock" and EXT_UUID in eff:
+        dconf_write("/org/gnome/shell/enabled-extensions", "[" + ", ".join(gv_str(x) for x in eff if x != EXT_UUID) + "]")
+        print(f"  disabled {EXT_UUID}")
+    shutil.rmtree(STATE / "baseline", ignore_errors=True)
+    (STATE / "current.json").unlink(missing_ok=True)
+    (STATE / "notice.json").unlink(missing_ok=True)
+    # never re-apply at the next login: the user chose this
+    atomic_write(STATE / "init.json", json.dumps({"result": "reverted", "to": to,
+                 "at": datetime.datetime.now().isoformat(timespec="seconds")}).encode())
+    reload_running()
+    print(f"pulsar-theme: reverted to {'stock GNOME' if to == 'stock' else 'the image defaults'}")
+
+
+# Keys the Pulsar IMAGE themes by default (zz1-pulsar-theme.gschema.override);
+# `revert` sends them to upstream GNOME even if the engine never wrote them.
+STOCK_KEYS = [
+    "/org/gnome/desktop/interface/accent-color",
+    "/org/gnome/desktop/interface/color-scheme",
+    "/org/gnome/desktop/background/picture-uri",
+    "/org/gnome/desktop/background/picture-uri-dark",
+    "/org/gnome/desktop/background/primary-color",
+    "/org/gnome/TextEditor/style-scheme",
+]
+
+# -------------------------------------------------------------- render ----
+
+
+TPL = re.compile(r"\{\{\s*([a-z0-9_]+)\s*\}\}")
+
+
+def render_tpl(text, ctx, where="template"):
+    def sub(m):
+        k = m.group(1)
+        if k not in ctx:
+            raise KeyError(f"{where}: unknown placeholder {{{{ {k} }}}}")
+        return str(ctx[k])
+    return TPL.sub(sub, text)
+
+
+def template(name):
+    """User templates in $XDG_CONFIG_HOME/pulsar/themed/ beat the image's."""
+    for d in [CONFIG / "pulsar" / "themed"] + TEMPLATE_PATH:
+        if (d / name).exists():
+            return (d / name).read_text()
+    raise FileNotFoundError(name)
+
+
+def theme_override(theme, name):
+    """A hand-written file in the theme dir beats the template."""
+    p = theme.dir / name
+    return p.read_text() if p.exists() else None
+
+
+def variant_blocks(theme, variant_mode, tpl_name, wrap):
+    """Render tpl once per variant. With both variants, `wrap(mode, body)`
+    fences each one (e.g. in a CSS media query) so light/dark keeps working."""
+    tpl = template(tpl_name)
+    if variant_mode == "both" and theme.both:
+        return "".join(wrap(m, render_tpl(tpl, theme.variants[m].ctx(), tpl_name)) for m in ("light", "dark"))
+    v = theme.variants[variant_mode if variant_mode in theme.variants else theme.prefer]
+    return wrap(None, render_tpl(tpl, v.ctx(), tpl_name))
+
+
+MARK_BEGIN = "/* >>> pulsar-theme (managed; `pulsar-theme revert` removes it) >>> */"
+MARK_END = "/* <<< pulsar-theme <<< */"
+
+
+def managed(path, block):
+    """Put our block at the END of a user-owned CSS file (later wins at equal
+    priority) and leave everything else in it alone."""
+    old = path.read_text() if path.exists() else ""
+    old = re.sub(re.escape(MARK_BEGIN) + r".*?" + re.escape(MARK_END) + r"\n?", "", old, flags=re.S)
+    old = old.rstrip() + ("\n\n" if old.strip() else "")
+    return old + MARK_BEGIN + "\n" + block.rstrip() + "\n" + MARK_END + "\n"
+
+# -------------------------------------------------------------- targets ----
+
+
+class Target:
+    name = ""
+    desc = ""
+    default = True        # part of `set` unless --only says otherwise
+    live = ""             # how/if running apps pick the change up
+
+    def available(self):
+        return True
+
+    def apply(self, tx, theme, vm):
+        raise NotImplementedError
+
+
+class Scheme(Target):
+    name, desc, live = "scheme", "color-scheme + libadwaita system accent", "live everywhere (Shell, GTK4, Flatpaks via portal)"
+
+    def apply(self, tx, theme, vm):
+        mode = theme.prefer if vm == "both" else vm
+        v = theme.variants[mode]
+        tx.set("/org/gnome/desktop/interface/color-scheme", gv_str("prefer-dark" if mode == "dark" else "default"))
+        tx.set("/org/gnome/desktop/interface/accent-color", gv_str(v.gnome_accent))
+
+
+class Gtk4(Target):
+    name, desc, live = "gtk4", "libadwaita CSS variables in gtk-4.0/gtk.css", "new windows only: GTK reads gtk.css once at startup"
+
+    def apply(self, tx, theme, vm):
+        def wrap(m, body):
+            if m is None:
+                return body
+            return f"@media (prefers-color-scheme: {m}) {{\n{body}}}\n"
+        block = f"/* {theme.name} */\n" + variant_blocks(theme, vm, "gtk4.css", wrap)
+        p = CONFIG / "gtk-4.0" / "gtk.css"
+        tx.write(p, managed(p, block))
+
+
+class Gtk3(Target):
+    name, desc, live = "gtk3", "adw-gtk3 / Adwaita named colours in gtk-3.0/gtk.css", "new windows only"
+
+    def apply(self, tx, theme, vm):
+        mode = theme.prefer if vm == "both" else vm
+        v = theme.variants[mode]
+        block = render_tpl(template("gtk3.css"), v.ctx(), "gtk3.css")
+        p = CONFIG / "gtk-3.0" / "gtk.css"
+        tx.write(p, managed(p, f"/* {theme.name} ({mode}) */\n" + block))
+        if any(d.joinpath("themes", "adw-gtk3").is_dir() for d in (DATA, pathlib.Path("/usr/share"))):
+            tx.set("/org/gnome/desktop/interface/gtk-theme", gv_str("adw-gtk3-dark" if mode == "dark" else "adw-gtk3"))
+
+
+class Ptyxis(Target):
+    name, desc, live = "ptyxis", "Ptyxis palette file + palette key on every profile", "live (Ptyxis watches its settings)"
+
+    def available(self):
+        return shutil.which("ptyxis") is not None or pathlib.Path("/usr/bin/ptyxis").exists()
+
+    def apply(self, tx, theme, vm):
+        pid = f"pulsar-{theme.slug}"
+        lines = ["[Palette]", f"Name={theme.name}", ""]
+        modes = ("light", "dark") if (vm == "both" and theme.both) else (theme.prefer if vm == "both" else vm,) * 2
+        for section, m in zip(("Light", "Dark"), modes):
+            lines.append(f"[{section}]")
+            lines.append(render_tpl(template("ptyxis.palette"), theme.variants[m].ctx(), "ptyxis.palette").rstrip())
+            lines.append("")
+        tx.write(DATA / "org.gnome.Ptyxis" / "palettes" / f"{pid}.palette", "\n".join(lines))
+        uuids = parse_gv_list(dconf_read("/org/gnome/Ptyxis/profile-uuids"))
+        if not uuids:
+            # Fresh user: Ptyxis has not created its default profile yet.
+            u = hashlib.md5(os.urandom(16)).hexdigest()
+            uuids = [u]
+            tx.set("/org/gnome/Ptyxis/profile-uuids", "[" + gv_str(u) + "]")
+            tx.set("/org/gnome/Ptyxis/default-profile-uuid", gv_str(u))
+        for u in uuids:
+            tx.set(f"/org/gnome/Ptyxis/Profiles/{u}/palette", gv_str(pid))
+        # Ptyxis ships interface-style='dark' regardless of the desktop; a
+        # two-variant theme only follows the Dark Style toggle with 'system'.
+        tx.set("/org/gnome/Ptyxis/interface-style", gv_str("system" if (vm == "both" and theme.both) else
+                                                            (theme.prefer if vm == "both" else vm)))
+
+
+class SourceView(Target):
+    name, desc, live = "gtksourceview", "GtkSourceView 5 scheme + GNOME Text Editor style-scheme", "live for the key; new scheme files need an app restart"
+
+    def apply(self, tx, theme, vm):
+        dirs = [DATA / "gtksourceview-5" / "styles"]
+        flat = HOME / ".var" / "app" / "org.gnome.TextEditor"
+        if flat.is_dir():  # Flatpak Text Editor looks in its own XDG_DATA_HOME
+            dirs.append(flat / "data" / "gtksourceview-5" / "styles")
+        base = f"pulsar-{theme.slug}"
+        modes = ["light", "dark"] if theme.both else [theme.prefer]
+        for m in modes:
+            v = theme.variants[m]
+            sid = base if (m == "light" or not theme.both) else base + "-dark"
+            ctx = dict(v.ctx(), id=sid, name=f"{theme.name}" + (" Dark" if sid.endswith("-dark") and theme.both else ""),
+                       author=xml_escape(theme.author or "pulsar-theme"),
+                       pair=(base + "-dark" if m == "light" else base) if theme.both else sid,
+                       pair_key="dark-variant" if m == "light" else "light-variant")
+            xml = render_tpl(template("gtksourceview.xml"), ctx, "gtksourceview.xml")
+            for d in dirs:
+                tx.write(d / f"{sid}.xml", xml)
+        # Text Editor turns "<id>" into "<id>-dark" by itself when the style is dark.
+        tx.set("/org/gnome/TextEditor/style-scheme", gv_str(base))
+        if flat.is_dir():
+            kf = flat / "config" / "glib-2.0" / "settings" / "keyfile"
+            tx.write(kf, keyfile_set(kf, "org/gnome/TextEditor", "style-scheme", gv_str(base)))
+
+
+class Wallpaper(Target):
+    name, desc, live = "wallpaper", "desktop + lock-screen background (light/dark pair)", "live"
+
+    def apply(self, tx, theme, vm):
+        idx = current_state().get("wallpaper_index", 0) if current_state().get("theme") == theme.slug else 0
+        # Renders are build output; an image built with --no-wallpapers has
+        # none, and pointing GNOME at a missing file shows a grey desktop.
+        have = {m: [w for w in theme.wallpapers[m] if w.exists()] for m in ("dark", "light")}
+        if not have["dark"] and not have["light"]:
+            have = {m: [BRAND_WALLPAPER[m]] if BRAND_WALLPAPER[m].exists() else [] for m in ("dark", "light")}
+        theme.wallpapers = have
+        dark = pick(theme.wallpapers["dark"], idx) or pick(theme.wallpapers["light"], idx)
+        light = pick(theme.wallpapers["light"], idx) or dark
+        if vm in ("dark", "light") and not theme.both:
+            light = dark = pick(theme.wallpapers[vm], idx) or dark
+        if not dark:
+            return
+        tx.set("/org/gnome/desktop/background/picture-uri", gv_str(light.as_uri()))
+        tx.set("/org/gnome/desktop/background/picture-uri-dark", gv_str(dark.as_uri()))
+        tx.set("/org/gnome/desktop/background/picture-options", gv_str("zoom"))
+        bg = theme.variants[theme.prefer]["background_deep"].hex
+        tx.set("/org/gnome/desktop/background/primary-color", gv_str(bg))
+        # No org.gnome.desktop.screensaver write: GNOME 50's unlock dialog
+        # blurs the desktop background and never reads that key.
+
+
+class Shell(Target):
+    name, desc, live = "shell", "GNOME Shell stylesheet via the pulsar-theme extension", "live (extension watches the file)"
+
+    def apply(self, tx, theme, vm):
+        # one sheet per scheme; the extension swaps them when Dark Style flips
+        for scheme in ("dark", "light"):
+            mode = scheme if (vm == "both" and scheme in theme.variants) else (theme.prefer if vm == "both" else vm)
+            css = render_tpl(template("gnome-shell.css"), theme.variants[mode].ctx(), "gnome-shell.css")
+            tx.write(STATE / "shell" / f"gnome-shell-{scheme}.css", f"/* {theme.name} ({mode}) */\n" + css)
+        eff = gsettings_get("org.gnome.shell", "enabled-extensions")
+        if EXT_UUID not in parse_gv_list(eff):
+            tx.set("/org/gnome/shell/enabled-extensions",
+                   "[" + ", ".join(gv_str(x) for x in parse_gv_list(eff) + [EXT_UUID]) + "]")
+
+
+class Btop(Target):
+    name, desc, live = "btop", "btop theme + color_theme in btop.conf", "live (SIGUSR2 reloads btop)"
+
+    def apply(self, tx, theme, vm):
+        conf = CONFIG / "btop" / "btop.conf"
+        if vm == "both" and theme.both:
+            # btop has one theme file and no light/dark notion. Its built-in
+            # TTY theme draws with the terminal's 16 colours, and the Ptyxis
+            # palette already flips with Dark Style, so btop follows for free.
+            # and no painted background: TTY paints it with ANSI color0, which
+            # is a mid-tone on light palettes; the terminal's own ground is right
+            tx.write(conf, conf_set_many(conf, {"color_theme": '"TTY"', "theme_background": "False"}))
+            tx.hook("signal btop", lambda: subprocess.run(["pkill", "-USR2", "-x", "btop"], check=False))
+            return
+        mode = theme.prefer if vm == "both" else vm
+        path = CONFIG / "btop" / "themes" / f"pulsar-{theme.slug}.theme"
+        tx.write(path, render_tpl(template("btop.theme"), theme.variants[mode].ctx(), "btop.theme"))
+        tx.write(conf, conf_set_many(conf, {"color_theme": f'"{path}"', "theme_background": "False"}))
+        tx.hook("signal btop", lambda: subprocess.run(["pkill", "-USR2", "-x", "btop"], check=False))
+
+
+class Flatpak(Target):
+    name, desc, live = "flatpak", "let Flatpak apps read the host gtk.css (global user override)", "per app launch"
+    default = False  # widens every app's sandbox a little; opt-in
+
+    def apply(self, tx, theme, vm):
+        p = DATA / "flatpak" / "overrides" / "global"
+        text = p.read_text() if p.exists() else ""
+        for fs in ("xdg-config/gtk-4.0:ro", "xdg-config/gtk-3.0:ro"):
+            text = keyfile_list_add(text, "Context", "filesystems", fs)
+        tx.write(p, text)
+
+
+TARGETS = [Scheme(), Gtk4(), Gtk3(), Ptyxis(), SourceView(), Wallpaper(), Shell(), Btop(), Flatpak()]
+
+# --------------------------------------------------------------- helpers ----
+
+
+def pick(lst, i):
+    return lst[i % len(lst)] if lst else None
+
+
+def xml_escape(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def parse_gv_list(s):
+    return re.findall(r"'([^']*)'", s or "")
+
+
+def conf_set(path, key, value):
+    text = path.read_text() if path.exists() else ""
+    line = f"{key} = {value}"
+    if re.search(rf"^{key}\s*=.*$", text, flags=re.M):
+        return re.sub(rf"^{key}\s*=.*$", line, text, flags=re.M)
+    return text + ("" if text.endswith("\n") or not text else "\n") + line + "\n"
+
+
+def conf_set_many(path, kv):
+    text = path.read_text() if path.exists() else ""
+    for k, v in kv.items():
+        line = f"{k} = {v}"
+        if re.search(rf"^{k}\s*=.*$", text, flags=re.M):
+            text = re.sub(rf"^{k}\s*=.*$", line, text, flags=re.M)
+        else:
+            text += ("" if text.endswith("\n") or not text else "\n") + line + "\n"
+    return text
+
+
+def keyfile_set(path, group, key, value):
+    text = path.read_text() if path.exists() else ""
+    return _kf_edit(text, group, key, lambda old: value)
+
+
+def keyfile_list_add(text, group, key, item):
+    def f(old):
+        items = [x for x in (old or "").split(";") if x]
+        if item not in items:
+            items.append(item)
+        return ";".join(items) + ";"
+    return _kf_edit(text, group, key, f)
+
+
+def _kf_edit(text, group, key, fn):
+    lines = text.splitlines()
+    out, in_g, done, seen_g = [], False, False, False
+    for ln in lines:
+        m = re.match(r"^\[(.*)\]\s*$", ln)
+        if m:
+            if in_g and not done:
+                out.append(f"{key}={fn(None)}")
+                done = True
+            in_g = m.group(1) == group
+            seen_g = seen_g or in_g
+        elif in_g and ln.split("=", 1)[0].strip() == key:
+            out.append(f"{key}={fn(ln.split('=', 1)[1])}")
+            done = True
+            continue
+        out.append(ln)
+    if not done:
+        if not seen_g:
+            if out and out[-1].strip():
+                out.append("")
+            out.append(f"[{group}]")
+        out.append(f"{key}={fn(None)}")
+    return "\n".join(out) + "\n"
+
+
+def current_state():
+    p = STATE / "current.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def reload_running():
+    subprocess.run(["pkill", "-USR2", "-x", "btop"], check=False, capture_output=True)
+
+# ----------------------------------------------------------- config ----
+# User preferences, not theme state: `revert` leaves this file alone.
+CONF = CONFIG / "pulsar" / "theme.conf"
+CONF_DEFAULTS = {"restart-prompt": "on"}
+
+
+def conf_get(k):
+    if CONF.exists():
+        for ln in CONF.read_text().splitlines():
+            kk, _, v = ln.partition("=")
+            if kk.strip() == k and not ln.lstrip().startswith("#"):
+                return v.strip()
+    return CONF_DEFAULTS[k]
+
+
+def conf_put(k, v):
+    if k not in CONF_DEFAULTS:
+        sys.exit(f"pulsar-theme: unknown setting {k} (known: {', '.join(CONF_DEFAULTS)})")
+    atomic_write(CONF, conf_set(CONF, k, v).encode())
+
+# ---------------------------------------------------------- restarts ----
+# gtk.css is read once per process, so open GTK windows keep the old palette.
+# The fix offered is a GRACEFUL restart only: activate the app's own
+# `app.quit` (org.gtk.Actions), which is exactly what Ctrl+Q does -- an app
+# with unsaved work raises its own "save changes?" dialog and stays open.
+# Nothing is ever killed; only apps that actually exited are relaunched.
+
+NOTE = "open apps pick up the new colours when they are relaunched"
+# Terminals: quitting one ends every shell in it. Their palette is live anyway.
+NEVER_RESTART = {"org.gnome.Ptyxis", "org.gnome.Ptyxis.Devel", "org.gnome.Console", "org.gnome.Terminal",
+                 "digital.arclight.Pulsar.ThemePicker"}
+
+
+def _gdbus(*args, dest=None, path=None, method=None):
+    cmd = ["gdbus", "call", "--session"]
+    if dest:
+        cmd += ["--dest", dest, "--object-path", path, "--method", method]
+    try:
+        r = subprocess.run(cmd + list(args), capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _bus(method, *args):
+    return _gdbus(*args, dest="org.freedesktop.DBus", path="/org/freedesktop/DBus", method=f"org.freedesktop.DBus.{method}")
+
+
+def desktop_file(app_id):
+    roots = [DATA] + [pathlib.Path(x) for x in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":")]
+    roots += [DATA / "flatpak" / "exports" / "share", pathlib.Path("/var/lib/flatpak/exports/share")]
+    for r in roots:
+        f = r / "applications" / f"{app_id}.desktop"
+        if f.exists():
+            return f
+    return None
+
+
+def open_gtk_apps():
+    """(restartable, manual) GApplications on the session bus that paint with
+    the host gtk.css. Flatpaks count only if the flatpak target is on --
+    otherwise they never read gtk.css and a restart changes nothing."""
+    names = re.findall(r"'([A-Za-z][\w-]*(?:\.[\w-]+){2,})'", _bus("ListNames") or "")
+    flatpak_on = "flatpak" in current_state().get("targets", [])
+    restart, manual = [], []
+    for n in sorted(set(names)):
+        if n in NEVER_RESTART or n.startswith(("org.freedesktop.", "org.gtk.", "org.gnome.Shell", "org.gnome.SettingsDaemon",
+                                               "org.a11y.", "ca.desrt.", "org.gnome.evolution", "org.gnome.OnlineAccounts")):
+            continue
+        df = desktop_file(n)
+        if not df:
+            continue                        # a service or helper, not an app
+        path = "/" + n.replace(".", "/").replace("-", "_")
+        intro = _gdbus(dest=n, path=path, method="org.freedesktop.DBus.Introspectable.Introspect")
+        if not intro or "org.gtk.Application" not in intro:
+            continue
+        pid = re.search(r"uint32 (\d+)", _bus("GetConnectionUnixProcessID", n) or "")
+        sandboxed = bool(pid) and pathlib.Path(f"/proc/{pid.group(1)}/root/.flatpak-info").exists()
+        if sandboxed and not flatpak_on:
+            continue
+        label = next((ln.split("=", 1)[1] for ln in df.read_text(errors="ignore").splitlines() if ln.startswith("Name=")), n)
+        acts = _gdbus(dest=n, path=path, method="org.gtk.Actions.List") or ""
+        entry = {"id": n, "path": path, "name": label, "flatpak": sandboxed, "desktop": str(df),
+                 "pid": int(pid.group(1)) if pid else None}
+        (restart if "'quit'" in acts else manual).append(entry)
+    return restart, manual
+
+
+def desktop_exec(path):
+    """The [Desktop Entry] Exec line, field codes dropped. Run directly rather
+    than through `gio launch`: for DBusActivatable apps that goes via D-Bus
+    activation, which in testing raced the old instance's exit and came up
+    windowless. Direct exec of a unique app is what the dash does anyway."""
+    import shlex
+    ex, in_main = None, False
+    for ln in pathlib.Path(path).read_text(errors="ignore").splitlines():
+        if ln.startswith("["):
+            in_main = ln.strip() == "[Desktop Entry]"
+        elif in_main and ln.startswith("Exec="):
+            ex = ln[5:]
+            break
+    argv = [x for x in shlex.split(ex or "") if not re.fullmatch(r"%[a-zA-Z]", x)]
+    return argv or ["gio", "launch", str(path)]
+
+
+def _alive(pid):
+    try:
+        st = pathlib.Path(f"/proc/{pid}/stat").read_text()
+    except (OSError, TypeError):
+        return False
+    return st.rsplit(")", 1)[1].split()[0] not in ("Z", "X")   # a zombie has exited
+
+
+def restart_apps(apps, wait=6.0):
+    """Ask each app to quit; relaunch the ones that did. Returns [(app, outcome)]."""
+    for a in apps:
+        _gdbus("quit", "[]", "{}", dest=a["id"], path=a["path"], method="org.gtk.Actions.Activate")
+    pending, out = {a["id"]: a for a in apps}, []
+    end = time.time() + wait
+    while pending and time.time() < end:
+        time.sleep(0.25)
+        for i in list(pending):
+            gone = "false" in (_bus("NameHasOwner", i) or "")
+            # and the process itself: relaunching while the old one is still
+            # writing its session state races it (seen with Text Editor)
+            if gone and not _alive(pending[i]["pid"]):
+                a = pending.pop(i)
+                cmd = ["flatpak", "run", a["id"]] if a["flatpak"] else desktop_exec(a["desktop"])
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                out.append((a, "restarted"))
+    out += [(a, "kept open: it is asking about unsaved work") for a in pending.values()]
+    return out
+
+
+def after_switch(policy="ask"):
+    """policy: ask (prompt on a TTY if the user has not opted out), restart,
+    or note (never prompt: scripts, first login)."""
+    restart, manual = open_gtk_apps()
+    if not restart and not manual:
+        return
+    ask = policy == "ask" and conf_get("restart-prompt") == "on" and sys.stdin.isatty() and sys.stdout.isatty()
+    if policy != "restart" and not ask:
+        print(f"pulsar-theme: {NOTE}" + (f" ({', '.join(a['name'] for a in restart + manual)})"))
+        return
+    if manual:
+        print(f"  reopen these yourself (no graceful quit): {', '.join(a['name'] for a in manual)}")
+    if not restart:
+        return
+    if ask:
+        ans = input(f"Restart {len(restart)} open app{'s' if len(restart) != 1 else ''} to apply the theme? "
+                    f"({', '.join(a['name'] for a in restart)})\n[R]estart  [l]ater  [d]on't ask again: ").strip().lower()
+        if ans.startswith("l"):
+            return
+        if ans.startswith("d"):
+            conf_put("restart-prompt", "off")
+            print(f"  won't ask again ({CONF}); turn it back on with: pulsar-theme config restart-prompt on")
+            print(f"pulsar-theme: {NOTE}")
+            return
+    for a, outcome in restart_apps(restart):
+        print(f"  {a['name']}: {outcome}")
+
+# ------------------------------------------------------------- audit ----
+# Floors: WCAG 2.2 AA. Text 4.5:1, large/UI parts and comments 3:1; body
+# text is held to 7:1 (AAA) because it is everything you read all day.
+
+
+def audit_variant(v):
+    """(label, ratio, floor, target): below floor fails, below target warns."""
+    c = lambda a, b: v[a].contrast(v[b])
+    checks = [("body text on window", c("foreground", "window"), 4.5, 7.0),
+              ("body text on view", c("foreground", "view"), 4.5, 7.0),
+              ("body text on card", c("foreground", "card"), 4.5, 7.0),
+              ("body text on popover", c("foreground", "popover"), 4.5, 7.0),
+              ("top bar text", c("foreground", "background_deep"), 4.5, 7.0),
+              ("text on selection", c("foreground", "selection"), 4.5, 4.5),
+              ("accent as text on window", c("accent_text", "window"), 4.5, 4.5),
+              ("label on accent (toggles, buttons)", c("accent_fg", "accent"), 4.5, 4.5),
+              ("accent toggle vs quick-settings card", c("accent", "popover"), 3.0, 3.0),
+              ("dim text", c("foreground_dim", "background"), 4.5, 4.5),
+              ("comments / muted", c("muted", "background"), 3.0, 3.0)]
+    for k in ("red", "orange", "yellow", "green", "cyan", "blue", "magenta"):
+        checks.append((f"syntax + ANSI {k}", c(k, "background"), 4.5, 4.5))
+    for i in (8, 9, 10, 11, 12, 13, 14):
+        checks.append((f"ANSI color{i} (ls --color, btop)", v[f"color{i}"].contrast(v["background"]), 3.0, 3.0))
+    return checks
+
+
+def cmd_audit(names, quiet=False):
+    bad = 0
+    for n in names:
+        th = load_theme(n)
+        for mode, v in th.variants.items():
+            res = audit_variant(v)
+            fails = [x for x in res if x[1] < x[2]]
+            warns = [x for x in res if x[2] <= x[1] < x[3]]
+            bad += len(fails)
+            status = ("FAIL %d" % len(fails)) if fails else "PASS"
+            lo = min(res[:5], key=lambda x: x[1])
+            print(f"{th.slug:14} {mode:5} {status:7} body text >= {lo[1]:.1f}:1"
+                  + (f"  (below AAA 7:1 on {len(warns)} surfaces -- upstream palette)" if warns else ""))
+            for label, got, floor, _ in fails:
+                print(f"    FAIL {label}: {got:.2f} < {floor}")
+    return bad
+
+# --------------------------------------------------------------- init ----
+
+
+def customised():
+    """Reasons the user has made the look their own. Any one of them means
+    first-login leaves the desktop alone and only says the themes exist."""
+    why = []
+    for f in (CONFIG / "gtk-4.0" / "gtk.css", CONFIG / "gtk-3.0" / "gtk.css"):
+        if f.exists() and f.read_text(errors="ignore").strip() and MARK_BEGIN not in f.read_text(errors="ignore"):
+            why.append(f"own {f.relative_to(HOME)}")
+    for k, label in [("/org/gnome/desktop/interface/accent-color", "chose an accent colour"),
+                     ("/org/gnome/desktop/interface/gtk-theme", "set a GTK theme"),
+                     ("/org/gnome/desktop/background/picture-uri", "chose a wallpaper"),
+                     ("/org/gnome/desktop/background/picture-uri-dark", "chose a wallpaper"),
+                     ("/org/gnome/shell/extensions/user-theme/name", "uses a Shell theme")]:
+        if dconf_read(k) is not None and label not in why:
+            why.append(label)
+    for u in parse_gv_list(dconf_read("/org/gnome/Ptyxis/profile-uuids")):
+        pal = dconf_read(f"/org/gnome/Ptyxis/Profiles/{u}/palette")
+        if pal and not pal.strip("'").startswith("pulsar-"):
+            why.append("chose a terminal palette")
+            break
+    bt = CONFIG / "btop" / "btop.conf"
+    if bt.exists() and re.search(r'^color_theme\s*=\s*"(?!Default|TTY|.*pulsar-)', bt.read_text(), re.M):
+        why.append("chose a btop theme")
+    return why
+
+
+def notify(summary, body):
+    """Queue a notification for pulsar-theme-notice.service. `init` runs
+    before the Shell exists, so there is nobody to hand it to yet; the notice
+    unit delivers it once the session is up, and keeps it for the next login
+    if delivery fails. One file, so it can never be shown twice."""
+    atomic_write(STATE / "notice.json", json.dumps({"summary": summary, "body": body}).encode())
+
+
+def cmd_notice():
+    f = STATE / "notice.json"
+    if not f.exists():
+        return
+    n = json.loads(f.read_text())
+    out = _gdbus("pulsar-theme", "0", "preferences-desktop-appearance-symbolic", n["summary"], n["body"],
+                 "[]", "{}", "15000", dest="org.freedesktop.Notifications", path="/org/freedesktop/Notifications",
+                 method="org.freedesktop.Notifications.Notify")
+    if out is None:
+        sys.exit("pulsar-theme: notification service not reachable; keeping the notice for next login")
+    f.unlink()
+
+
+# The picker's shortcut. Super+Shift+T is free in stock GNOME 50 (checked
+# against every keybinding schema the Shell, mutter and settings-daemon ship);
+# `init` still checks the ACCOUNT, because a user may have taken it.
+PICKER_ACCEL = "<Super><Shift>t"
+PICKER_CMD = "/usr/libexec/pulsar/pulsar-theme-picker"
+MK = "/org/gnome/settings-daemon/plugins/media-keys"
+PICKER_PATH = f"{MK}/custom-keybindings/pulsar-theme-picker/"
+KEYBINDING_SCHEMAS = ["org.gnome.desktop.wm.keybindings", "org.gnome.shell.keybindings",
+                      "org.gnome.mutter.keybindings", "org.gnome.mutter.wayland.keybindings",
+                      "org.gnome.settings-daemon.plugins.media-keys"]
+
+
+def _accel_key(a):
+    mods = frozenset(m.lower() for m in re.findall(r"<([^>]+)>", a))
+    mods = frozenset({"primary": "control", "ctrl": "control"}.get(m, m) for m in mods)
+    return mods, re.sub(r"<[^>]+>", "", a).lower()
+
+
+def accel_taken(accel):
+    """Who, if anyone, in THIS account already answers to `accel`."""
+    want = _accel_key(accel)
+    for schema in KEYBINDING_SCHEMAS:
+        r = subprocess.run(["gsettings", "list-recursively", schema], capture_output=True, text=True)
+        for ln in r.stdout.splitlines():
+            for a in re.findall(r"'([^']*)'", ln):
+                if a and _accel_key(a) == want:
+                    return ln.split()[1]
+    for path in parse_gv_list(gsettings_get("org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings")):
+        b = dconf_read(path.rstrip("/") + "/binding")
+        if b and _accel_key(b.strip("'")) == want:
+            return f"custom shortcut {path}"
+    return None
+
+
+def bind_picker(tx):
+    """Add the picker shortcut through the same transaction, so `revert`
+    removes it. Returns True if bound."""
+    if not pathlib.Path(PICKER_CMD).exists() or accel_taken(PICKER_ACCEL):
+        return False
+    cur = parse_gv_list(gsettings_get("org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"))
+    if PICKER_PATH not in cur:
+        tx.set(f"{MK}/custom-keybindings", "[" + ", ".join(gv_str(x) for x in cur + [PICKER_PATH]) + "]")
+    tx.set(PICKER_PATH + "name", gv_str("Theme picker"))
+    tx.set(PICKER_PATH + "command", gv_str(PICKER_CMD))
+    tx.set(PICKER_PATH + "binding", gv_str(PICKER_ACCEL))
+    return True
+
+
+def cmd_init(theme="pulsar", force=False):
+    """First login. Runs once (stamped); the user unit calls this before the
+    Shell starts. A fresh account gets the full Pulsar theme through the
+    engine; an account that has made its look its own is left alone."""
+    stamp = STATE / "init.json"
+    if stamp.exists() and not force:
+        print(f"pulsar-theme: init already done ({json.loads(stamp.read_text()).get('result')})")
+        return
+    why = customised()
+    rec = {"at": datetime.datetime.now().isoformat(timespec="seconds")}
+    if why:
+        rec.update(result="skipped", reasons=why)
+        print(f"pulsar-theme: first login, but this account has its own look ({'; '.join(why)}); leaving it alone")
+        notify("Pulsar themes are available",
+               "Your own look was kept. Browse them from Themes in the app grid, or run: pulsar theme list")
+    else:
+        cmd_set(load_theme(theme), restart_policy="note")
+        tx = Transaction()
+        bound = bind_picker(tx)
+        if bound:
+            tx.commit()
+        rec.update(result="applied", theme=theme, shortcut=PICKER_ACCEL if bound else None)
+        print("pulsar-theme: picker shortcut " + ("Super+Shift+T" if bound else "not set (taken in this account)"))
+        notify("Pulsar theme applied",
+               ("Super+Shift+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colours. "
+               "pulsar theme revert puts stock GNOME back.")
+    atomic_write(stamp, json.dumps(rec, indent=1).encode())
+
+# --------------------------------------------------------------- commands ----
+
+
+def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask"):
+    selected = [t for t in TARGETS if (t.name in only if only else t.default)]
+    unknown = set(only or []) - {t.name for t in TARGETS}
+    if unknown:
+        sys.exit(f"pulsar-theme: unknown target(s): {', '.join(sorted(unknown))}")
+    if variant != "both" and variant not in theme.variants:
+        print(f"  note: {theme.name} has no {variant} palette; using {theme.prefer}", file=sys.stderr)
+        variant = theme.prefer
+    tx = Transaction(dry=dry)
+    applied = []
+    # Render EVERYTHING before touching anything: a broken template or theme
+    # aborts here with the desktop untouched.
+    for t in selected:
+        if not t.available():
+            print(f"  skip {t.name}: not available here")
+            continue
+        t.apply(tx, theme, variant)
+        applied.append(t.name)
+    # Files the previous theme generated that this one does not (its palette,
+    # scheme, btop theme) go, so switching never accumulates stale files.
+    if only is None:
+        for f in current_state().get("files", []):
+            if pathlib.Path(f) not in tx.files:
+                tx.remove(f)
+    print(f"pulsar-theme: {theme.name} ({variant}) -> {', '.join(applied)}")
+    tx.commit()
+    if not dry:
+        st = {"theme": theme.slug, "name": theme.name, "variant": variant, "targets": applied,
+              "applied": datetime.datetime.now().isoformat(timespec="seconds"),
+              "files": sorted(str(f) for f, c in tx.files.items() if c is not None) if only is None
+              else current_state().get("files", []),
+              "wallpaper_index": wallpaper_index if wallpaper_index is not None else
+              (current_state().get("wallpaper_index", 0) if current_state().get("theme") == theme.slug else 0)}
+        atomic_write(STATE / "current.json", json.dumps(st, indent=1).encode())
+        if {"gtk4", "gtk3"} & set(applied) and restart_policy != "none":
+            after_switch(restart_policy)
+
+
+def cmd_render(theme, out):
+    """Render every target's files into `out` (HOME-shaped), touching nothing."""
+    global CONFIG, DATA, STATE
+    out = pathlib.Path(out).resolve()
+    CONFIG, DATA, STATE = out / ".config", out / ".local/share", out / ".local/state/pulsar-theme"
+    tx = Transaction(dry=True)
+    for t in TARGETS:
+        t.apply(tx, theme, "both")
+    for p, c in tx.files.items():
+        if c is not None:
+            atomic_write(p, c)
+            print(p)
+    for k, v in tx.keys.items():
+        print(f"dconf {k} = {v}")
+
+
+def cmd_cycle(step):
+    themes = sorted(find_themes())
+    cur = current_state().get("theme")
+    i = (themes.index(cur) + step) % len(themes) if cur in themes else 0
+    cmd_set(load_theme(themes[i]))
+
+
+def cmd_bg_next():
+    st = current_state()
+    if not st:
+        sys.exit("pulsar-theme: no theme applied")
+    th = load_theme(st["theme"])
+    idx = st.get("wallpaper_index", 0) + 1
+    st["wallpaper_index"] = idx
+    atomic_write(STATE / "current.json", json.dumps(st, indent=1).encode())
+    cmd_set(th, st["variant"], only=["wallpaper"], wallpaper_index=idx, restart_policy="none")
+
+
+def cmd_list():
+    cur = current_state().get("theme")
+    for slug, path in find_themes().items():
+        try:
+            t = Theme(path)
+            vs = "+".join(m for m in ("dark", "light") if m in t.variants)
+            sw = " ".join(ansi_swatch(t.variants[t.prefer][k]) for k in
+                          ("background", "accent", "red", "green", "yellow", "blue", "magenta", "cyan"))
+            print(f"{'*' if slug == cur else ' '} {slug:24} {sw}  {t.name} [{vs}]")
+        except Exception as e:
+            print(f"! {slug:24} broken: {e}")
+
+
+def ansi_swatch(c):
+    r, g, b = (round(v * 255) for v in (c.r, c.g, c.b))
+    return f"\x1b[48;2;{r};{g};{b}m  \x1b[0m" if sys.stdout.isatty() else c.hex
+
+
+def cmd_targets():
+    for t in TARGETS:
+        print(f"{t.name:14} {'on ' if t.default else 'opt'} {'ok  ' if t.available() else 'n/a '} {t.desc}\n{'':19}{t.live}")
+
+# ---------------------------------------------------------------- import ----
+
+
+def fetch(src):
+    if re.match(r"https?://", src):
+        with urllib.request.urlopen(src, timeout=20) as r:
+            return r.read().decode()
+    return pathlib.Path(src).read_text()
+
+
+def parse_flat_yaml(text):
+    """Enough YAML for base16/base24 schemes: scalars and one nested map."""
+    out, nest = {}, None
+    for ln in text.splitlines():
+        if not ln.strip() or ln.lstrip().startswith("#"):
+            continue
+        m = re.match(r'^(\s*)([A-Za-z0-9_-]+)\s*:\s*("[^"]*"|\'[^\']*\'|[^#]*?)\s*(#.*)?$', ln)
+        if not m:
+            continue
+        ind, k, v = len(m.group(1)), m.group(2), m.group(3).strip().strip('"').strip("'")
+        if ind == 0:
+            if v == "":
+                nest = out.setdefault(k, {})
+            else:
+                out[k], nest = v, None
+        elif nest is not None:
+            nest[k] = v
+    return out
+
+
+def base16_to_palette(pal):
+    """tinted-theming styling guidelines: which base slot means what."""
+    h = {k.lower(): "#" + v.lstrip("#").lower() for k, v in pal.items() if re.fullmatch(r"base[0-9a-fA-F]{2}", k)}
+    m = {"background": "base00", "background_raised": "base01", "selection": "base02", "muted": "base03",
+         "foreground_dim": "base04", "foreground": "base05", "foreground_bright": "base07", "red": "base08", "orange": "base09", "yellow": "base0a",
+         "green": "base0b", "cyan": "base0c", "blue": "base0d", "magenta": "base0e", "brown": "base0f",
+         "accent": "base0d",
+         # base24 extras
+         "background_sunken": "base10", "background_deep": "base11", "bright_red": "base12",
+         "bright_yellow": "base13", "bright_green": "base14", "bright_cyan": "base15",
+         "bright_blue": "base16", "bright_magenta": "base17"}
+    return {k: h[v] for k, v in m.items() if v in h}
+
+
+def cmd_import_base16(src, slug=None, accent=None, out_root=None, overrides=None):
+    y = parse_flat_yaml(fetch(src))
+    pal = y.get("palette") if isinstance(y.get("palette"), dict) else y
+    name = y.get("name") or y.get("scheme") or "Imported"
+    author = y.get("author", "")
+    p = base16_to_palette(pal)
+    if len(p) < 16:
+        sys.exit(f"pulsar-theme: {src} does not look like a base16/base24 scheme")
+    for kv in overrides or []:
+        k, _, v = kv.partition("=")
+        p[k.strip()] = p.get(v.strip(), v.strip())
+    if accent:
+        p["accent"] = p.get(accent, accent)
+    hue_audit(p, src)
+    bg = Color.parse(p["background"])
+    variant = y.get("variant") or ("light" if bg.lum() > 0.4 else "dark")
+    slug = slug or re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    write_theme(slug, name, author, f"base16 import: {src}", {variant: p}, out_root)
+
+
+EXPECTED_HUE = {"red": 20, "orange": 55, "yellow": 90, "green": 140, "cyan": 195, "blue": 255, "magenta": 310}
+
+
+def hue_audit(p, src):
+    """base16 slots are semantic only by convention, and popular schemes break
+    it (Tokyo Night's base08 is a pale blue-white). Terminal red that is not
+    red is a real usability bug, so say so and name the fix."""
+    for k, want in EXPECTED_HUE.items():
+        if k not in p:
+            continue
+        L, a, b = Color.parse(p[k]).oklab()
+        chroma = math.hypot(a, b)
+        hue = math.degrees(math.atan2(b, a)) % 360
+        off = min(abs(hue - want), 360 - abs(hue - want))
+        if chroma < 0.03 or off > 70:
+            print(f"  warning: {k} is {p[k]} (oklch hue {hue:.0f}, chroma {chroma:.2f}) -- not {k}. "
+                  f"Fix with --set {k}=#rrggbb", file=sys.stderr)
+
+
+def write_theme(slug, name, author, source, variants, out_root=None, walls=None):
+    root = pathlib.Path(out_root) if out_root else DATA / "pulsar" / "themes"
+    d = root / slug
+    d.mkdir(parents=True, exist_ok=True)
+    wp = {}
+    for mode, p in variants.items():
+        files = []
+        for i, w in enumerate(walls or []):
+            dst = d / "backgrounds" / w.name
+            dst.parent.mkdir(exist_ok=True)
+            shutil.copy2(w, dst)
+            files.append(f"backgrounds/{w.name}")
+        # Always generate one wallpaper from the palette, so every theme is a
+        # complete look out of the box: the wallpaper is most of what a theme feels like.
+        v = Variant(mode, p)
+        (d / f"wallpaper-{mode}.svg").write_text(generated_wallpaper(v))
+        files.append(f"wallpaper-{mode}.svg")
+        wp[mode] = files
+    lines = [f'name = "{name}"', f'author = "{author}"', f'source = "{source}"',
+             f'prefer = "{next(iter(variants))}"', ""]
+    for mode, p in variants.items():
+        lines.append(f"[{mode}]")
+        for k in PALETTE_KEYS + SURFACE_KEYS:
+            if k in p:
+                lines.append(f'{k} = "{p[k]}"')
+        lines.append("")
+    lines.append("[wallpaper]")
+    for mode, files in wp.items():
+        lines.append(f"{mode} = [{', '.join(json.dumps(f) for f in files)}]")
+    (d / "theme.toml").write_text("\n".join(lines) + "\n")
+    Theme(d / "theme.toml")  # validate
+    print(f"pulsar-theme: imported {name} -> {d}")
+
+
+def generated_wallpaper(v):
+    """A resolution-independent SVG from the palette: deep ground, two soft
+    blooms in the accent and magenta, and the palette read left to right as a
+    thin spectrum line (the Pulsar footer motif). GNOME loads SVG wallpapers
+    through gdk-pixbuf's librsvg loader."""
+    bg, deep = v["background"].hex, v["background_deep"].hex
+    a, m, c = v["accent"].hex, v["magenta"].hex, v["cyan"].hex
+    stops = [v[k].hex for k in ("red", "orange", "yellow", "green", "cyan", "blue", "magenta")]
+    grad = "".join(f'<stop offset="{i / (len(stops) - 1):.3f}" stop-color="{s}"/>' for i, s in enumerate(stops))
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="3840" height="2160" viewBox="0 0 3840 2160">
+<defs>
+ <radialGradient id="g" cx="50%" cy="45%" r="75%"><stop offset="0" stop-color="{bg}"/><stop offset="1" stop-color="{deep}"/></radialGradient>
+ <radialGradient id="a" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="{a}" stop-opacity="0.55"/><stop offset="1" stop-color="{a}" stop-opacity="0"/></radialGradient>
+ <radialGradient id="m" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="{m}" stop-opacity="0.40"/><stop offset="1" stop-color="{m}" stop-opacity="0"/></radialGradient>
+ <radialGradient id="c" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="{c}" stop-opacity="0.22"/><stop offset="1" stop-color="{c}" stop-opacity="0"/></radialGradient>
+ <linearGradient id="s" x1="0" x2="1" y1="0" y2="0">{grad}</linearGradient>
+</defs>
+<rect width="3840" height="2160" fill="url(#g)"/>
+<ellipse cx="2750" cy="760" rx="1500" ry="1100" fill="url(#a)"/>
+<ellipse cx="980" cy="1600" rx="1400" ry="900" fill="url(#m)"/>
+<ellipse cx="1900" cy="1080" rx="900" ry="700" fill="url(#c)"/>
+<rect x="0" y="2148" width="3840" height="12" fill="url(#s)" opacity="0.9"/>
+</svg>
+"""
+
+# ------------------------------------------------------------------ main ----
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="pulsar-theme", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("set")
+    s.add_argument("theme")
+    s.add_argument("--variant", choices=["both", "dark", "light"], default="both")
+    s.add_argument("--only", help="comma-separated targets")
+    s.add_argument("--with", dest="extra", help="also apply these opt-in targets (e.g. flatpak)")
+    s.add_argument("--dry-run", action="store_true")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--restart", dest="restart", action="store_const", const="restart",
+                   help="gracefully restart open GTK apps without asking")
+    g.add_argument("--no-restart", dest="restart", action="store_const", const="note", help="never ask; print the note")
+    sub.add_parser("list")
+    ra = sub.add_parser("restart-apps", help="list (or with --yes, gracefully restart) GTK apps holding the old palette")
+    ra.add_argument("--yes", action="store_true")
+    ra.add_argument("--json", action="store_true")
+    cf = sub.add_parser("config", help="show or change preferences (~/.config/pulsar/theme.conf)")
+    cf.add_argument("key", nargs="?")
+    cf.add_argument("value", nargs="?")
+    au = sub.add_parser("audit", help="WCAG contrast checks for themes (exit 1 on failure)")
+    au.add_argument("themes", nargs="*")
+    sub.add_parser("notice", help="deliver the notification init queued (pulsar-theme-notice.service)")
+    it = sub.add_parser("init", help="first-login: apply the Pulsar theme once, unless the look is already customised")
+    it.add_argument("--theme", default="pulsar")
+    it.add_argument("--force", action="store_true")
+    sub.add_parser("next")
+    sub.add_parser("prev")
+    sub.add_parser("bg-next")
+    sub.add_parser("current")
+    rv = sub.add_parser("revert")
+    rv.add_argument("--to", choices=["stock", "image"], default="stock",
+                    help="stock: upstream GNOME (default); image: Pulsar's image defaults")
+    sub.add_parser("targets")
+    r = sub.add_parser("render")
+    r.add_argument("theme")
+    r.add_argument("out")
+    i = sub.add_parser("import")
+    i.add_argument("kind", choices=["base16"])
+    i.add_argument("src")
+    i.add_argument("--name")
+    i.add_argument("--accent", help="palette key or hex to use as accent (base16)")
+    i.add_argument("--into", help="themes root to write into (default: user themes dir)")
+    i.add_argument("--set", action="append", help="override a palette key: red=#f7768e (base16)")
+    a = ap.parse_args(argv)
+
+    if a.cmd == "set":
+        only = a.only.split(",") if a.only else None
+        if a.extra:
+            only = (only or [t.name for t in TARGETS if t.default]) + a.extra.split(",")
+        cmd_set(load_theme(a.theme), a.variant, only, a.dry_run, restart_policy=a.restart or "ask")
+    elif a.cmd == "restart-apps":
+        restart, manual = open_gtk_apps()
+        if a.json and not a.yes:
+            print(json.dumps({"restart": restart, "manual": manual}))
+        elif a.yes:
+            res = restart_apps(restart)
+            if a.json:
+                print(json.dumps([{"id": x["id"], "outcome": o} for x, o in res]))
+            else:
+                for x, o in res:
+                    print(f"{x['name']}: {o}")
+        else:
+            for x in restart:
+                print(f"restartable  {x['id']}  ({x['name']})")
+            for x in manual:
+                print(f"manual       {x['id']}  ({x['name']})")
+    elif a.cmd == "config":
+        if a.key and a.value:
+            conf_put(a.key, a.value)
+        for k in CONF_DEFAULTS:
+            if not a.key or a.key == k:
+                print(f"{k} = {conf_get(k)}")
+        print(f"# {CONF}")
+    elif a.cmd == "audit":
+        sys.exit(1 if cmd_audit(a.themes or sorted(find_themes())) else 0)
+    elif a.cmd == "init":
+        cmd_init(a.theme, a.force)
+    elif a.cmd == "notice":
+        cmd_notice()
+    elif a.cmd == "list":
+        cmd_list()
+    elif a.cmd in ("next", "prev"):
+        cmd_cycle(1 if a.cmd == "next" else -1)
+    elif a.cmd == "bg-next":
+        cmd_bg_next()
+    elif a.cmd == "current":
+        print(json.dumps(current_state(), indent=1) or "none")
+    elif a.cmd == "revert":
+        revert(a.to)
+    elif a.cmd == "targets":
+        cmd_targets()
+    elif a.cmd == "render":
+        cmd_render(load_theme(a.theme), a.out)
+    elif a.cmd == "import":
+        cmd_import_base16(a.src, a.name, a.accent, a.into, a.set)
+
+
+if __name__ == "__main__":
+    main()
