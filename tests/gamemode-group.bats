@@ -227,7 +227,7 @@ EOF
     # res=success in the audit log. Without the copy, this test hangs the unit
     # in its retry loop forever.
     printf 'proto:1000:/bin/bash\n' > "$PASSWD_DB"
-    ! grep -q '^gamemode:' "$PULSAR_ETC_GROUP"
+    if grep -q '^gamemode:' "$PULSAR_ETC_GROUP"; then echo 'fixture already has the group'; false; fi
     run "$SCRIPT"
     [ "$status" -eq 0 ]
     [[ "$output" == *"copied gamemode into"* ]]

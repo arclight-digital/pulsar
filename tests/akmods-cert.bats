@@ -43,7 +43,7 @@ seed_decoy() {
     run "$SCRIPT"
     [ "$status" -eq 0 ]
     cmp -s "$PULSAR_MOK" "$PUB"
-    ! grep -q decoy "$PRIV"
+    if grep -q decoy "$PRIV"; then echo "decoy key survived"; false; fi
     grep -q '^placeholder:' "$PRIV"
     [[ "$output" == *"replacing ${PUB}"* ]]
     [[ "$output" == *"replacing ${PRIV}"* ]]

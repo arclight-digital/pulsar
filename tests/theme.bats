@@ -64,7 +64,7 @@ setup() {
     run python3 "$ENGINE" list
     [ "$status" -eq 0 ]
     [ "$(printf '%s\n' "$output" | wc -l)" -ge 16 ]
-    ! printf '%s\n' "$output" | grep -q '^!'
+    [ -z "$(printf '%s\n' "$output" | grep '^!')" ]
     # every theme follows Dark Style except the one-sided ones: Dracula and
     # Alucard as upstream ships them, and the two CRT phosphors
     [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 4 ]
