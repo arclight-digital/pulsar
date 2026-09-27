@@ -1291,20 +1291,45 @@ def _alive(pid):
     return st.rsplit(")", 1)[1].split()[0] not in ("Z", "X")   # a zombie has exited
 
 
+# Apps that stay resident in --gapplication-service mode and ignore their quit
+# action there (measured: Files was still running 30 s after it), keeping the
+# old palette until told to quit their own way. Whether one has a window open
+# cannot be told reliably over D-Bus (Files keeps a hidden window object), so
+# they are not relaunched: they start again on demand, in the new colours.
+SERVICE_QUIT = {"org.gnome.Software": ["gnome-software", "--quit"],
+                "org.gnome.Nautilus": ["nautilus", "--quit"]}
+
+
 def restart_apps(apps, wait=6.0):
-    """Ask each app to quit; relaunch the ones that did. Returns [(app, outcome)]."""
+    """Ask each app to quit; relaunch the ones that did. Returns [(app, outcome)].
+
+    Success is the OLD PROCESS being gone, not the bus name: a D-Bus-activated
+    app (Files) is started again on demand the moment anything asks for it,
+    so its name can be owned by a fresh instance before we look. That fresh
+    instance already has the new palette, and is not launched a second time."""
     for a in apps:
         _gdbus("quit", "[]", "{}", dest=a["id"], path=a["path"], method="org.gtk.Actions.Activate")
+        if a["id"] in SERVICE_QUIT:
+            try:
+                subprocess.run(SERVICE_QUIT[a["id"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=5, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
     pending, out = {a["id"]: a for a in apps}, []
     end = time.time() + wait
     while pending and time.time() < end:
         time.sleep(0.25)
         for i in list(pending):
-            gone = "false" in (_bus("NameHasOwner", i) or "")
-            # and the process itself: relaunching while the old one is still
+            # the process itself: relaunching while the old one is still
             # writing its session state races it (seen with Text Editor)
-            if gone and not _alive(pending[i]["pid"]):
-                a = pending.pop(i)
+            if _alive(pending[i]["pid"]):
+                continue
+            a = pending.pop(i)
+            if i in SERVICE_QUIT:
+                out.append((a, "closed; reopen it and it is in the new colours"))
+            elif "true" in (_bus("NameHasOwner", i) or ""):
+                out.append((a, "restarted"))  # re-activated on demand already
+            else:
                 cmd = ["flatpak", "run", a["id"]] if a["flatpak"] else desktop_exec(a["desktop"])
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                 out.append((a, "restarted"))
