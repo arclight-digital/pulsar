@@ -253,11 +253,15 @@ const first = THEMES[0];
   .inner::before {
     content: '';
     position: absolute;
-    inset: 4% -35% 12%;
+    inset: 4% -35% 4%;
     z-index: -1;
     pointer-events: none;
+    /* closest-side: the ellipse ends inside the box on every side, so it has
+       faded to nothing before the box's edge. A fixed 50% radius from a 55%
+       centre ran past the bottom edge while still dark, and the box cut it
+       off as a hard line above the look picker. */
     background: radial-gradient(
-      ellipse 50% 50% at 50% 55%,
+      ellipse closest-side at 50% 55%,
       color-mix(in oklab, var(--bg-deep) 78%, transparent) 0%,
       color-mix(in oklab, var(--bg-deep) 52%, transparent) 45%,
       transparent 100%
