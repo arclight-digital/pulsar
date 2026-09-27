@@ -1,13 +1,13 @@
 // The site in a Pulsar theme: one theme's palette in, the full set of ARC
 // tokens out -- surfaces, text ramp, borders, accents, the chip family, the
 // code blocks -- as a stylesheet. Never ARC's parts: only the tokens its
-// two-colour contract and base.css already read.
+// two-color contract and base.css already read.
 //
 // Contrast is fitted, not hoped for. Every text token is checked against the
 // surface it sits on and pulled toward the foreground until it clears WCAG AA
-// (4.5:1); the link/accent colour is pulled the same way. So a low-contrast
+// (4.5:1); the link/accent color is pulled the same way. So a low-contrast
 // palette (Solarized, Everforest light) still reads, and the theme stays
-// recognisably itself -- only lightness moves, toward its own foreground.
+// recognizably itself -- only lightness moves, toward its own foreground.
 //
 // Selectors are prefixed `html:root` so they outrank both tokens.css and
 // ARC's [data-theme] rules whatever order the stylesheets land in -- the
@@ -113,7 +113,7 @@ function fixedDark(v: Variant): string {
   const fg = hex(v.fg);
   const surfaces = [bg, deep, raised];
   // ARC re-derives the accent inside a fixed-dark region from the brand
-  // colour at a fixed lightness (base.css, the @supports block), which knows
+  // color at a fixed lightness (base.css, the @supports block), which knows
   // nothing about this palette; so the region gets the theme's own accent,
   // fitted to its dark surfaces with the same headroom as the page.
   const accent = hex(v.accent);

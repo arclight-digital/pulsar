@@ -40,7 +40,7 @@ const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'
       </section>
 
       <section class="chapter" id="secure-boot">
-        <h2>Enrol the key, once</h2>
+        <h2>Enroll the key, once</h2>
         <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
         <p class="lede">
           The nvidia image's driver is signed with Pulsar's key so Secure&nbsp;Boot can stay on.
@@ -55,7 +55,7 @@ const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'
               <code>mokutil</code> asks for a password you will retype at the firmware screen on the
               next boot — used once, then never again.
             </p>
-            <arc-code-block class="theme-fixed-dark" language="bash" filename="enrol" code={ENROL}></arc-code-block>
+            <arc-code-block class="theme-fixed-dark" language="bash" filename="enroll" code={ENROL}></arc-code-block>
             </div>
           </li>
           <li>
@@ -71,7 +71,7 @@ const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'
               ))}
             </p>
             <p class="hint">
-              Miss the prompt and nothing breaks — the enrolment just doesn't happen. Run the import
+              Miss the prompt and nothing breaks — the enrollment just doesn't happen. Run the import
               again.
             </p>
             </div>
@@ -92,8 +92,8 @@ const MOK = ['Enroll MOK', 'View key 0', 'Continue', 'Yes', 'password', 'reboot'
 
         <arc-alert variant="warning" heading="Lost the key later?">
           A BIOS update can clear the whole MOK list. On the nvidia image the recovery is GNOME
-          Software's own Secure Boot prompt: it enrols <code>/etc/pki/akmods/certs/public_key.der</code>,
-          and a boot-time unit keeps that file equal to <code>MOK.der</code>, so the prompt enrols the
+          Software's own Secure Boot prompt: it enrolls <code>/etc/pki/akmods/certs/public_key.der</code>,
+          and a boot-time unit keeps that file equal to <code>MOK.der</code>, so the prompt enrolls the
           right key. If you would rather not trust a stranger's key at all, the standard image needs
           none — and the repo is MIT-licensed to fork with your own.
         </arc-alert>

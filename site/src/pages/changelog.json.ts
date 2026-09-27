@@ -2,7 +2,7 @@
 // committed it. The page renders a capped list; this is the whole thing, and
 // the hint under the changelog section links straight to it.
 //
-// Served from the source file byte for byte (?raw, not a re-serialised import)
+// Served from the source file byte for byte (?raw, not a re-serialized import)
 // so what a reader downloads is what the build host wrote.
 import raw from '../data/changelog.json?raw';
 

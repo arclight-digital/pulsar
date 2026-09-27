@@ -85,7 +85,7 @@ await Promise.all(
 //
 // v2's files are each cropped to their own art plus 3%, so pulsar-mark-light
 // (no glow) has a tighter box than pulsar-animated-large (glow), and neither
-// box is centred on the core. theme.ts swaps one for the other in the same
+// box is centered on the core. theme.ts swaps one for the other in the same
 // 180px <img>, which as supplied would draw the light mark 15% larger and
 // shift its core by ~13px -- the mark would visibly jump on every theme flip,
 // and the flywheel's transform-origin (Hero.astro) could only be right for

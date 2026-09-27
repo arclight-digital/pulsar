@@ -2,7 +2,7 @@
 // The site-wide picker: a small floating trigger on every page, opening a
 // sheet with two independent choices.
 //
-//   Theme      recolours the whole site through ARC's tokens (never its
+//   Theme      recolors the whole site through ARC's tokens (never its
 //              parts), remembered across pages; dark-first, as the image
 //              lists them. Single-mode themes say so and set the page's mode.
 //   Wallpaper  the home page's sky: Pulsar's live shader in any of its four
@@ -12,7 +12,7 @@
 //
 // arc-sheet is modal: the page behind is inert (so focus stays in the
 // sheet), Escape closes it, and focus returns to the trigger. Its scrim is
-// kept light through its own custom properties so the recolour behind it is
+// kept light through its own custom properties so the recolor behind it is
 // visible while choosing. Every swatch carries the theme's name as text.
 import { THEMES, label, tileAttrs, variant } from '../data/themes';
 
@@ -30,7 +30,7 @@ const modeNote = (t: (typeof THEMES)[number]) =>
 <arc-sheet side="right" heading="Make it yours" class="picker-sheet" data-picker>
   <section class="grp" aria-labelledby="pk-theme">
     <h2 class="grp-h" id="pk-theme">Theme</h2>
-    <p class="grp-note">Recolours this whole site, the way <code>pulsar theme set</code> recolours your desktop.</p>
+    <p class="grp-note">Recolors this whole site, the way <code>pulsar theme set</code> recolors your desktop.</p>
     <ul class="themes" role="list">
       {
         THEMES.map((t) => {
@@ -140,7 +140,7 @@ const modeNote = (t: (typeof THEMES)[number]) =>
 
   .picker-sheet {
     --sheet-width: min(420px, 92vw);
-    /* light scrim: the recolour behind the sheet should stay visible */
+    /* light scrim: the recolor behind the sheet should stay visible */
     --sheet-backdrop: rgba(0, 0, 0, 0.18);
     --sheet-backdrop-filter: none;
   }

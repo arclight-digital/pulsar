@@ -5,8 +5,8 @@
 //
 // It advances on its own, slowly, until someone touches the deck; from then
 // on it is theirs. Stepping by hand also picks the theme for the rest of the
-// page (the pulsar:theme event); the idle drift does not, because recolouring
-// a page nobody asked to recolour is noise. Reduced motion: no drift at all,
+// page (the pulsar:theme event); the idle drift does not, because recoloring
+// a page nobody asked to recolor is noise. Reduced motion: no drift at all,
 // and the stills swap without a fade (the stylesheet drops the transition).
 import { detailOf, pick } from './themes';
 

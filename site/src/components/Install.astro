@@ -6,7 +6,7 @@ import DownloadRow from './DownloadRow.astro';
 import { IMAGES, ISOS } from '../data/site';
 
 interface Props {
-  /** the home page links to /install for the key enrolment; /install is it */
+  /** the home page links to /install for the key enrollment; /install is it */
   compact?: boolean;
 }
 
@@ -38,9 +38,9 @@ const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
       Then reboot. The nvidia image's driver comes signed —{' '}
       {
         compact ? (
-          <a href="/install#secure-boot">enrol its key once</a>
+          <a href="/install#secure-boot">enroll its key once</a>
         ) : (
-          <a href="#secure-boot">enrol its key once</a>
+          <a href="#secure-boot">enroll its key once</a>
         )
       }{' '}
       and keep Secure&nbsp;Boot&nbsp;on.

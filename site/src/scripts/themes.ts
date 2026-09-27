@@ -1,5 +1,5 @@
 // Picking a theme -- from the floating picker, the showcase tiles or a hero
-// control -- recolours the WHOLE site (scripts/sitetheme.ts), swaps the
+// control -- recolors the WHOLE site (scripts/sitetheme.ts), swaps the
 // showcase preview to that theme's desktop, and follows it with the command.
 //
 // One source of truth for "which theme is showing": a pulsar:theme event on
@@ -117,7 +117,7 @@ export function initThemes(): void {
   });
 
   // A theme remembered from an earlier page: the pre-paint script already put
-  // its colours on; this re-applies (a new build may have refined them) and
+  // its colors on; this re-applies (a new build may have refined them) and
   // brings the picker, tiles and preview into line. No toast -- nothing was
   // picked just now.
   const stored = storedTheme();

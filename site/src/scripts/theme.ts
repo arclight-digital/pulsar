@@ -61,7 +61,7 @@ function reflect(): void {
   // each take the drawing made for their size.
   //
   // Light theme gets STATIC marks. The brand package has no animated -light
-  // cut, and recolouring the dark animation would be exactly the derived
+  // cut, and recoloring the dark animation would be exactly the derived
   // light art the package's authored -light files exist to replace. The
   // animated cuts carry their own CSS: an <img> runs animation inside the SVG
   // but exposes nothing to page CSS, and the file's own prefers-reduced-motion

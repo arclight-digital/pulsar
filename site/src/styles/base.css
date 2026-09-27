@@ -1,7 +1,7 @@
 /* Page ground rules and the handful of utilities that cross every component
  * boundary. Anything that belongs to one section lives in that component's
  * scoped <style> block instead. Every value is an ARC UI token or one of
- * Pulsar's own from tokens.css -- a literal here is a colour no theme can
+ * Pulsar's own from tokens.css -- a literal here is a color no theme can
  * reach. */
 
 * {

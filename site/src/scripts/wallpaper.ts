@@ -1,5 +1,5 @@
 // The wallpaper, chosen apart from the theme. A visitor can wear one theme's
-// colours over another theme's wallpaper -- Nord over Pulsar's Silk, say.
+// colors over another theme's wallpaper -- Nord over Pulsar's Silk, say.
 // Site-only; the OS pairs each theme with its own wallpapers.
 //
 //   "pulsar"  the live shader, in whichever look (Silk/Leak/Satin/Holo)

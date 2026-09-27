@@ -246,7 +246,7 @@ const first = THEMES[0];
   /* A soft wash of the page's deepest ground behind the text column. The live
      sky runs the wallpaper shader, whose luminous filaments are bright enough
      to fight the tagline and the pitch where they cross it; the wash calms the
-     centre and fades out long before the edges, so the sky still reads as
+     center and fades out long before the edges, so the sky still reads as
      alive around the words. --bg-deep follows the page theme (ink on dark,
      star on light) and the site-wide theme picker, so it never shows as a
      dark box on a light page. */
@@ -258,7 +258,7 @@ const first = THEMES[0];
     pointer-events: none;
     /* closest-side: the ellipse ends inside the box on every side, so it has
        faded to nothing before the box's edge. A fixed 50% radius from a 55%
-       centre ran past the bottom edge while still dark, and the box cut it
+       center ran past the bottom edge while still dark, and the box cut it
        off as a hard line above the look picker. */
     background: radial-gradient(
       ellipse closest-side at 50% 55%,
@@ -273,8 +273,8 @@ const first = THEMES[0];
     height: 180px;
     width: 180px;
     margin-bottom: var(--space-lg);
-    /* The core, not the box centre: the files are cropped to their art, so
-       the core is off-centre in its box and a spin about 50% 50% makes it
+    /* The core, not the box center: the files are cropped to their art, so
+       the core is off-center in its box and a spin about 50% 50% makes it
        orbit. --mark-origin is computed from the SVG at build time (see the
        frontmatter), so a new logo drop cannot leave it pointing at the old
        core. The light mark is staged on the same box, so one origin serves

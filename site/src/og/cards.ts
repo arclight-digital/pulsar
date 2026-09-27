@@ -92,7 +92,7 @@ export const CARDS: Card[] = [
       // Each comment is the CLI's own help text for that command (cli.astro's
       // USAGE, which is verbatim from cli/pulsar), trimmed to fit.
       lines: [
-        { cmd: 'pulsar theme set tokyo-night', note: 're-colour the whole desktop' },
+        { cmd: 'pulsar theme set tokyo-night', note: 're-color the whole desktop' },
         { cmd: 'pulsar doctor', note: 'health snapshot' },
         { cmd: 'sudo pulsar rollback', note: 'boot the previous deployment' },
       ],

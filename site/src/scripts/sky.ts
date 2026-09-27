@@ -18,7 +18,7 @@ import { THEMES, type Variant } from '../data/themes';
 // The sky wears the theme the visitor picked: its deep/bg ground, and its
 // accent plus two supporting hues (the shader mixes them in OKLab). Pulsar
 // itself sends nothing -- u_palette_on stays 0 and the brand constants in the
-// shader draw exactly the brand sky. Eight colours, no extra noise.
+// shader draw exactly the brand sky. Eight colors, no extra noise.
 type RGB = [number, number, number];
 type Palette = { hi: RGB; mid: RGB; deep: RGB; alt: RGB; ga: RGB; gb: RGB; da: RGB; db: RGB };
 const hex = (h: string): RGB => {
