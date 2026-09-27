@@ -61,6 +61,15 @@ transaction:
 - two Shell stylesheets in `~/.local/state/pulsar-theme/shell/`, which the
   extension layers over the stock Shell theme and swaps on Dark Style
 
+- terminal coding agents, where one is set up: Claude Code (`~/.claude.json`
+  `theme`), Gemini CLI (`~/.gemini/settings.json` `ui.theme`) and opencode
+  (`~/.config/opencode/tui.json` `theme`) are set to draw with the terminal's
+  16 colors, so they wear the Ptyxis palette, which is this theme. Light
+  themes give Claude Code and Gemini their own light theme instead: their
+  ANSI light modes draw text in color 7, which every light palette puts a
+  shade off the background. Redone on a Dark Style flip, like GTK3. Revert
+  takes back only that key, and a theme the user picked in the agent since
+  is theirs. `--without agents` leaves them alone
 - a read-only grant on `~/.config/gtk-4.0` and `~/.config/gtk-3.0` in the
   global Flatpak override, so Flatpak apps (most of GNOME's own apps here)
   read the same gtk.css. It is the one sandbox the engine widens, so it can

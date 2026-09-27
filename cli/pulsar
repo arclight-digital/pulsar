@@ -3390,7 +3390,8 @@ usage: pulsar theme <command>
   list                      the themes, with swatches; * marks the current one
   set <theme>               recolor the desktop: accent, light/dark, GTK4 and
                             GTK3 apps, Ptyxis, btop, Text Editor, the top bar
-                            and quick settings, the wallpaper
+                            and quick settings, the wallpaper, and coding
+                            agents (Claude Code, Gemini CLI, opencode)
     --variant dark|light    pin one variant (default: follow Dark Style)
     --restart | --no-restart
                             open GTK apps keep the old colors until they

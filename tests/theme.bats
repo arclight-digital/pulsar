@@ -493,3 +493,74 @@ PY
     python3 "$ENGINE" follow-scheme
     [ "$(sha256sum "$XDG_CONFIG_HOME/gtk-3.0/gtk.css")" = "$before" ]
 }
+
+# --- agents: coding agents draw with the terminal's colors ---------------
+
+agent_homes() {
+    printf '{\n  "numStartups": 3,\n  "projects": {}\n}\n' > "$HOME/.claude.json"
+    mkdir -p "$HOME/.gemini" "$XDG_CONFIG_HOME/opencode"
+}
+jkey() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
+for p in sys.argv[2].split("."): d = d.get(p) if isinstance(d, dict) else None
+print("" if d is None else d)' "$1" "$2"; }
+
+@test "agents: each installed agent is set to the terminal's colors, and nothing else of its config moves" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    agent_homes
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(jkey "$HOME/.claude.json" theme)" = dark-ansi ]
+    [ "$(jkey "$HOME/.claude.json" numStartups)" = 3 ]
+    [ "$(jkey "$HOME/.gemini/settings.json" ui.theme)" = ANSI ]
+    [ "$(jkey "$XDG_CONFIG_HOME/opencode/tui.json" theme)" = system ]
+}
+
+@test "agents: light avoids the ANSI themes that draw text in color 7" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    agent_homes
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(jkey "$HOME/.claude.json" theme)" = light ]
+    [ "$(jkey "$HOME/.gemini/settings.json" ui.theme)" = "Default Light" ]
+}
+
+@test "agents: a Dark Style flip redoes them, like GTK3" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    agent_homes
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme >/dev/null
+    [ "$(jkey "$HOME/.claude.json" theme)" = light ]
+}
+
+@test "agents: none installed means no agent config is created" {
+    fake_dconf
+    run python3 "$ENGINE" set pulsar --no-restart
+    [ "$status" -eq 0 ]
+    [ ! -e "$HOME/.claude.json" ]
+    [ ! -e "$HOME/.gemini" ]
+    [ ! -e "$XDG_CONFIG_HOME/opencode/tui.json" ]
+}
+
+@test "agents: revert takes back only the theme key, keeps a later choice, and removes files it made" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    agent_homes
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    # the user picks their own theme in opencode afterwards
+    printf '{"theme": "tokyonight"}\n' > "$XDG_CONFIG_HOME/opencode/tui.json"
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ -z "$(jkey "$HOME/.claude.json" theme)" ]
+    [ "$(jkey "$HOME/.claude.json" numStartups)" = 3 ]
+    [ ! -e "$HOME/.gemini/settings.json" ]
+    [ "$(jkey "$XDG_CONFIG_HOME/opencode/tui.json" theme)" = tokyonight ]
+}
+
+@test "agents: a config that is not JSON is left alone" {
+    fake_dconf
+    printf 'not json {' > "$HOME/.claude.json"
+    run python3 "$ENGINE" set pulsar --no-restart
+    [ "$status" -eq 0 ]
+    [ "$(cat "$HOME/.claude.json")" = "not json {" ]
+}

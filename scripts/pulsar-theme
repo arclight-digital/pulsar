@@ -484,11 +484,12 @@ class Transaction:
         base.setdefault("wrote", {})
         for p, undo in self.shared.items():
             rec = base["shared"].setdefault(str(p), {"existed": p.exists(), **undo, "orig": {}})
-            if undo["kind"] in ("conf", "keyfile"):
+            if undo["kind"] in ("conf", "keyfile", "json"):
                 text = uread(p)
                 for k in undo["keys"]:
                     if k not in rec["orig"]:
                         rec["orig"][k] = (conf_value(text, k) if undo["kind"] == "conf"
+                                          else json_get(text, k) if undo["kind"] == "json"
                                           else _kf_get(text, undo["group"], k))
             elif undo["kind"] == "list":
                 text = uread(p)
@@ -549,11 +550,13 @@ class Transaction:
         base["wrote"].update({k: dconf_read(k) for k in self.keys})
         base.pop("inflight", None)
         for p, undo in self.shared.items():
-            if undo["kind"] in ("conf", "keyfile"):
+            if undo["kind"] in ("conf", "keyfile", "json"):
                 text = uread(p)
                 rec = base["shared"][str(p)].setdefault("wrote", {})
                 for k in undo["keys"]:
-                    rec[k] = conf_value(text, k) if undo["kind"] == "conf" else _kf_get(text, undo["group"], k)
+                    rec[k] = (conf_value(text, k) if undo["kind"] == "conf"
+                              else json_get(text, k) if undo["kind"] == "json"
+                              else _kf_get(text, undo["group"], k))
         atomic_write(self.base_manifest, json.dumps(base, indent=1).encode())
         for desc, fn in self.after:
             try:
@@ -670,6 +673,19 @@ def revert(to="stock"):
                 else:
                     text = (_kf_remove(text, rec["group"], k) if v is None
                             else _kf_edit(text, rec["group"], k, lambda _o, v=v: v))
+        elif rec["kind"] == "json":
+            for k, v in rec["orig"].items():
+                if k in rec.get("wrote", {}) and json_get(text, k) != rec["wrote"][k]:
+                    print(f"  kept     {p}: {k} (changed since the theme set it)")
+                    continue
+                try:
+                    text = json_set(text, k, v)
+                except ValueError:
+                    print(f"  kept     {p}: not JSON any more, left as it is")
+                    break
+            # a file the engine created, now back to nothing: it goes
+            if not rec["existed"] and text.strip() in ("{}", ""):
+                text = ""
         elif rec["kind"] == "list":
             cur = [x for x in (_kf_get(text, rec["group"], rec["key"]) or "").split(";") if x]
             keep = [x for x in cur if x not in rec.get("added", [])]
@@ -800,6 +816,44 @@ def managed(path, block):
     old = re.sub(re.escape(MARK_BEGIN) + r".*?" + re.escape(MARK_END) + r"\n?", "", old, flags=re.S)
     old = old.rstrip() + ("\n\n" if old.strip() else "")
     return old + MARK_BEGIN + "\n" + block.rstrip() + "\n" + MARK_END + "\n"
+
+def json_get(text, key):
+    """A dotted key's value in a JSON document, or None. Unparseable text is
+    treated as absent: the engine never rewrites a file it cannot read."""
+    try:
+        obj = json.loads(text) if text.strip() else {}
+    except ValueError:
+        return None
+    for part in key.split("."):
+        if not isinstance(obj, dict) or part not in obj:
+            return None
+        obj = obj[part]
+    return obj
+
+
+def json_set(text, key, value):
+    """Set (value not None) or remove a dotted key, keeping every other key
+    and their order. Raises on text that is not a JSON object, so a file the
+    user broke is left alone rather than replaced."""
+    obj = json.loads(text) if text.strip() else {}
+    if not isinstance(obj, dict):
+        raise ValueError("not a JSON object")
+    parts = key.split(".")
+    chain = [obj]
+    for part in parts[:-1]:
+        if value is None and not isinstance(chain[-1].get(part), dict):
+            return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
+        chain.append(chain[-1].setdefault(part, {}))
+    if value is None:
+        chain[-1].pop(parts[-1], None)
+        # and the parents it leaves empty ({"ui": {}} is not a setting)
+        for parent, part in zip(reversed(chain[:-1]), reversed(parts[:-1])):
+            if parent.get(part) == {}:
+                parent.pop(part)
+    else:
+        chain[-1][parts[-1]] = value
+    return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
+
 
 # -------------------------------------------------------------- targets ----
 
@@ -1027,8 +1081,55 @@ class Flatpak(Target):
         return True
 
 
+class Agents(Target):
+    """Terminal coding agents draw their own colors. Where one can draw with
+    the terminal's 16 ANSI colors instead, it is set to, so it wears whatever
+    Ptyxis wears -- which is this theme. Only agents that are already set up
+    here: a config file is never created for an agent nobody installed.
+
+      Claude Code  ~/.claude.json "theme": dark-ansi. Light gets Claude's own
+                   "light": its light-ansi draws code in ANSI color 7, which
+                   every light palette puts a shade off the background
+                   (anthropics/claude-code#40905).
+      Gemini CLI   ~/.gemini/settings.json ui.theme: "ANSI"; light gets
+                   "Default Light", for the same reason until checked.
+      opencode     ~/.config/opencode/tui.json theme: "system", which follows
+                   the terminal in both variants.
+
+    Like GTK3 it is written for the scheme in effect, and follow-scheme
+    redoes it when Dark Style flips."""
+    name, desc, live = "agents", "coding agents (Claude Code, Gemini CLI, opencode) use the terminal's colors", "next time the agent starts"
+
+    def plan(self, mode):
+        dark = mode == "dark"
+        out = []
+        if (HOME / ".claude.json").is_file():
+            out.append((HOME / ".claude.json", "theme", "dark-ansi" if dark else "light"))
+        if (HOME / ".gemini").is_dir():
+            out.append((HOME / ".gemini" / "settings.json", "ui.theme", "ANSI" if dark else "Default Light"))
+        if (CONFIG / "opencode").is_dir():
+            out.append((CONFIG / "opencode" / "tui.json", "theme", "system"))
+        return out
+
+    def available(self):
+        return bool(self.plan("dark"))
+
+    def apply(self, tx, theme, vm):
+        mode = (current_scheme() if theme.both else theme.prefer) if vm == "both" else vm
+        mode = mode if mode in theme.variants else theme.prefer
+        for path, key, value in self.plan(mode):
+            text = uread(path) if path.exists() else ""
+            try:
+                new = json_set(text, key, value)
+            except ValueError:
+                print(f"pulsar-theme: {path} is not JSON; leaving it alone", file=sys.stderr)
+                continue
+            if json_get(text, key) != value:
+                tx.edit(path, new, {"kind": "json", "keys": [key]})
+
+
 FLATPAK_ITEMS = ["xdg-config/gtk-4.0:ro", "xdg-config/gtk-3.0:ro"]
-TARGETS = [Scheme(), Gtk4(), Gtk3(), Ptyxis(), SourceView(), Wallpaper(), Shell(), Btop(), Flatpak()]
+TARGETS = [Scheme(), Gtk4(), Gtk3(), Ptyxis(), SourceView(), Wallpaper(), Shell(), Btop(), Flatpak(), Agents()]
 
 # --------------------------------------------------------------- helpers ----
 
@@ -1612,14 +1713,15 @@ def cmd_follow_scheme():
     its own. On a flip, redo just that half. A no-op unless a two-variant
     theme is applied in "both" mode with gtk3 among its targets."""
     st = current_state()
-    if not st.get("theme") or st.get("variant", "both") != "both" or "gtk3" not in st.get("targets", []):
+    redo = [t for t in ("gtk3", "agents") if t in st.get("targets", [])]
+    if not st.get("theme") or st.get("variant", "both") != "both" or not redo:
         return
     try:
         theme = load_theme(st["theme"])
     except SystemExit:
         return
     if theme.both:
-        cmd_set(theme, "both", ["gtk3"], restart_policy="none")
+        cmd_set(theme, "both", redo, restart_policy="none")
 
 
 def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask", extra=None,
