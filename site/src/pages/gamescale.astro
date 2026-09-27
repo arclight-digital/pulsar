@@ -1,9 +1,10 @@
 ---
 import Gamescale from '../components/Gamescale.astro';
 import Base from '../layouts/Base.astro';
+import { APP_ID, ORG_ID } from '../data/site';
 
 const DESCRIPTION =
-  'gamescale gives a game your screen’s real resolution under fractional scaling, then puts the desktop back when it quits — even when it doesn’t quit cleanly.';
+  'gamescale gives each game your screen’s real resolution under GNOME fractional scaling, and puts the scale back when it quits — even if the game dies.';
 
 const FLATPAK_ERR =
   '$ flatpak run --command=sh --filesystem=/usr/bin/gamescale:ro com.valvesoftware.Steam\nF: Not sharing "/usr/bin/gamescale" with sandbox: Path "/usr" is reserved by Flatpak';
@@ -12,14 +13,16 @@ const JSONLD = [
     '@type': 'TechArticle',
     headline: 'gamescale',
     description: DESCRIPTION,
-    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
-    author: { '@type': 'Organization', name: 'Arclight Digital LLC', url: 'https://arclight.build' },
+    about: { '@id': APP_ID },
+    author: { '@id': ORG_ID },
+    publisher: { '@id': ORG_ID },
+    url: new URL('/gamescale', Astro.site).href,
   },
 ];
 const SETUP = 'pulsar setup gamescale --platform steam';
 ---
 
-<Base title="gamescale — the panel’s real resolution for one game" description={DESCRIPTION} path="/gamescale" jsonLd={JSONLD}>
+<Base title="gamescale — native-resolution games with fractional scaling" crumb="gamescale" description={DESCRIPTION} path="/gamescale" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
       <arc-page-header border>

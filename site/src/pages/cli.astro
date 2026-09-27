@@ -1,8 +1,9 @@
 ---
 import Base from '../layouts/Base.astro';
+import { APP_ID, ORG_ID } from '../data/site';
 
 const DESCRIPTION =
-  'The pulsar command: themes, health checks, a diagnosis report, agent setup, updates and rollback. Reads work unprivileged; only the commands that change the system ask for root.';
+  'One command for an atomic Linux desktop: re-colour GNOME in one step, check the system’s health, set up a coding agent in a toolbox, update, and roll back.';
 
 // The CLI's own usage text, verbatim from cli/pulsar. A transcript, not a
 // retyping: if the help changes, this is the place that has to change with it.
@@ -64,14 +65,16 @@ const JSONLD = [
     '@type': 'TechArticle',
     headline: 'The pulsar command',
     description: DESCRIPTION,
-    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
-    author: { '@type': 'Organization', name: 'Arclight Digital LLC', url: 'https://arclight.build' },
+    about: { '@id': APP_ID },
+    author: { '@id': ORG_ID },
+    publisher: { '@id': ORG_ID },
+    url: new URL('/cli', Astro.site).href,
   },
 ];
 const DEVBOX = 'pulsar setup devbox    # distrobox assemble from /usr/share/pulsar/distrobox.ini';
 ---
 
-<Base title="The pulsar command — Pulsar’s CLI, explained" description={DESCRIPTION} path="/cli" jsonLd={JSONLD}>
+<Base title="The pulsar command — themes, health, agents and rollback" crumb="The pulsar command" description={DESCRIPTION} path="/cli" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
       <arc-page-header border>

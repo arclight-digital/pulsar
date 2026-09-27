@@ -4,10 +4,10 @@ import Version from '../components/Version.astro';
 import Base from '../layouts/Base.astro';
 import { changelog, version } from '../data/build';
 import { arithmetic, digest } from '../data/digest';
-import { IMAGES } from '../data/site';
+import { APP_ID, IMAGES } from '../data/site';
 
 const DESCRIPTION =
-  'What changed in the latest Pulsar build: every package that moved, diffed from the SBOMs attached to the images themselves. Nothing here is written by hand.';
+  'Every package added, removed or upgraded in last night’s Pulsar build, diffed from the SBOMs attached to the images themselves. None of it is written by hand.';
 
 const lead = digest.lead;
 const extra = lead ? lead.members.length - 1 : 0;
@@ -19,12 +19,13 @@ const JSONLD = [
     name: `What changed in Pulsar ${version}`,
     description: DESCRIPTION,
     dateModified: changelog.generated,
-    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
+    about: { '@id': APP_ID },
+    url: new URL('/changelog', Astro.site).href,
   },
 ];
 ---
 
-<Base title={`Changelog — what changed in Pulsar ${version}`} description={DESCRIPTION} path="/changelog" jsonLd={JSONLD}>
+<Base title={`Pulsar ${version} changelog — every package that moved`} crumb="Changelog" description={DESCRIPTION} path="/changelog" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
       <arc-page-header border>
@@ -78,7 +79,9 @@ const JSONLD = [
         </div>
       </section>
 
-      <section class="chapter">
+      <section class="chapter" aria-labelledby="every-package">
+        {/* the outline's level between the h1 and the ledger's band h3s */}
+        <h2 class="sr-only" id="every-package">Every package that moved</h2>
         <Ledger />
         <p class="hint">
           Every row, unsummarised: <a href="/changelog.json">changelog.json</a>. The package list

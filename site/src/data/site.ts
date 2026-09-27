@@ -2,10 +2,29 @@
 // cannot leave half the page pointing at the old thing.
 export const REPO = 'https://github.com/arclight-digital/pulsar';
 
+// The site's own origin, and the only place in site/ that spells it.
+// astro.config.mjs hands it to Astro as `site`, and everything else -- the
+// canonical tags, og:url, the JSON-LD ids, the sitemap and robots.txt -- is
+// built from Astro.site or from the ids below, never retyped.
+//
 // TODO(getpulsar.dev): the site is moving to getpulsar.dev once that domain is
-// registered and live. Until then everything -- astro.config's `site`, the
-// canonical tags, the sitemap and every link -- stays on
-// pulsar.arclight.digital; change them together, in one commit, on the day.
+// registered and live. On the day, this line is the whole change inside site/.
+// Outside it, in the same change or just before:
+//   - the Worker's custom domain (Cloudflare dashboard, Domains & Routes), and
+//     a 301 from pulsar.arclight.digital/* to the same path on the new host
+//   - BUILDD_SITE_ORIGIN on helios, or the beacon's CORS check refuses the
+//     new origin and the live-build chip goes quiet
+//   - Containerfile's PULSAR_CHANGELOG_URL (what `pulsar changelog` fetches;
+//     the old host keeps working only while the redirect does)
+//   - scripts/rpm-sbom.sh's SPDX documentNamespace (an identifier, not a
+//     fetched URL; changing it is optional and only affects new SBOMs)
+//   - PRODUCT.md's domain note, and the new property in search consoles
+export const SITE = 'https://pulsar.arclight.digital';
+
+// JSON-LD node ids. Base.astro defines the nodes; pages point at them with
+// { '@id': ... } rather than repeating the objects.
+export const APP_ID = `${SITE}/#pulsar`;
+export const ORG_ID = `${SITE}/#arclight`;
 
 export const IMAGES = {
   vanilla: 'ghcr.io/arclight-digital/pulsar',

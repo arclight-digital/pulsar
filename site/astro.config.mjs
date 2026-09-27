@@ -2,11 +2,20 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import arcDsd from './integrations/arc-dsd.mjs';
+import { SITE } from './src/data/site.ts';
+import changelog from './src/data/changelog.json' with { type: 'json' };
+
+// The one date the build knows for certain: when last night's diff was
+// written. The home page and the changelog both render it, so their lastmod is
+// that stamp; the other pages change only when the repo does, and a guessed
+// date is worse than none, so they carry no lastmod at all.
+const NIGHTLY = changelog.generated ? new Date(changelog.generated).toISOString() : undefined;
 
 // Static output. The deploy target is an assets-only Cloudflare Worker (see
 // wrangler.jsonc) serving ./dist from the edge -- there is no server, so there
-// is no adapter. `site` is what canonical, og:url and the sitemap are built
-// from; crawlers resolve nothing relative, so it has to be the real origin.
+// is no adapter. `site` is what canonical, og:url, robots.txt and the sitemap
+// are built from; crawlers resolve nothing relative, so it has to be the real
+// origin. It is spelled once, in src/data/site.ts.
 //
 // The components are ARC UI web components (@arclux/arc-ui). They are
 // pre-rendered into declarative shadow DOM by the arc-dsd integration after the
@@ -19,7 +28,7 @@ export default defineConfig({
   // together, one at a time, as they were found. Fixing instances by hand
   // was whack-a-mole; keeping the whitespace costs a few KB of HTML.
   compressHTML: false,
-  site: 'https://pulsar.arclight.digital',
+  site: SITE,
   output: 'static',
   // Slash-less URLs, everywhere they appear: the nav, the canonical tags, the
   // sitemap, and what the CDN serves. `format: 'file'` writes install.html
@@ -31,13 +40,19 @@ export default defineConfig({
     arcDsd(),
     sitemap({
       // /preview/* are the hero options, rendered for choosing between and
-      // marked noindex; they are not pages anyone should land on
-      filter: (page) => !new URL(page).pathname.startsWith('/preview/'),
+      // marked noindex; they are not pages anyone should land on. Neither is
+      // the 404 page.
+      filter: (page) => {
+        const path = new URL(page).pathname;
+        return !path.startsWith('/preview/') && path !== '/404';
+      },
       // the home page and the changelog change every night; the rest when
       // the repo does
       serialize: (item) => {
         const path = new URL(item.url).pathname;
-        item.changefreq = path === '/' || path === '/changelog' ? 'daily' : 'weekly';
+        const nightly = path === '/' || path === '/changelog';
+        item.changefreq = nightly ? 'daily' : 'weekly';
+        if (nightly && NIGHTLY) item.lastmod = NIGHTLY;
         item.priority = path === '/' ? 1 : path === '/install' ? 0.9 : 0.7;
         return item;
       },

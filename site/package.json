@@ -9,7 +9,9 @@
     "dev": "npm run stage && astro dev",
     "build": "npm run stage && astro build",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "astro check",
+    "seo": "node scripts/seo-check.mjs",
+    "build:checked": "npm run build && npm run seo"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

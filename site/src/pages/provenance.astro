@@ -1,24 +1,26 @@
 ---
 import Pipeline from '../components/Pipeline.astro';
 import Base from '../layouts/Base.astro';
-import { IMAGES, REPO } from '../data/site';
+import { APP_ID, IMAGES, ORG_ID, REPO } from '../data/site';
 
 const DESCRIPTION =
-  'Every Pulsar image carries its full package list as an SPDX SBOM and is diffed package by package every night. The NVIDIA module is signed for Secure Boot and the installer ISOs with Pulsar’s release key; image signing is coming.';
+  'Every Pulsar image ships its full package list as an SPDX SBOM and is diffed package by package each night. The NVIDIA module and ISOs are signed; images aren’t yet.';
 
 const JSONLD = [
   {
     '@type': 'TechArticle',
     headline: 'Every Pulsar image has a paper trail',
     description: DESCRIPTION,
-    about: { '@id': 'https://pulsar.arclight.digital/#pulsar' },
-    author: { '@type': 'Organization', name: 'Arclight Digital LLC', url: 'https://arclight.build' },
+    about: { '@id': APP_ID },
+    author: { '@id': ORG_ID },
+    publisher: { '@id': ORG_ID },
+    url: new URL('/provenance', Astro.site).href,
   },
 ];
 const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
 ---
 
-<Base title="Provenance — every Pulsar image has a paper trail" description={DESCRIPTION} path="/provenance" jsonLd={JSONLD}>
+<Base title="Pulsar provenance — SBOMs and a nightly package diff" crumb="Provenance" description={DESCRIPTION} path="/provenance" jsonLd={JSONLD}>
   <main id="main" class="page">
     <arc-container size="lg">
       <arc-page-header border>
@@ -26,7 +28,9 @@ const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
         <p slot="description">The machine that runs Pulsar never compiles anything. A build machine that exists for one night builds every image and attaches its full package list, and the keys that matter never touch it.</p>
       </arc-page-header>
 
-      <section class="chapter">
+      <section class="chapter" aria-labelledby="one-night">
+        {/* the timeline's steps are level-3 headings; this is their h2 */}
+        <h2 class="sr-only" id="one-night">How one night's build runs</h2>
         <Pipeline />
       </section>
 

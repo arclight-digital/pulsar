@@ -30,7 +30,7 @@ const extra = lead ? lead.members.length - 1 : 0;
 const headline = digest.baseline ? 'First build.' : digest.quiet ? 'Nothing moved.' : lead?.label;
 
 const DESCRIPTION =
-  'Pulsar is a stylish, atomic, agentic Linux. Sixteen themes in one command, a machine you can hand to an agent, and games that just run.';
+  'A stylish, atomic, agentic Linux, built nightly on Fedora: sixteen GNOME themes in one command, a machine you can hand to a coding agent, and games that just run.';
 
 const GAMING = [
   {
@@ -76,7 +76,7 @@ const ROT = [
 ---
 
 <Base
-  title="Pulsar — stylish, atomic, agentic Linux"
+  title="Pulsar — stylish, atomic, agentic Linux, built on Fedora"
   ogTitle="Pulsar — your lighthouse in the sky"
   description={DESCRIPTION}
   path="/"
@@ -99,7 +99,7 @@ const ROT = [
         </p>
         <Inside facts={GAMING} />
         <h3 class="gs-h">
-          <img class="gs-icon" src="/assets/gamescale.svg" alt="" width="32" height="32" />
+          <img class="gs-icon" src="/assets/gamescale.svg" alt="" width="32" height="32" loading="lazy" decoding="async" />
           <span>gamescale</span>
         </h3>
         <Gamescale compact />
