@@ -388,7 +388,11 @@ void main() {
         float tid = floor(sdiag * 48.0);
         float lit = step(0.80, hash(vec2(tid, 7.0)));
         float thread = glowLine(fract(sdiag * 48.0) - 0.5, 0.09) * lit;
-        float pulse = pow(0.5 + 0.5 * sin(su * 9.0 - u_time * 0.6 + hash(vec2(tid, 3.0)) * 6.2831), 10.0);
+        // The pulse travels along the threads -- but not on the live site,
+        // where its fronts read as bands marching to the upper right across
+        // the dark sky behind the hero text. Stills never moved anyway.
+        float pt = u_time * 0.6 * (1.0 - clamp(u_live, 0.0, 1.0));
+        float pulse = pow(0.5 + 0.5 * sin(su * 9.0 - pt + hash(vec2(tid, 3.0)) * 6.2831), 10.0);
         float weftLit = step(0.90, hash(vec2(floor(su * 30.0), 11.0)));
         float glint = thread * weftLit * glowLine(fract(su * 30.0) - 0.5, 0.10);
         float satinLit = exp(-sd * 2.2);
