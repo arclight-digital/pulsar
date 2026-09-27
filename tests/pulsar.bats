@@ -1162,6 +1162,60 @@ EOF
     [[ "$output" == *"pulsar doctor"* ]]
 }
 
+# --- the nvidia image with no module loaded -------------------------------
+# A missing module on a machine that HAS an NVIDIA GPU is a module Secure Boot
+# rejected, and fails. On a machine with none it is the wrong image -- and it
+# is every GPU-less VM the boot gate tests this image on, where a fail would
+# hold back a release for being booted somewhere it cannot use its driver.
+
+# $1 = one "vendor class" pair per device
+pci_fixture() {
+    export PULSAR_SYS_PCI="${BATS_TEST_TMPDIR}/pci"
+    rm -rf "$PULSAR_SYS_PCI"; mkdir -p "$PULSAR_SYS_PCI"
+    local i=0 v c
+    while read -r v c; do
+        [ -n "$v" ] || continue
+        mkdir -p "$PULSAR_SYS_PCI/0000:00:0$i.0"
+        echo "$v" > "$PULSAR_SYS_PCI/0000:00:0$i.0/vendor"
+        echo "$c" > "$PULSAR_SYS_PCI/0000:00:0$i.0/class"
+        i=$((i + 1))
+    done <<<"$1"
+}
+
+no_module_nvidia_image() {
+    jq '.variant = "nvidia-open"' "$PULSAR_MANIFEST" > "$PULSAR_MANIFEST.new" \
+        && mv "$PULSAR_MANIFEST.new" "$PULSAR_MANIFEST"
+    export PULSAR_PROC_MODULES="${BATS_TEST_TMPDIR}/modules"
+    : > "$PULSAR_PROC_MODULES"
+}
+
+nvidia_status() { printf '%s' "$output" | jq -r '.checks[] | select(.id=="nvidia") | .status'; }
+
+@test "doctor: an NVIDIA GPU with no module loaded fails" {
+    no_module_nvidia_image
+    pci_fixture $'0x8086 0x030000\n0x10de 0x030000'
+    run "$PULSAR" doctor --json
+    [ "$(nvidia_status)" = fail ]
+}
+
+@test "doctor: the nvidia image on a machine with no NVIDIA GPU warns, and says which image fits" {
+    no_module_nvidia_image
+    # an Intel iGPU and an NVIDIA device that is not a display (an audio
+    # function on the same card is 0x0403)
+    pci_fixture $'0x8086 0x030000\n0x10de 0x040300'
+    run "$PULSAR" doctor --json
+    [ "$(nvidia_status)" = warn ]
+    [[ "$output" == *"no NVIDIA GPU"* ]]
+    [[ "$output" == *"ghcr.io/arclight-digital/pulsar:latest"* ]]
+}
+
+@test "doctor: no readable PCI bus keeps the strict reading" {
+    no_module_nvidia_image
+    export PULSAR_SYS_PCI="${BATS_TEST_TMPDIR}/no-such-bus"
+    run "$PULSAR" doctor --json
+    [ "$(nvidia_status)" = fail ]
+}
+
 # --- GPU containers (CDI) --------------------------------------------------
 # A CDI spec names every driver library by its full version, so one written
 # for another driver resolves fine and then fails inside the container. What

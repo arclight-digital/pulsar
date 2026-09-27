@@ -296,6 +296,21 @@ check_greenboot() {
     fi
 }
 
+# Is there an NVIDIA display device (vendor 0x10de, PCI class 0x03xxxx) on
+# the bus? Read from sysfs, which needs no tools. "Cannot tell" -- no sysfs,
+# as in a container -- answers yes, so doctor falls back to the stricter
+# reading rather than excusing a missing module on a guess.
+# PULSAR_SYS_PCI: the tests' fixture.
+nvidia_gpu_present() {
+    local bus="${PULSAR_SYS_PCI:-/sys/bus/pci/devices}" d
+    [ -d "$bus" ] || return 0
+    for d in "$bus"/*; do
+        [ "$(cat "$d/vendor" 2>/dev/null)" = 0x10de ] || continue
+        case "$(cat "$d/class" 2>/dev/null)" in 0x03*) return 0 ;; esac
+    done
+    return 1
+}
+
 check_nvidia() {
     local variant; variant=$(mf variant)
     case "$variant" in
@@ -312,6 +327,14 @@ check_nvidia() {
     # HOST's /proc/modules, so without it a GPU-less build host fails here
     # while a developer's nvidia laptop passes.
     if ! grep -q '^nvidia ' "${PULSAR_PROC_MODULES:-/proc/modules}" 2>/dev/null; then
+        # No module on a machine with no NVIDIA GPU is not a rejected
+        # module, it is the wrong image -- and it is also every VM this image
+        # is boot-tested on. Only a GPU that is there and unserved is a fail.
+        if ! nvidia_gpu_present; then
+            record nvidia warn "nvidia image, but this machine has no NVIDIA GPU" \
+                   "the vanilla image fits it: bootc switch ghcr.io/arclight-digital/pulsar:latest"
+            return
+        fi
         record nvidia fail "nvidia variant but no nvidia module is loaded" \
                "Secure Boot may have rejected an unsigned module: dmesg | grep -i taint"
         return
