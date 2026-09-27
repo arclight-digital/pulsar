@@ -1492,6 +1492,25 @@ def bind_picker(tx):
     return True
 
 
+# The markers a desktop session leaves in an account the first time it runs:
+# the Shell's own data dir (session state, app usage) and xdg-user-dirs'
+# config, which an autostart writes on every GNOME login. init runs BEFORE
+# gnome-session-pre.target, so on an account's very first desktop login
+# neither exists yet; on any account that has ever had a GNOME session here,
+# both do. gnome-initial-setup copies dconf, keyrings and monitors.xml into
+# the account it creates, never these, so they hold on that path too.
+SESSION_MARKERS = (DATA / "gnome-shell", CONFIG / "user-dirs.dirs")
+WELCOME_PENDING = "welcome.pending"
+
+
+def fresh_account():
+    """True only for an account whose first desktop login this is. The
+    welcome (pulsar-welcome.service) runs on exactly this and nothing else,
+    so an existing account that meets init on the update that ships it --
+    customised or not -- is never greeted as if it were new."""
+    return not any(m.exists() for m in SESSION_MARKERS)
+
+
 def cmd_init(theme="pulsar", force=False):
     """First login. Runs once (stamped); the user unit calls this before the
     Shell starts. A fresh account gets the full Pulsar theme through the
@@ -1506,10 +1525,21 @@ def cmd_init(theme="pulsar", force=False):
     # than mistake it for customisation.
     resumed = pending.exists()
     why = [] if resumed else customised()
+    # Fresh is decided once, on the first run, before anything is written: a
+    # resumed run reads the first run's answer rather than re-deciding. It
+    # also requires "apply" -- a customised account is never new -- and never
+    # holds for --force, which is someone re-running init by hand.
+    if resumed:
+        try:
+            fresh = bool(json.loads(pending.read_text() or "{}").get("fresh"))
+        except ValueError:
+            fresh = False
+    else:
+        fresh = not why and not force and fresh_account()
     if not why:
         # the decision is "apply": only now does a crash mean "finish this"
-        atomic_write(pending, json.dumps({"decision": "apply", "theme": theme}).encode())
-    rec = {"at": datetime.datetime.now().isoformat(timespec="seconds"), "resumed": resumed}
+        atomic_write(pending, json.dumps({"decision": "apply", "theme": theme, "fresh": fresh}).encode())
+    rec = {"at": datetime.datetime.now().isoformat(timespec="seconds"), "resumed": resumed, "fresh": fresh}
     if why:
         rec.update(result="skipped", reasons=why)
         print(f"pulsar-theme: first login, but this account has its own look ({'; '.join(why)}); leaving it alone")
@@ -1529,9 +1559,16 @@ def cmd_init(theme="pulsar", force=False):
             print(f"pulsar-theme: picker shortcut not set: {e}", file=sys.stderr)
         rec.update(result="applied", theme=theme, shortcut=PICKER_ACCEL if bound else None)
         print("pulsar-theme: picker shortcut " + ("Super+Shift+T" if bound else "not set (taken in this account)"))
-        notify("Pulsar theme applied",
-               ("Super+Shift+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colours. "
-               "pulsar theme revert puts stock GNOME back.")
+        if fresh:
+            # A new account gets the welcome instead, which shows the themes
+            # and the shortcut itself: one greeting, not a notification on
+            # top of a window saying the same thing. Written before the
+            # stamp, so a crash here leaves init.pending to finish the job.
+            atomic_write(STATE / WELCOME_PENDING, json.dumps({"shortcut": rec["shortcut"]}).encode())
+        else:
+            notify("Pulsar theme applied",
+                   ("Super+Shift+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colours. "
+                   "pulsar theme revert puts stock GNOME back.")
     atomic_write(stamp, json.dumps(rec, indent=1).encode())
     pending.unlink(missing_ok=True)
 

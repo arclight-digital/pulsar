@@ -1,0 +1,27 @@
+# The welcome window, on a new account's first login and never again.
+#
+# Who counts as new is decided by `pulsar-theme init` (pulsar-theme-init.service,
+# which runs earlier in the same login): only on an account's FIRST desktop
+# session -- no GNOME Shell data dir, no xdg-user-dirs config, nothing
+# customised -- does it write welcome.pending, and it writes it instead of
+# queueing its own theme notification. An existing account that gets this
+# unit in an update has had sessions, so init never writes the marker for it
+# (and if init already ran on it, init never runs again at all). See
+# fresh_account() in the engine.
+#
+# The welcome stamps %S/pulsar-welcome/shown.json and deletes the marker as
+# soon as its window is up, so a crash, a logout or Esc all count as shown.
+# The app grid's "Welcome to Pulsar" ignores both and just opens it.
+[Unit]
+Description=Pulsar: first-login welcome
+ConditionPathExists=%S/pulsar-theme/welcome.pending
+ConditionPathExists=!%S/pulsar-welcome/shown.json
+After=gnome-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/libexec/pulsar/pulsar-welcome --first-login
+
+[Install]
+WantedBy=gnome-session.target

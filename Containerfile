@@ -622,9 +622,9 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # adw-gtk3 is what lets GTK3 apps take the palette at all: stock Adwaita GTK3
 # reads different colour names and no light/dark pairing.
 # ---------------------------------------------------------------------------
-COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py /usr/libexec/pulsar/
+COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py scripts/pulsar-welcome /usr/libexec/pulsar/
 RUN set -eu; \
-    chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker; \
+    chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker /usr/libexec/pulsar/pulsar-welcome; \
     free_kb=$(df --output=avail -k / | tail -1); \
     [ "${free_kb}" -gt 1048576 ] || \
       { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
@@ -679,6 +679,7 @@ RUN set -eu; \
       case "${ext}" in *"'${u}'"*) ;; *) echo "FATAL: ${u} is not in the default enabled-extensions (${ext})"; exit 1 ;; esac; \
     done; \
     desktop-file-validate /usr/share/applications/digital.arclight.Pulsar.ThemePicker.desktop; \
+    desktop-file-validate /usr/share/applications/digital.arclight.Pulsar.Welcome.desktop; \
     echo "theme engine: $(/usr/libexec/pulsar/pulsar-theme list | wc -l) themes, audit clean, extension declares Shell ${SHELL_MAJOR}"
 
 # ---------------------------------------------------------------------------
@@ -739,6 +740,12 @@ RUN set -eu; \
 # happened once the Shell is up. Both are gated on stamps in the account's
 # state dir, so on every later login they do not even start.
 #
+# pulsar-welcome.service is --global for the same per-account reason. It runs
+# only on a new account's first login: init writes its marker for an account
+# with no earlier desktop session (see fresh_account() in the engine), in
+# place of the notice, and the welcome stamps itself shown. An existing
+# account that gets this in an update is never greeted.
+#
 # Still deliberately NOT enabled: bootc's fetch-apply-updates.timer, which
 # runs `bootc upgrade --apply` and reboots on its own, and would additionally
 # drop the layers on any system that has them. Notifying is the policy;
@@ -772,6 +779,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-gl-check.path && \
     systemctl --global enable pulsar-theme-init.service && \
     systemctl --global enable pulsar-theme-notice.service && \
+    systemctl --global enable pulsar-welcome.service && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service \
              pulsar-gamemode-group.service; do \
@@ -779,7 +787,8 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
-             pulsar-gl-check.path pulsar-theme-init.service pulsar-theme-notice.service; do \
+             pulsar-gl-check.path pulsar-theme-init.service pulsar-theme-notice.service \
+             pulsar-welcome.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

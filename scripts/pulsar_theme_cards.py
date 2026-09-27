@@ -86,10 +86,12 @@ def _load_thumb(pic, path):
 
 
 class ThemeCard(Gtk.Box):
-    def __init__(self, pt, th, current=False, width=300):
+    def __init__(self, pt, th, current=False, width=300, mode=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, css_classes=["pt-card", f"pt-{th.slug}"])
         self.theme = th
-        mode = mode_for(pt, th)
+        # `mode` lets a caller that tracks Dark Style itself (the welcome)
+        # say which variant to preview; a one-sided theme ignores it.
+        mode = mode if mode in th.variants else mode_for(pt, th)
         v = th.variants[mode]
         bg, fg, acc = v["background"], v["foreground"], v["accent"]
         acc_fg = v.p.get("accent_fg") or (bg if sum((acc.r, acc.g, acc.b)) > 1.5 else fg)

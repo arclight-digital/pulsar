@@ -130,3 +130,14 @@ picture-uri-dark='file:///usr/share/backgrounds/pulsar/pulsar-silk-dark.png'
 # lock screen has no dark-variant key; silk-dark is the brand default
 [org.gnome.desktop.screensaver]
 picture-uri='file:///usr/share/backgrounds/pulsar/pulsar-silk-dark.png'
+
+# GNOME Shell's own first-login "Welcome to GNOME" / "Take the Tour" dialog.
+# Pulsar's welcome (pulsar-welcome.service) greets a new account instead, and
+# two welcomes back to back is one too many. The Shell shows its dialog while
+# this key compares older than the running version; the schema's own
+# description (org.gnome.shell.gschema.xml, GNOME 50) names a huge number as
+# the way to disable it for good, so no future Shell release brings it back.
+# A default only: an account that has already seen the dialog has its own
+# value, which this never touches.
+[org.gnome.shell]
+welcome-dialog-last-shown-version='999999'

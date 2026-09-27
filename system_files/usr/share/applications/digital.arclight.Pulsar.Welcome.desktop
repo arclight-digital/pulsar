@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome to Pulsar
+Comment=Themes, updates and rollback, games and coding agents: a short tour
+Keywords=welcome;tour;intro;getting started;
+Exec=/usr/libexec/pulsar/pulsar-welcome
+Icon=pulsar-logo-icon
+Categories=GTK;System;
+StartupNotify=true
+X-GNOME-UsesNotifications=false

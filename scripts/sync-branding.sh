@@ -114,6 +114,14 @@ for sz in 512 256 128 64 48; do
     echo "  ${S}/icons/hicolor/${sz}x${sz}/apps/pulsar-logo-icon.png (${sz}px)"
 done
 
+# The welcome's hero mark: the large drawing, shown well above 56px, in both
+# colourings so it follows Dark Style. Vector, installed as supplied.
+echo "Welcome mark              <- svg/pulsar-mark, svg/pulsar-mark-light"
+for m in pulsar-mark pulsar-mark-light; do
+    install -Dm644 "${B}/svg/${m}.svg" "${S}/pulsar/brand/${m}.svg"
+    echo "  ${S}/pulsar/brand/${m}.svg"
+done
+
 # GDM login screen.
 #
 # NOT a hardcoded path: the greeter reads the org.gnome.login-screen "logo"

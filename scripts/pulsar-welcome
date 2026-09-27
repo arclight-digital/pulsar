@@ -1,0 +1,491 @@
+#!/usr/bin/python3
+"""pulsar-welcome -- the first-login welcome: five pages, then out of the way.
+
+Started once per account by pulsar-welcome.service with --first-login, which
+only fires on a new account's first desktop session (see that unit, and
+fresh_account() in the theme engine). With --first-login the window stamps
+$XDG_STATE_HOME/pulsar-welcome/shown.json as soon as it is up, so it never
+comes back. Without it (the "Welcome to Pulsar" entry in the app grid) it
+simply opens, stamp or no stamp.
+
+The theme page is the picker's card grid (pulsar_theme_cards.py), applying
+through `pulsar-theme set` exactly as the picker does. This window is
+libadwaita, so it re-reads the account's gtk.css after a switch and recolours
+itself: the welcome is its own demo.
+"""
+import datetime
+import json
+import os
+import pathlib
+import re
+import sys
+import time
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import pulsar_theme_engine  # noqa: E402
+
+pt = pulsar_theme_engine.load(HERE / "pulsar-theme")
+import pulsar_theme_cards as cards  # noqa: E402
+
+STATE = pt.xdg("XDG_STATE_HOME", ".local/state")
+STAMP = STATE / "pulsar-welcome" / "shown.json"
+PENDING = pt.STATE / pt.WELCOME_PENDING
+BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
+         HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
+
+CSS = """
+.wl-display { font-weight: 800; font-size: 3.1em; letter-spacing: -0.02em; }
+.wl-title { font-weight: 800; font-size: 2.3em; letter-spacing: -0.015em; }
+.wl-tagline { font-weight: 800; font-size: 1.45em; color: var(--accent-color); letter-spacing: 0.01em; }
+.wl-lede { font-size: 1.12em; opacity: 0.78; }
+.wl-kicker { font-weight: 800; font-size: 0.78em; letter-spacing: 0.16em; color: var(--accent-color); }
+.wl-h { font-weight: 800; font-size: 1.12em; }
+.wl-body { opacity: 0.78; }
+.wl-fact { padding: 14px 18px; border-radius: 18px; background-color: alpha(currentColor, 0.05); }
+.wl-fact-icon { color: var(--accent-color); }
+.wl-cmd { font-family: monospace; font-size: 0.95em; padding: 4px 10px; border-radius: 8px;
+          background-color: alpha(var(--accent-bg-color), 0.16); color: var(--accent-color); }
+.wl-rule { min-height: 1px; background-color: alpha(currentColor, 0.10); }
+.wl-pill { padding: 10px 26px; border-radius: 999px; font-weight: 800; }
+.wl-start { padding: 14px 44px; border-radius: 999px; font-weight: 800; font-size: 1.15em; }
+.wl-mark { opacity: 0; transform: translateY(14px) scale(0.96);
+           transition: opacity 700ms ease-out, transform 900ms cubic-bezier(0.16, 1, 0.3, 1); }
+.wl-mark.in { opacity: 1; transform: none; }
+.wl-rise { opacity: 0; transition: opacity 900ms ease-out 250ms; }
+.wl-rise.in { opacity: 1; }
+.wl-switchrow { padding: 10px 16px; border-radius: 999px; background-color: alpha(currentColor, 0.05); }
+.wl-bottom { padding: 14px 22px 18px; }
+"""
+
+
+def label(text, cls, xalign=0.5, wrap=True, **kw):
+    return Gtk.Label(label=text, css_classes=cls, xalign=xalign, wrap=wrap, justify=(
+        Gtk.Justification.CENTER if xalign == 0.5 else Gtk.Justification.LEFT), **kw)
+
+
+def markup(text, cls, xalign=0.5):
+    lb = label("", cls, xalign)
+    lb.set_markup(text)
+    return lb
+
+
+def page(*children, width=720, top=24):
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, valign=Gtk.Align.CENTER,
+                  margin_top=top, margin_bottom=24, margin_start=32, margin_end=32)
+    for c in children:
+        box.append(c)
+    clamp = Adw.Clamp(child=box, maximum_size=width, tightening_threshold=width - 80)
+    return Gtk.ScrolledWindow(child=clamp, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, hexpand=True,
+                              propagate_natural_height=False)
+
+
+def spacer(h):
+    return Gtk.Box(height_request=h)
+
+
+def fact(icon, head, body):
+    """One plain statement with an icon: not a list row, a small panel."""
+    b = Gtk.Box(spacing=16, css_classes=["wl-fact"])
+    b.append(Gtk.Image(icon_name=icon, pixel_size=28, valign=Gtk.Align.START, css_classes=["wl-fact-icon"],
+                       margin_top=2))
+    txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
+    txt.append(label(head, ["wl-h"], 0))
+    txt.append(markup(body, ["wl-body"], 0))
+    b.append(txt)
+    return b
+
+
+def command(cmd, what):
+    row = Gtk.Box(spacing=14)
+    row.append(Gtk.Label(label=cmd, css_classes=["wl-cmd"], valign=Gtk.Align.CENTER, width_chars=16, xalign=0))
+    row.append(label(what, ["wl-body"], 0, hexpand=True, valign=Gtk.Align.CENTER))
+    return row
+
+
+def shortcut_bound():
+    """Whether init bound Super+Shift+T in this account (it skips a taken one)."""
+    try:
+        return bool(json.loads((pt.STATE / "init.json").read_text()).get("shortcut"))
+    except (OSError, ValueError):
+        return False
+
+
+class Welcome(Adw.ApplicationWindow):
+    def __init__(self, app, first_login):
+        super().__init__(application=app, title="Welcome to Pulsar", default_width=920, default_height=780)
+        # Not css_classes=: that replaces the window's own classes, and with
+        # them libadwaita's text colour, which is the whole palette.
+        self.first_login = first_login
+        self._busy = False
+        cards.install_css()
+        prov = Gtk.CssProvider()
+        prov.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), prov,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.live = None  # the re-read gtk.css, once a theme has been picked here
+
+        tv = Adw.ToolbarView(top_bar_style=Adw.ToolbarStyle.FLAT, bottom_bar_style=Adw.ToolbarStyle.FLAT)
+        hb = Adw.HeaderBar(show_title=False)
+        skip = Gtk.Button(label="Skip", css_classes=["flat"], tooltip_text="Close the welcome (Esc)")
+        skip.connect("clicked", lambda *_: self.close())
+        hb.pack_start(skip)
+        self.skip = skip
+        tv.add_top_bar(hb)
+
+        self.carousel = Adw.Carousel(allow_scroll_wheel=False, spacing=24, vexpand=True)
+        self.pages = [self.hello(), self.themes(), self.cant_rot(), self.games_agents(), self.done()]
+        for p in self.pages:
+            self.carousel.append(p)
+        self.carousel.connect("page-changed", lambda *_: self.sync())
+        tv.set_content(self.carousel)
+
+        bottom = Gtk.CenterBox(css_classes=["wl-bottom"])
+        self.back = Gtk.Button(label="Back", css_classes=["flat", "wl-pill"])
+        self.back.connect("clicked", lambda *_: self.go(-1))
+        self.next = Gtk.Button(label="Get started", css_classes=["suggested-action", "wl-pill"])
+        self.next.connect("clicked", lambda *_: self.go(1))
+        bottom.set_start_widget(self.back)
+        bottom.set_center_widget(Adw.CarouselIndicatorDots(carousel=self.carousel))
+        bottom.set_end_widget(self.next)
+        tv.add_bottom_bar(bottom)
+        self.set_content(tv)
+
+        key = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        key.connect("key-pressed", self._esc)
+        self.add_controller(key)
+        # Bubble phase: the theme grid keeps its own arrow keys while it has focus.
+        arrows = Gtk.EventControllerKey()
+        arrows.connect("key-pressed", self._arrows)
+        self.add_controller(arrows)
+        self.connect("map", self._mapped)
+        self.sync()
+
+    # ------------------------------------------------------------ pages ----
+
+    def hello(self):
+        mark_path = None
+        for d in BRAND:
+            if (d / "pulsar-mark.svg").exists():
+                mark_path = d
+                break
+        self.mark = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, can_shrink=True, css_classes=["wl-mark"],
+                                halign=Gtk.Align.CENTER, width_request=200, height_request=200)
+        if mark_path:
+            sm = Adw.StyleManager.get_default()
+
+            def pick(*_):
+                name = "pulsar-mark.svg" if sm.get_dark() else "pulsar-mark-light.svg"
+                self.mark.set_filename(str(mark_path / name))
+            sm.connect("notify::dark", pick)
+            pick()
+        rise = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-rise"])
+        rise.append(label("Welcome to Pulsar", ["wl-display"]))
+        rise.append(label("Stylish, atomic, agentic.", ["wl-tagline"]))
+        rise.append(spacer(4))
+        rise.append(label("A desktop that looks after itself, so you can get on with the work and the play.",
+                          ["wl-lede"]))
+        self.rise = rise
+        return page(self.mark, spacer(8), rise, width=640)
+
+    def themes(self):
+        bound = shortcut_bound()
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        head.append(label("MAKE IT YOURS", ["wl-kicker"]))
+        head.append(label("Pick a look", ["wl-title"]))
+        head.append(label("One click recolours everything: apps, terminal, editor, top bar and wallpaper. "
+                          "This window changes with it.", ["wl-lede"]))
+
+        row = Gtk.Box(spacing=12, css_classes=["wl-switchrow"], halign=Gtk.Align.CENTER)
+        row.append(Gtk.Image(icon_name="weather-clear-night-symbolic"))
+        row.append(Gtk.Label(label="Dark Style", css_classes=["wl-h"]))
+        self.dark = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self.iface = None
+        try:
+            src = Gio.SettingsSchemaSource.get_default()
+            if src and src.lookup("org.gnome.desktop.interface", True):
+                self.iface = Gio.Settings(schema_id="org.gnome.desktop.interface")
+        except GLib.Error:
+            self.iface = None
+        if self.iface:
+            self.dark.set_active(self.iface.get_string("color-scheme") == "prefer-dark")
+            self.dark.connect("notify::active", self._dark_toggled)
+            self.iface.connect("changed::color-scheme", self._scheme_changed)
+        else:
+            row.set_sensitive(False)
+        row.append(self.dark)
+
+        self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.SINGLE, max_children_per_line=2,
+                                min_children_per_line=2, row_spacing=20, column_spacing=20,
+                                activate_on_single_click=True, homogeneous=True, valign=Gtk.Align.START)
+        self.flow.connect("child-activated", self.on_pick)
+        self.fill_cards()
+        # One source for "dark": libadwaita's. The cards and the re-read
+        # gtk.css follow it, so they always match the window's own text.
+        Adw.StyleManager.get_default().connect("notify::dark", self._dark_changed)
+
+        hint = markup(("<b>Super+Shift+T</b> brings these back any time." if bound else
+                       "<b>Themes</b>, in the app grid, brings these back any time.")
+                      + " <tt>pulsar theme revert</tt> puts stock GNOME back.", ["wl-body"])
+        return page(head, spacer(6), row, spacer(10), self.flow, spacer(6), hint, width=820, top=8)
+
+    @staticmethod
+    def scheme():
+        """What this window is showing, which is what the cards preview."""
+        return "dark" if Adw.StyleManager.get_default().get_dark() else "light"
+
+    def fill_cards(self):
+        cur = pt.current_state().get("theme")
+        while (c := self.flow.get_first_child()) is not None:
+            self.flow.remove(c)
+        for slug, th in pt.ordered_themes():
+            if th is None:
+                continue
+            card = cards.ThemeCard(pt, th, current=(slug == cur), width=340, mode=self.scheme())
+            child = Gtk.FlowBoxChild(child=card, css_classes=["pt-child"])
+            child.slug, child.card = slug, card
+            child.set_tooltip_text(f"pulsar theme set {slug}")
+            self.flow.append(child)
+            if slug == cur:
+                self.flow.select_child(child)
+
+    def cant_rot(self):
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        head.append(label("ATOMIC", ["wl-kicker"]))
+        head.append(label("Built not to rot", ["wl-title"]))
+        head.append(label("The system is one tested image, swapped whole. Your files and settings live apart "
+                          "from it, and updates never touch them.", ["wl-lede"]))
+        facts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        facts.append(fact("weather-clear-night-symbolic", "A new image every night",
+                          "Built fresh from the latest Fedora packages, and checked before it is published."))
+        facts.append(fact("system-reboot-symbolic", "Updates land on reboot",
+                          "A notification says when a new image is out. Updating stages it beside the "
+                          "running one, and it takes over at the next restart: nothing changes under you "
+                          "mid-session."))
+        facts.append(fact("edit-undo-symbolic", "The last good system is one reboot away",
+                          "If an update misbehaves, pick the previous entry at boot, or roll back and restart."))
+        cmds = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=6)
+        cmds.append(command("pulsar update", "fetch and stage the newest image now"))
+        cmds.append(command("pulsar doctor", "check that everything is as it should be"))
+        cmds.append(command("pulsar rollback", "go back to the previous image"))
+        return page(head, spacer(8), facts, Gtk.Box(css_classes=["wl-rule"], margin_top=8, margin_bottom=4),
+                    cmds, width=680, top=8)
+
+    def games_agents(self):
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        head.append(label("GAMES AND AGENTS", ["wl-kicker"]))
+        head.append(label("Play, and hand off the work", ["wl-title"]))
+        cols = Gtk.Box(spacing=16, homogeneous=True, margin_top=10)
+        g = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-fact"])
+        g.append(Gtk.Image(icon_name="input-gaming-symbolic", pixel_size=34, halign=Gtk.Align.START,
+                           css_classes=["wl-fact-icon"]))
+        g.append(label("Games just run", ["wl-h"], 0))
+        g.append(markup("Steam is among the default apps. GameMode, MangoHud and gamescope are part of the "
+                        "system, and <b>gamescale</b> runs a game at the panel's real resolution, then puts "
+                        "the desktop back when it exits.", ["wl-body"], 0))
+        a = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-fact"])
+        a.append(Gtk.Image(icon_name="utilities-terminal-symbolic", pixel_size=34, halign=Gtk.Align.START,
+                           css_classes=["wl-fact-icon"]))
+        a.append(label("Ready for coding agents", ["wl-h"], 0))
+        a.append(markup("<tt>pulsar setup agent</tt> installs an agent's command-line tool in a toolbox, "
+                        "away from the system. <tt>/usr/share/pulsar/AGENTS.md</tt> briefs any agent on how "
+                        "this machine works, and what it should ask you before touching.", ["wl-body"], 0))
+        cols.append(g)
+        cols.append(a)
+        return page(head, cols, width=820, top=8)
+
+    def done(self):
+        check = Gtk.Image(icon_name="object-select-symbolic", pixel_size=56, css_classes=["wl-fact-icon"])
+        start = Gtk.Button(label="Start", css_classes=["suggested-action", "wl-start"], halign=Gtk.Align.CENTER)
+        start.connect("clicked", lambda *_: self.close())
+        self.start = start
+        return page(check, label("You're set.", ["wl-display"]),
+                    label("Welcome to Pulsar reopens from the app grid whenever you want this tour again.",
+                          ["wl-lede"]), spacer(18), start, width=560)
+
+    # ------------------------------------------------------- navigation ----
+
+    def go(self, d):
+        i = round(self.carousel.get_position()) + d
+        if 0 <= i < len(self.pages):
+            self.carousel.scroll_to(self.pages[i], True)
+
+    def sync(self):
+        i = round(self.carousel.get_position())
+        last = len(self.pages) - 1
+        self.back.set_opacity(0 if i == 0 else 1)
+        self.back.set_sensitive(i > 0)
+        self.next.set_visible(i < last)
+        self.next.set_label("Get started" if i == 0 else "Next")
+        self.skip.set_visible(i < last)
+        if i == last:
+            GLib.idle_add(self.start.grab_focus)
+
+    def _esc(self, _c, kv, *_):
+        if kv == Gdk.KEY_Escape:
+            self.close()
+            return True
+        return False
+
+    def _arrows(self, _c, kv, *_):
+        if kv in (Gdk.KEY_Right, Gdk.KEY_Page_Down):
+            self.go(1)
+            return True
+        if kv in (Gdk.KEY_Left, Gdk.KEY_Page_Up):
+            self.go(-1)
+            return True
+        return False
+
+    def _mapped(self, *_):
+        GLib.timeout_add(60, self._enter)
+        if self.first_login:
+            # Shown is shown: stamp now, not on close, so a crash or a logout
+            # mid-tour can never bring it back on the next login.
+            mark_shown()
+
+    def _enter(self):
+        self.mark.add_css_class("in")
+        self.rise.add_css_class("in")
+        return False
+
+    # ------------------------------------------------------------ theme ----
+
+    def _dark_toggled(self, sw, _p):
+        want = "prefer-dark" if sw.get_active() else "default"
+        if self.iface.get_string("color-scheme") != want:
+            self.iface.set_string("color-scheme", want)
+
+    def _scheme_changed(self, *_):
+        on = self.iface.get_string("color-scheme") == "prefer-dark"
+        if self.dark.get_active() != on:
+            self.dark.set_active(on)
+
+    def _dark_changed(self, *_):
+        if self.live:
+            self.recolour()
+        self.fill_cards()
+
+    def on_pick(self, _flow, child):
+        if self._busy:
+            return
+        self._busy = True
+        self._picked = child
+        child.card.set_busy(True)
+        self.flow.set_sensitive(False)
+        proc = Gio.Subprocess.new([str(HERE / "pulsar-theme"), "set", child.slug, "--no-restart"],
+                                  Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
+        proc.communicate_utf8_async(None, None, self._set_done, child.slug)
+
+    def _set_done(self, proc, res, slug):
+        try:
+            _ok, out, _err = proc.communicate_utf8_finish(res)
+        except GLib.Error as e:
+            out = e.message
+        self._picked.card.set_busy(False)
+        self.flow.set_sensitive(True)
+        self._busy = False
+        if not proc.get_successful():
+            d = Adw.AlertDialog(heading="Could not apply the theme",
+                                body=(out or "").strip()[-600:] or f"pulsar-theme set {slug} failed")
+            d.add_response("close", "Close")
+            d.present(self)
+            return
+        self.recolour()
+        self.fill_cards()
+
+    def recolour(self, *_):
+        """GTK read gtk.css once, at startup; read it again so this window
+        wears the theme just picked. The file's two prefers-color-scheme
+        blocks are resolved here against libadwaita's own idea of dark, so
+        the palette and Adwaita's text colours can never disagree."""
+        css = pt.CONFIG / "gtk-4.0" / "gtk.css"
+        disp = Gdk.Display.get_default()
+        if self.live:
+            Gtk.StyleContext.remove_provider_for_display(disp, self.live)
+            self.live = None
+        try:
+            text = css.read_text(errors="replace")
+        except OSError:
+            return
+        prov = Gtk.CssProvider()
+        prov.load_from_string(resolve_scheme(text, Adw.StyleManager.get_default().get_dark()))
+        Gtk.StyleContext.add_provider_for_display(disp, prov, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+        self.live = prov
+
+
+def resolve_scheme(css, dark):
+    """Unwrap the @media (prefers-color-scheme: ...) block that applies and
+    drop the other; everything outside them is kept as it is."""
+    want = "dark" if dark else "light"
+    out, i = [], 0
+    pat = re.compile(r"@media\s*\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)\s*\{")
+    while (m := pat.search(css, i)):
+        out.append(css[i:m.start()])
+        depth, j = 1, m.end()
+        while j < len(css) and depth:
+            depth += {"{": 1, "}": -1}.get(css[j], 0)
+            j += 1
+        if m.group(1) == want:
+            out.append(css[m.end():j - 1])
+        i = j
+    out.append(css[i:])
+    return "".join(out)
+
+
+def mark_shown():
+    try:
+        pt.atomic_write(STAMP, json.dumps({"at": datetime.datetime.now().isoformat(timespec="seconds")}).encode())
+        PENDING.unlink(missing_ok=True)
+    except OSError as e:
+        print(f"pulsar-welcome: could not stamp {STAMP}: {e}", file=sys.stderr)
+
+
+def initial_setup_running():
+    """GNOME's own first-login setup (language, keyboard, online accounts)
+    runs in an account an administrator created, until it is done. Two
+    first-login windows at once is one too many: the welcome waits."""
+    uid = os.getuid()
+    for p in pathlib.Path("/proc").iterdir():
+        try:
+            if p.name.isdigit() and p.stat().st_uid == uid and \
+                    (p / "comm").read_text().strip() == "gnome-initial-s":   # comm is cut at 15
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def main(argv):
+    first = "--first-login" in argv[1:]
+    if first and STAMP.exists():
+        # the unit's condition already says this; a second guard costs nothing
+        PENDING.unlink(missing_ok=True)
+        return 0
+    if os.environ.get("PULSAR_WELCOME_STAMP_ONLY"):   # tests: the stamp logic without a display
+        if first:
+            mark_shown()
+        return 0
+    if first:
+        # its autostart may still be on its way up: look for a few seconds,
+        # then wait (at most an hour) for it to finish
+        deadline = time.monotonic() + 3600
+        time.sleep(3)
+        while initial_setup_running() and time.monotonic() < deadline:
+            time.sleep(2)
+    app = Adw.Application(application_id="digital.arclight.Pulsar.Welcome")
+
+    def activate(a):
+        w = a.get_active_window() or Welcome(a, first)
+        w.present()
+    app.connect("activate", activate)
+    return app.run([argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

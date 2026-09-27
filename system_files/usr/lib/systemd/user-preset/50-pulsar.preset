@@ -8,3 +8,4 @@ enable pulsar-update-check.timer
 enable pulsar-gl-check.path
 enable pulsar-theme-init.service
 enable pulsar-theme-notice.service
+enable pulsar-welcome.service
