@@ -108,6 +108,15 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .search-section-content, .app-folder-dialog, .workspace-switcher, .resize-popup {
   background-color: {{popover}}; color: {{foreground}}; }
 
+/* Calendar text is stock white in every state; the date header above it
+   too. Theme foreground here, before the dimming rules below, which then
+   take weekends and other-month days down from it. */
+.calendar .calendar-day, .calendar .calendar-day:hover, .calendar .calendar-day:active,
+.calendar .calendar-day:selected, .calendar .calendar-day:focus,
+.datemenu-today-button, .datemenu-today-button .date-label { color: {{foreground}}; }
+.calendar .calendar-month-header .calendar-month-label { color: {{foreground}} !important; }
+.calendar .calendar-day-heading, .datemenu-today-button .day-label { color: rgba({{foreground_rgb}}, 0.68); }
+
 /* Stock also hard-codes its secondary text as fixed greys (#b2b2b4,
    #9b9b9d, #afafb1, white at 50%) rather than dimming the foreground, so
    under a coloured theme the notification header, event times, weekends
