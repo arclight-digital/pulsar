@@ -110,7 +110,7 @@ def command(cmd, what):
 
 
 def shortcut_bound():
-    """Whether init bound Super+Shift+T in this account (it skips a taken one)."""
+    """Whether init bound Super+T in this account (it skips a taken one)."""
     try:
         return bool(json.loads((pt.STATE / "init.json").read_text()).get("shortcut"))
     except (OSError, ValueError):
@@ -230,7 +230,7 @@ class Welcome(Adw.ApplicationWindow):
         # gtk.css follow it, so they always match the window's own text.
         Adw.StyleManager.get_default().connect("notify::dark", self._dark_changed)
 
-        hint = markup(("<b>Super+Shift+T</b> brings these back any time." if bound else
+        hint = markup(("<b>Super+T</b> brings these back any time." if bound else
                        "<b>Themes</b>, in the app grid, brings these back any time.")
                       + " <tt>pulsar theme revert</tt> puts stock GNOME back.", ["wl-body"])
         return page(head, spacer(6), row, spacer(10), self.flow, spacer(6), hint, width=820, top=8)

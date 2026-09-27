@@ -1473,10 +1473,11 @@ def cmd_notice():
     f.unlink()
 
 
-# The picker's shortcut. Super+Shift+T is free in stock GNOME 50 (checked
-# against every keybinding schema the Shell, mutter and settings-daemon ship);
+# The picker's shortcut: Super+T, T for themes. Free in stock GNOME 50
+# (checked against every keybinding schema the Shell, mutter and
+# settings-daemon ship), so the plain chord rather than a Shift variant;
 # `init` still checks the ACCOUNT, because a user may have taken it.
-PICKER_ACCEL = "<Super><Shift>t"
+PICKER_ACCEL = "<Super>t"
 PICKER_CMD = "/usr/libexec/pulsar/pulsar-theme-picker"
 LOCK = None  # the writer lock main() takes; see there
 MK = "/org/gnome/settings-daemon/plugins/media-keys"
@@ -1588,7 +1589,7 @@ def cmd_init(theme="pulsar", force=False):
         except Exception as e:   # a shortcut is never worth an unfinished init
             print(f"pulsar-theme: picker shortcut not set: {e}", file=sys.stderr)
         rec.update(result="applied", theme=theme, shortcut=PICKER_ACCEL if bound else None)
-        print("pulsar-theme: picker shortcut " + ("Super+Shift+T" if bound else "not set (taken in this account)"))
+        print("pulsar-theme: picker shortcut " + ("Super+T" if bound else "not set (taken in this account)"))
         if fresh:
             # A new account gets the welcome instead, which shows the themes
             # and the shortcut itself: one greeting, not a notification on
@@ -1597,7 +1598,7 @@ def cmd_init(theme="pulsar", force=False):
             atomic_write(STATE / WELCOME_PENDING, json.dumps({"shortcut": rec["shortcut"]}).encode())
         else:
             notify("Pulsar theme applied",
-                   ("Super+Shift+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colours. "
+                   ("Super+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colours. "
                    "pulsar theme revert puts stock GNOME back.")
     atomic_write(stamp, json.dumps(rec, indent=1).encode())
     pending.unlink(missing_ok=True)

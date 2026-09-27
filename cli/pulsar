@@ -2164,7 +2164,7 @@ usage: pulsar theme <command>
   config [key [value]]      restart-prompt on|off
   import base16 <file|url>  add a base16/base24 scheme as your own theme
 
-The picker is Themes in the app grid (Super+Shift+T if it was free).
+The picker is Themes in the app grid (Super+T if it was free).
 Themes live in /usr/share/pulsar/themes; your own in ~/.local/share/pulsar/themes.
 EOF
 }

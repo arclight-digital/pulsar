@@ -103,7 +103,7 @@ gtk.css, Ptyxis or btop, and a unit alone would leave the first frame stock.
   the Shell starts, so its first frame is themed anyway.
 - `pulsar-theme-init.service` runs `pulsar-theme init` once per account,
   before the Shell starts. A fresh account gets the full theme, plus the
-  picker on Super+Shift+T if nothing in that account already uses it. An
+  picker on Super+T if nothing in that account already uses it. An
   account that has made its look its own -- its own gtk.css, accent,
   wallpaper, GTK or Shell theme, terminal palette or btop theme -- is left
   entirely alone.

@@ -71,7 +71,7 @@ export function pick(detail: ThemeDetail) {
 }
 
 // Once a session, the first time someone picks a theme: where the same thing
-// lives on a real Pulsar desktop. First login binds Super+Shift+T only when
+// lives on a real Pulsar desktop. First login binds Super+T only when
 // the key is free, so the line names the command too, which always works.
 function tellOnce(slug: string) {
   try {
@@ -83,7 +83,7 @@ function tellOnce(slug: string) {
   const toast = document.querySelector<HTMLElement & { show?: (o: object) => void }>('[data-theme-toast]');
   const cmd = `pulsar theme set ${slug}`;
   toast?.show?.({
-    message: `In Pulsar: Super+Shift+T, or ${cmd}`,
+    message: `In Pulsar: Super+T, or ${cmd}`,
     duration: 9000,
     actionLabel: 'Copy command',
     action: () => {
