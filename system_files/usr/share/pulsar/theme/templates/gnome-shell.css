@@ -38,6 +38,14 @@
 .search-entry:focus { box-shadow: inset 0 0 0 2px {{accent}}; }
 .ws-switcher-indicator:active, .workspace-dot:active { background-color: {{accent}}; }
 StEntry { selection-background-color: rgba({{accent_rgb}}, 0.35); }
+/* Every Shell text field (folder rename, run dialog, prompts, network
+   passwords) is stock #48484c with white text: restate it from the theme.
+   The focus ring is the theme's accent, not GNOME's nearest accent. */
+StEntry { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+StEntry:hover { background-color: rgba({{foreground_rgb}}, 0.11); color: {{foreground}}; }
+StEntry:focus { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}};
+  box-shadow: inset 0 0 0 2px rgba({{accent_rgb}}, 0.85) !important; }
+StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: rgba({{foreground_rgb}}, 0.5); }
 
 /* Stock hard-codes its own greys (#36363a popovers, #38383b dash and search,
    #222226 overview, #2e2e33 switchers) into the controls that sit ON those
@@ -99,6 +107,43 @@ StEntry { selection-background-color: rgba({{accent_rgb}}, 0.35); }
 .weather-button:hover, .message:hover { background-color: st-mix({{foreground}}, {{background_raised}}, 6%); }
 .search-section-content, .app-folder-dialog, .workspace-switcher, .resize-popup {
   background-color: {{popover}}; color: {{foreground}}; }
+
+/* Stock also hard-codes its secondary text as fixed greys (#b2b2b4,
+   #9b9b9d, #afafb1, white at 50%) rather than dimming the foreground, so
+   under a coloured theme the notification header, event times, weekends
+   and search descriptions stay grey beside themed text. Restate them as
+   the theme's foreground at two strengths. Before the accent block below:
+   today can be a weekend, and its accent text must still win. */
+.message .message-header, .message .message-header .message-header-content .event-time,
+.events-button .events-box .events-title,
+.events-button .events-box .events-list .event-box .event-time,
+.events-button .events-box .events-list .event-placeholder,
+.world-clocks-button .world-clocks-header,
+.world-clocks-button .world-clocks-grid .world-clocks-timezone,
+.weather-button .weather-box .weather-header-box .weather-header,
+.list-search-result .list-search-result-description,
+.dialog-list .dialog-list-box .dialog-list-item .dialog-list-item-description,
+.run-dialog .run-dialog-description, .search-statustext {
+  color: rgba({{foreground_rgb}}, 0.68); }
+.calendar .calendar-day.calendar-weekend, .calendar .calendar-week-number,
+.popup-inactive-menu-item:insensitive, .candidate-index {
+  color: rgba({{foreground_rgb}}, 0.6); }
+.calendar .calendar-day.calendar-other-month,
+.calendar .calendar-day.calendar-other-month.calendar-weekend,
+.device-subtitle, StEntry StLabel.hint-text, .message-media-control:insensitive,
+.message-list .message-list-placeholder {
+  color: rgba({{foreground_rgb}}, 0.45); }
+.end-session-dialog .end-session-dialog-battery-warning, .end-session-dialog .dialog-list-title,
+.prompt-dialog .prompt-dialog-error-label, .caps-lock-warning-label,
+.conflicting-session-dialog-content .conflicting-session-dialog-desc-warning {
+  color: {{yellow}}; }
+/* and the notification stack's own greys: the cards behind the top one,
+   the tile behind a themed icon, media buttons */
+.message:second-in-stack { background-color: st-mix({{background_deep}}, {{background_raised}}, 25%); }
+.message:lower-in-stack { background-color: st-mix({{background_deep}}, {{background_raised}}, 45%); }
+.message .message-box .message-icon.message-themed-icon { background-color: rgba({{foreground_rgb}}, 0.07); }
+.message-media-control:hover { background-color: rgba({{foreground_rgb}}, 0.13); }
+.message-media-control:active { background-color: rgba({{foreground_rgb}}, 0.18); }
 
 /* The dash's items are .overview-tile too, but there the tile is the whole
    column and only its .overview-icon should light up (the rules near the
