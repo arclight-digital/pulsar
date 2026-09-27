@@ -3,6 +3,24 @@
 #panel { background-color: {{background_deep}}; }
 #panel .panel-button { color: {{foreground}}; }
 #panel:overview { background-color: transparent; }
+/* The top bar's hover and pressed states are a white overlay (inset
+   box-shadow), which reads as a grey pill on a coloured bar; tint them from
+   the foreground instead. Stock restates the text white in the overview at a
+   higher specificity, so that case is restated too. The workspace dots in
+   the Activities button are fixed white. Recording and sharing indicators
+   keep stock red and orange: those colours mean something. */
+#panel .panel-button:focus, #panel .panel-button:hover,
+#panel .panel-button.clock-display:focus .clock, #panel .panel-button.clock-display:hover .clock {
+  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.14); }
+#panel .panel-button:active, #panel .panel-button:checked,
+#panel .panel-button.clock-display:active .clock, #panel .panel-button.clock-display:checked .clock {
+  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.22); }
+#panel .panel-button:active:hover, #panel .panel-button:checked:hover,
+#panel .panel-button.clock-display:active .clock:hover, #panel .panel-button.clock-display:checked .clock:hover {
+  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.26); }
+#panel:overview .panel-button, #panel:overview .panel-button.clock-display { color: {{foreground}}; }
+#panel .panel-button#panelActivities .workspace-dot,
+#panel:overview .panel-button#panelActivities .workspace-dot { background-color: {{foreground}}; }
 .popup-menu-content, .candidate-popup-content, .quick-settings {
   background-color: {{popover}}; color: {{foreground}};
   border-color: rgba({{accent_rgb}}, 0.18); }
@@ -30,6 +48,10 @@
 #dash .dash-item-container .show-apps:active .overview-icon,
 #dash .dash-item-container .overview-tile:active .overview-icon,
 #dash .dash-item-container .show-apps:checked .overview-icon { background-color: rgba({{foreground_rgb}}, 0.14); color: {{foreground}}; }
+/* running-app dots and the dash separator: stock white, now the theme's */
+.app-grid-running-dot { background-color: {{accent}}; }
+#dash .dash-separator { background-color: rgba({{foreground_rgb}}, 0.12); }
+.ws-switcher-indicator { background-color: rgba({{foreground_rgb}}, 0.5); }
 #overviewGroup { background-color: {{background_deep}}; }
 /* Workspace thumbnails draw windows only, over stock's fixed #46464e: an
    empty workspace is that grey box. Give it the theme's raised surface. */
