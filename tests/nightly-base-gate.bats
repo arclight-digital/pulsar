@@ -517,10 +517,13 @@ night() {
   make_tree
   write_index "${AMD64_NOW}" "${ARM64_NOW}"
   stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
-  night
+  PULSAR_GATE=1 night
   [ "$status" -eq 0 ]
   # Anchored exactly the way run-build.sh anchors it.
   grep -q '^no build tonight: ' <<<"$output"
+  # Gated or not, a skip is not a build waiting on the boot gate: the build
+  # host would wait an hour for a VM verdict on nothing.
+  if grep -q '^gate: pending' <<<"$output"; then false; fi
   # And no version: a skip that printed one would be recorded as a build, and
   # run-build.sh trusts the version over the skip line when both are present.
   [[ "$output" != *"this build is "* ]]

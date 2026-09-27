@@ -81,13 +81,15 @@ stub_skopeo() {
 case "$1" in
   inspect)
     case "$*" in
+      # a layout's manifest: one text per slot, so its digest is predictable
+      *--raw*oci:*) l="${*##*oci:}"; l="${l%:build}"; printf 'manifest-%s\n' "${l##*/}" ;;
       *--raw*) echo "manifest unknown"; exit 1 ;;   # the version tag is free
       *oci:*)  echo '{"Layers":["a"]}' ;;
     esac ;;
   copy)
-    df=; dst=
+    df=; dst=; src=
     while [ $# -gt 0 ]; do
-      case "$1" in --digestfile) df="$2"; shift ;; docker://*) dst="${1#docker://}" ;; esac
+      case "$1" in --digestfile) df="$2"; shift ;; docker://*) dst="${1#docker://}" ;; oci:*) src="${1#oci:}" ;; esac
       shift
     done
     tag="${dst##*:}"
@@ -99,7 +101,9 @@ case "$1" in
       [ "${FAIL_VANILLA_PUSH}" = no ] || { echo "copy ${dst} FAILED" >> "${EVENTS}"; exit 1; } ;;
     esac
     echo "copy ${dst}" >> "${EVENTS}"
-    echo "sha256:${tag}" > "${df}" ;;
+    # what a registry reports: the digest of the manifest it was given
+    src="${src%:build}"
+    echo "sha256:$(printf 'manifest-%s\n' "${src##*/}" | sha256sum | cut -d' ' -f1)" > "${df}" ;;
 esac
 exit 0
 STUB
@@ -178,4 +182,70 @@ no_event() {
   grep -qx "copy ghcr.io/arclight-digital/pulsar:${VERSION}" "${EVENTS}"
   grep -qx "copy ghcr.io/arclight-digital/pulsar-nvidia:${VERSION}" "${EVENTS}"
   no_event 'copy .*:(latest|44)$'
+}
+
+# ---------------------------------------------------------------------------
+# --promote-only: the second half of a gated night. The first half pushed
+# version tags and stopped; a VM booted them; this moves the floating tags
+# onto exactly what was booted, and builds nothing.
+# ---------------------------------------------------------------------------
+
+promote_only() {
+  run --separate-stderr env PULSAR_MIN_FREE_GB=0 "${TREE}/scripts/build.sh" \
+    --promote-only --variant all --image ghcr.io/arclight-digital/pulsar \
+    --image-nvidia ghcr.io/arclight-digital/pulsar-nvidia --work "${WORKDIR}" "$@"
+}
+
+gated_build() {
+  build --no-floating-tags
+  [ "$status" -eq 0 ] || { cat "${EVENTS}"; echo "$stderr"; false; }
+  : > "${EVENTS}"
+}
+
+@test "--promote-only moves both floating tags and builds nothing" {
+  gated_build
+  promote_only --version "${VERSION}"
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+  for t in latest 44; do
+    grep -qx "copy ghcr.io/arclight-digital/pulsar:${t}" "${EVENTS}"
+    grep -qx "copy ghcr.io/arclight-digital/pulsar-nvidia:${t}" "${EVENTS}"
+  done
+  no_event '^(build|rechunk)'
+  no_event "copy .*:${VERSION}\$"
+}
+
+@test "--promote-only refuses a layout that is not the version it was asked for" {
+  gated_build
+  promote_only --version 44.20260928.0
+  [ "$status" -ne 0 ]
+  no_event 'copy '
+}
+
+@test "--promote-only refuses a layout that is not the digest that was gated" {
+  gated_build
+  echo "sha256:0000000000000000000000000000000000000000000000000000000000000000" > "${WORKDIR}/digest-nvidia"
+  promote_only --version "${VERSION}"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"what was pushed and gated"* ]]
+  # nothing at all: checking nvidia after promoting vanilla would be the
+  # split release again
+  no_event 'copy '
+}
+
+@test "--promote-only with nothing built refuses" {
+  promote_only --version "${VERSION}"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"nothing was built here to promote"* ]]
+}
+
+@test "--promote-only with --no-floating-tags moves nothing" {
+  gated_build
+  promote_only --version "${VERSION}" --no-floating-tags
+  [ "$status" -eq 0 ]
+  no_event 'copy '
+}
+
+@test "--promote-only requires --version" {
+  promote_only
+  [ "$status" -eq 2 ]
 }

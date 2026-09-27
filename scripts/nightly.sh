@@ -45,6 +45,9 @@
 #   PULSAR_CHANNEL              scheduled | manual. REQUIRED -- see below.
 #   PULSAR_FORCE_BUILD          yes to build even when nothing the image is
 #                               made from has changed -- see anything_moved()
+#   PULSAR_GATE                 1 to stop after the version tags for the boot
+#                               gate; `nightly.sh --promote` finishes the night
+#                               once it passes. Anything else: ungated, as ever.
 #   PULSAR_MIN_FREE_GB          floor build.sh refuses to start under, in GB
 #                               (default 10, 0 disables). A full build cache
 #                               reports itself as whichever mirror the build
@@ -53,7 +56,8 @@
 # One argument, optional: --base-check answers the anything_moved() question and
 # exits without building anything. 0 it would build, 3 it would skip.
 # --preflight checks the credentials a build will need (see preflight()) and
-# exits: 0 usable, 1 not. Anything
+# exits: 0 usable, 1 not. --promote finishes a night the boot gate held: see
+# PULSAR_GATE below. Anything
 # else is refused with 2 rather than ignored -- a swallowed --manual builds and
 # publishes as scheduled, which is the one outcome this script is written to
 # prevent.
@@ -537,6 +541,61 @@ preflight() {
   return "${bad}"
 }
 
+# ---------------------------------------------------------------------------
+# Everything after the images are pushed: describe them, then say the night
+# is done. An ungated night runs it straight after build.sh; a gated one runs
+# it from --promote, once the boot gate has passed, so the changelog, the SBOM
+# baseline and the site never describe a build that was held back.
+# ---------------------------------------------------------------------------
+finish_night() {
+  # Describe what was just published: SBOMs onto the images, the changelog
+  # against last night, the page. Part of the nightly rather than a step after
+  # it -- an image nobody can inspect is a blob users are asked to trust, and a
+  # night that ships one without saying what changed has not finished.
+  case "${PULSAR_PUBLISH:-yes}" in
+    no) echo "PULSAR_PUBLISH=no -- images pushed, nothing described" >&2 ;;
+    *)
+      publish_args=(
+        --version "${VERSION}"
+        --image "${IMAGE}"
+        --image-nvidia "${IMAGE_NVIDIA}"
+        --prev-digest "${PREV_DIGEST}"
+        --work "${WORK}"
+        --branch "${PULSAR_PUBLISH_BRANCH:-main}"
+      )
+      [ "${PULSAR_PUBLISH:-yes}" = dry-run ] && publish_args+=(--dry-run)
+      # Per-build SBOMs and a changelog, but none of the moving pointers and no
+      # site commit: a manual build describes itself without becoming the baseline
+      # the next scheduled build diffs against.
+      [ "${CHANNEL}" = manual ] && publish_args+=(--no-promote)
+      [ -n "${PULSAR_GIT_TOKEN_FILE:-}" ] \
+        && publish_args+=(--git-token-file "${PULSAR_GIT_TOKEN_FILE}")
+      "${REPO}/scripts/publish.sh" "${publish_args[@]}"
+      ;;
+  esac
+
+  elapsed=$(( $(date -u +%s) - started ))
+  echo "pulsar nightly ${VERSION} finished in ${elapsed}s"
+
+  # What the operator who started this needs to know, in one place: it exists, it
+  # is pullable, and it changed nothing about what anybody else gets.
+  if [ "${CHANNEL}" = manual ]; then
+    echo
+    echo "manual build ${VERSION}:"
+    echo "  pushed        ${IMAGE}:${VERSION}"
+    echo "                ${IMAGE_NVIDIA}:${VERSION}"
+    echo "  not moved     :latest and :${FEDORA_VERSION} still point at the last scheduled build"
+    echo "  not written   the SBOM baseline, the published changelog, the site"
+    echo "  boot it       bootc switch ${IMAGE_NVIDIA}:${VERSION}"
+  fi
+
+  # NOT pinged on a manual build. This is a dead-man's switch on the TIMER: it
+  # alerts by omission, so a hand-run build that pinged it would mark the night as
+  # healthy and hide a scheduled run that never happened. The one case where doing
+  # less is the whole feature. ping_healthcheck holds that rule for both callers.
+  ping_healthcheck "${VERSION} ok in ${elapsed}s"
+}
+
 # One ping, two callers. The dead-man's switch watches the TIMER, so any night
 # the timer did its job has to ping -- including a night that looked at the
 # base and decided correctly that there was nothing to build. Omission means
@@ -604,7 +663,7 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 case "${1:-}" in
-  ""|--base-check|--preflight) ;;
+  ""|--base-check|--preflight|--promote) ;;
   --manual|--scheduled|--channel*)
     # The flag a person reaches for, named here because reaching for it is
     # reasonable and the answer is one line away.
@@ -614,7 +673,7 @@ case "${1:-}" in
     exit 2 ;;
   *)
     echo "unknown argument: ${1}" >&2
-    echo "nightly.sh takes --base-check, --preflight, or no argument at all." >&2
+    echo "nightly.sh takes --base-check, --preflight, --promote, or no argument at all." >&2
     exit 2 ;;
 esac
 
@@ -623,6 +682,32 @@ esac
 # reason the mismatch above is now a thing that can fail out loud. 3 rather
 # than 1 for "would skip": 1 is a broken run and 2 is a config error, and this
 # is neither.
+# The second half of a gated night: promote the build the gate passed, then
+# describe it. Builds nothing; refuses unless a gated first half left its
+# record here, on this channel.
+if [ "${1:-}" = --promote ]; then
+  pending="${WORK}/gate-pending.json"
+  [ -r "${pending}" ] \
+    || { echo "no ${pending}: nothing here is waiting on the boot gate" >&2; exit 1; }
+  VERSION="$(jq -r '.version // empty' "${pending}")"
+  PREV_DIGEST="$(jq -r '.prev_digest // ""' "${pending}")"
+  started="$(jq -r '.started // empty' "${pending}")"
+  [ -n "${VERSION}" ] && [ -n "${started}" ] \
+    || { echo "${pending} is not a gate record" >&2; exit 1; }
+  if [ "$(jq -r .channel "${pending}")" != "${CHANNEL}" ]; then
+    echo "${pending} is a $(jq -r .channel "${pending}") build; this is ${CHANNEL}" >&2
+    exit 1
+  fi
+  echo "promoting ${VERSION}, which passed the boot gate"
+  promote_args=(--promote-only --variant all --version "${VERSION}"
+                --image "${IMAGE}" --image-nvidia "${IMAGE_NVIDIA}" --work "${WORK}")
+  [ "${CHANNEL}" = manual ] && promote_args+=(--no-floating-tags)
+  "${REPO}/scripts/build.sh" "${promote_args[@]}"
+  finish_night
+  rm -f "${pending}"
+  exit 0
+fi
+
 if [ "${1:-}" = --preflight ]; then
   preflight && exit 0
   exit 1
@@ -721,54 +806,25 @@ build_args=(
 # nothing else. build.sh also refuses to move the floating tags onto a -dev
 # version even if this line is ever dropped.
 [ "${CHANNEL}" = manual ] && build_args+=(--no-floating-tags)
+# Gated, the floating tags wait for the boot gate; --promote moves them.
+[ "${PULSAR_GATE:-0}" = 1 ] && [ "${CHANNEL}" != manual ] && build_args+=(--no-floating-tags)
 "${REPO}/scripts/build.sh" "${build_args[@]}"
 
-# Describe what was just published: SBOMs onto the images, the changelog
-# against last night, the page. Part of the nightly rather than a step after
-# it -- an image nobody can inspect is a blob users are asked to trust, and a
-# night that ships one without saying what changed has not finished.
-case "${PULSAR_PUBLISH:-yes}" in
-  no) echo "PULSAR_PUBLISH=no -- images pushed, nothing described" >&2 ;;
-  *)
-    publish_args=(
-      --version "${VERSION}"
-      --image "${IMAGE}"
-      --image-nvidia "${IMAGE_NVIDIA}"
-      --prev-digest "${PREV_DIGEST}"
-      --work "${WORK}"
-      --branch "${PULSAR_PUBLISH_BRANCH:-main}"
-    )
-    [ "${PULSAR_PUBLISH:-yes}" = dry-run ] && publish_args+=(--dry-run)
-    # Per-build SBOMs and a changelog, but none of the moving pointers and no
-    # site commit: a manual build describes itself without becoming the baseline
-    # the next scheduled build diffs against.
-    [ "${CHANNEL}" = manual ] && publish_args+=(--no-promote)
-    [ -n "${PULSAR_GIT_TOKEN_FILE:-}" ] \
-      && publish_args+=(--git-token-file "${PULSAR_GIT_TOKEN_FILE}")
-    "${REPO}/scripts/publish.sh" "${publish_args[@]}"
-    ;;
-esac
-
-elapsed=$(( $(date -u +%s) - started ))
-echo "pulsar nightly ${VERSION} finished in ${elapsed}s"
-
-# What the operator who started this needs to know, in one place: it exists, it
-# is pullable, and it changed nothing about what anybody else gets.
-if [ "${CHANNEL}" = manual ]; then
-  echo
-  echo "manual build ${VERSION}:"
-  echo "  pushed        ${IMAGE}:${VERSION}"
-  echo "                ${IMAGE_NVIDIA}:${VERSION}"
-  echo "  not moved     :latest and :${FEDORA_VERSION} still point at the last scheduled build"
-  echo "  not written   the SBOM baseline, the published changelog, the site"
-  echo "  boot it       bootc switch ${IMAGE_NVIDIA}:${VERSION}"
+# THE BOOT GATE. With PULSAR_GATE=1 (the builder's build.env sets it) the
+# night stops here, its version tags pushed and nothing else: no :latest, no
+# changelog, no site. The build host boots each image on a throwaway VM and,
+# when both pass, runs `nightly.sh --promote`, which picks up from exactly
+# this point. `gate: pending <version>` is the line it waits for -- keep its
+# shape -- and gate-pending.json is what --promote needs to finish the night.
+if [ "${PULSAR_GATE:-0}" = 1 ]; then
+  jq -n --arg v "${VERSION}" --arg c "${CHANNEL}" --arg p "${PREV_DIGEST}" \
+        --argjson s "${started}" \
+        '{version: $v, channel: $c, prev_digest: $p, started: $s}' > "${WORK}/gate-pending.json"
+  echo "gate: pending ${VERSION}"
+  exit 0
 fi
 
-# NOT pinged on a manual build. This is a dead-man's switch on the TIMER: it
-# alerts by omission, so a hand-run build that pinged it would mark the night as
-# healthy and hide a scheduled run that never happened. The one case where doing
-# less is the whole feature. ping_healthcheck holds that rule for both callers.
-ping_healthcheck "${VERSION} ok in ${elapsed}s"
+finish_night
 
 }
 

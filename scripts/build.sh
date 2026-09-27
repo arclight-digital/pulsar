@@ -52,6 +52,13 @@
 #                       manifest extraction all read :<fedora> out of local
 #                       storage. On a workstation that repoints the local
 #                       :latest this script's own closing hint names.
+#   --promote-only      build nothing: move :<fedora> and :latest onto what an
+#                       earlier --push --no-floating-tags run of this same
+#                       --version left in --work. For the boot gate: the
+#                       build pushes version tags and stops, a VM boots them,
+#                       and this runs once they pass. Refuses unless each
+#                       layout still holds --version and its manifest is the
+#                       digest that run pushed -- the one that was gated.
 #   --allow-existing-version
 #                       publish a version tag the guard would not clear. The
 #                       push refuses by default, because that tag is the one
@@ -87,6 +94,7 @@ DO_PUSH=no
 DO_WALLPAPERS=yes
 NO_FLOATING_TAGS=no
 ALLOW_EXISTING_VERSION=no
+PROMOTE_ONLY=no
 IMAGE="${IMAGE:-localhost/pulsar}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:-localhost/pulsar-nvidia}"
 SIGNER_URL="${PULSAR_SIGNER_URL:-}"
@@ -109,6 +117,7 @@ while [ $# -gt 0 ]; do
     --work)              WORK="${2:?}"; shift ;;
     --no-wallpapers)     DO_WALLPAPERS=no ;;
     --no-floating-tags)  NO_FLOATING_TAGS=yes ;;
+    --promote-only)      PROMOTE_ONLY=yes ;;
     --allow-existing-version) ALLOW_EXISTING_VERSION=yes ;;
     vanilla|nvidia|all)  VARIANT="$1" ;;
     # From the header itself, not a line range: the range was '2,50p' and the
@@ -120,6 +129,10 @@ while [ $# -gt 0 ]; do
 done
 
 case "${VARIANT}" in vanilla|nvidia|all) ;; *) echo "bad --variant" >&2; exit 2 ;; esac
+if [ "${PROMOTE_ONLY}" = yes ] && [ -z "${VERSION}" ]; then
+  echo "--promote-only requires --version: it promotes one build, and checks it is that one" >&2
+  exit 2
+fi
 if [ "${DO_PUSH}" = yes ] && [ -z "${VERSION}" ]; then
   echo "--push requires --version: the content assertion reads the stamp back" >&2
   exit 2
@@ -687,6 +700,48 @@ finish_vanilla_ship() {
   cat "${SHIP_LOG}"
   [ "${rc}" -eq 0 ] || { echo "vanilla failed its checks or its push (exit ${rc})" >&2; exit "${rc}"; }
 }
+
+# ---------------------------------------------------------------------------
+# --promote-only: the second half of a gated night. Nothing is built; the
+# layouts the first half left are checked to be the build that was gated,
+# then promoted exactly as an ungated night promotes them.
+# ---------------------------------------------------------------------------
+promote_only() {
+  local -a slots=()
+  { [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; } && slots+=(vanilla)
+  { [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; } && slots+=(nvidia)
+  local slot image want got
+  # Every check before any promotion: a refusal after vanilla had moved would
+  # be the split release this exists to prevent.
+  for slot in "${slots[@]}"; do
+    [ -f "${WORK}/${slot}/index.json" ] \
+      || { echo "no ${slot} layout in ${WORK}: nothing was built here to promote" >&2; exit 1; }
+    [ -s "${WORK}/digest-${slot}" ] \
+      || { echo "no digest-${slot} in ${WORK}: the ${slot} version tag was never pushed" >&2; exit 1; }
+    assert_content "${slot}" "${slot}"
+    want="$(cat "${WORK}/digest-${slot}")"
+    got="sha256:$(skopeo inspect --raw "oci:${WORK}/${slot}:build" | sha256sum | cut -d' ' -f1)"
+    if [ "${got}" != "${want}" ]; then
+      echo "the ${slot} layout is ${got}, but ${want} is what was pushed and gated" >&2
+      echo "refusing to promote something other than what was checked" >&2
+      exit 1
+    fi
+  done
+  if [ "${NO_FLOATING_TAGS}" = yes ]; then
+    say "--no-floating-tags: nothing floating to promote for ${VERSION}"
+    return 0
+  fi
+  say "promoting ${VERSION} to :${FEDORA_VERSION} and :latest"
+  for slot in "${slots[@]}"; do
+    image="${IMAGE}"; [ "${slot}" = nvidia ] && image="${IMAGE_NVIDIA}"
+    promote "${image}" "${slot}"
+  done
+}
+
+if [ "${PROMOTE_ONLY}" = yes ]; then
+  promote_only
+  exit 0
+fi
 
 check_space
 note_space "start"
