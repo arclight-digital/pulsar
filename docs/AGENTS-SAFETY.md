@@ -258,6 +258,22 @@ Without a checkpoint:
   and `mv` carry the old SELinux label with them, and a file labelled
   `user_home_t` in `/etc` gets its reader denied.
 
+## The MCP server
+
+`pulsar mcp` is an MCP server on stdio, and `pulsar agent add` registers it
+with each agent that speaks MCP (Claude Code, Codex, Gemini CLI, opencode),
+as an entry named `pulsar` written only if none exists. Its tools are the
+CLI's own `--json` answers: `doctor`, `status`, `manifest`, `report`,
+`crashes`, `update_check`, `agent_status`, `theme_list`, `theme_current`,
+and the guide as a resource.
+
+It can change one thing, on purpose: `theme_set`, the user's own desktop
+theme, through the same engine as `pulsar theme set` and undone by
+`pulsar theme revert`. Nothing in it needs root, and none of the root
+commands are there: update, rollback, checkpoint, guard and pin stay
+commands the user runs. An agent that could call them could undo the checks
+meant to hold it. The sandbox leaves the server out: it reads the host.
+
 ## Crashes, and what an agent is sent
 
 systemd-coredump records every crash. When one of your programs crashes and

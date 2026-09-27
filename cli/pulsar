@@ -1635,6 +1635,114 @@ unlink_agent_skills() {
     done
 }
 
+# ---------------------------------------------------------------------------
+# mcp -- this machine's facts as MCP tools (scripts/pulsar-mcp). `agent add`
+# registers it in each agent's own MCP config, as an entry named "pulsar"
+# that is written only if none exists and removed only if it is ours.
+#
+# An agent in the agents toolbox cannot see /usr/bin/pulsar, so its entry
+# starts the server on the host through flatpak-spawn; a native install runs
+# on the host already.
+# ---------------------------------------------------------------------------
+MCP_TOOL=${PULSAR_MCP:-/usr/libexec/pulsar/pulsar-mcp}
+
+cmd_mcp() {
+    case "${1:-}" in
+        -h|--help)
+            printf 'usage: pulsar mcp   an MCP server on stdio: doctor, status, manifest, report, crashes,\n                    update_check, agent_status, theme_list/current/set, and the guide.\n                    pulsar agent add registers it with each agent. Nothing in it needs root.\n'
+            return 0 ;;
+    esac
+    [ $# -eq 0 ] || die "'mcp' takes no arguments (it speaks MCP on stdin/stdout)"
+    [ -r "$MCP_TOOL" ] || die "the MCP server is not staged in this image (${MCP_TOOL})"
+    PULSAR_CLI=$(realpath "$SELF") PULSAR_AGENTS_MD="$AGENTS_MD" exec python3 "$MCP_TOOL"
+}
+
+# The command an agent's MCP entry runs, as a JSON array: host or box.
+mcp_argv_json() {
+    local cli
+    cli=$(realpath "$SELF")
+    if [ "${1:-}" = box ]; then
+        jq -n -c --arg c "$cli" '["flatpak-spawn", "--host", $c, "mcp"]'
+    else
+        jq -n -c --arg c "$cli" '[$c, "mcp"]'
+    fi
+}
+
+# A JSON config's .<path> gets our entry, only if it has none. Atomic.
+json_add_entry() {
+    local file=$1 path=$2 entry=$3 tmp
+    mkdir -p "$(dirname "$file")"
+    [ -s "$file" ] || printf '{}\n' > "$file"
+    jq -e . "$file" >/dev/null 2>&1 || { printf '%s is not JSON; add the pulsar MCP server to it yourself\n' "$file"; return 0; }
+    if jq -e "getpath(${path}) != null" "$file" >/dev/null; then
+        printf '%s already has an MCP server named pulsar; left alone\n' "$file"; return 0
+    fi
+    tmp=$(mktemp "${file}.XXXXXX")
+    jq --argjson e "$entry" "setpath(${path}; \$e)" "$file" > "$tmp" && chmod --reference="$file" "$tmp" && mv "$tmp" "$file"
+    printf 'registered the pulsar MCP server in %s\n' "$file"
+}
+
+# ...and loses it, only if it is still the one we wrote.
+json_remove_entry() {
+    local file=$1 path=$2 tmp
+    [ -f "$file" ] && jq -e . "$file" >/dev/null 2>&1 || return 0
+    # ours: it runs pulsar with the argument "mcp" (in whichever shape the
+    # agent's config spells a command)
+    jq -e "getpath(${path}) | tostring | (contains(\"pulsar\") and contains(\"\\\"mcp\\\"\"))" "$file" >/dev/null 2>&1 || return 0
+    tmp=$(mktemp "${file}.XXXXXX")
+    jq "delpaths([${path}])" "$file" > "$tmp" && chmod --reference="$file" "$tmp" && mv "$tmp" "$file"
+    printf 'removed the pulsar MCP server from %s\n' "$file"
+}
+
+register_mcp() {
+    local where=${1:-box} argv cmd f
+    [ -r "$MCP_TOOL" ] || return 0
+    have jq || return 0
+    argv=$(mcp_argv_json "$where")
+    case "$A_NAME" in
+        claude)
+            json_add_entry "$HOME/.claude.json" '["mcpServers","pulsar"]' \
+                "$(jq -n -c --argjson a "$argv" '{type: "stdio", command: $a[0], args: $a[1:]}')" ;;
+        gemini)
+            json_add_entry "$HOME/.gemini/settings.json" '["mcpServers","pulsar"]' \
+                "$(jq -n -c --argjson a "$argv" '{command: $a[0], args: $a[1:]}')" ;;
+        opencode)
+            json_add_entry "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" '["mcp","pulsar"]' \
+                "$(jq -n -c --argjson a "$argv" '{type: "local", command: $a, enabled: true}')" ;;
+        codex)
+            f="${CODEX_HOME:-$HOME/.codex}/config.toml"
+            if [ -f "$f" ] && grep -q '^\[mcp_servers\.pulsar\]' "$f"; then
+                printf '%s already has an MCP server named pulsar; left alone\n' "$f"; return 0
+            fi
+            mkdir -p "$(dirname "$f")"
+            cmd=$(printf '%s' "$argv" | jq -r '.[0] | tojson')
+            local gap="" rest
+            [ ! -s "$f" ] || gap=$'\n'
+            rest=$(printf '%s' "$argv" | jq -c '.[1:]')
+            printf '%s# pulsar-mcp: written by pulsar agent add codex\n[mcp_servers.pulsar]\ncommand = %s\nargs = %s\n' \
+                "$gap" "$cmd" "$rest" >> "$f"
+            printf 'registered the pulsar MCP server in %s\n' "$f" ;;
+    esac
+}
+
+unregister_mcp() {
+    local f tmp
+    case "$A_NAME" in
+        claude)   json_remove_entry "$HOME/.claude.json" '["mcpServers","pulsar"]' ;;
+        gemini)   json_remove_entry "$HOME/.gemini/settings.json" '["mcpServers","pulsar"]' ;;
+        opencode) json_remove_entry "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" '["mcp","pulsar"]' ;;
+        codex)
+            f="${CODEX_HOME:-$HOME/.codex}/config.toml"
+            [ -f "$f" ] && grep -q '^# pulsar-mcp: written by' "$f" || return 0
+            tmp=$(mktemp "${f}.XXXXXX")
+            # our comment line, the table header, and its keys up to the next table
+            awk '/^# pulsar-mcp: written by/ { skip = 1; next }
+                 skip && /^\[/ && !/^\[mcp_servers\.pulsar\]/ { skip = 0 }
+                 !skip' "$f" > "$tmp" && chmod --reference="$f" "$tmp" && mv "$tmp" "$f"
+            printf 'removed the pulsar MCP server from %s\n' "$f" ;;
+    esac
+}
+
 unlink_agent_context() {
     local target
     target=$(agent_context_path "$A_NAME") || return 0
@@ -1729,6 +1837,7 @@ agent_install() {
         printf 'leaving it as it is: it runs on the host, not in the %s toolbox\n' "$AGENT_BOX"
         link_agent_context native
         link_agent_skills
+        register_mcp host
         printf 'done: nothing installed\n'
         return 0
     fi
@@ -1782,6 +1891,7 @@ agent_install() {
     write_agent_shim
     link_agent_context
     link_agent_skills
+    register_mcp box
     case ":${PATH}:" in
         *":${AGENT_SHIMS}:"*) ;;
         *) printf 'note: %s is not on PATH in this shell; a new login shell adds it on Fedora\n' "$AGENT_SHIMS" ;;
@@ -1798,10 +1908,12 @@ agent_remove() {
         printf '%s was installed by its own installer; remove it with that installer\n' "$native"
         unlink_agent_context
         unlink_agent_skills
+        unregister_mcp
         return 0
     fi
     unlink_agent_context
     unlink_agent_skills
+    unregister_mcp
     if have toolbox && box_exists; then
         case "$A_METHOD" in
             npm) in_box npm uninstall -g --prefix "$AGENT_PREFIX" "$A_PKG" || true ;;
@@ -2289,6 +2401,11 @@ sandbox_sync_in() {
         if [ -e "$HOME/$rel" ]; then
             mkdir -p "$(dirname "$home/$rel")"
             cp -a --remove-destination "$HOME/$rel" "$home/$rel"
+            # the host's pulsar MCP server is not reachable from in here
+            if [ "$rel" = .claude.json ] && have jq; then
+                local t; t=$(mktemp)
+                if jq 'del(.mcpServers.pulsar)' "$home/$rel" > "$t" 2>/dev/null; then mv "$t" "$home/$rel"; else rm -f "$t"; fi
+            fi
         else
             # gone on the host: gone in here too, not left over from before
             rm -f "${home:?}/$rel"
@@ -3735,6 +3852,8 @@ Agents
                            sandbox [on|off] | guard [on|off]
   pulsar agent ask         start your agent on a redacted report of this
                            machine; --crash latest for the last crash
+  pulsar mcp               this machine's facts as MCP tools, for any agent
+                           (agent add registers it). nothing in it needs root
 
 Options
   --json                   JSON output, anywhere on the line. A command
@@ -3835,6 +3954,7 @@ main() {
         checkpoint) cmd_checkpoint "$@" ;;
         setup)      cmd_setup "$@" ;;
         agent)      cmd_agent "$@" ;;
+        mcp)        cmd_mcp "$@" ;;
         help)       cmd_help "$@" ;;
         *)          usage >&2; die "unknown command: ${cmd}" ;;
     esac

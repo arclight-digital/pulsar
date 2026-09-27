@@ -70,6 +70,12 @@ its description.
 
 ## Facts, not guesses
 
+If your client speaks MCP, the `pulsar` MCP server (`pulsar mcp`, which
+`pulsar agent add` registers for you) has the commands below as tools that
+return JSON: `doctor`, `status`, `manifest`, `report`, `crashes`,
+`update_check`, `agent_status`, and `theme_list` / `theme_current` /
+`theme_set`. Prefer them to parsing text. None of them needs or grants root.
+
 Run these before assuming anything about this machine. None needs root.
 
 Call the CLI as **`/usr/bin/pulsar`** when you script it. The Pulsar code

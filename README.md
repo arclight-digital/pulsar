@@ -120,6 +120,8 @@ does and does not undo. `pulsar agent add claude` (or `codex`, `gemini`,
 `opencode`, `aider`) installs that agent into its own toolbox and runs it from
 any terminal; none is installed by default, and one you installed yourself is
 left alone, and it can make you a theme: the image ships a skill for that.
+`pulsar mcp` hands any MCP-speaking agent this machine's facts as tools
+(`agent add` registers it), and nothing in it needs root.
 `sudo pulsar agent guard on` makes layering and system Flatpak
 installs ask for your password, for the agent and for you, and
 `sudo pulsar checkpoint` before a session lets you diff and restore `/etc`

@@ -1,0 +1,208 @@
+#!/usr/bin/python3
+"""pulsar-mcp -- this machine's facts as MCP tools, for any agent that speaks MCP.
+
+`pulsar mcp` runs this: an MCP server over stdio (JSON-RPC 2.0, one message
+per line). Every tool is a thin call to the pulsar CLI's own --json output,
+so an agent gets the same answers a person gets, as data, instead of
+parsing text or guessing.
+
+What it does NOT offer, on purpose: anything that needs root. update,
+rollback, checkpoint, guard and pin stay commands the user runs. An agent
+that could call them could undo the checks meant to hold it. The one thing
+it changes is the desktop theme, which is the user's own, applied through
+the same engine as `pulsar theme set`, and taken back by `pulsar theme
+revert`.
+
+Stdlib only.
+"""
+import json
+import os
+import subprocess
+import sys
+
+CLI = os.environ.get("PULSAR_CLI", "/usr/bin/pulsar")
+GUIDE = os.environ.get("PULSAR_AGENTS_MD", "/usr/share/pulsar/AGENTS.md")
+VERSION = "1.0.0"
+PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
+
+
+def obj(props=None, required=None):
+    s = {"type": "object", "properties": props or {}}
+    if required:
+        s["required"] = required
+    return s
+
+
+TOOLS = [
+    {"name": "doctor",
+     "description": "Health checks for this Pulsar machine, as JSON: {checks: [{id, status: ok|warn|fail|skip, summary, detail}], ok}. "
+                    "Pass `check` to run one (e.g. flatpak-gl, crashes, updates, nvidia). Run this before assuming anything is wrong.",
+     "inputSchema": obj({"check": {"type": "string", "description": "one check id; omit for all"}}),
+     "readOnly": True},
+    {"name": "status",
+     "description": "Deployments (booted, staged, rollback), pins and layered packages, as JSON.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "manifest",
+     "description": "Image version, variant (vanilla or nvidia), kernel, components, and the hardware under `host`, as JSON.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "report",
+     "description": "One redacted diagnosis document: doctor, status, manifest, failed units, recent warning+ journal lines, "
+                    "graphics and Flatpak state. With `crash` (a PID or 'latest'), also that crash's signal, stack trace and log lines. "
+                    "Use it when something is broken.",
+     "inputSchema": obj({"crash": {"type": "string", "description": "a PID, or 'latest'"},
+                         "lines": {"type": "integer", "minimum": 1, "maximum": 500,
+                                   "description": "journal lines (default 50)"}}),
+     "readOnly": True},
+    {"name": "crashes",
+     "description": "This user's crashes since boot, by program, as a doctor check. `report` with crash=latest gives the details.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "update_check",
+     "description": "Whether a newer Pulsar image is published: {status: current|staged|available, booted, latest, image}. "
+                    "Updating itself needs the user: `sudo pulsar update`.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "agent_status",
+     "description": "What this machine gives an agent: the guide, installed agents, guard (whether layering and system Flatpak "
+                    "installs ask for a password), whether the booted deployment is pinned, and the sandbox setting here.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "theme_list",
+     "description": "The desktop themes available, with swatches; * marks the current one.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "theme_current",
+     "description": "The theme applied now, its variant, and what it wrote.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "theme_set",
+     "description": "Recolor the whole desktop with a theme (a slug from theme_list): accent, GTK apps, terminal, editor, "
+                    "top bar, wallpaper and coding agents. Changes the user's desktop, so only when they asked for it. "
+                    "`pulsar theme revert` undoes it. Open apps keep the old colors until restarted.",
+     "inputSchema": obj({"theme": {"type": "string"},
+                         "variant": {"type": "string", "enum": ["both", "dark", "light"],
+                                     "description": "default both: follow Dark Style"}}, ["theme"]),
+     "readOnly": False},
+]
+
+
+def run(args, ok_codes=(0,)):
+    """(text, is_error). The CLI's exit codes that carry an answer (doctor's
+    1, update --check's 10) are answers, not errors."""
+    try:
+        r = subprocess.run([CLI, *args], capture_output=True, text=True, timeout=300,
+                           env=dict(os.environ, NO_COLOR="1"))
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"could not run pulsar: {e}", True
+    out = r.stdout.strip() or r.stderr.strip()
+    return out, r.returncode not in ok_codes
+
+
+def call(name, a):
+    if name == "doctor":
+        return run(["--json", "doctor", *([a["check"]] if a.get("check") else [])], (0, 1))
+    if name == "status":
+        return run(["--json", "status"])
+    if name == "manifest":
+        return run(["--json", "manifest"])
+    if name == "report":
+        args = ["report"]
+        if a.get("crash"):
+            args += ["--crash", str(a["crash"])]
+        if a.get("lines"):
+            args += ["--lines", str(int(a["lines"]))]
+        return run(args)
+    if name == "crashes":
+        return run(["--json", "doctor", "crashes"], (0, 1))
+    if name == "update_check":
+        return run(["--json", "update", "--check"], (0, 10))
+    if name == "agent_status":
+        parts = {}
+        for key, args in (("agent", ["--json", "agent"]), ("guard", ["--json", "agent", "guard"]),
+                          ("pin", ["--json", "pin"])):
+            text, err = run(args)
+            try:
+                parts[key] = json.loads(text) if not err else {"error": text}
+            except ValueError:
+                parts[key] = {"error": text}
+        return json.dumps(parts), False
+    if name == "theme_list":
+        return run(["theme", "list"])
+    if name == "theme_current":
+        return run(["theme", "current"])
+    if name == "theme_set":
+        theme = str(a.get("theme", ""))
+        if not theme or theme.startswith("-"):
+            return "theme_set needs a theme slug (see theme_list)", True
+        args = ["theme", "set", theme, "--no-restart"]
+        if a.get("variant") in ("dark", "light"):
+            args += ["--variant", a["variant"]]
+        return run(args)
+    return f"unknown tool: {name}", True
+
+
+def tool_list():
+    out = []
+    for t in TOOLS:
+        d = {k: t[k] for k in ("name", "description", "inputSchema")}
+        d["annotations"] = {"readOnlyHint": t["readOnly"], "destructiveHint": False,
+                            "idempotentHint": t["readOnly"], "openWorldHint": False}
+        out.append(d)
+    return out
+
+
+def handle(msg):
+    method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
+    if mid is None:
+        return None     # a notification (initialized, cancelled): nothing to say
+    if method == "initialize":
+        want = params.get("protocolVersion")
+        return {"protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
+                "capabilities": {"tools": {}, "resources": {}},
+                "serverInfo": {"name": "pulsar", "version": VERSION},
+                "instructions": "Facts about this Pulsar machine (image-based Fedora Silverblue). Read the guide "
+                                "resource first. Nothing here needs or grants root."}
+    if method == "ping":
+        return {}
+    if method == "tools/list":
+        return {"tools": tool_list()}
+    if method == "tools/call":
+        name = params.get("name", "")
+        text, err = call(name, params.get("arguments") or {})
+        return {"content": [{"type": "text", "text": text}], "isError": err}
+    if method == "resources/list":
+        return {"resources": [{"uri": "pulsar://guide", "name": "AGENTS.md",
+                               "description": "How this machine works, and what to ask the user before touching",
+                               "mimeType": "text/markdown"}]}
+    if method == "resources/read":
+        if params.get("uri") != "pulsar://guide":
+            raise LookupError(f"no resource {params.get('uri')}")
+        try:
+            text = open(GUIDE, encoding="utf-8").read()
+        except OSError as e:
+            raise LookupError(f"no guide in this image: {e}")
+        return {"contents": [{"uri": "pulsar://guide", "mimeType": "text/markdown", "text": text}]}
+    raise NotImplementedError(method)
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+        else:
+            try:
+                result = handle(msg)
+                if result is None:
+                    continue
+                reply = {"jsonrpc": "2.0", "id": msg.get("id"), "result": result}
+            except NotImplementedError as e:
+                reply = {"jsonrpc": "2.0", "id": msg.get("id"), "error": {"code": -32601, "message": f"method not found: {e}"}}
+            except LookupError as e:
+                reply = {"jsonrpc": "2.0", "id": msg.get("id"), "error": {"code": -32602, "message": str(e)}}
+        sys.stdout.write(json.dumps(reply) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

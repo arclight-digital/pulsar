@@ -2640,3 +2640,58 @@ SH
     ! git config branch.nolocal.remote
     [ -z "$(ls "$XDG_RUNTIME_DIR"/pulsar/*.pushed 2>/dev/null)" ]
 }
+
+# ---------------------------------------------------------------------------
+# MCP registration: agent add writes a "pulsar" entry in each agent's own
+# MCP config, only if none exists; agent remove takes back only its own.
+# ---------------------------------------------------------------------------
+@test "agent add registers the pulsar MCP server with each agent, through the host from the box" {
+    agent_env
+    export PULSAR_MCP="${BATS_TEST_DIRNAME}/../scripts/pulsar-mcp"
+    echo '{"numStartups": 2}' > "${HOME}/.claude.json"
+    "$PULSAR" agent add claude >/dev/null
+    "$PULSAR" agent add gemini >/dev/null
+    "$PULSAR" agent add opencode >/dev/null
+    "$PULSAR" agent add codex >/dev/null
+    jq -e '.mcpServers.pulsar.command == "flatpak-spawn" and .mcpServers.pulsar.args[0] == "--host"
+           and .mcpServers.pulsar.args[-1] == "mcp" and .numStartups == 2' "${HOME}/.claude.json"
+    jq -e '.mcpServers.pulsar.command == "flatpak-spawn"' "${HOME}/.gemini/settings.json"
+    jq -e '.mcp.pulsar.type == "local" and .mcp.pulsar.command[-1] == "mcp"' "${HOME}/.config/opencode/opencode.json"
+    grep -qx '\[mcp_servers.pulsar\]' "${HOME}/.codex/config.toml"
+    grep -qx 'command = "flatpak-spawn"' "${HOME}/.codex/config.toml"
+    # and back out, leaving everything else
+    printf '\n[profile.mine]\nmodel = "x"\n' >> "${HOME}/.codex/config.toml"
+    "$PULSAR" agent remove claude >/dev/null
+    "$PULSAR" agent remove codex >/dev/null
+    jq -e '.mcpServers.pulsar == null and .numStartups == 2' "${HOME}/.claude.json"
+    ! grep -q 'mcp_servers.pulsar' "${HOME}/.codex/config.toml"
+    grep -qx '\[profile.mine\]' "${HOME}/.codex/config.toml"
+}
+
+@test "a pulsar MCP entry the user wrote is theirs: not replaced, not removed" {
+    agent_env
+    export PULSAR_MCP="${BATS_TEST_DIRNAME}/../scripts/pulsar-mcp"
+    echo '{"mcpServers":{"pulsar":{"command":"my-own-thing"}}}' > "${HOME}/.claude.json"
+    run "$PULSAR" agent add claude
+    [[ "$output" == *"already has an MCP server named pulsar; left alone"* ]]
+    "$PULSAR" agent remove claude >/dev/null
+    jq -e '.mcpServers.pulsar.command == "my-own-thing"' "${HOME}/.claude.json"
+}
+
+@test "a native install's MCP entry runs pulsar on the host directly" {
+    agent_env
+    export PULSAR_MCP="${BATS_TEST_DIRNAME}/../scripts/pulsar-mcp"
+    printf '#!/bin/sh\n' > "${STUB}/claude"; chmod +x "${STUB}/claude"
+    "$PULSAR" agent add claude >/dev/null
+    jq -e '.mcpServers.pulsar.args == ["mcp"] and (.mcpServers.pulsar.command | endswith("pulsar"))' "${HOME}/.claude.json"
+}
+
+@test "the sandbox's copy of the claude state drops the host-only pulsar MCP server" {
+    sandbox_env
+    echo '{"mcpServers":{"pulsar":{"command":"x"},"other":{"command":"y"}}}' > "${HOME}/.claude.json"
+    cd "$PROJ"
+    "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    local c="${HOME}/.local/share/pulsar/sandbox/claude/.claude.json"
+    jq -e '.mcpServers.pulsar == null and .mcpServers.other.command == "y"' "$c"
+    jq -e '.mcpServers.pulsar.command == "x"' "${HOME}/.claude.json"
+}
