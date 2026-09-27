@@ -176,6 +176,14 @@ allows:
 - with `push branches`, anything but the default branch; with `push off`,
   nothing. Pull and fetch go through the same gate, freshly fetched.
 
+**Pull requests go through it too.** Inside, `gh` is the gate's own client,
+and `gh pr create` is the one thing it does: the gate opens the pull request
+on GitHub as you, with a token your host's `git credential` gives for
+github.com, which never enters the sandbox. The head must already be on the
+remote (pushed through the gate), and `push off` means no pull requests.
+Nothing else on the forge: no merging, closing, commenting or editing.
+GitHub only, for now.
+
 `.git/config` stays read-only for the whole session, so `push -u` cannot
 record upstream tracking inside. The gate notes each branch that reached the
 real remote instead, and when the session ends Pulsar sets
@@ -204,10 +212,13 @@ What it does **not** do, said plainly:
   can still leave with it.
 - **SELinux is not confining it.** Label separation is off, as toolbox has
   it, so your files are never relabeled; the mounts do the isolating.
-- **An agent installed with its vendor's own installer** runs as that
-  installer set it up when you type its name. Start it with
-  `pulsar agent run <name>` to sandbox it; `pulsar agent sandbox` names any
-  such install.
+- **Typing an agent's name is sandboxed in interactive bash only.**
+  `/etc/profile.d/pulsar-agents.sh` makes `claude`, `codex` and the rest
+  shell functions that go through `pulsar agent run`, which is what reaches
+  an agent installed with its vendor's own installer. A script that runs the
+  agent, another shell (zsh, fish), or `command claude` starts it as
+  installed. `pulsar agent run <name>` always goes through the settings;
+  `pulsar agent sandbox wrap off` turns the functions off.
 - **What it writes into the project is yours to review.** A Makefile, a test
   script or an `.envrc` it edits runs when you run it.
 - **A session killed outright** (not ended: `kill -9`, a crash) skips the

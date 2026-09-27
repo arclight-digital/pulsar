@@ -29,11 +29,15 @@ first, so the agent can pull without credentials too.
 
 Stdlib only: this file also runs inside the sandbox image as the client.
 """
+import json
 import os
+import re
 import socket
 import subprocess
 import sys
 import threading
+import urllib.error
+import urllib.request
 
 ZERO = "0" * 40
 SERVICES = {"upload-pack", "receive-pack"}
@@ -95,6 +99,95 @@ def refresh(mirror, remote):
                cwd=mirror, check=False, timeout=300)
 
 
+# ------------------------------------------------------ pull requests ----
+#
+# `gh pr create` inside the sandbox is this client, and this is the one thing
+# it can do on the forge: open a pull request, as the user, with a token the
+# host's own `git credential` gives for the pinned remote's host. The token
+# never enters the sandbox. No merge, close, comment or edit. GitHub only,
+# for now; the head branch must already be on the remote (pushed through the
+# gate), and `push off` means no pull requests either.
+
+GITHUB_API = os.environ.get("PULSAR_GATE_GITHUB_API", "https://api.github.com")
+GH_URL = re.compile(r"^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                    r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+
+
+def credential(host):
+    """The user's password/token for https://<host>, from their own git
+    credential setup, never prompting."""
+    r = subprocess.run(["git", "credential", "fill"], input=f"protocol=https\nhost={host}\n\n",
+                       text=True, capture_output=True, timeout=60,
+                       env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never"))
+    for line in r.stdout.splitlines():
+        if line.startswith("password="):
+            return line[len("password="):]
+    return None
+
+
+def pr_create(mirror, remote, req):
+    url = pinned(mirror).get(remote, "")
+    m = GH_URL.match(url)
+    if not m:
+        return {"error": f"{remote} is {url}: pull requests through the gate work for GitHub remotes only, for now"}
+    owner, repo = m.group(1), m.group(2)
+    policy = git("config", "--default", "on", "pulsar.push", cwd=mirror, check=False).stdout.strip()
+    if policy == "off":
+        return {"error": "pushing is off for this project, and so are pull requests (on the host: pulsar agent sandbox push on)"}
+    title, body = str(req.get("title") or "").strip(), str(req.get("body") or "")
+    head = str(req.get("head") or "")
+    base = str(req.get("base") or "") or git("config", f"pulsar.defaultBranch.{remote}", cwd=mirror, check=False).stdout.strip()
+    if not title or len(title) > 256:
+        return {"error": "a pull request needs a title, 256 characters at most"}
+    if len(body) > 65536:
+        return {"error": "the body is over 64 KiB"}
+    for name, b in (("head", head), ("base", base)):
+        if not b or git("check-ref-format", "--branch", b, check=False).returncode != 0:
+            return {"error": f"{name} '{b}' is not a branch name"}
+    if refresh(mirror, remote).returncode != 0:
+        return {"error": f"could not reach {url}"}
+    for name, b in (("head", head), ("base", base)):
+        if git("rev-parse", "--verify", "--quiet", f"refs/heads/{b}", cwd=mirror, check=False).returncode != 0:
+            return {"error": f"{name} branch '{b}' is not on {remote}" + (": push it first" if name == "head" else "")}
+    token = credential("github.com")
+    if not token:
+        return {"error": "the host has no GitHub credential git can use (git credential fill for github.com gave none)"}
+    data = json.dumps({"title": title, "body": body, "head": head, "base": base,
+                       "draft": bool(req.get("draft"))}).encode()
+    rq = urllib.request.Request(f"{GITHUB_API}/repos/{owner}/{repo}/pulls", data=data, method="POST", headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "pulsar-agent-gate", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(rq, timeout=60) as r:
+            out = json.load(r)
+        return {"url": out.get("html_url", ""), "number": out.get("number")}
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.load(e)
+            msg = err.get("message", "")
+            detail = "; ".join(x.get("message", "") for x in err.get("errors", []) if isinstance(x, dict))
+        except (ValueError, AttributeError):
+            msg, detail = str(e), ""
+        return {"error": f"GitHub said {e.code}: {msg}" + (f" ({detail})" if detail else "")}
+    except OSError as e:
+        return {"error": f"could not reach GitHub: {e}"}
+
+
+def handle_pr(conn, mirror, remote):
+    buf = b""
+    while not buf.endswith(b"\n") and len(buf) < 70000:
+        b = conn.recv(65536)
+        if not b:
+            break
+        buf += b
+    try:
+        req = json.loads(buf.decode())
+    except ValueError:
+        req = None
+    res = pr_create(mirror, remote, req) if isinstance(req, dict) else {"error": "a malformed request"}
+    conn.sendall((json.dumps(res) + "\n").encode())
+
+
 def handle(conn, mirror):
     header = b""
     while not header.endswith(b"\n"):
@@ -106,6 +199,12 @@ def handle(conn, mirror):
     service, remote = (parts + ["", ""])[:2]
     # ext::'s %s is "upload-pack"; accept the git- form too
     service = service.removeprefix("git-")
+    if service == "pr-create":
+        if remote not in pinned(mirror):
+            conn.sendall((json.dumps({"error": f"no pinned remote '{remote}' for this project"}) + "\n").encode())
+            return
+        handle_pr(conn, mirror, remote)
+        return
     proto = parts[2] if len(parts) > 2 else ""
     remotes = pinned(mirror)
     if service not in SERVICES:
@@ -218,6 +317,66 @@ def connect(sock_path, service, remote):
     return 0
 
 
+def gh(sock_path, args):
+    """The sandbox's `gh`: `gh pr create` and nothing else."""
+    if args[:2] != ["pr", "create"]:
+        print("gh: only `gh pr create` works in Pulsar's sandbox, through its gate. "
+              "Ask the user for anything else on GitHub.", file=sys.stderr)
+        return 1
+    req, i, rest = {"draft": False}, 0, args[2:]
+    fill = False
+    while i < len(rest):
+        a = rest[i]
+        val = rest[i + 1] if i + 1 < len(rest) else None
+        if a in ("-t", "--title"):
+            req["title"], i = val, i + 2
+        elif a in ("-b", "--body"):
+            req["body"], i = val, i + 2
+        elif a in ("-F", "--body-file"):
+            req["body"] = sys.stdin.read() if val == "-" else open(val, encoding="utf-8").read()
+            i += 2
+        elif a in ("-B", "--base"):
+            req["base"], i = val, i + 2
+        elif a in ("-H", "--head"):
+            req["head"], i = val, i + 2
+        elif a in ("-d", "--draft"):
+            req["draft"], i = True, i + 1
+        elif a in ("-f", "--fill"):
+            fill, i = True, i + 1
+        elif "=" in a and a.split("=", 1)[0] in ("--title", "--body", "--base", "--head", "--body-file"):
+            k, v = a.split("=", 1)
+            rest[i:i + 1] = [k, v]
+        else:
+            print(f"gh: '{a}' is not supported in the sandbox (use --title, --body, --body-file, --base, "
+                  "--head, --draft, --fill)", file=sys.stderr)
+            return 1
+    head = req.get("head") or git("rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
+    req["head"] = head
+    if fill and not req.get("title"):
+        req["title"] = git("log", "-1", "--format=%s", check=False).stdout.strip()
+        req.setdefault("body", git("log", "-1", "--format=%b", check=False).stdout.strip())
+    if not req.get("title"):
+        print("gh: a title is needed (--title, or --fill for the last commit's)", file=sys.stderr)
+        return 1
+    remote = git("config", f"branch.{head}.remote", check=False).stdout.strip() or "origin"
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(sock_path)
+    s.sendall(f"pr-create {remote}\n".encode() + (json.dumps(req) + "\n").encode())
+    buf = b""
+    while (b := s.recv(65536)):
+        buf += b
+    try:
+        res = json.loads(buf.decode())
+    except ValueError:
+        print("gh: no answer from the gate", file=sys.stderr)
+        return 1
+    if res.get("error"):
+        print(f"gh: {res['error']}", file=sys.stderr)
+        return 1
+    print(res.get("url", ""))
+    return 0
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     if cmd == "serve" and len(argv) == 4:
@@ -226,6 +385,8 @@ def main(argv):
         return connect(argv[2], argv[3], argv[4])
     if cmd == "hook":
         return hook()
+    if cmd == "gh" and len(argv) >= 3:
+        return gh(argv[2], argv[3:])
     if cmd == "setup" and len(argv) == 5:
         return setup(argv[2], argv[3], argv[4])
     print("usage: pulsar-agent-gate serve <socket> <mirror> | connect <socket> <service> <remote>"

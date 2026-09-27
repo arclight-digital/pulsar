@@ -2180,7 +2180,7 @@ setting_resolve() {
         [ -z "$base" ] || src="global"
     fi
     if [ -z "$base" ]; then
-        case "$key" in sandbox) base=off ;; push) base=on ;; esac
+        case "$key" in sandbox) base=off ;; push|wrap) base=on ;; esac
         src=default
     fi
     # The repo file can only tighten: sandbox on; push off or branches.
@@ -2310,12 +2310,16 @@ agent_sandbox() {
                 git -C "$mirror" config --get-regexp '^remote\..*\.url$' 2>/dev/null \
                     | sed 's/^remote\.\(.*\)\.url /remote   \1 -> /; s/$/  (pinned)/'
             fi
-            local n native
+            local n native wrap
+            wrap=$(setting_resolve wrap "$root"); wrap=${wrap%%$'\t'*}
+            printf 'wrap     %s  (typing an agent'"'"'s name in bash goes through pulsar agent run)\n' \
+                "$([ "$wrap" = off ] && echo off || echo on)"
             while IFS=$'\t' read -r n _; do
                 native=$(native_launcher "$n" 2>/dev/null) || continue
                 is_our_shim "${AGENT_SHIMS}/${n}" && continue
-                printf 'note     %s runs from %s, which Pulsar does not wrap: start it with pulsar agent run %s to sandbox it\n' \
-                    "$n" "$native" "$n"
+                if [ "$wrap" = off ]; then
+                    printf 'note     %s runs from %s as installed: pulsar agent run %s sandboxes it (wrap is off)\n' "$n" "$native" "$n"
+                fi
             done <<<"$AGENTS_TABLE"
             ;;
         on|off)
@@ -2330,6 +2334,14 @@ agent_sandbox() {
             setting_write push "${rest[0]}" "$here" "$root"
             if [ "$here" = 1 ]; then printf 'push %s for %s\n' "${rest[0]}" "$root"; else printf 'push %s (global)\n' "${rest[0]}"; fi
             ;;
+        wrap)
+            # whether typing an agent's name goes through `agent run`
+            # (/etc/profile.d/pulsar-agents.sh); global, read by every shell
+            case "${rest[0]:-}" in on|off) ;; *) die "usage: pulsar agent sandbox wrap on|off" ;; esac
+            [ "$here" = 0 ] || die "wrap is global: every shell reads it"
+            setting_write wrap "${rest[0]}" 0 "$root"
+            printf 'typing an agent'"'"'s name %s through pulsar agent run, in new shells\n' \
+                "$([ "${rest[0]}" = on ] && echo goes || echo no longer goes)" ;;
         allow)
             [ ${#rest[@]} -eq 1 ] || die "usage: pulsar agent sandbox allow <path> [--rw] [--here]"
             sandbox_allow "${rest[0]}" "$here" "$root" "$rw" ;;
@@ -2560,6 +2572,11 @@ sandbox_run() {
     mkdir -p "$(dirname "$sock")"
     local n=0 rname url pin
     args+=(-v "${GATE_TOOL}:/usr/libexec/pulsar/pulsar-agent-gate:ro" -v "${sock}:/run/pulsar-gate.sock")
+    # `gh pr create`, through the gate; the only gh there is in here
+    local ghw="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gh"
+    printf '#!/bin/sh\n# the sandbox'"'"'s gh: pr create, through the gate (pulsar-agent-gate)\nexec python3 /usr/libexec/pulsar/pulsar-agent-gate gh /run/pulsar-gate.sock "$@"\n' > "$ghw"
+    chmod 0755 "$ghw"
+    args+=(-v "${ghw}:/usr/local/bin/gh:ro")
     # .git/config is read-only in here, so `push -u` cannot record tracking
     # (git says it did, after an error). autoSetupRemote makes a plain
     # `git push` of a new branch work without it.
@@ -2652,6 +2669,9 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      unless --rw): a tool the agent's hooks run
        pulsar agent sandbox list|repin
                                      per-project settings; re-pin this project's remotes
+       pulsar agent sandbox wrap on|off
+                                     whether typing an agent's name in bash goes
+                                     through pulsar agent run (default on)
        pulsar agent run <name> [--sandbox|--no-sandbox] [-- args]
                                      start an agent (its command does this for you)
        pulsar agent guard [on|off]   make layering and system Flatpak installs ask

@@ -58,7 +58,9 @@ tracking for every branch you pushed when the session ends.
 `git push` and `git pull` work through a gate that pushes with the user's
 credentials: branches only, never force-push, delete or tags, and maybe not
 the default branch. If a push is refused, the message says why; tell the
-user rather than work around it.
+user rather than work around it. `gh pr create` works too (--title, --body,
+--body-file, --base, --head, --draft, --fill), for a branch you have
+already pushed; it is the only `gh` command in here.
 
 ## Skills
 

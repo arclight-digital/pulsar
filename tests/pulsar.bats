@@ -2470,6 +2470,7 @@ teardown() { [ -z "${XDG_RUNTIME_DIR:-}" ] || case "$XDG_RUNTIME_DIR" in /tmp/ps
     [[ "$a" != *"SSH_AUTH_SOCK"* ]]
     # origin's URL rewritten to the gate, in the env, not in the project
     grep -qx "GIT_CONFIG_KEY_1=push.autoSetupRemote" "$PODMAN_LOG"
+    grep -qx "${XDG_RUNTIME_DIR}/pulsar/gh:/usr/local/bin/gh:ro" "$PODMAN_LOG"
     grep -qx "GIT_CONFIG_VALUE_2=${UPSTREAM}" "$PODMAN_LOG"
     grep -q "^GIT_CONFIG_KEY_2=url.ext::python3 /usr/libexec/pulsar/pulsar-agent-gate connect /run/pulsar-gate.sock %s origin.insteadOf$" "$PODMAN_LOG"
     [ "$(git -C "$PROJ" remote get-url origin)" = "$UPSTREAM" ]
@@ -2694,4 +2695,41 @@ SH
     local c="${HOME}/.local/share/pulsar/sandbox/claude/.claude.json"
     jq -e '.mcpServers.pulsar == null and .mcpServers.other.command == "y"' "$c"
     jq -e '.mcpServers.pulsar.command == "x"' "${HOME}/.claude.json"
+}
+
+# ---------------------------------------------------------------------------
+# /etc/profile.d/pulsar-agents.sh: typing an agent's name goes through
+# `pulsar agent run`, in interactive bash only, unless wrap is off.
+# ---------------------------------------------------------------------------
+PROFILE_SNIPPET="${BATS_TEST_DIRNAME}/../system_files/etc/profile.d/pulsar-agents.sh"
+
+@test "typing an agent's name in interactive bash goes through pulsar agent run, arguments intact" {
+    local cli="${BATS_TEST_TMPDIR}/cli"
+    printf '#!/bin/sh\nfor a in "$@"; do printf "[%%s]" "$a"; done; echo\n' > "$cli"; chmod +x "$cli"
+    export HOME="${BATS_TEST_TMPDIR}/home" XDG_CONFIG_HOME="${BATS_TEST_TMPDIR}/home/.config"
+    mkdir -p "$HOME"
+    run env PULSAR_CLI_PATH="$cli" bash --norc -i -c ". '$PROFILE_SNIPPET'; claude --resume 'two words'; codex x" 2>/dev/null
+    [[ "$output" == *"[agent][run][claude][--][--resume][two words]"* ]]
+    [[ "$output" == *"[agent][run][codex][--][x]"* ]]
+}
+
+@test "the wrapper stays out of scripts, of a sandbox, and of a shell that turned it off" {
+    local cli="${BATS_TEST_TMPDIR}/cli"
+    printf '#!/bin/sh\necho wrapped\n' > "$cli"; chmod +x "$cli"
+    export HOME="${BATS_TEST_TMPDIR}/home" XDG_CONFIG_HOME="${BATS_TEST_TMPDIR}/home/.config"
+    mkdir -p "$HOME"
+    # "file" when an install is on PATH, nothing when not: never "function"
+    run env PULSAR_CLI_PATH="$cli" bash -c ". '$PROFILE_SNIPPET'; type -t claude"
+    [[ "$output" != *function* ]]
+    run env PULSAR_CLI_PATH="$cli" PULSAR_SANDBOX=1 bash --norc -i -c ". '$PROFILE_SNIPPET'; type -t claude" 2>/dev/null
+    [[ "$output" != *function* ]]
+    if [ "$(id -u)" -eq 0 ]; then
+        # agent sandbox refuses root; the shell only reads the file
+        mkdir -p "${XDG_CONFIG_HOME}/pulsar"; echo 'wrap = off' > "${XDG_CONFIG_HOME}/pulsar/agent.conf"
+    else
+        PULSAR_AGENT_CONF="${XDG_CONFIG_HOME}/pulsar/agent.conf" "$PULSAR" agent sandbox wrap off >/dev/null
+    fi
+    grep -qx 'wrap = off' "${XDG_CONFIG_HOME}/pulsar/agent.conf"
+    run env PULSAR_CLI_PATH="$cli" bash --norc -i -c ". '$PROFILE_SNIPPET'; type -t claude" 2>/dev/null
+    [[ "$output" != *function* ]]
 }
