@@ -17,6 +17,7 @@ setup() {
     git -C "$T/project" commit -qm a
     git -C "$T/project" push -q origin main
     python3 "$GATE" setup "$T/mirror.git" "$T/project" "python3 $GATE"
+    export PULSAR_GATE_PUSHED="$T/pushed"
     python3 "$GATE" serve "$SOCK" "$T/mirror.git" 2>"$T/serve.log" &
     GATE_PID=$!
     local i=0
@@ -108,4 +109,12 @@ upstream() { git -C "$T/upstream.git" rev-parse --verify --quiet "$1"; }
     [ "$(git -C "$T/mirror.git" config remote.origin.url)" = "$T/upstream.git" ]
     python3 "$GATE" setup "$T/mirror.git" "$T/project" "python3 $GATE"
     [ "$(git -C "$T/mirror.git" config remote.origin.url)" = "$T/upstream.git" ]
+}
+
+@test "the gate notes each branch that reached the remote, and only those" {
+    commit b
+    agit push -q origin main:refs/heads/feature
+    git -C "$T/project" commit -q --amend -m rewritten
+    agit push -f origin main:refs/heads/feature 2>/dev/null || true
+    [ "$(cat "$T/pushed")" = "$(printf 'origin\trefs/heads/feature')" ]
 }

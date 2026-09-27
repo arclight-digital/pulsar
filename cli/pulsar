@@ -2320,6 +2320,29 @@ sandbox_creds_out() {
     tmp=$(mktemp "${host}.XXXXXX") && cp "$in" "$tmp" && chmod 0600 "$tmp" && mv "$tmp" "$host"
 }
 
+# Upstream tracking for what the agent pushed. Inside, .git/config is
+# read-only, so `push -u` (and push.autoSetupRemote) cannot record it; the
+# gate notes each branch that reached the real remote, and this records it
+# on the host as the session ends. Only branch.<b>.remote and .merge, only
+# for a local branch of that name with no upstream yet, and only for a
+# remote the gate had pinned.
+sandbox_tracking() {
+    local root=$1 log=$2 mirror=$3 remote ref b
+    [ -s "$log" ] || { rm -f "$log"; return 0; }
+    while IFS=$'\t' read -r remote ref; do
+        b=${ref#refs/heads/}
+        [ "$ref" != "$b" ] || continue
+        git check-ref-format --branch "$b" >/dev/null 2>&1 || continue
+        git -C "$mirror" config "remote.${remote}.url" >/dev/null 2>&1 || continue
+        git -C "$root" show-ref --verify --quiet "refs/heads/${b}" || continue
+        git -C "$root" config "branch.${b}.remote" >/dev/null 2>&1 && continue
+        git -C "$root" config "branch.${b}.remote" "$remote"
+        git -C "$root" config "branch.${b}.merge" "$ref"
+        printf 'note: %s now tracks %s/%s\n' "$b" "$remote" "$b" >&2
+    done < <(sort -u "$log")
+    rm -f "$log"
+}
+
 # Agent config in the project that an agent loads by itself: read-only in
 # here when it exists; created in here, it is defused when the session ends.
 PROJECT_AGENT_CONFIG='.claude .mcp.json .codex .gemini .opencode opencode.json opencode.jsonc'
@@ -2436,10 +2459,13 @@ sandbox_run() {
     done < <(git -C "$mirror" config --get-regexp '^remote\..*\.url$' | sed 's/^remote\.\(.*\)\.url /\1 /')
     args+=(-e "GIT_CONFIG_COUNT=${n}")
 
-    python3 "$GATE_TOOL" serve "$sock" "$mirror" 2>>"${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log" &
+    local pushed="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.pushed"
+    rm -f "$pushed"
+    PULSAR_GATE_PUSHED="$pushed" python3 "$GATE_TOOL" serve "$sock" "$mirror" \
+        2>>"${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log" &
     local gate_pid=$!
     # shellcheck disable=SC2064  # the values are fixed now, on purpose
-    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'; sandbox_defuse '${root}' '${existed}'; sandbox_creds_out '${name}' '${home}' '${before}'" EXIT
+    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'; sandbox_defuse '${root}' '${existed}'; sandbox_tracking '${root}' '${pushed}' '${mirror}'; sandbox_creds_out '${name}' '${home}' '${before}'" EXIT
     local waited=0
     while [ ! -S "$sock" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
     [ -S "$sock" ] || die "the push gate did not start (see ${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log)"

@@ -52,8 +52,9 @@ and `rpm-ostree` are not there, so do not look for them or try to reach the
 host. `.git/config` and `.git/hooks` are read-only; commit normally. A
 write to `.git/config` fails with "Device or resource busy": that is the
 sandbox, not a fault, so do not retry it. It means `push -u` records no
-tracking branch (git still says it did); plain `git push` works anyway,
-because `push.autoSetupRemote` is on.
+tracking branch in here (git still says it did); plain `git push` works
+anyway, because `push.autoSetupRemote` is on, and Pulsar records the
+tracking for every branch you pushed when the session ends.
 `git push` and `git pull` work through a gate that pushes with the user's
 credentials: branches only, never force-push, delete or tags, and maybe not
 the default branch. If a push is refused, the message says why; tell the

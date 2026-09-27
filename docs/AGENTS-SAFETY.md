@@ -176,6 +176,14 @@ allows:
 - with `push branches`, anything but the default branch; with `push off`,
   nothing. Pull and fetch go through the same gate, freshly fetched.
 
+`.git/config` stays read-only for the whole session, so `push -u` cannot
+record upstream tracking inside. The gate notes each branch that reached the
+real remote instead, and when the session ends Pulsar sets
+`branch.<name>.remote` and `.merge` for it on the host, and nothing else. A
+config that was writable during the session would be filtered too late: an
+editor runs git in the background, and a planted `core.fsmonitor` would
+fire before the session ended.
+
 **Settings, most specific first**, where whatever the agent could write can
 only tighten:
 

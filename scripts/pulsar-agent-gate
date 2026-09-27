@@ -189,6 +189,13 @@ def hook():
                        text=True, capture_output=True, env=env)
     for line in (r.stdout + r.stderr).splitlines():
         print(f"pulsar gate: {line}", file=sys.stderr)
+    # What went through, for the host to record as upstream tracking when the
+    # session ends: inside, .git/config is read-only and `push -u` cannot.
+    log = os.environ.get("PULSAR_GATE_PUSHED")
+    if r.returncode == 0 and log:
+        with open(log, "a") as f:
+            for spec in refspecs:
+                f.write(f"{remote}\t{spec.split(':', 1)[1]}\n")
     return r.returncode
 
 

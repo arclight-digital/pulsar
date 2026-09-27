@@ -2609,3 +2609,34 @@ SH
     "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
     [ "$(cat "${HOME}/.claude/.credentials.json")" = '{"token":"old"}' ]
 }
+
+@test "branches the agent pushed track their remote after the session, and nothing else is written" {
+    sandbox_env
+    git -C "$PROJ" commit -q --allow-empty -m a
+    git -C "$PROJ" branch feature
+    git -C "$PROJ" branch tracked
+    git -C "$PROJ" config branch.tracked.remote origin
+    git -C "$PROJ" config branch.tracked.merge refs/heads/elsewhere
+    # the "session": the gate reports three pushes, one to a branch with no
+    # local counterpart and one to a branch that already tracks something
+    cat > "${STUB}/podman" <<'SH'
+#!/bin/sh
+case "$1" in
+    image) exit 0 ;;
+    run) for s in "$XDG_RUNTIME_DIR"/pulsar/gate-*.sock; do
+             printf 'origin\trefs/heads/feature\norigin\trefs/heads/nolocal\norigin\trefs/heads/tracked\nevil\trefs/heads/feature\n' > "${s%.sock}.pushed"
+         done
+         exit 0 ;;
+esac
+SH
+    chmod +x "${STUB}/podman"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"feature now tracks origin/feature"* ]]
+    [ "$(git config branch.feature.remote)" = origin ]
+    [ "$(git config branch.feature.merge)" = refs/heads/feature ]
+    [ "$(git config branch.tracked.merge)" = refs/heads/elsewhere ]
+    ! git config branch.nolocal.remote
+    [ -z "$(ls "$XDG_RUNTIME_DIR"/pulsar/*.pushed 2>/dev/null)" ]
+}
