@@ -47,3 +47,13 @@
 
 ## Fonts
 Host Grotesk and JetBrains Mono are included in `fonts/` under the OFL.
+
+## App icons (`apps/`)
+
+`pulsar-themes.svg` and `pulsar-themes-symbolic.svg` are the Themes app's
+icon (the theme picker), as supplied. The image ships them under the app's
+ID, `digital.arclight.Pulsar.ThemePicker` (scalable and symbolic, in
+`system_files/usr/share/icons/hicolor/`), with the design tool's embedded
+content-credentials metadata stripped; the copies here keep it. The engine's
+notifications use the symbolic one. The welcome app uses the Pulsar mark
+itself (`pulsar-logo-icon`): it is Pulsar's own tour, not a separate tool.

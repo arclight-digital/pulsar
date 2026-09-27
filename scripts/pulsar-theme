@@ -1435,7 +1435,7 @@ def cmd_notice():
     if not f.exists():
         return
     n = json.loads(f.read_text())
-    out = _gdbus("pulsar-theme", "0", "preferences-desktop-appearance-symbolic", n["summary"], n["body"],
+    out = _gdbus("pulsar-theme", "0", "digital.arclight.Pulsar.ThemePicker-symbolic", n["summary"], n["body"],
                  "[]", "{}", "15000", dest="org.freedesktop.Notifications", path="/org/freedesktop/Notifications",
                  method="org.freedesktop.Notifications.Notify")
     if out is None:
