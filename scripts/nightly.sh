@@ -51,7 +51,9 @@
 #                               was talking to when the disk ran out.
 #
 # One argument, optional: --base-check answers the anything_moved() question and
-# exits without building anything. 0 it would build, 3 it would skip. Anything
+# exits without building anything. 0 it would build, 3 it would skip.
+# --preflight checks the credentials a build will need (see preflight()) and
+# exits: 0 usable, 1 not. Anything
 # else is refused with 2 rather than ignored -- a swallowed --manual builds and
 # publishes as scheduled, which is the one outcome this script is written to
 # prevent.
@@ -234,20 +236,19 @@ base_moved() {
   [ -n "${last}" ] \
     || { echo "the published build records no base digest; building" >&2; return 0; }
 
-  # A SPLIT RELEASE IS NOT AN UNCHANGED BASE. build.sh pushes vanilla to
-  # :latest before it builds nvidia, so a night whose nvidia half failed
-  # leaves the two :latest tags on different versions -- and every label
-  # above is read off vanilla, which says the base is already built. Without
-  # this, the next night skips and nvidia stays behind until quay happens to
-  # move, while the healthcheck reports a clean skip. Fails open with the
-  # rest: an nvidia tag that cannot be read is a mismatch, and builds.
+  # A SPLIT RELEASE IS NOT AN UNCHANGED BASE. build.sh used to push vanilla
+  # to :latest before it built nvidia, so a night whose nvidia half failed
+  # left the two :latest tags on different versions -- and every label above
+  # is read off vanilla, which said the base was already built. build.sh now
+  # moves both :latest tags together after both variants are pushed, so a
+  # split takes a failure in the seconds between the two promotions; this
+  # stays as the belt for that. Fails open with the rest: an nvidia tag that
+  # cannot be read is a mismatch, and builds.
   #
-  # THE COST, accepted with open eyes: an nvidia half that fails EVERY night
-  # (an akmod that will not build against a new kernel) makes every night
-  # rebuild and republish an unchanged vanilla too -- empty changelogs until
-  # nvidia is fixed. Each of those nights also fails the nvidia build loudly,
-  # which is the point: the old behaviour went silent after the first. The
-  # real fix is an nvidia-only rebuild, which build.sh cannot do yet.
+  # THE COST of moving them together, accepted with open eyes: an nvidia half
+  # that fails EVERY night (an akmod that will not build against a new
+  # kernel) now holds vanilla back too. Each of those nights fails loudly,
+  # and nobody is left a build ahead of anybody else.
   local version nv_version
   version="$(label_of "${published}" org.opencontainers.image.version)"
   if [ -n "${version}" ]; then
@@ -416,6 +417,126 @@ anything_moved() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# PREFLIGHT: the credentials a night will need, asked for in its first minute.
+#
+# Each was first used late. The signer is first called about twenty-five
+# minutes in, from inside the nvidia build; the git token not until the site
+# commit, an hour in, after the images are already public. On 2026-09-05 that
+# token expired and the site stalled silently for four days. So each is tried
+# here, where a dead one costs a minute, and a token that is merely close to
+# its expiry is named in the log and in the healthcheck ping while there is
+# still time to renew it.
+#
+# Run EVERY night, skipped ones included: a token dies on its own schedule,
+# not on nights with something to build. Each check needs its input and is
+# skipped without it, so a workstation run with none of this configured
+# checks nothing and says so.
+#
+# Tokens reach curl through a 0600 header file, never an argument, which
+# every other user on the box could read out of ps.
+# ---------------------------------------------------------------------------
+PULSAR_GITHUB_REPO="${PULSAR_GITHUB_REPO:-arclight-digital/pulsar}"
+PREFLIGHT_WARNINGS=""
+EXPIRY_WARN_DAYS=14
+
+preflight_warn() {
+  echo "WARNING: $*" >&2
+  PREFLIGHT_WARNINGS+="${PREFLIGHT_WARNINGS:+; }$*"
+}
+
+auth_header() {
+  local f="${WORK_TMP}/auth-header"
+  ( umask 077; printf '%s\n' "$1" > "${f}" )
+  printf '%s' "${f}"
+}
+
+# $1 what it is, $2 the token, $3 the API path to ask, $4 what it must allow:
+# push (to PULSAR_GITHUB_REPO) or packages (write:packages). 1 = unusable.
+check_github_token() {
+  local what="$1" hdr="${WORK_TMP}/gh-headers" body="${WORK_TMP}/gh-body" code exp days scopes
+  code="$(curl -sS --max-time 20 -o "${body}" -D "${hdr}" -w '%{http_code}' \
+            -H @"$(auth_header "Authorization: token $2")" \
+            "https://api.github.com/$3" 2>/dev/null)" \
+    || { preflight_warn "could not reach api.github.com to check the ${what}"; return 0; }
+  case "${code}" in
+    200) ;;
+    401) echo "FATAL: GitHub rejects the ${what} (401): expired or revoked" >&2; return 1 ;;
+    *)   preflight_warn "checking the ${what} got HTTP ${code} from GitHub; not checked"; return 0 ;;
+  esac
+  case "$4" in
+    push)
+      jq -e '.permissions.push == true' "${body}" >/dev/null 2>&1 \
+        || { echo "FATAL: the ${what} cannot push to ${PULSAR_GITHUB_REPO}" >&2; return 1; } ;;
+    packages)
+      # Classic tokens list their scopes; fine-grained ones do not, and are
+      # given the benefit of the doubt rather than refused on a missing header.
+      scopes="$(grep -i '^x-oauth-scopes:' "${hdr}" | cut -d: -f2- | tr -d '\r')"
+      if [ -n "${scopes}" ] && ! grep -q 'write:packages' <<<"${scopes}"; then
+        echo "FATAL: the ${what} lacks write:packages (has:${scopes})" >&2
+        return 1
+      fi ;;
+  esac
+  exp="$(grep -i '^github-authentication-token-expiration:' "${hdr}" | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')"
+  if [ -z "${exp}" ]; then
+    echo "${what}: usable, no expiry"
+    return 0
+  fi
+  days=$(( ( $(date -d "${exp}" +%s 2>/dev/null || date +%s) - $(date +%s) ) / 86400 ))
+  if [ "${days}" -lt "${EXPIRY_WARN_DAYS}" ]; then
+    preflight_warn "the ${what} expires in ${days} days (${exp}); renew it"
+  else
+    echo "${what}: usable, expires ${exp}"
+  fi
+}
+
+preflight() {
+  local bad=0 tok
+  echo "preflight: the credentials this night needs"
+
+  # The signer, through its token-guarded /cert: one request proves the
+  # address, the TLS certificate and the token together.
+  if [ -n "${PULSAR_SIGNER_URL:-}" ] && [ -r "${PULSAR_SIGNER_TOKEN_FILE:-}" ]; then
+    local -a ca=()
+    [ -s "${PULSAR_SIGNER_CA_FILE:-}" ] && ca=(--cacert "${PULSAR_SIGNER_CA_FILE}")
+    if curl -fsS --max-time 20 "${ca[@]}" -o /dev/null \
+         -H @"$(auth_header "Authorization: Bearer $(cat "${PULSAR_SIGNER_TOKEN_FILE}")")" \
+         "${PULSAR_SIGNER_URL%/}/cert" 2>/dev/null; then
+      echo "signer: answers at ${PULSAR_SIGNER_URL}"
+    else
+      echo "FATAL: the signer at ${PULSAR_SIGNER_URL} did not answer /cert with this token" >&2
+      echo "       (address, TLS certificate or token); the nvidia build would fail" >&2
+      echo "       on it about twenty-five minutes in" >&2
+      bad=1
+    fi
+  else
+    echo "signer: not configured here; not checked"
+  fi
+
+  # The registry token, out of the auth file the builder logged in with.
+  tok=""
+  if [ -r "${REGISTRY_AUTH_FILE:-}" ]; then
+    tok="$(jq -r '.auths["ghcr.io"].auth // empty' "${REGISTRY_AUTH_FILE}" 2>/dev/null \
+             | base64 -d 2>/dev/null | cut -d: -f2- || true)"
+  fi
+  if [ -n "${tok}" ]; then
+    check_github_token "ghcr.io push token" "${tok}" user packages || bad=1
+  else
+    echo "ghcr.io token: no REGISTRY_AUTH_FILE login here; not checked"
+  fi
+
+  # The site commit's token.
+  if [ -r "${PULSAR_GIT_TOKEN_FILE:-}" ]; then
+    check_github_token "site commit token" "$(cat "${PULSAR_GIT_TOKEN_FILE}")" \
+      "repos/${PULSAR_GITHUB_REPO}" push || bad=1
+  else
+    echo "site commit token: not configured here; not checked"
+  fi
+
+  rm -f "${WORK_TMP}/auth-header" "${WORK_TMP}/gh-headers" "${WORK_TMP}/gh-body"
+  return "${bad}"
+}
+
 # One ping, two callers. The dead-man's switch watches the TIMER, so any night
 # the timer did its job has to ping -- including a night that looked at the
 # base and decided correctly that there was nothing to build. Omission means
@@ -427,6 +548,9 @@ ping_healthcheck() {
     echo "manual build: healthcheck not pinged -- it watches the timer, and a ping" >&2
     echo "from here would hide a scheduled run that did not happen." >&2
   elif [ -n "${PULSAR_HEALTHCHECK_URL:-}" ]; then
+    # A credential near its expiry rides along, so the ping that says the
+    # night was fine also says what will stop being fine.
+    [ -z "${PREFLIGHT_WARNINGS}" ] || what+=" -- WARNING: ${PREFLIGHT_WARNINGS}"
     curl -fsS --max-time 20 --retry 3 \
       --data-binary "${what}" \
       "${PULSAR_HEALTHCHECK_URL}" >/dev/null \
@@ -480,7 +604,7 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 case "${1:-}" in
-  ""|--base-check) ;;
+  ""|--base-check|--preflight) ;;
   --manual|--scheduled|--channel*)
     # The flag a person reaches for, named here because reaching for it is
     # reasonable and the answer is one line away.
@@ -490,7 +614,7 @@ case "${1:-}" in
     exit 2 ;;
   *)
     echo "unknown argument: ${1}" >&2
-    echo "nightly.sh takes --base-check, or no argument at all." >&2
+    echo "nightly.sh takes --base-check, --preflight, or no argument at all." >&2
     exit 2 ;;
 esac
 
@@ -499,6 +623,11 @@ esac
 # reason the mismatch above is now a thing that can fail out loud. 3 rather
 # than 1 for "would skip": 1 is a broken run and 2 is a config error, and this
 # is neither.
+if [ "${1:-}" = --preflight ]; then
+  preflight && exit 0
+  exit 1
+fi
+
 PULSAR_ADDONS_HASH="$(addons_fingerprint)"
 export PULSAR_ADDONS_HASH
 
@@ -531,6 +660,8 @@ fi
 # the same evening rather than a latent surprise. Forty seconds against an
 # hour-long build.
 "${REPO}/scripts/check.sh"
+
+preflight || { echo "preflight failed: fix the credential above; nothing was built" >&2; exit 1; }
 
 # AFTER check.sh, on purpose. Those forty seconds are what turns a broken
 # script on main into a failed nightly the same evening, and a quiet night is
