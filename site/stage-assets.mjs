@@ -64,6 +64,9 @@ const FILES = [
   ['site/assets-static/silk-still-dark.jpg', 'silk-still-dark.jpg'],
   ['site/assets-static/silk-still-light.jpg', 'silk-still-light.jpg'],
   ['site/assets-static/gamescale.svg', 'gamescale.svg'],
+  // 64px tile of +-2-step triangular noise at a tiny alpha: dithers the
+  // hero's CSS readability wash, which browsers (Firefox) draw undithered.
+  ['site/assets-static/dither.png', 'dither.png'],
 ];
 
 // Clear first: a file dropped from the list above must leave the deploy too,

@@ -260,7 +260,10 @@ const first = THEMES[0];
        faded to nothing before the box's edge. A fixed 50% radius from a 55%
        center ran past the bottom edge while still dark, and the box cut it
        off as a hard line above the look picker. */
-    background: radial-gradient(
+    /* The dither tile first (on top): a CSS gradient is drawn undithered in
+       Firefox and, laid over the sky, also thins the shader's own grain, so
+       without it the wash banded. +-2 steps of noise, invisible as texture. */
+    background: url('/assets/dither.png') repeat, radial-gradient(
       ellipse closest-side at 50% 55%,
       color-mix(in oklab, var(--bg-deep) 78%, transparent) 0%,
       color-mix(in oklab, var(--bg-deep) 52%, transparent) 45%,
