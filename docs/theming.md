@@ -151,8 +151,9 @@ tune it per render; the phosphor themes run a touch stronger. The brand
 wallpapers (and the site's live hero sky, which compiles the same
 assets/shaders/pulsar.frag in WebGL1) carry the same treatment in the brand colours, kept GLSL ES 1.0 and cheap. `scripts/build.sh` renders them as PNG
 on the builder, like the brand wallpapers; the Containerfile converts them
-to JPEG XL at quality 97 (about 0.6 MB each; below 97 the film grain, which
-is also the dither, goes, and dark gradients band). A `--no-wallpapers`
+to JPEG XL at quality 99 (about 1.2 MB each; q97 kept only ~60% of the
+film grain in dark gradients, and that grain is also the dither, so they
+banded; both shaders also add a +-1-step triangular dither last). A `--no-wallpapers`
 build ships none, and every theme falls back to the brand pair.
 
 ## When GNOME changes

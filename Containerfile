@@ -612,9 +612,11 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # by silently doing nothing.
 #
 # Wallpapers: scripts/build.sh renders them as PNG on the builder (there is no
-# GL stack in here), cjxl converts them at quality 97 and the PNGs go. q97 is
-# about 0.6 MB against a 3.7 MB PNG and keeps the film grain, which is also
-# the dither that stops the dark gradients banding; q90 strips it and blocks.
+# GL stack in here), cjxl converts them at quality 99 and the PNGs go. q99 is
+# about 1.2 MB against a 3.7 MB PNG. Measured on Phosphor's silk: q97 (0.65 MB)
+# kept only ~60% of the grain in the dark gradients, and that grain is also
+# the dither, so they banded again on screen; q99 keeps ~90%, and the shaders
+# add a +-1-step triangular dither on top. q90 strips it and blocks.
 # GNOME 50 reads .jxl natively (glycin-jxl), and ships its own wallpapers as
 # .jxl. A --no-wallpapers build has no renders: that is fine, the engine falls
 # back to the brand wallpapers, so it is announced rather than fatal.
@@ -632,7 +634,7 @@ RUN set -eu; \
     n=0; \
     for png in /usr/share/pulsar/themes/*/backgrounds/*.png; do \
       [ -e "${png}" ] || continue; \
-      cjxl -q 97 --quiet "${png}" "${png%.png}.jxl"; \
+      cjxl -q 99 --quiet "${png}" "${png%.png}.jxl"; \
       [ -s "${png%.png}.jxl" ] || { echo "FATAL: cjxl wrote nothing for ${png}"; exit 1; }; \
       rm -f "${png}"; \
       n=$((n + 1)); \
