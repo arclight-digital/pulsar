@@ -73,6 +73,14 @@ ARG FEDORA_VERSION
 # `rpmkeys -K` is not enough by itself: on an UNSIGNED package it prints
 # "digests OK" and exits 0. Only "signatures OK" in its output means a key
 # vouched for the file, so that is what is required.
+#
+# distribution-gpg-keys STAYS. The base image already ships it, because
+# fedora-workstation-repositories requires it, and that package is what
+# defines rpmfusion-nonfree-nvidia-driver (plus the Steam and Chrome repos
+# GNOME Software offers). Removing the keys removed it as a dependent, and the
+# nvidia image then failed on "No matching repositories for
+# rpmfusion-nonfree-nvidia-driver" (2026-09-27). The check below keeps that
+# from reaching the nvidia build as a mystery.
 # ---------------------------------------------------------------------------
 RUN for attempt in 1 2 3; do \
       host=mirrors.rpmfusion.org; \
@@ -98,7 +106,9 @@ RUN for attempt in 1 2 3; do \
     done && \
     dnf5 install -y /tmp/rpmfusion-free-release.rpm /tmp/rpmfusion-nonfree-release.rpm && \
     rm -f /tmp/rpmfusion-*-release.rpm && \
-    dnf5 remove -y distribution-gpg-keys && \
+    { rpm -q fedora-workstation-repositories >/dev/null && \
+      [ -f /etc/yum.repos.d/rpmfusion-nonfree-nvidia-driver.repo ] || \
+      { echo "FATAL: fedora-workstation-repositories or its rpmfusion-nonfree-nvidia-driver repo is gone; the nvidia image cannot fetch its driver" >&2; exit 1; }; } && \
     dnf5 swap -y ffmpeg-free ffmpeg --allowerasing
 
 # ---------------------------------------------------------------------------
