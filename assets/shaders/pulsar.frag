@@ -53,6 +53,16 @@ uniform vec3 u_p_da, u_p_db;                       // dawn ground: bottom, top
 bool pal() { return u_palette_on > 0.5; }
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// Grain and dither only: a sine-free hash (Dave Hoskins' hash12). The sine
+// hash above leaves faint diagonal line structure at screen-space inputs,
+// and sliding its input every frame made those lines march across the sky
+// as moving bands, on every look. Stars and threads keep the sine hash so
+// the art itself does not move.
+float hashS(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
 
 float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
@@ -445,7 +455,8 @@ void main() {
     // ---- film grain, screen-space ------------------------------------------
     // Follows luminance the way real grain does: strongest in the lit silk,
     // never absent even in the blacks. This also kills gradient banding.
-    float g = hash(gl_FragCoord.xy + fract(u_time) * 17.0) - 0.5;
+    vec2 nseed = gl_FragCoord.xy + floor(fract(u_time) * 60.0) * vec2(113.0, 71.0);
+    float g = hashS(nseed) - 0.5;
     float brightness = dot(col, vec3(0.33));
     col += g * (0.012 + 0.050 * brightness) * mix(1.0, 0.6, theme);
 
@@ -459,8 +470,7 @@ void main() {
     // where one visible step is four 8-bit ones, and +-1 vanishes under it --
     // the site's dark diagonal gradient banded on such a panel with the +-1
     // dither measurably present. Stills keep +-1 (their grain survives).
-    vec2 dq = gl_FragCoord.xy + fract(u_time) * 23.0;
-    float damp = mix(1.0, 3.0, clamp(u_live, 0.0, 1.0));
-    col += (hash(dq + 0.37) + hash(dq + 91.7) - 1.0) * damp / 255.0;
+        float damp = mix(1.0, 3.0, clamp(u_live, 0.0, 1.0));
+    col += (hashS(nseed + 0.37) + hashS(nseed + 91.7) - 1.0) * damp / 255.0;
     gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }

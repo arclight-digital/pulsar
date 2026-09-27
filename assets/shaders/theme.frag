@@ -43,6 +43,16 @@ uniform float u_grain;            // grain multiplier (it is also the 8-bit dith
 uniform float u_web;              // filament + lattice density/brightness (silk 1; leak/holo 0.55, satin 0.45)
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// Grain and dither only: a sine-free hash (Dave Hoskins' hash12). The sine
+// hash above leaves faint diagonal line structure at screen-space inputs,
+// and sliding its input every frame made those lines march across the sky
+// as moving bands, on every look. Stars and threads keep the sine hash so
+// the art itself does not move.
+float hashS(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
 float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
@@ -356,7 +366,8 @@ void main() {
 
     // grain: follows luminance, never absent -- this is also the dither that
     // keeps the long low-contrast gradients from banding in 8-bit
-    float g = hash(gl_FragCoord.xy + fract(u_time) * 17.0) - 0.5;
+    vec2 nseed = gl_FragCoord.xy + floor(fract(u_time) * 60.0) * vec2(113.0, 71.0);
+    float g = hashS(nseed) - 0.5;
     float brightness = dot(col, vec3(0.33));
     col += g * (0.012 + 0.050 * brightness) * mix(1.0, 0.5, theme) * u_grain;
 
@@ -366,7 +377,6 @@ void main() {
     // both thin it further, so long gradients banded again. A triangular
     // (two-sample) dither of +-1 step on top breaks the bands wherever the
     // image is quantised, and is too fine to read as texture.
-    vec2 dq = gl_FragCoord.xy + fract(u_time) * 23.0;
-    col += (hash(dq + 0.37) + hash(dq + 91.7) - 1.0) / 255.0;
+        col += (hashS(nseed + 0.37) + hashS(nseed + 91.7) - 1.0) / 255.0;
     gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
