@@ -119,7 +119,8 @@ toolboxes for dev tools, Flatpaks for apps, never reboot, and what rollback
 does and does not undo. `pulsar agent add claude` (or `codex`, `gemini`,
 `opencode`, `aider`) installs that agent into its own toolbox and runs it from
 any terminal; none is installed by default, and one you installed yourself is
-left alone. `sudo pulsar agent guard on` makes layering and system Flatpak
+left alone, and it can make you a theme: the image ships a skill for that.
+`sudo pulsar agent guard on` makes layering and system Flatpak
 installs ask for your password, for the agent and for you, and
 `sudo pulsar checkpoint` before a session lets you diff and restore `/etc`
 after it. When a program crashes, a notification offers to hand the crash

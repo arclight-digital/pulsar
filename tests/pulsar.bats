@@ -1502,6 +1502,7 @@ EOF
 # that the image stays vendor-neutral.
 # ---------------------------------------------------------------------------
 REPO_AGENTS_MD="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/AGENTS.md"
+REPO_SKILLS="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/skills"
 
 @test "agent guide prints the guide the image ships" {
     PULSAR_AGENTS_MD="$REPO_AGENTS_MD" run "$PULSAR" agent guide
@@ -1570,6 +1571,7 @@ agent_env() {
     mkdir -p "$HOME"
     unset XDG_DATA_HOME XDG_CONFIG_HOME CODEX_HOME
     export PULSAR_AGENTS_MD="$REPO_AGENTS_MD"
+    export PULSAR_SKILLS="$REPO_SKILLS"
     STUB="${BATS_TEST_TMPDIR}/stub"
     mkdir -p "$STUB"
     export TOOLBOX_LOG="${BATS_TEST_TMPDIR}/toolbox.log"
@@ -2321,4 +2323,55 @@ fake_agent() {
     run "$PULSAR" agent default gemini
     [ "$status" -ne 0 ]
     [[ "$output" == *"not installed"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Skills the image ships, and the links agent add makes to them.
+# ---------------------------------------------------------------------------
+@test "agent add links each skill where that agent reads skills, and remove takes back only those" {
+    agent_env
+    "$PULSAR" agent add claude >/dev/null
+    "$PULSAR" agent add codex >/dev/null
+    "$PULSAR" agent add gemini >/dev/null
+    "$PULSAR" agent add opencode >/dev/null
+    [ "$(readlink "${HOME}/.claude/skills/pulsar-theme")" = "${REPO_SKILLS}/pulsar-theme" ]
+    [ "$(readlink "${HOME}/.codex/skills/pulsar-theme")" = "${REPO_SKILLS}/pulsar-theme" ]
+    [ "$(readlink "${HOME}/.gemini/skills/pulsar-theme")" = "${REPO_SKILLS}/pulsar-theme" ]
+    [ "$(readlink "${HOME}/.config/opencode/skills/pulsar-theme")" = "${REPO_SKILLS}/pulsar-theme" ]
+    # the user's own skill beside it survives the remove
+    mkdir -p "${HOME}/.claude/skills/mine"
+    "$PULSAR" agent remove claude >/dev/null
+    [ ! -e "${HOME}/.claude/skills/pulsar-theme" ]
+    [ -d "${HOME}/.claude/skills/mine" ]
+}
+
+@test "agent add never replaces a skill of the user's with the same name" {
+    agent_env
+    mkdir -p "${HOME}/.codex/skills/pulsar-theme"
+    echo mine > "${HOME}/.codex/skills/pulsar-theme/SKILL.md"
+    run "$PULSAR" agent add codex
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already exists; left alone"* ]]
+    [ "$(cat "${HOME}/.codex/skills/pulsar-theme/SKILL.md")" = mine ]
+}
+
+@test "every shipped skill is well formed and names only commands that exist" {
+    local d name verbs v engine="${BATS_TEST_DIRNAME}/../scripts/pulsar-theme"
+    for d in "$REPO_SKILLS"/*/; do
+        d=${d%/}
+        [ "$(head -1 "${d}/SKILL.md")" = "---" ] || fail "${d}: no frontmatter"
+        name=$(awk '/^name: / { print $2; exit }' "${d}/SKILL.md")
+        [ "$name" = "$(basename "$d")" ] || fail "${d}: name '${name}' is not the folder's"
+        grep -q '^description: .\{40,\}' "${d}/SKILL.md" || fail "${d}: description too thin to route on"
+        verbs=$(grep -o 'pulsar [a-z-]*' "${d}/SKILL.md" | awk 'NF == 2 { print $2 }' | sort -u)
+        for v in $verbs; do
+            # theme is routed before the dispatch table, to the engine
+            [ "$v" = theme ] && continue
+            grep -qE "^        ${v}\)" "$PULSAR" || fail "${d} names 'pulsar ${v}', which main() does not dispatch"
+        done
+        verbs=$(grep -o 'pulsar theme [a-z-]*' "${d}/SKILL.md" | awk '{ print $3 }' | sort -u)
+        for v in $verbs; do
+            grep -qE "add_parser\(\"${v}\"" "$engine" || fail "${d} names 'pulsar theme ${v}', which the engine does not have"
+        done
+    done
 }

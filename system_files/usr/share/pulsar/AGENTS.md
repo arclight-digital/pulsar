@@ -43,6 +43,14 @@ guard is on (below).
   **Never** use it for dev tools. It builds a new deployment, needs a reboot,
   and makes every future update slower. Ask the user first.
 
+## Skills
+
+`/usr/share/pulsar/skills/` holds skills for this machine, one folder each
+with a `SKILL.md`: `pulsar-theme` makes, checks and applies desktop themes.
+`pulsar agent add` links them where your agent looks for skills. If yours
+does not read skills, read the matching `SKILL.md` yourself when a task fits
+its description.
+
 ## Facts, not guesses
 
 Run these before assuming anything about this machine. None needs root.

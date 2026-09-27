@@ -1586,6 +1586,55 @@ link_agent_context() {
     fi
 }
 
+# Skills: /usr/share/pulsar/skills/<name>/SKILL.md, in the Agent Skills
+# layout (a folder, a SKILL.md with name and description) that each of these
+# reads from a folder of its own, per its docs. Linked one skill at a time,
+# so a user's own skills beside them are never touched, and linked rather
+# than copied so they follow the image. aider reads no skills.
+SKILLS_DIR=${PULSAR_SKILLS:-/usr/share/pulsar/skills}
+
+agent_skills_path() {
+    case "$1" in
+        claude)   printf '%s\n' "$HOME/.claude/skills" ;;
+        codex)    printf '%s\n' "${CODEX_HOME:-$HOME/.codex}/skills" ;;
+        gemini)   printf '%s\n' "$HOME/.gemini/skills" ;;
+        opencode) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills" ;;
+        *)        return 1 ;;
+    esac
+}
+
+link_agent_skills() {
+    local dir s target linked=""
+    dir=$(agent_skills_path "$A_NAME") || return 0
+    [ -d "$SKILLS_DIR" ] || return 0
+    for s in "$SKILLS_DIR"/*/; do
+        s=${s%/}
+        [ -r "${s}/SKILL.md" ] || continue
+        target="${dir}/$(basename "$s")"
+        if [ -L "$target" ] && [ "$(readlink "$target")" = "$s" ]; then
+            continue
+        elif [ -e "$target" ] || [ -L "$target" ]; then
+            printf '%s already exists; left alone\n' "$target"
+            continue
+        fi
+        mkdir -p "$dir"
+        ln -s "$s" "$target"
+        linked+="${linked:+, }$(basename "$s")"
+    done
+    [ -z "$linked" ] || printf 'linked skills into %s: %s\n' "$dir" "$linked"
+}
+
+unlink_agent_skills() {
+    local dir l
+    dir=$(agent_skills_path "$A_NAME") || return 0
+    [ -d "$dir" ] || return 0
+    for l in "$dir"/*; do
+        # only links into the image's skills, never the user's own
+        [ -L "$l" ] || continue
+        case "$(readlink "$l")" in "${SKILLS_DIR}"/*) rm -f "$l"; printf 'removed the skill link %s\n' "$l" ;; esac
+    done
+}
+
 unlink_agent_context() {
     local target
     target=$(agent_context_path "$A_NAME") || return 0
@@ -1677,6 +1726,7 @@ agent_install() {
         printf '%s is already installed by its own installer at %s\n' "$A_DESC" "$native"
         printf 'leaving it as it is: it runs on the host, not in the %s toolbox\n' "$AGENT_BOX"
         link_agent_context native
+        link_agent_skills
         printf 'done: nothing installed\n'
         return 0
     fi
@@ -1729,6 +1779,7 @@ agent_install() {
 
     write_agent_shim
     link_agent_context
+    link_agent_skills
     case ":${PATH}:" in
         *":${AGENT_SHIMS}:"*) ;;
         *) printf 'note: %s is not on PATH in this shell; a new login shell adds it on Fedora\n' "$AGENT_SHIMS" ;;
@@ -1744,9 +1795,11 @@ agent_remove() {
     elif native=$(native_launcher "$A_BIN"); then
         printf '%s was installed by its own installer; remove it with that installer\n' "$native"
         unlink_agent_context
+        unlink_agent_skills
         return 0
     fi
     unlink_agent_context
+    unlink_agent_skills
     if have toolbox && box_exists; then
         case "$A_METHOD" in
             npm) in_box npm uninstall -g --prefix "$AGENT_PREFIX" "$A_PKG" || true ;;

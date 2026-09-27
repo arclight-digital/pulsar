@@ -215,6 +215,11 @@ Agents discover it in two ways:
    - aider: the shim passes `--read /usr/share/pulsar/AGENTS.md` whenever the
      image has it, because aider reads nothing unless asked.
 
+   It also links each skill in `/usr/share/pulsar/skills/` (Agent Skills
+   layout) into that agent's own skills folder: `~/.claude/skills`,
+   `$CODEX_HOME/skills`, `~/.gemini/skills`, `~/.config/opencode/skills`.
+   One link per skill, never over a folder of the user's with the same name.
+
    **An agent installed its own way is supported too.** If a vendor's
    installer already put the command on `PATH` (Claude Code's `install.sh`
    writes `~/.local/bin/claude`), `agent add` leaves it exactly as it is,

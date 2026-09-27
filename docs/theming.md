@@ -17,6 +17,7 @@ it deliberately does not.
 | image default | `zz1-pulsar-theme.gschema.override`: `enabled-extensions` only |
 | first-login units | `pulsar-theme-init.service`, `pulsar-theme-notice.service` (user, `--global`) |
 | GTK3 recolouring | `adw-gtk3-theme` |
+| agent skill for making themes | `/usr/share/pulsar/skills/pulsar-theme/SKILL.md`, linked by `pulsar agent add` |
 
 Themes: Pulsar, Pulsar Holo, Catppuccin, Gruvbox, Tokyo Night, Nord, Rosé
 Pine, Everforest, Kanagawa, Solarized, Flexoki, Ayu, and Dracula and
