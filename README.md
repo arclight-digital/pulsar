@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pulsar.arclight.digital">pulsar.arclight.digital</a>
+  <a href="https://getpulsar.dev">getpulsar.dev</a>
 </p>
 
 A stylish, atomic, agentic Linux desktop: a bootc image built on Fedora
@@ -220,8 +220,8 @@ Signing moves to Pulsar's own cosign release key: the one that already signs
 the installer ISOs, published at [`keys/cosign.pub`](keys/cosign.pub). Until
 that lands, the SBOM and the nightly diff are the paper trail. Each nightly is
 diffed against the one before it from those SBOMs — rendered at
-[pulsar.arclight.digital/changelog](https://pulsar.arclight.digital/changelog),
-served raw as [changelog.json](https://pulsar.arclight.digital/changelog.json),
+[getpulsar.dev/changelog](https://getpulsar.dev/changelog),
+served raw as [changelog.json](https://getpulsar.dev/changelog.json),
 and on the machine as `pulsar changelog`. Nothing in it is written by hand.
 
 ## Working on it

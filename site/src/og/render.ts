@@ -15,6 +15,9 @@ import { Resvg } from '@resvg/resvg-js';
 import satori from 'satori';
 import sharp from 'sharp';
 import { changelog } from '../data/build';
+import { SITE as SITE_URL } from '../data/site';
+
+const SITE_HOST = new URL(SITE_URL).host;
 import { THEMES, variant } from '../data/themes';
 import { buildDate, version, type Card, type Line } from './cards';
 
@@ -237,7 +240,7 @@ function topRow(card: Card): Node {
     h(
       'div',
       { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 20, color: MUTED, letterSpacing: 0.5 },
-      `pulsar.arclight.digital${card.path === '/' ? '' : card.path}`,
+      `${SITE_HOST}${card.path === '/' ? '' : card.path}`,
     ),
   );
 }
@@ -374,7 +377,7 @@ async function home(card: Card): Promise<Node> {
       h(
         'div',
         { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 20, color: MUTED, marginTop: 40 },
-        'pulsar.arclight.digital',
+        SITE_HOST,
       ),
     ),
   );

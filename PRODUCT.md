@@ -120,9 +120,10 @@ beside the ISOs and committed as `keys/cosign.pub`.
 - The share card (`og.jpg`) is an Astro endpoint rendered at build time with
   Satori from the same fonts and tokens as the page, over the silk still.
   Nothing about it is hand-maintained.
-- Domain (confirmed 2026-09-12): the site lives at pulsar.arclight.digital,
-  attached to the Worker in the Cloudflare dashboard; `astro.config.mjs`
-  sets it as `site` for canonical, og:url and the sitemap. The GitHub Pages
+- Domain (moved 2026-09-26): the site lives at getpulsar.dev, attached to
+  the Worker in the Cloudflare dashboard; pulsar.arclight.digital 301s to it.
+  `SITE` in site/src/data/site.ts (which `astro.config.mjs` imports) is the
+  one place it is written, for canonical, og:url and the sitemap. The GitHub Pages
   deployment is retired. URLs on the page stay relative anyway. The LLC site
   is arclight.build.
 - URLs and registry names the page repeats are declared once in

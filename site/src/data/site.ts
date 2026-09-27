@@ -7,19 +7,14 @@ export const REPO = 'https://github.com/arclight-digital/pulsar';
 // canonical tags, og:url, the JSON-LD ids, the sitemap and robots.txt -- is
 // built from Astro.site or from the ids below, never retyped.
 //
-// TODO(getpulsar.dev): the site is moving to getpulsar.dev once that domain is
-// registered and live. On the day, this line is the whole change inside site/.
-// Outside it, in the same change or just before:
-//   - the Worker's custom domain (Cloudflare dashboard, Domains & Routes), and
-//     a 301 from pulsar.arclight.digital/* to the same path on the new host
-//   - BUILDD_SITE_ORIGIN on helios, or the beacon's CORS check refuses the
-//     new origin and the live-build chip goes quiet
-//   - Containerfile's PULSAR_CHANGELOG_URL (what `pulsar changelog` fetches;
-//     the old host keeps working only while the redirect does)
-//   - scripts/rpm-sbom.sh's SPDX documentNamespace (an identifier, not a
-//     fetched URL; changing it is optional and only affects new SBOMs)
-//   - PRODUCT.md's domain note, and the new property in search consoles
-export const SITE = 'https://pulsar.arclight.digital';
+// The site lives at getpulsar.dev (moved 2026-09-26); this line is the whole
+// of the domain inside site/. Outside it, the same move touched: the Worker's
+// custom domain and a 301 from pulsar.arclight.digital/* (Cloudflare),
+// BUILDD_SITE_ORIGIN on helios (the beacon's CORS origin, or the live-build
+// chip goes quiet), and Containerfile's PULSAR_CHANGELOG_URL. rpm-sbom.sh's
+// SPDX documentNamespace still names the old host on purpose: it is an
+// identifier, not a URL anything fetches.
+export const SITE = 'https://getpulsar.dev';
 
 // JSON-LD node ids. Base.astro defines the nodes; pages point at them with
 // { '@id': ... } rather than repeating the objects.

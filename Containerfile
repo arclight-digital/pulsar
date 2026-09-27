@@ -543,7 +543,7 @@ LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
 # `pulsar sbom` reads the live rpm database instead, which is the same source
 # and is correct by construction; the published per-build copies live in R2.
 # ---------------------------------------------------------------------------
-ARG PULSAR_CHANGELOG_URL="https://pulsar.arclight.digital/changelog.json"
+ARG PULSAR_CHANGELOG_URL="https://getpulsar.dev/changelog.json"
 COPY cli/pulsar /usr/bin/pulsar
 COPY scripts/rpm-sbom.sh /usr/libexec/pulsar/rpm-sbom.sh
 COPY scripts/flatpak-defaults.sh /usr/libexec/pulsar/flatpak-defaults.sh
