@@ -13,7 +13,7 @@ restore. **Your data is not.** An agent that runs as you can do anything to
 Pulsar is a bootc image on Fedora Silverblue. Three properties do the work,
 and none of them is Pulsar-specific. They come from the base system:
 
-1. **`/usr` is read-only.** The OS is a signed image, mounted read-only. An
+1. **`/usr` is read-only.** The OS is one image, mounted read-only. An
    agent cannot edit a system binary or a shipped config file in place, even
    as root.
 2. **Every OS change is a new deployment.** `rpm-ostree install`, an update, a
