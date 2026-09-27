@@ -37,8 +37,9 @@ back after rebooting.
 |---|---|---|
 | `/usr` (the OS image) | nothing | n/a |
 | Stage a deployment (`rpm-ostree install`, `upgrade`, `rollback`, `cleanup`) | **yes**, see below | `sudo rpm-ostree cleanup --pending` before a reboot, `sudo pulsar rollback` after |
-| System Flatpaks (install or remove) | **yes**, see below | reinstall; `sudo pulsar setup apps` restores the defaults |
+| System Flatpaks (install or remove) and Flatpak remotes (add, modify) | **yes**, see below | reinstall; `sudo pulsar setup apps` restores the defaults |
 | `/etc` | nothing: it is root-owned | a copy you made first; `sudo ostree admin config-diff` shows what differs from the image |
+| `/usr/local`, `/opt` (links to `/var/usrlocal`, `/var/opt`) | nothing: they are root-owned | delete what was put there by hand. No update or rollback touches them |
 | `$HOME`: code, dotfiles, SSH keys, browser profiles | **everything** | your backups. Nothing here rolls `$HOME` back |
 | User Flatpaks and all Flatpak app data (`~/.var/app`) | everything | your backups |
 | Toolboxes, podman containers, user systemd units | everything | recreate them |
@@ -59,6 +60,12 @@ ticket in the terminal it runs in. `/usr` is still read-only, and a new
 deployment is still just a staged deployment. But an `/etc` edit takes effect
 immediately, and it outlives rollback (next section).
 
+`/var` includes `/usr/local` and `/opt`, which are links into it. A binary a
+root agent installs there (`sudo make install`, a vendor's `install.sh`)
+shadows the image on `PATH`, never appears in `rpm-ostree status`, and
+outlives every update and rollback. It is a way around the read-only `/usr`
+that the deployment model does not see at all.
+
 ## What is NOT protected
 
 Be exact about this when you make the pitch:
@@ -71,11 +78,13 @@ Be exact about this when you make the pitch:
   carry local edits forward with a three-way merge. Rollback boots the old
   deployment's copy. That can bring back files you wanted changed, or keep an
   edit you did not want, depending on when the edit happened relative to the
-  update. So rollback is not an `/etc` undo. See "Undoing an `/etc` change"
-  below.
+  update. An edit made after the old deployment was current is simply
+  missing once you boot it, and the next update merges forward from there,
+  so an edit can vanish without anyone removing it. Rollback is not an
+  `/etc` undo. See "Undoing an `/etc` change" below.
 - **`/var`.** Everything under it is shared by every deployment: container
-  storage, libvirt images, Flatpak installations, `/var/home`. None of it is
-  versioned.
+  storage, libvirt images, Flatpak installations, `/var/home`, and
+  `/usr/local` and `/opt`, which are links into it. None of it is versioned.
 - **Flatpak data.** Apps can be reinstalled. Their data in `~/.var/app`
   cannot.
 - **The network.** An agent can reach anything you can, with whatever
@@ -110,6 +119,9 @@ What works today:
   <file>.pre-agent`). AGENTS.md tells agents to do exactly that.
 - A file you want back to the image's version can be copied from
   `/usr/etc/<path>`, which holds the image's pristine `/etc`.
+- After putting a file back, run `sudo restorecon -v <file>`. `cp -a` and
+  `mv` carry the old SELinux label with them, and a file labelled
+  `user_home_t` in `/etc` gets its reader denied.
 
 A `pulsar checkpoint` command (snapshot `/etc` and pin the booted deployment
 before a session, then diff or restore after) is built and waiting on a real
