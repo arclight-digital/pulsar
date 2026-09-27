@@ -116,6 +116,17 @@ RUN for attempt in 1 2 3; do \
 # updates (or even updates-archive) metadata yet. Koji serves every RPM the
 # moment it is built, no mirror sync involved, so a nightly landing in that
 # window still builds.
+#
+# FROM KOJI'S SIGNED COPY, CHECKED. The plain /packages/.../x86_64/ path is
+# the build output as it left the builder -- UNSIGNED, with nothing between
+# it and this image but https. kernel-devel is what the NVIDIA module is
+# compiled against and then signed with the MOK users enrol, so it is not a
+# file to take on trust. Koji keeps a copy signed with the release key under
+# data/signed/<short key id>/, and a kernel the compose already shipped has
+# been signed, so that copy exists whenever this path is taken. Both RPMs must
+# pass `rpmkeys -K` against Fedora's own key with "signatures OK" -- on an
+# unsigned file rpmkeys says "digests OK" and exits 0, so its exit status
+# alone proves nothing.
 RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     VER=$(rpm -q --qf '%{VERSION}' kernel-core) && \
     REL=$(rpm -q --qf '%{RELEASE}' kernel-core) && \
@@ -123,11 +134,19 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     { dnf5 install -y --enablerepo=updates-archive kernel-devel-${KV} akmods \
         gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' || \
       { echo "kernel-devel ${KV} not on mirrors yet; fetching from koji directly" && \
-        KOJI="https://kojipkgs.fedoraproject.org/packages/kernel/${VER}/${REL}/x86_64" && \
+        FKEY="/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-$(rpm -E %fedora)-primary" && \
+        rpm --import "${FKEY}" && \
+        KID=$(GNUPGHOME="$(mktemp -d)" gpg --show-keys --with-colons "${FKEY}" | awk -F: '$1 == "pub" { print tolower(substr($5, 9)); exit }') && \
+        [ -n "${KID}" ] && \
+        KOJI="https://kojipkgs.fedoraproject.org/packages/kernel/${VER}/${REL}/data/signed/${KID}/x86_64" && \
         curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
           -o /tmp/kernel-devel.rpm "${KOJI}/kernel-devel-${KV}.rpm" && \
         curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
           -o /tmp/kernel-devel-matched.rpm "${KOJI}/kernel-devel-matched-${KV}.rpm" && \
+        for f in /tmp/kernel-devel.rpm /tmp/kernel-devel-matched.rpm; do \
+          rpmkeys -K "${f}" | grep -q ': digests signatures OK$' || \
+            { echo "FATAL: ${f} from koji is not signed by ${FKEY}:" >&2; rpmkeys -Kv "${f}" >&2; exit 1; }; \
+        done && \
         dnf5 install -y /tmp/kernel-devel.rpm /tmp/kernel-devel-matched.rpm akmods \
           gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' && \
         rm -f /tmp/kernel-devel*.rpm; }; } && \

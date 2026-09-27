@@ -57,14 +57,31 @@ ARG FEDORA_VERSION
 # as somebody else's outage. Every retry loop in both Containerfiles carries
 # the same check for the same reason, and scripts/build.sh refuses to start a
 # build on a filesystem that is already this short.
+#
+# THE RELEASE RPMS ARE CHECKED BEFORE THEY ARE INSTALLED. They are the trust
+# root for everything rpmfusion supplies -- they drop the repo files and the
+# keys every later rpmfusion package, the NVIDIA akmod included, is checked
+# against -- and dnf does not check the signature of an RPM given as a URL.
+# Fetched over https from a GeoIP redirect to whichever mirror, installed
+# unchecked, a bad mirror would have chosen the keys. So they are downloaded,
+# checked against rpmfusion's keys as FEDORA packages them (distribution-gpg-
+# keys comes from Fedora's own signed repos, so the chain starts at the base
+# image's trust, not at the mirror), and only then installed. No fingerprint
+# is pinned here: rpmfusion keys each Fedora release separately, and a pin
+# would be a line to update every six months that Fedora already updates.
+#
+# `rpmkeys -K` is not enough by itself: on an UNSIGNED package it prints
+# "digests OK" and exits 0. Only "signatures OK" in its output means a key
+# vouched for the file, so that is what is required.
 # ---------------------------------------------------------------------------
 RUN for attempt in 1 2 3; do \
       host=mirrors.rpmfusion.org; \
       [ "${attempt}" -lt 3 ] || host=download1.rpmfusion.org; \
-      dnf5 install -y \
-        "https://${host}/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
-        "https://${host}/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm" \
-        fedora-repos-archive && break; \
+      dnf5 install -y distribution-gpg-keys fedora-repos-archive && \
+      curl -fsSL -o /tmp/rpmfusion-free-release.rpm \
+        "https://${host}/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" && \
+      curl -fsSL -o /tmp/rpmfusion-nonfree-release.rpm \
+        "https://${host}/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm" && break; \
       free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
       [ "${free_kb:-0}" -gt 262144 ] || \
         { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
@@ -73,6 +90,15 @@ RUN for attempt in 1 2 3; do \
       dnf5 clean all >/dev/null 2>&1 || true; \
       sleep $((attempt * 15)); \
     done && \
+    for v in free nonfree; do \
+      rpm --import "/usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-${v}-fedora-${FEDORA_VERSION}" || exit 1; \
+      rpmkeys -K "/tmp/rpmfusion-${v}-release.rpm" | grep -q ': digests signatures OK$' || \
+        { echo "FATAL: rpmfusion-${v}-release is not signed by rpmfusion's Fedora ${FEDORA_VERSION} key:" >&2; \
+          rpmkeys -Kv "/tmp/rpmfusion-${v}-release.rpm" >&2; exit 1; }; \
+    done && \
+    dnf5 install -y /tmp/rpmfusion-free-release.rpm /tmp/rpmfusion-nonfree-release.rpm && \
+    rm -f /tmp/rpmfusion-*-release.rpm && \
+    dnf5 remove -y distribution-gpg-keys && \
     dnf5 swap -y ffmpeg-free ffmpeg --allowerasing
 
 # ---------------------------------------------------------------------------
@@ -144,9 +170,21 @@ RUN mesa="$(rpm -q --qf '%{VERSION}' mesa-filesystem.x86_64)" && \
 # -- the 2026-08-12 log shows it walking eleven of them -- but
 # copr.fedorainfracloud.org has no alternate to fail over to, so a bad minute
 # there is a failed build unless something waits and asks again.
+#
+# THE COPR'S KEY IS PINNED. A COPR is one person's build project, and dnf
+# trusts its key on first sight: whatever pubkey.gpg the server hands over is
+# imported and believed. So it is imported here first and must be the key
+# this project has always had, the way the mise and NVIDIA keys are. COPR
+# keys a project once and keeps that key for years; if it ever does change,
+# this stops the build with both fingerprints in the log, and the new one
+# goes here only once it has been checked against the project page.
 RUN for attempt in 1 2 3; do \
       dnf5 install -y 'dnf5-command(copr)' && \
       dnf5 copr enable -y bieszczaders/kernel-cachyos-addons && \
+      rpm --import "$(sed -n 's/^gpgkey=//p' /etc/yum.repos.d/*kernel-cachyos-addons*.repo | head -n1)" && \
+      { rpm -qa 'gpg-pubkey*' | grep -qi '^gpg-pubkey-a98571785d3845aef14b16b1cdd249f6f4033a98-' || \
+        { echo "FATAL: the kernel-cachyos-addons COPR key is not A98571785D3845AEF14B16B1CDD249F6F4033A98:" >&2; \
+          rpm -qa 'gpg-pubkey*' --qf '%{VERSION} %{SUMMARY}\n' >&2; exit 1; }; } && \
       dnf5 install -y scx-scheds && break; \
       free_kb="$(df -Pk / | awk 'NR==2 {print $4}')"; \
       [ "${free_kb:-0}" -gt 262144 ] || \
