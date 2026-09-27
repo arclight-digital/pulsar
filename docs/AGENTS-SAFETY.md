@@ -105,12 +105,36 @@ See "Proposals" below.
 
 ## Undoing an `/etc` change
 
-The OS half already has an undo. `/etc` does not have one yet, and it is the
-one piece that matters most after an agent session. It holds sshd config,
-sudoers, network and firewall config, and it survives rollback in ways that
-are hard to reason about.
+The OS half already has an undo. `/etc` is the piece that matters most after
+an agent session. It holds sshd config, sudoers, network and firewall config,
+and it survives rollback in ways that are hard to reason about. Its undo is
+`pulsar checkpoint`:
 
-What works today:
+```
+sudo pulsar checkpoint "before the agent"   # snapshot /etc, pin the booted deployment
+sudo pulsar checkpoint diff                  # what changed, appeared, vanished since
+sudo pulsar checkpoint restore <id>          # put changed and deleted files back
+sudo pulsar checkpoint drop <id>             # delete it, and unpin what it pinned
+```
+
+A checkpoint keeps `/etc` as a tar with owners, modes, ACLs and SELinux
+labels, so a restored file comes back as it was, label included. It also pins
+the booted deployment so the OS state it describes cannot be garbage
+collected. `restore` does not delete files added since: it lists them, because
+one of them may be the change you wanted. It discards a deployment staged
+since the checkpoint, and if a newer one has already been booted it tells you
+to `sudo pulsar rollback` instead of rebooting for you.
+
+It restores **all** of `/etc` that changed since, not only what the agent
+touched. Read `diff` before `restore`.
+
+It needs root on purpose, for every subcommand including `list` and `diff`:
+the snapshot holds shadow and private keys, and an agent that can take and
+restore its own checkpoints can also erase the evidence of what it did. It
+does not cover `$HOME`, the rest of `/var`, Flatpak data, or anything sent
+over the network.
+
+Without a checkpoint:
 
 - `sudo ostree admin config-diff` lists every `/etc` file that differs from
   what the image ships: `M` modified, `A` added, `D` deleted. Run it after a
@@ -119,14 +143,9 @@ What works today:
   <file>.pre-agent`). AGENTS.md tells agents to do exactly that.
 - A file you want back to the image's version can be copied from
   `/usr/etc/<path>`, which holds the image's pristine `/etc`.
-- After putting a file back, run `sudo restorecon -v <file>`. `cp -a` and
-  `mv` carry the old SELinux label with them, and a file labelled
+- After putting a file back by hand, run `sudo restorecon -v <file>`. `cp -a`
+  and `mv` carry the old SELinux label with them, and a file labelled
   `user_home_t` in `/etc` gets its reader denied.
-
-A `pulsar checkpoint` command (snapshot `/etc` and pin the booted deployment
-before a session, then diff or restore after) is built and waiting on a real
-run before it ships. It will need root on purpose: an agent that can take and
-restore its own checkpoints can also erase the evidence of what it did.
 
 ## How agents find out about this machine
 
@@ -195,7 +214,7 @@ Each of these is a decision for the maintainer, not a default:
   real isolation for `$HOME`, at the price of the agent losing your git
   config, SSH agent and logins. It is a bigger design than a maintenance-mode
   project should take on without a user asking for it.
-- **Automatic checkpoints**, once `pulsar checkpoint` ships. For example,
+- **Automatic checkpoints.** For example,
   before each `pulsar update`. Probably not: a checkpoint is only useful if
   you know which one predates the thing you want to undo, and automatic ones
   pile up pins.
