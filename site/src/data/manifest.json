@@ -1,9 +1,9 @@
 {
   "image": "pulsar-nvidia",
   "variant": "nvidia-open",
-  "version": "44.20260926.0",
+  "version": "44.20260927.0",
   "base": "fedora-silverblue:44",
-  "built": "2026-09-26T02:15:43Z",
+  "built": "2026-09-27T02:57:44Z",
   "kernel": "7.2.7-200.fc44.x86_64",
   "components": {
     "scheduler": "scx_bpfland",
@@ -12,9 +12,9 @@
     "gamemode": "1.8.2-4.fc44",
     "mangohud": "0.8.3~rc1-2.fc44",
     "mesa": "26.2.3-1.fc44",
-    "gamescale": "v2.0.0"
+    "mesa_va": "freeworld",
+    "gamescale": "v2.0.2"
   },
   "changelog_url": "https://pulsar.arclight.digital/changelog.json",
-  "attestation": "gh attestation verify oci://ghcr.io/arclight-digital/pulsar --owner arclight-digital",
   "nvidia_driver": "615.71.09"
 }

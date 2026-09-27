@@ -1,132 +1,84 @@
 {
-  "generated": "2026-09-26T03:00:09Z",
+  "generated": "2026-09-27T03:45:18Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:dee545f55939b89645a8838170063390af5ed9d121b2d04a926a78ebdf220363",
-    "digest": "sha256:dee545f55939b89645a8838170063390af5ed9d121b2d04a926a78ebdf220363"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:5e6409b328659dc7cec4734f3afa9393fc1389093eee2ea13f8d8260f03b0543",
     "digest": "sha256:5e6409b328659dc7cec4734f3afa9393fc1389093eee2ea13f8d8260f03b0543"
+  },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:b63661d463f60b386740f95c6c76a2b50eb752cfe716723fdd2c6ecdb50191f5",
+    "digest": "sha256:b63661d463f60b386740f95c6c76a2b50eb752cfe716723fdd2c6ecdb50191f5"
   },
   "summary": {
     "added": 2,
     "removed": 0,
-    "upgraded": 17,
+    "upgraded": 9,
     "downgraded": 0,
     "changed": 0
   },
   "added": [
     {
-      "name": "dbus-daemon",
-      "version": "1:1.16.2-1.fc44"
+      "name": "adw-gtk3-theme",
+      "version": "6.4-3.fc44"
     },
     {
-      "name": "dbus-tools",
-      "version": "1:1.16.2-1.fc44"
+      "name": "mesa-va-drivers-freeworld",
+      "version": "26.2.3-1.fc44"
     }
   ],
   "removed": [],
   "changed": [
     {
-      "name": "bootc",
-      "from": "1.16.10-1.fc44",
-      "to": "1.16.13-1.fc44",
+      "name": "firefox",
+      "from": "156.0-1.fc44",
+      "to": "156.0.1-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "ffmpeg",
-      "from": "8.1.2-3.fc44",
-      "to": "8.1.3-1.fc44",
+      "name": "firefox-langpacks",
+      "from": "156.0-1.fc44",
+      "to": "156.0.1-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "ffmpeg-libs",
-      "from": "8.1.2-3.fc44",
-      "to": "8.1.3-1.fc44",
+      "name": "fwupd",
+      "from": "2.1.7-1.fc44",
+      "to": "2.1.8-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "javascriptcoregtk4.1",
-      "from": "2.52.5-1.fc44",
-      "to": "2.54.0-2.fc44",
+      "name": "fwupd-plugin-modem-manager",
+      "from": "2.1.7-1.fc44",
+      "to": "2.1.8-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "javascriptcoregtk6.0",
-      "from": "2.52.5-1.fc44",
-      "to": "2.54.0-2.fc44",
+      "name": "fwupd-plugin-uefi-capsule-data",
+      "from": "2.1.7-1.fc44",
+      "to": "2.1.8-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libavdevice",
-      "from": "8.1.2-3.fc44",
-      "to": "8.1.3-1.fc44",
+      "name": "libheif",
+      "from": "1.23.4-6.fc44",
+      "to": "1.23.5-3.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libldb",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
+      "name": "libheif-ffmpeg",
+      "from": "1.23.4-6.fc44",
+      "to": "1.23.5-3.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libsmbclient",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
+      "name": "python3-boto3",
+      "from": "1.43.96-1.fc44",
+      "to": "1.43.99-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "libwbclient",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "mise",
-      "from": "2026.9.13-1",
-      "to": "2026.9.14-1",
-      "direction": "upgraded"
-    },
-    {
-      "name": "samba-client",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "samba-client-libs",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "samba-common",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "samba-core-libs",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "samba-ndr-libs",
-      "from": "2:4.24.6-1.fc44",
-      "to": "2:4.24.7-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "webkit2gtk4.1",
-      "from": "2.52.5-1.fc44",
-      "to": "2.54.0-2.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "webkitgtk6.0",
-      "from": "2.52.5-1.fc44",
-      "to": "2.54.0-2.fc44",
+      "name": "python3-botocore",
+      "from": "1.43.96-1.fc44",
+      "to": "1.43.99-1.fc44",
       "direction": "upgraded"
     }
   ]
