@@ -1716,8 +1716,8 @@ EOF
     "$PULSAR" agent add codex >/dev/null
     : > "$TOOLBOX_LOG"
     run "${HOME}/.local/bin/codex" --version "two words"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"real codex --version two words"* ]]
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"real codex --version two words"* ]] || fail "$output"
     # Inside a container (CI in a toolbox) the shim runs the binary directly,
     # because toolbox cannot nest; on a host it must go through the box.
     if [ ! -e /run/.containerenv ]; then
@@ -1875,7 +1875,7 @@ EOF
     agent_env
     "$PULSAR" agent add claude >/dev/null
     grep -q 'name="agents"' "${HOME}/.local/bin/claude"
-    grep -q 'exec flatpak-spawn --host toolbox run -c' "${HOME}/.local/bin/claude"
+    grep -q 'exec flatpak-spawn --host .* agent run .claude. -- "$@"' "${HOME}/.local/bin/claude"
 }
 
 # ---------------------------------------------------------------------------
@@ -2374,4 +2374,118 @@ fake_agent() {
             grep -qE "add_parser\(\"${v}\"" "$engine" || fail "${d} names 'pulsar theme ${v}', which the engine does not have"
         done
     done
+}
+
+# ---------------------------------------------------------------------------
+# agent sandbox: the settings layers, the refusals, and what the container
+# is given. podman is stubbed to record its argv; the gate is the real one.
+# ---------------------------------------------------------------------------
+sandbox_env() {
+    agent_env
+    export PULSAR_GATE="${BATS_TEST_DIRNAME}/../scripts/pulsar-agent-gate"
+    # a socket path has to fit in 108 bytes
+    export XDG_RUNTIME_DIR="/tmp/pst.$$.${BATS_TEST_NUMBER}"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    export PODMAN_LOG="${BATS_TEST_TMPDIR}/podman.args"
+    cat > "${STUB}/podman" <<'SH'
+#!/bin/sh
+case "$1" in
+    image) exit 0 ;;
+    run) shift; for a in "$@"; do printf '%s\n' "$a"; done > "$PODMAN_LOG"; exit 0 ;;
+esac
+SH
+    chmod +x "${STUB}/podman"
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/claude"; chmod +x "${STUB}/claude"
+    export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+    UPSTREAM="${BATS_TEST_TMPDIR}/upstream.git"
+    PROJ="${HOME}/code/proj"
+    git init -q --bare -b main "$UPSTREAM"
+    git init -q -b main "$PROJ"
+    git -C "$PROJ" remote add origin "$UPSTREAM"
+}
+teardown() { [ -z "${XDG_RUNTIME_DIR:-}" ] || case "$XDG_RUNTIME_DIR" in /tmp/pst.*) rm -rf "$XDG_RUNTIME_DIR" ;; esac; }
+
+@test "sandbox settings: global, then yours for the project, and the repo can only tighten" {
+    sandbox_env
+    cd "$PROJ"
+    run "$PULSAR" agent sandbox
+    [[ "$output" == *"sandbox  off  (default)"* ]]
+    "$PULSAR" agent sandbox on >/dev/null
+    run "$PULSAR" agent sandbox
+    [[ "$output" == *"sandbox  on  (global)"* ]]
+    "$PULSAR" agent sandbox off --here >/dev/null
+    run "$PULSAR" agent sandbox
+    [[ "$output" == *"sandbox  off  (this project, yours)"* ]]
+    mkdir -p .pulsar
+    printf 'sandbox = "on"\npush = "branches"\n' > .pulsar/agent.toml
+    run "$PULSAR" agent sandbox
+    [[ "$output" == *"sandbox  on  (this project: .pulsar/agent.toml)"* ]]
+    [[ "$output" == *"push     branches  (this project: .pulsar/agent.toml)"* ]]
+    # a repo file cannot loosen anything
+    printf 'sandbox = "off"\npush = "on"\n' > .pulsar/agent.toml
+    "$PULSAR" agent sandbox on --here >/dev/null
+    "$PULSAR" agent sandbox push off --here >/dev/null
+    run "$PULSAR" agent sandbox
+    [[ "$output" == *"sandbox  on  (this project, yours)"* ]]
+    [[ "$output" == *"push     off  (this project, yours)"* ]]
+    run "$PULSAR" agent sandbox list
+    [[ "$output" == *"sandbox  on        ${PROJ}"* ]]
+}
+
+@test "agent run --no-sandbox cannot override a repo that says sandbox" {
+    sandbox_env
+    cd "$PROJ"
+    mkdir -p .pulsar; printf 'sandbox = "on"\n' > .pulsar/agent.toml
+    run "$PULSAR" agent run claude --no-sandbox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *".pulsar/agent.toml says to sandbox"* ]]
+}
+
+@test "the sandbox refuses to show an agent all of \$HOME" {
+    sandbox_env
+    cd "$HOME"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"start it inside one"* ]]
+    [ ! -e "$PODMAN_LOG" ]
+}
+
+@test "a sandboxed agent gets the project, read-only git internals, its state, and the gate; not \$HOME" {
+    sandbox_env
+    mkdir -p "${HOME}/.ssh" "${HOME}/.claude"; echo secret > "${HOME}/.ssh/id_ed25519"
+    printf '[user]\n\tname = t\n' > "${HOME}/.gitconfig"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox -- --version
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"sandboxed: only ${PROJ} is visible; push on"* ]]
+    local a; a=$(cat "$PODMAN_LOG")
+    grep -qx "type=tmpfs,destination=${HOME},tmpfs-mode=0700,U=true" "$PODMAN_LOG"
+    grep -qx "${PROJ}:${PROJ}" "$PODMAN_LOG"
+    grep -qx "${PROJ}/.git/config:${PROJ}/.git/config:ro" "$PODMAN_LOG"
+    grep -qx "${PROJ}/.git/hooks:${PROJ}/.git/hooks:ro" "$PODMAN_LOG"
+    grep -qx "${HOME}/.claude:${HOME}/.claude" "$PODMAN_LOG"
+    grep -qx "${HOME}/.gitconfig:${HOME}/.gitconfig:ro" "$PODMAN_LOG"
+    [[ "$a" != *".ssh"* ]]
+    [[ "$a" != *"SSH_AUTH_SOCK"* ]]
+    # origin's URL rewritten to the gate, in the env, not in the project
+    grep -qx "GIT_CONFIG_VALUE_1=${UPSTREAM}" "$PODMAN_LOG"
+    grep -q "^GIT_CONFIG_KEY_1=url.ext::python3 /usr/libexec/pulsar/pulsar-agent-gate connect /run/pulsar-gate.sock %s origin.insteadOf$" "$PODMAN_LOG"
+    [ "$(git -C "$PROJ" remote get-url origin)" = "$UPSTREAM" ]
+    # the agent's own args, after the image
+    [ "$(tail -1 "$PODMAN_LOG")" = --version ]
+    # the gate is gone with the session
+    [ -z "$(ls "${XDG_RUNTIME_DIR}/pulsar/"*.sock 2>/dev/null)" ]
+}
+
+@test "the gate pins a project's remotes once, and says when the project's moved" {
+    sandbox_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    git -C "$PROJ" remote set-url origin "${BATS_TEST_TMPDIR}/elsewhere.git"
+    run "$PULSAR" agent run claude --sandbox
+    [[ "$output" == *"origin is pinned to ${UPSTREAM}, but the project now says ${BATS_TEST_TMPDIR}/elsewhere.git"* ]]
+    grep -qx "GIT_CONFIG_VALUE_1=${UPSTREAM}" "$PODMAN_LOG"
+    "$PULSAR" agent sandbox repin >/dev/null
+    run "$PULSAR" agent run claude --sandbox
+    grep -qx "GIT_CONFIG_VALUE_1=${BATS_TEST_TMPDIR}/elsewhere.git" "$PODMAN_LOG"
 }

@@ -1,0 +1,230 @@
+#!/usr/bin/python3
+"""pulsar-agent-gate -- git push for a sandboxed agent, without its credentials.
+
+A sandboxed agent (`pulsar agent sandbox`) holds no SSH key, no token and no
+credential helper. Its git rewrites each of the project's remotes to this
+gate, through git's ext:: transport:
+
+  sandbox:  git push origin  ->  pulsar-agent-gate connect <socket> ...
+  host:     pulsar-agent-gate serve <socket> <mirror>
+              -> git receive-pack <mirror>
+                   -> pre-receive: pulsar-agent-gate hook
+                        policy, then `git push <pinned remote>` as the user
+
+The mirror is a bare repository on the host, one per project, that the
+sandbox cannot see. It holds:
+
+  remote.<name>.url     each remote's URL, PINNED when the mirror was made.
+                        Never re-read from the project, whose .git/config the
+                        agent could otherwise point at another repository and
+                        have the gate push there with the user's credentials.
+  pulsar.push           on | branches | off
+  pulsar.defaultBranch  per remote: what `branches` protects
+
+Policy, whatever the setting: branches only (no tags), no deletes, no
+force-push; the upstream push never passes --force, so a remote that moved
+rejects a non-fast-forward itself. `branches` also refuses the default
+branch. Fetches go through the same gate, refreshed from the real remote
+first, so the agent can pull without credentials too.
+
+Stdlib only: this file also runs inside the sandbox image as the client.
+"""
+import os
+import socket
+import subprocess
+import sys
+import threading
+
+ZERO = "0" * 40
+SERVICES = {"upload-pack", "receive-pack"}
+
+
+def git(*args, cwd=None, check=True, **kw):
+    return subprocess.run(["git", *args], cwd=cwd, check=check, text=True, capture_output=True, **kw)
+
+
+def pkt(line):
+    data = (line + "\n").encode()
+    return b"%04x" % (len(data) + 4) + data
+
+
+def pinned(mirror):
+    """{name: url} of the remotes the mirror was made with."""
+    r = git("config", "--get-regexp", r"^remote\..*\.url$", cwd=mirror, check=False)
+    out = {}
+    for line in r.stdout.splitlines():
+        key, _, url = line.partition(" ")
+        out[key[len("remote."):-len(".url")]] = url
+    return out
+
+
+# ------------------------------------------------------------------ host ----
+
+def setup(mirror, project, hook_cmd):
+    """Make the mirror if it is not there, pinning the project's remotes as
+    they are now. An existing mirror is left exactly as it is."""
+    if os.path.isdir(os.path.join(mirror, "objects")):
+        return 0
+    remotes = git("config", "--get-regexp", r"^remote\..*\.url$", cwd=project, check=False).stdout.splitlines()
+    if not remotes:
+        print(f"pulsar-agent-gate: {project} has no remotes; nothing to push to", file=sys.stderr)
+    os.makedirs(os.path.dirname(mirror), mode=0o700, exist_ok=True)
+    git("init", "--quiet", "--bare", mirror)
+    git("config", "pulsar.project", project, cwd=mirror)
+    git("config", "pulsar.push", "on", cwd=mirror)
+    for line in remotes:
+        key, _, url = line.partition(" ")
+        name = key[len("remote."):-len(".url")]
+        # a URL and nothing else: no fetch refspec, so a push from inside the
+        # hook never tries to move a remote-tracking ref in quarantine
+        git("config", f"remote.{name}.url", url, cwd=mirror)
+        head = git("ls-remote", "--symref", url, "HEAD", check=False, timeout=60).stdout
+        for h in head.splitlines():
+            if h.startswith("ref: refs/heads/"):
+                git("config", f"pulsar.defaultBranch.{name}", h.split()[1][len("refs/heads/"):], cwd=mirror)
+    hook = os.path.join(mirror, "hooks", "pre-receive")
+    with open(hook, "w") as f:
+        f.write(f"#!/bin/sh\nexec {hook_cmd} hook\n")
+    os.chmod(hook, 0o755)
+    return 0
+
+
+def refresh(mirror, remote):
+    """Bring the mirror's branches up to the real remote's, as the user."""
+    return git("fetch", "--quiet", "--prune", remote, "+refs/heads/*:refs/heads/*",
+               cwd=mirror, check=False, timeout=300)
+
+
+def handle(conn, mirror):
+    header = b""
+    while not header.endswith(b"\n"):
+        b = conn.recv(1)
+        if not b or len(header) > 512:
+            return
+        header += b
+    parts = header.decode(errors="replace").split()
+    service, remote = (parts + ["", ""])[:2]
+    # ext::'s %s is "upload-pack"; accept the git- form too
+    service = service.removeprefix("git-")
+    proto = parts[2] if len(parts) > 2 else ""
+    remotes = pinned(mirror)
+    if service not in SERVICES:
+        conn.sendall(pkt(f"ERR pulsar gate: '{service}' is not a git service the gate serves"))
+        return
+    if remote not in remotes:
+        conn.sendall(pkt(f"ERR pulsar gate: no pinned remote '{remote}' for this project"))
+        return
+    r = refresh(mirror, remote)
+    if r.returncode != 0:
+        msg = (r.stderr.strip().splitlines() or ["fetch failed"])[-1]
+        conn.sendall(pkt(f"ERR pulsar gate: could not reach {remotes[remote]}: {msg}"))
+        return
+    env = dict(os.environ, PULSAR_GATE_REMOTE=remote)
+    if proto:
+        env["GIT_PROTOCOL"] = proto
+    fd = conn.fileno()
+    os.dup2(fd, 0)
+    os.dup2(fd, 1)
+    os.execvpe("git", ["git", service, mirror], env)
+
+
+def serve(sock_path, mirror):
+    try:
+        os.unlink(sock_path)
+    except FileNotFoundError:
+        pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old = os.umask(0o077)
+    srv.bind(sock_path)
+    os.umask(old)
+    srv.listen(8)
+    while True:
+        conn, _ = srv.accept()
+        if os.fork() == 0:
+            srv.close()
+            try:
+                handle(conn, mirror)
+            finally:
+                os._exit(0)
+        conn.close()
+        try:
+            while os.waitpid(-1, os.WNOHANG)[0]:
+                pass
+        except ChildProcessError:
+            pass
+
+
+def hook():
+    """pre-receive in the mirror: runs on the host, as the user."""
+    remote = os.environ.get("PULSAR_GATE_REMOTE", "")
+    policy = git("config", "--default", "on", "pulsar.push", check=False).stdout.strip()
+    default = git("config", f"pulsar.defaultBranch.{remote}", check=False).stdout.strip()
+    refspecs, errors = [], []
+    for line in sys.stdin:
+        old, new, ref = line.split()
+        if policy == "off":
+            errors.append(f"{ref}: pushing is off for this project (on the host: pulsar agent sandbox push on)")
+        elif not ref.startswith("refs/heads/"):
+            errors.append(f"{ref}: only branches can be pushed from the sandbox, not tags")
+        elif new == ZERO:
+            errors.append(f"{ref}: deleting a branch is not allowed from the sandbox")
+        elif old != ZERO and git("merge-base", "--is-ancestor", old, new, check=False).returncode != 0:
+            errors.append(f"{ref}: force-push is not allowed from the sandbox")
+        elif policy == "branches" and default and ref == f"refs/heads/{default}":
+            errors.append(f"{ref}: this project only allows pushing to other branches (push = branches)")
+        else:
+            refspecs.append(f"{new}:{ref}")
+    if errors:
+        for e in errors:
+            print(f"pulsar gate: {e}", file=sys.stderr)
+        return 1
+    if not refspecs:
+        return 0
+    # As the user, with their credentials; never --force. The new objects are
+    # still in quarantine, which the object-directory variables let this push
+    # read. GIT_QUARANTINE_PATH itself only forbids ref updates, and a remote
+    # on a local path would inherit it and refuse the push, so it goes.
+    env = {k: v for k, v in os.environ.items() if k != "GIT_QUARANTINE_PATH"}
+    r = subprocess.run(["git", "push", "--atomic", "--no-verify", remote, *refspecs],
+                       text=True, capture_output=True, env=env)
+    for line in (r.stdout + r.stderr).splitlines():
+        print(f"pulsar gate: {line}", file=sys.stderr)
+    return r.returncode
+
+
+# --------------------------------------------------------------- sandbox ----
+
+def connect(sock_path, service, remote):
+    """git's ext:: transport: our stdio is the git protocol stream."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(sock_path)
+    s.sendall(f"{service} {remote} {os.environ.get('GIT_PROTOCOL', '')}\n".encode())
+
+    def up():
+        while (b := os.read(0, 65536)):
+            s.sendall(b)
+        s.shutdown(socket.SHUT_WR)
+    t = threading.Thread(target=up, daemon=True)
+    t.start()
+    while (b := s.recv(65536)):
+        os.write(1, b)
+    return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ""
+    if cmd == "serve" and len(argv) == 4:
+        return serve(argv[2], argv[3])
+    if cmd == "connect" and len(argv) == 5:
+        return connect(argv[2], argv[3], argv[4])
+    if cmd == "hook":
+        return hook()
+    if cmd == "setup" and len(argv) == 5:
+        return setup(argv[2], argv[3], argv[4])
+    print("usage: pulsar-agent-gate serve <socket> <mirror> | connect <socket> <service> <remote>"
+          " | setup <mirror> <project> <hook-cmd> | hook", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

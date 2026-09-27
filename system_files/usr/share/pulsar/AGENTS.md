@@ -43,6 +43,18 @@ guard is on (below).
   **Never** use it for dev tools. It builds a new deployment, needs a reboot,
   and makes every future update slower. Ask the user first.
 
+## If you are sandboxed
+
+`PULSAR_SANDBOX=1` in your environment means you are running in Pulsar's
+agent sandbox: a container that shows you only the project you were started
+in. The rest of `$HOME`, the user's SSH keys, `sudo`, `pulsar`, `toolbox`
+and `rpm-ostree` are not there, so do not look for them or try to reach the
+host. `.git/config` and `.git/hooks` are read-only; commit normally.
+`git push` and `git pull` work through a gate that pushes with the user's
+credentials: branches only, never force-push, delete or tags, and maybe not
+the default branch. If a push is refused, the message says why; tell the
+user rather than work around it.
+
 ## Skills
 
 `/usr/share/pulsar/skills/` holds skills for this machine, one folder each

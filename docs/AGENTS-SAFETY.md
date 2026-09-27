@@ -42,7 +42,7 @@ back after rebooting.
 | Reboot (`systemctl reboot`) | **yes**: stock systemd, for any active session | nothing to undo, but it boots whatever is staged |
 | `/etc` | nothing: it is root-owned | a copy you made first; `sudo ostree admin config-diff` shows what differs from the image |
 | `/usr/local`, `/opt` (links to `/var/usrlocal`, `/var/opt`) | nothing: they are root-owned | delete what was put there by hand. No update or rollback touches them |
-| `$HOME`: code, dotfiles, SSH keys, browser profiles | **everything** | your backups. Nothing here rolls `$HOME` back |
+| `$HOME`: code, dotfiles, SSH keys, browser profiles | **everything**; sandboxed, only the project it was started in | your backups. Nothing here rolls `$HOME` back |
 | User Flatpaks and all Flatpak app data (`~/.var/app`) | everything | your backups |
 | Toolboxes, podman containers, user systemd units | everything | recreate them |
 
@@ -84,10 +84,12 @@ that the deployment model does not see at all.
 
 Be exact about this when you make the pitch:
 
-- **`$HOME`.** Deleted source, a rewritten `~/.ssh/config`, a force-pushed
-  branch, a leaked token: none of it is an OS change, so none of it has a
-  deployment to roll back to. Git, backups, and scoped credentials are the
-  defence, the same as on any other machine.
+- **`$HOME`, unless the agent is sandboxed.** Deleted source, a rewritten
+  `~/.ssh/config`, a force-pushed branch, a leaked token: none of it is an OS
+  change, so none of it has a deployment to roll back to. The sandbox (below)
+  narrows this to the one project the agent was started in, and takes
+  force-push and your keys off the table; inside that project, git and
+  backups are still the defense.
 - **`/etc` across rollback.** Each deployment has its own `/etc`, and updates
   carry local edits forward with a three-way merge. Rollback boots the old
   deployment's copy. That can bring back files you wanted changed, or keep an
@@ -113,9 +115,72 @@ an isolation boundary. The box shares your `$HOME`, your session bus and your
 UID, and `flatpak-spawn --host` runs anything on the host. Treat an agent in
 the box as an agent on the host. Anything the box does to `$HOME` is done.
 
-Real isolation is a separate user account, or a rootless container started
-**without** `$HOME` mounted. Both cost convenience, and neither is built here.
-See "Proposals" below.
+Real isolation is the sandbox, next.
+
+## The sandbox, and a push that never holds your key
+
+`pulsar agent sandbox on` (or `--here`, for one project) starts agents in a
+rootless podman container instead. The agent's own command does it: `claude`
+stays `claude`, and says `sandboxed: only ~/code/x is visible` as it starts.
+
+What it sees:
+
+- **The project** it was started in (the git root), read-write, except
+  `.git/config` and `.git/hooks`, which are read-only. A hook or a
+  `core.fsmonitor` planted there would run on the host the next time *you*
+  ran git in that repo; read-only, it can still commit but cannot change what
+  git runs.
+- **Its own login and settings** (`~/.claude`, `~/.codex`, ...), so one
+  sign-in works in both modes; `~/.gitconfig`, read-only, so commits are
+  still yours; the guide and the skills.
+
+What it does not: the rest of `$HOME` (a private, empty tmpfs sits under
+those mounts), your SSH keys and agent, browser profiles, other projects,
+the session bus, `flatpak-spawn`. It refuses to start from `$HOME` itself.
+
+**Push goes through a gate.** Inside, the project's remotes point at
+`pulsar-agent-gate`, which runs on the host for the length of the session.
+A push arrives in a per-project mirror the agent cannot see; its hook checks
+the push and, if it passes, pushes it to the real remote **with your
+credentials**, whatever you already use. The agent sees the real remote's
+answer in its own `git push`. It never holds a key or a token. The gate
+allows:
+
+- branches only: no tags, no deleting, no force-push (the real push never
+  passes `--force`, so a remote that moved refuses a non-fast-forward itself);
+- the remotes the project had the first time it ran sandboxed, **pinned**
+  then, on the host. The project's `.git/config` is not consulted again, so an
+  agent cannot point `origin` somewhere else and push there as you.
+  `pulsar agent sandbox repin` re-pins after a real change of remote;
+- with `push branches`, anything but the default branch; with `push off`,
+  nothing. Pull and fetch go through the same gate, freshly fetched.
+
+**Settings, most specific first**, where whatever the agent could write can
+only tighten:
+
+| Layer | Where | Can loosen? |
+|---|---|---|
+| repo | `<project>/.pulsar/agent.toml`: `sandbox = "on"`, `push = "off"` or `"branches"` | no: it can only turn the sandbox on or push down |
+| yours, per project | `~/.config/pulsar/agent-projects`, via `--here` | yes |
+| global | `~/.config/pulsar/agent.conf` | yes |
+
+`pulsar agent sandbox` shows the answer for the project you are in and
+which layer gave it. `pulsar agent run <name> --no-sandbox` starts one
+session unsandboxed, except where the repo file says otherwise.
+
+What it does **not** do, said plainly:
+
+- **The network is open.** The agent needs its API. The sandbox limits what
+  it can read, not where it can send what it read: the project's contents
+  can still leave with it.
+- **SELinux is not confining it.** Label separation is off, as toolbox has
+  it, so your files are never relabeled; the mounts do the isolating.
+- **An agent installed with its vendor's own installer** runs as that
+  installer set it up when you type its name. Start it with
+  `pulsar agent run <name>` to sandbox it; `pulsar agent sandbox` names any
+  such install.
+- **What it writes into the project is yours to review.** A Makefile, a test
+  script or an `.envrc` it edits runs when you run it.
 
 ## Undoing an `/etc` change
 
@@ -248,11 +313,6 @@ Rejected alternatives:
 
 Each of these is a decision for the maintainer, not a default:
 
-- **A sandboxed agent box.** A rootless podman container with only the
-  project directory mounted, no `$HOME` and no session bus. That would give
-  real isolation for `$HOME`, at the price of the agent losing your git
-  config, SSH agent and logins. It is a bigger design than a maintenance-mode
-  project should take on without a user asking for it.
 - **Automatic checkpoints.** For example,
   before each `pulsar update`. Probably not: a checkpoint is only useful if
   you know which one predates the thing you want to undo, and automatic ones
