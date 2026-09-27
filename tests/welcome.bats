@@ -149,3 +149,24 @@ have_adw() { python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require
 @test "the welcome compiles" {
     python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$WELCOME"
 }
+
+@test "the agents page lists agents alphabetically, split into name and maker" {
+    have_adw || skip "no PyGObject GTK 4 / libadwaita here"
+    run python3 - "$WELCOME" <<'PY'
+import importlib.machinery, importlib.util, json, sys
+path = sys.argv[1]; sys.argv = [path]
+loader = importlib.machinery.SourceFileLoader("pw", path)
+spec = importlib.util.spec_from_loader("pw", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+rows = m.agent_rows(json.dumps([
+    {"name": "codex", "command": "codex", "state": "available", "description": "Codex CLI (OpenAI)"},
+    {"name": "aider", "command": "aider", "state": "installed", "description": "aider (open source, any provider)"},
+]))
+print(" ".join(r["name"] for r in rows))
+print(rows[1]["title"] + "|" + rows[1]["vendor"])
+print(m.agent_rows("not json"))
+PY
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "aider codex" ]
+    [ "${lines[1]}" = "Codex CLI|OpenAI" ]
+    [ "${lines[2]}" = "[]" ]
+}

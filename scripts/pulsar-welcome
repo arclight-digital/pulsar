@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""pulsar-welcome -- the first-login welcome: five pages, then out of the way.
+"""pulsar-welcome -- the first-login welcome: six pages, then out of the way.
 
 Started once per account by pulsar-welcome.service with --first-login, which
 only fires on a new account's first desktop session (see that unit, and
@@ -18,6 +18,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 
@@ -37,6 +38,9 @@ import pulsar_theme_cards as cards  # noqa: E402
 STATE = pt.xdg("XDG_STATE_HOME", ".local/state")
 STAMP = STATE / "pulsar-welcome" / "shown.json"
 PENDING = pt.STATE / pt.WELCOME_PENDING
+# The CLI the agents page drives. From a checkout, the checkout's own.
+PULSAR = os.environ.get("PULSAR_CLI") or (
+    str(HERE.parent / "cli" / "pulsar") if (HERE.parent / "cli" / "pulsar").exists() else "/usr/bin/pulsar")
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
          HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
 
@@ -62,6 +66,7 @@ CSS = """
 .wl-rise.in { opacity: 1; }
 .wl-switchrow { padding: 10px 16px; border-radius: 999px; background-color: alpha(currentColor, 0.05); }
 .wl-bottom { padding: 14px 22px 18px; }
+.wl-note { opacity: 0.62; font-size: 0.92em; }
 """
 
 
@@ -140,7 +145,7 @@ class Welcome(Adw.ApplicationWindow):
         tv.add_top_bar(hb)
 
         self.carousel = Adw.Carousel(allow_scroll_wheel=False, spacing=24, vexpand=True)
-        self.pages = [self.hello(), self.themes(), self.cant_rot(), self.games_agents(), self.done()]
+        self.pages = [self.hello(), self.themes(), self.cant_rot(), self.games(), self.agents(), self.done()]
         for p in self.pages:
             self.carousel.append(p)
         self.carousel.connect("page-changed", lambda *_: self.sync())
@@ -277,28 +282,36 @@ class Welcome(Adw.ApplicationWindow):
         return page(head, spacer(8), facts, Gtk.Box(css_classes=["wl-rule"], margin_top=8, margin_bottom=4),
                     cmds, width=680, top=8)
 
-    def games_agents(self):
+    def games(self):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        head.append(label("GAMES AND AGENTS", ["wl-kicker"]))
-        head.append(label("Play, and hand off the work", ["wl-title"]))
-        cols = Gtk.Box(spacing=16, homogeneous=True, margin_top=10)
-        g = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-fact"])
-        g.append(Gtk.Image(icon_name="input-gaming-symbolic", pixel_size=34, halign=Gtk.Align.START,
-                           css_classes=["wl-fact-icon"]))
-        g.append(label("Games just run", ["wl-h"], 0))
-        g.append(markup("Steam is among the default apps. GameMode, MangoHud and gamescope are part of the "
-                        "system, and <b>gamescale</b> runs a game at the panel's real resolution, then puts "
-                        "the desktop back when it exits.", ["wl-body"], 0))
-        a = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-fact"])
-        a.append(Gtk.Image(icon_name="utilities-terminal-symbolic", pixel_size=34, halign=Gtk.Align.START,
-                           css_classes=["wl-fact-icon"]))
-        a.append(label("Ready for coding agents", ["wl-h"], 0))
-        a.append(markup("<tt>pulsar agent add</tt> installs an agent's command-line tool in a toolbox, "
-                        "away from the system. <tt>/usr/share/pulsar/AGENTS.md</tt> briefs any agent on how "
-                        "this machine works, and what it should ask you before touching.", ["wl-body"], 0))
-        cols.append(g)
-        cols.append(a)
-        return page(head, cols, width=820, top=8)
+        head.append(label("GAMES", ["wl-kicker"]))
+        head.append(label("Games just run", ["wl-title"]))
+        head.append(label("Steam is among the default apps, and the rest is part of the system.", ["wl-lede"]))
+        facts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        facts.append(fact("input-gaming-symbolic", "GameMode, MangoHud and gamescope",
+                          "Installed, configured and ready, with nothing to set up."))
+        facts.append(fact("video-display-symbolic", "gamescale",
+                          "Runs a game at the panel's real resolution, then puts the desktop back when it "
+                          "exits."))
+        return page(head, spacer(8), facts, width=680, top=8)
+
+    def agents(self):
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        head.append(label("AGENTIC", ["wl-kicker"]))
+        head.append(label("Bring a coding agent", ["wl-title"]))
+        head.append(label("None comes installed. Pick one and it gets its own toolbox and a briefing on "
+                          "this machine. Skipping is fine.", ["wl-lede"]))
+        self.agent_list = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE,
+                                      margin_top=6)
+        self.agent_status = label("", ["wl-note"], wrap=True, visible=False)
+        facts = Gtk.Box(spacing=12, homogeneous=True, margin_top=6)
+        facts.append(fact("dialog-warning-symbolic", "Crashes, one click away",
+                          "A crash notice can hand it to your agent. Nothing is sent unless you click."))
+        facts.append(fact("security-high-symbolic", "It asks first",
+                          "It is told to. <tt>pulsar agent guard</tt> makes system installs need your "
+                          "password."))
+        self.fill_agents()
+        return page(head, self.agent_list, self.agent_status, facts, width=760, top=8)
 
     def done(self):
         check = Gtk.Image(icon_name="object-select-symbolic", pixel_size=56, css_classes=["wl-fact-icon"])
@@ -353,6 +366,84 @@ class Welcome(Adw.ApplicationWindow):
         self.mark.add_css_class("in")
         self.rise.add_css_class("in")
         return False
+
+    # ----------------------------------------------------------- agents ----
+
+    def _run(self, argv, done, *data):
+        try:
+            proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
+        except GLib.Error as e:
+            done(None, e.message, *data)
+            return
+        proc.communicate_utf8_async(None, None, lambda p, r: self._ran(p, r, done, data))
+
+    @staticmethod
+    def _ran(proc, res, done, data):
+        try:
+            _ok, out, _err = proc.communicate_utf8_finish(res)
+        except GLib.Error as e:
+            out = e.message
+        done(proc if proc.get_successful() else None, out or "", *data)
+
+    def _status(self, text):
+        self.agent_status.set_label(text)
+        self.agent_status.set_visible(bool(text))
+
+    def _status_markup(self, text):
+        self.agent_status.set_markup(text)
+        self.agent_status.set_visible(bool(text))
+
+    def fill_agents(self):
+        self._run([PULSAR, "agent", "list", "--json"], self._listed)
+
+    def _listed(self, proc, out):
+        while (row := self.agent_list.get_row_at_index(0)):
+            self.agent_list.remove(row)
+        rows = agent_rows(out) if proc else []
+        if not rows:
+            self.agent_list.set_visible(False)
+            self._status_markup("From a terminal: <tt>pulsar agent add &lt;name&gt;</tt>. "
+                                         "<tt>pulsar agent list</tt> shows the choices.")
+            return
+        default = agent_default()
+        for a in rows:
+            row = Adw.ActionRow(title=a["title"], subtitle=a["vendor"])
+            if a["name"] == default:
+                row.set_subtitle(f"{a['vendor']} · default")
+            if a["state"] == "available":
+                b = Gtk.Button(label="Add", valign=Gtk.Align.CENTER)
+                b.connect("clicked", self._add, a)
+            else:
+                # First run is where each vendor signs you in.
+                b = Gtk.Button(label="Sign in" if a["state"] == "installed" else "Open",
+                               valign=Gtk.Align.CENTER, css_classes=["flat"],
+                               tooltip_text=f"Opens a terminal running {a['command']}")
+                b.connect("clicked", lambda *_, c=a["command"]: open_terminal(c))
+            row.add_suffix(b)
+            self.agent_list.append(row)
+
+    def _add(self, btn, a):
+        spin = Adw.Spinner()
+        btn.set_child(spin)
+        self.agent_list.set_sensitive(False)
+        self._status(f"Installing {a['title']}. The first one sets up its toolbox, "
+                                    "which takes a minute or two.")
+        self._run([PULSAR, "agent", "add", a["name"]], self._added, a)
+
+    def _added(self, proc, out, a):
+        self.agent_list.set_sensitive(True)
+        if not proc:
+            self._status("")
+            d = Adw.AlertDialog(heading=f"Could not install {a['title']}",
+                                body=out.strip()[-600:] or f"pulsar agent add {a['name']} failed")
+            d.add_response("close", "Close")
+            d.present(self)
+            self.fill_agents()
+            return
+        # The one just picked is the one `agent ask` and crash notices use.
+        self._run([PULSAR, "agent", "default", a["name"]], lambda *_: self.fill_agents())
+        self._status_markup(f"{GLib.markup_escape_text(a['title'])} is ready. Sign in once, "
+                                     f"then run <tt>{a['command']}</tt> from any terminal.")
 
     # ------------------------------------------------------------ theme ----
 
@@ -436,6 +527,40 @@ def resolve_scheme(css, dark):
         i = j
     out.append(css[i:])
     return "".join(out)
+
+
+def agent_rows(text):
+    """`pulsar agent list --json` as rows, alphabetical so no vendor is
+    first by default. "Claude Code (Anthropic)" splits into title and
+    vendor."""
+    try:
+        agents = json.loads(text)
+    except ValueError:
+        return []
+    rows = []
+    for a in agents if isinstance(agents, list) else []:
+        m = re.match(r"^(.*?)\s*\((.*)\)$", a.get("description", ""))
+        title, vendor = (m.group(1), m.group(2)) if m else (a.get("description") or a.get("name", "?"), "")
+        rows.append({"name": a.get("name", ""), "command": a.get("command", ""), "state": a.get("state", ""),
+                     "title": title, "vendor": vendor})
+    return sorted(rows, key=lambda r: r["name"])
+
+
+def agent_default():
+    try:
+        r = subprocess.run([PULSAR, "agent", "default"], capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def open_terminal(cmd):
+    """A terminal on the agent's own command, in $HOME."""
+    try:
+        Gio.Subprocess.new(["ptyxis", "--new-window", "-d", str(pathlib.Path.home()), "-x", cmd],
+                           Gio.SubprocessFlags.NONE)
+    except GLib.Error as e:
+        print(f"pulsar-welcome: could not open a terminal: {e.message}", file=sys.stderr)
 
 
 def mark_shown():
