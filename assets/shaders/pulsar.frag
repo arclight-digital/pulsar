@@ -451,7 +451,12 @@ void main() {
     // both thin it further, so long gradients banded again. A triangular
     // (two-sample) dither of +-1 step on top breaks the bands wherever the
     // image is quantised, and is too fine to read as texture.
+    // Live, the dither is +-3 steps: laptop panels are often 6-bit (+FRC),
+    // where one visible step is four 8-bit ones, and +-1 vanishes under it --
+    // the site's dark diagonal gradient banded on such a panel with the +-1
+    // dither measurably present. Stills keep +-1 (their grain survives).
     vec2 dq = gl_FragCoord.xy + fract(u_time) * 23.0;
-    col += (hash(dq + 0.37) + hash(dq + 91.7) - 1.0) / 255.0;
+    float damp = mix(1.0, 3.0, clamp(u_live, 0.0, 1.0));
+    col += (hash(dq + 0.37) + hash(dq + 91.7) - 1.0) * damp / 255.0;
     gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
