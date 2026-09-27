@@ -151,16 +151,14 @@ supplied "${B}/in-os/pulsar-gdm-logo.png" "${S}/pulsar/pulsar-gdm-logo.png"
 # to a soft point that falls below one character well before the end of the
 # sweep, which is the part that makes it a sweep and not a ring.
 #
-# --cols is the RASTER width, not the width of the art that comes out: the
-# renderer trims the SVG's blank margin in both directions, so 38 rasterised
-# lands on 19 rows by 37 columns. 19 rows is the point -- that is the height
-# of a typical readout (5 header rows, 6 or 7 host rows, 7 components), so the
-# art and the information end together instead of the mark stopping short of
-# the values beside it. The v1 mark needed 56 for the same 19 rows because
-# its SVG carried a wide empty margin; v2's files are cropped to the art plus
-# 3%, so 56 would now draw 26 rows and run seven past the readout.
+# --rows is the height of the art in lines; its width follows from the mark's
+# own proportions and the terminal cell's (measured from JetBrains Mono), so
+# the mark comes out round. 19 rows is the point -- that is the height of a
+# typical readout (5 header rows, 6 or 7 host rows, 7 components), so the art
+# and the information end together instead of the mark stopping short of the
+# values beside it. At 19 rows the small mark is 38 columns wide.
 python3 "${REPO}/scripts/render-ascii-logo.py" "${B}/svg/pulsar-mark-small.svg" \
-        --cols 38 -o "${S}/pulsar/logo.ansi"
+        --rows 19 -o "${S}/pulsar/logo.ansi"
 
 # ---------------------------------------------------------------------------
 # GNOME Settings -> About lockup.
