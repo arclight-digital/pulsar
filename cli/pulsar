@@ -367,7 +367,9 @@ flatpak_gl_scan() {
     have flatpak || return 0
     # Instances are per user and sudo drops XDG_RUNTIME_DIR, so as root this
     # would look at root's (empty) set and call it healthy. Say nothing.
-    [ "$(id -u)" -ne 0 ] || return 0
+    # (The tests point PULSAR_FLATPAK_RUN at a fixture and may run as root on
+    # the build host; that is not a sudo'd user, so the guard does not apply.)
+    [ "$(id -u)" -ne 0 ] || [ -n "${PULSAR_FLATPAK_RUN:-}" ] || return 0
     local variant; variant=$(mf variant)
     case "$variant" in
         *nvidia*|"") ;;

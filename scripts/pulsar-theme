@@ -385,7 +385,12 @@ def _fake():
 def dconf_read(key):
     if FAKE_DCONF:
         return _fake().get(key)
-    r = subprocess.run(["dconf", "read", key], capture_output=True, text=True)
+    # no dconf binary (a build host, a container): the key has no value here,
+    # which `render` and the audit must survive rather than crash on
+    try:
+        r = subprocess.run(["dconf", "read", key], capture_output=True, text=True)
+    except FileNotFoundError:
+        return None
     v = r.stdout.strip()
     return v or None
 

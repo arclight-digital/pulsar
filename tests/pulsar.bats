@@ -29,6 +29,11 @@ setup() {
 JSON
 }
 
+
+# bats-core has no fail(); bats-assert does, and this suite does not load it.
+# Prints why and fails the test.
+fail() { printf '%s\n' "$*" >&2; return 1; }
+
 @test "runs and reports a version" {
     run "$PULSAR" --version
     [ "$status" -eq 0 ]
@@ -1488,6 +1493,9 @@ EOF
 # kept rather than refused. toolbox is stubbed and plays the box.
 # ---------------------------------------------------------------------------
 agent_env() {
+    # setup agent refuses root by design, and the build host runs the suite
+    # as root: these are user-session tests
+    [ "$(id -u)" -eq 0 ] && skip "setup agent refuses root; these run as a user"
     export HOME="${BATS_TEST_TMPDIR}/home"
     mkdir -p "$HOME"
     unset XDG_DATA_HOME XDG_CONFIG_HOME CODEX_HOME
