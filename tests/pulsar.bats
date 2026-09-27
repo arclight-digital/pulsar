@@ -201,9 +201,13 @@ EOF
 # `update` needs root, and CI is not root. An unprivileged user namespace is
 # enough -- nothing here touches the real system -- but Ubuntu can forbid one,
 # so the routing tests say so rather than quietly passing.
+# Already root: run it straight. A nested namespace would map only uid 0, and
+# root there cannot read a checkout owned by anyone else.
 as_root() {
-    unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"
-    run unshare -r env "PATH=${PATH}" "PULSAR_MANIFEST=${PULSAR_MANIFEST}" "$PULSAR" "$@"
+    local ns=(unshare -r)
+    if [ "$(id -u)" -eq 0 ]; then ns=()
+    else unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"; fi
+    run "${ns[@]}" env "PATH=${PATH}" "PULSAR_MANIFEST=${PULSAR_MANIFEST}" "$PULSAR" "$@"
 }
 
 CLEAN_STATUS='{"deployments":[{"booted":true,"version":"44.1","pinned":false}]}'
@@ -1914,8 +1918,7 @@ checkpoint_env() {
         {"booted":true,"version":"44.1","checksum":"aaa","pinned":false}]}'
 }
 
-# Already root: run it straight. A nested namespace would map only uid 0, and
-# root there cannot read a checkout owned by anyone else.
+# Already root: run it straight, as as_root does.
 cp_root() {
     local ns=(unshare -r)
     [ "$(id -u)" -ne 0 ] || ns=()
