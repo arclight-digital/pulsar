@@ -124,7 +124,7 @@ export function initThemes(): void {
   const tile = stored && document.querySelector<HTMLElement>(`[data-theme-tile="${CSS.escape(stored)}"]`);
   if (tile) show(detailOf(tile));
 
-  // the floating picker: open it, and "Back to Pulsar"
+  // the floating picker: open it, and "Reset Theming to Default"
   document.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     if (target.closest('[data-picker-open]')) {

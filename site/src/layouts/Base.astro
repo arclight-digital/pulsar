@@ -284,7 +284,8 @@ const ldJson = JSON.stringify(structuredData).replace(/</g, '\\u003c');
     <slot />
     <SiteFooter />
     <ThemePicker />
-    <arc-scroll-to-top threshold="900"></arc-scroll-to-top>
+    {/* bottom-left: the theme picker owns bottom-right */}
+    <arc-scroll-to-top threshold="900" position="bottom-left"></arc-scroll-to-top>
 
     {/* One script block, and hydrate first inside it: Lit must adopt the
         server-rendered shadow roots rather than render over them, and the
