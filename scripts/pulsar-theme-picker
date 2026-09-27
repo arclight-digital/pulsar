@@ -49,7 +49,7 @@ class Picker(Adw.ApplicationWindow):
                            activate_on_single_click=True, homogeneous=True, valign=Gtk.Align.START)
         flow.connect("child-activated", self.on_pick)
         flow.set_filter_func(self._match)
-        self.search.connect("search-changed", lambda *_: flow.invalidate_filter())
+        self.search.connect("search-changed", self._searched)
         self.search.connect("activate", lambda *_: self._pick_first(flow))
         self.flow = flow
         cur = pt.current_state().get("theme")
@@ -69,7 +69,9 @@ class Picker(Adw.ApplicationWindow):
         self.set_content(tv)
         if first:
             flow.select_child(first)
-            GLib.idle_add(first.grab_focus)
+            # once: a callback that returns True runs again, and grab_focus
+            # does, which pulled focus back to this card on every idle tick
+            GLib.idle_add(lambda: first.grab_focus() and False)
         # test hook for tests/theme-gate: act as if this card were clicked
         auto = os.environ.get("PULSAR_PICKER_AUTOPICK")
         if auto:
@@ -85,13 +87,39 @@ class Picker(Adw.ApplicationWindow):
         key.connect("key-pressed", self._key)
         self.add_controller(key)
 
+    def _in_search(self):
+        f = self.get_focus()
+        return f is not None and f.is_ancestor(self.search)
+
+    def _searched(self, *_):
+        self.flow.invalidate_filter()
+        # The key capture only forwards the key that starts a search; focus
+        # stays on the selected card, so the next keys went nowhere. Once a
+        # search is under way, typing (and Enter) belongs to the entry.
+        if self.search.get_text() and not self._in_search():
+            self.search.grab_focus()
+            self.search.set_position(-1)
+
+    def _first_visible(self):
+        return next((ch for ch in list(self.flow) if ch.get_child_visible() and self._match(ch)), None)
+
     def _key(self, _c, kv, *_):
+        # Down from the search steps into the filtered cards
+        if kv == Gdk.KEY_Down and self._in_search():
+            ch = self._first_visible()
+            if ch:
+                self.flow.select_child(ch)
+                ch.grab_focus()
+            return True
         if kv != Gdk.KEY_Escape:
             return False
         # Esc clears a search first, then closes
         if self.searchbar.get_search_mode():
             self.search.set_text("")
             self.searchbar.set_search_mode(False)
+            sel = self.flow.get_selected_children()
+            if sel:
+                sel[0].grab_focus()
             return True
         self.close()
         return True
@@ -104,11 +132,10 @@ class Picker(Adw.ApplicationWindow):
         return q in th.name.lower() or q in child.slug or q in (th.author or "").lower()
 
     def _pick_first(self, flow):
-        for ch in list(flow):
-            if ch.get_child_visible() and self._match(ch):
-                flow.select_child(ch)
-                self.on_pick(flow, ch)
-                return
+        ch = self._first_visible()
+        if ch:
+            flow.select_child(ch)
+            self.on_pick(flow, ch)
 
     def on_pick(self, _flow, child):
         # Everything slow runs off the main thread: `set` is a subprocess we
