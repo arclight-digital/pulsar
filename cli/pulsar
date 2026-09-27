@@ -301,14 +301,17 @@ check_nvidia() {
     case "$variant" in
         *nvidia*) ;;
         "") # No manifest. Only report if the driver is actually present.
-            grep -q '^nvidia ' /proc/modules 2>/dev/null || return 0 ;;
+            grep -q '^nvidia ' "${PULSAR_PROC_MODULES:-/proc/modules}" 2>/dev/null || return 0 ;;
         *)  # Vanilla image: nvidia absence is correct, say nothing.
             return 0 ;;
     esac
     # /proc/modules and /sys, never lsmod/modinfo: those live in /usr/sbin,
     # which is not on every user's PATH, and under pipefail a missing binary
     # reads as "no nvidia module" -- a false clean bill of health.
-    if ! grep -q '^nvidia ' /proc/modules 2>/dev/null; then
+    # PULSAR_PROC_MODULES: the tests' fixture; rootless podman shows the
+    # HOST's /proc/modules, so without it a GPU-less build host fails here
+    # while a developer's nvidia laptop passes.
+    if ! grep -q '^nvidia ' "${PULSAR_PROC_MODULES:-/proc/modules}" 2>/dev/null; then
         record nvidia fail "nvidia variant but no nvidia module is loaded" \
                "Secure Boot may have rejected an unsigned module: dmesg | grep -i taint"
         return

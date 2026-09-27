@@ -945,6 +945,10 @@ stub_gl() {
     jq '.variant = "nvidia-open"' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
     export PULSAR_NVIDIA_VERSION_FILE="${BATS_TEST_TMPDIR}/nvidia-version"
     printf '615.71.09\n' > "$PULSAR_NVIDIA_VERSION_FILE"
+    # the module is loaded, in the fixture as in the version file: the real
+    # /proc/modules is the host's, and the build host has no GPU
+    export PULSAR_PROC_MODULES="${BATS_TEST_TMPDIR}/modules"
+    printf 'nvidia 1 0 - Live 0x0\n' > "$PULSAR_PROC_MODULES"
     export PULSAR_FLATPAK_RUN="${BATS_TEST_TMPDIR}/run"
     export PULSAR_FLATPAK_ROOTS="${BATS_TEST_TMPDIR}/flatpak"
     export GL_RUNTIMES="$1"
