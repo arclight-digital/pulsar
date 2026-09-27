@@ -1,0 +1,12 @@
+[Unit]
+# Notifies once per crashed program per boot, with an "Ask <agent>" button
+# that opens a terminal on `pulsar agent ask --crash <pid>`. Nothing reaches
+# the agent unless that button is clicked.
+Description=Offer the agent a look at a crash
+
+[Service]
+Type=oneshot
+# The core lands in the directory before the journal entry coredumpctl reads
+# is written; give the entry a moment to follow.
+ExecStartPre=/usr/bin/sleep 3
+ExecStart=/usr/bin/pulsar doctor crashes --notify

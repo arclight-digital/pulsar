@@ -2157,3 +2157,168 @@ SH
     [[ "49-pulsar-guard.rules" < "empower.rules" ]]
     grep -qF "pulsar agent guard" "$REPO_GUARD_RULE"
 }
+
+# ---------------------------------------------------------------------------
+# crashes: doctor's check, report --crash, the notification, and agent ask.
+# coredumpctl is stubbed with what it prints for a real wireplumber abort;
+# the agent is a native `claude` stub that records what it was started with.
+# ---------------------------------------------------------------------------
+crash_env() {
+    agent_env
+    export CRASH_LIST="${BATS_TEST_TMPDIR}/crashes.json"
+    local me; me=$(id -u)
+    # two wireplumber aborts and one foo segfault of ours, one crash of someone else's
+    printf '[{"time":1,"pid":101,"uid":%s,"gid":%s,"sig":6,"corefile":"present","exe":"/usr/bin/wireplumber","size":5},
+{"time":2,"pid":202,"uid":%s,"gid":%s,"sig":11,"corefile":"present","exe":"/usr/bin/foo","size":5},
+{"time":3,"pid":303,"uid":4242,"gid":4242,"sig":11,"corefile":"present","exe":"/usr/bin/theirs","size":5},
+{"time":4,"pid":404,"uid":%s,"gid":%s,"sig":6,"corefile":"present","exe":"/usr/bin/wireplumber","size":5}]' \
+        "$me" "$me" "$me" "$me" "$me" "$me" > "$CRASH_LIST"
+    cat > "${STUB}/coredumpctl" <<'SH'
+#!/bin/sh
+case "$*" in
+    *list*) [ -s "$CRASH_LIST" ] || { echo "No coredumps found." >&2; exit 1; }; cat "$CRASH_LIST" ;;
+    *info*) cat <<'INFO'
+           PID: 404 (wireplumber)
+           UID: 1000 (someone)
+        Signal: 6 (ABRT)
+     Timestamp: Sun 2026-09-27 13:16:10 MDT (2h 36min ago)
+  Command Line: /usr/bin/wireplumber
+    Executable: /usr/bin/wireplumber
+     User Unit: wireplumber.service
+       Package: wireplumber/0.5.17-1.fc44
+       Message: Process 404 (wireplumber) of user 1000 dumped core.
+
+                Module libdbus-1.so.3 from rpm dbus-1.16.0-1.fc44.x86_64
+                Stack trace of thread 404:
+                #0  0x00007f34cb7bfccc __pthread_kill_implementation (libc.so.6 + 0x74ccc)
+                #1  0x00007f34bd360f37 dbus_bus_add_match (libdbus-1.so.3 + 0xff37)
+
+                Stack trace of thread 405:
+                #0  0x00007f34cb83f37d syscall (libc.so.6 + 0xf437d)
+INFO
+    ;;
+esac
+SH
+    chmod +x "${STUB}/coredumpctl"
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/journalctl"; chmod +x "${STUB}/journalctl"
+    export NOTIFY_LOG="${BATS_TEST_TMPDIR}/notify.log" RUN_LOG="${BATS_TEST_TMPDIR}/run.log"
+    : > "$NOTIFY_LOG"; : > "$RUN_LOG"
+    printf '#!/bin/sh\necho "$*" >> "$NOTIFY_LOG"\n' > "${STUB}/notify-send"
+    printf '#!/bin/sh\necho "$*" >> "$RUN_LOG"\n' > "${STUB}/systemd-run"
+    chmod +x "${STUB}/notify-send" "${STUB}/systemd-run"
+    export PULSAR_UPDATE_STATE="${BATS_TEST_TMPDIR}/state"
+    export PULSAR_BOOT_ID_FILE="${BATS_TEST_TMPDIR}/boot_id"
+    echo boot-a > "$PULSAR_BOOT_ID_FILE"
+    export XDG_RUNTIME_DIR="${BATS_TEST_TMPDIR}/run"; mkdir -p "$XDG_RUNTIME_DIR"
+    export AGENT_ARGS="${BATS_TEST_TMPDIR}/agent.args"
+}
+
+# a native install of $1 that records its argv, one argument per line
+fake_agent() {
+    printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done > "$AGENT_ARGS"\n' > "${STUB}/$1"
+    chmod +x "${STUB}/$1"
+}
+
+@test "doctor crashes counts this user's crashes by program, never someone else's" {
+    crash_env
+    run "$PULSAR" doctor crashes
+    [ "$status" -eq 0 ]
+    [[ "$output" == warn*"3 crash(es) of yours this boot: wireplumber (2), foo"* ]]
+    [[ "$output" != *theirs* ]]
+    : > "$CRASH_LIST"
+    run "$PULSAR" doctor crashes
+    [[ "$output" == ok*"no crashes"* ]]
+}
+
+@test "report --crash carries the crashing thread, not the others, and no stale 'ago'" {
+    crash_env
+    run "$PULSAR" report --crash latest
+    [ "$status" -eq 0 ] || fail "$output"
+    echo "$output" | jq -e '.crash.executable == "/usr/bin/wireplumber"
+        and .crash.unit == "wireplumber.service"
+        and .crash.time == "Sun 2026-09-27 13:16:10 MDT"
+        and (.crash.stack | length) == 2
+        and (.crash.stack[1] | test("dbus_bus_add_match"))'
+    run "$PULSAR" report --crash 999
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no crash of yours with PID 999"* ]]
+    run "$PULSAR" report --crash 303
+    [ "$status" -ne 0 ]
+}
+
+@test "crash notifications need an agent, and come once per program per boot" {
+    crash_env
+    run "$PULSAR" doctor crashes --notify
+    [ "$status" -eq 0 ]
+    [ ! -s "$RUN_LOG" ]
+    fake_agent claude
+    run "$PULSAR" doctor crashes --notify
+    [ "$status" -eq 0 ]
+    [ "$(grep -c "^--user" "$RUN_LOG")" -eq 2 ]
+    # the newest wireplumber crash, its button, and the command the button runs
+    grep -q -- "--unit=pulsar-crash-404 " "$RUN_LOG"
+    grep -q "Ask Claude Code wireplumber crashed" "$RUN_LOG"
+    grep -q "agent ask --crash 404$" "$RUN_LOG"
+    grep -q "foo crashed" "$RUN_LOG"
+    # a third wireplumber abort is not news; a new program is
+    run "$PULSAR" doctor crashes --notify
+    [ "$(grep -c "^--user" "$RUN_LOG")" -eq 2 ]
+    jq '. + [{"time":5,"pid":505,"uid":'"$(id -u)"',"sig":11,"exe":"/usr/bin/bar"}]' "$CRASH_LIST" > "${CRASH_LIST}.n" && mv "${CRASH_LIST}.n" "$CRASH_LIST"
+    run "$PULSAR" doctor crashes --notify
+    [ "$(grep -c "^--user" "$RUN_LOG")" -eq 3 ]
+    # after a reboot, the same program is news again
+    echo boot-b > "$PULSAR_BOOT_ID_FILE"
+    run "$PULSAR" doctor crashes --notify
+    [ "$(grep -c "^--user" "$RUN_LOG")" -eq 6 ]
+}
+
+@test "agent ask starts the agent on a private report, with the crash and the rule" {
+    crash_env
+    fake_agent claude
+    run "$PULSAR" agent ask --crash latest
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(wc -l < "$AGENT_ARGS")" -eq 1 ]
+    local prompt file
+    prompt=$(cat "$AGENT_ARGS")
+    [[ "$prompt" == *"wireplumber crashing (PID 404)"* ]]
+    [[ "$prompt" == *"Do not change the system without asking me first."* ]]
+    file=$(printf '%s' "$prompt" | grep -o "${XDG_RUNTIME_DIR}/pulsar/report-[0-9T]*\.json")
+    [ "$(stat -c %a "$file")" = 600 ]
+    jq -e '.crash.pid == 404' "$file"
+    # a question replaces the default ask, and no crash means no crash section
+    run "$PULSAR" agent ask why is my fan loud
+    prompt=$(cat "$AGENT_ARGS")
+    [[ "$prompt" == *"why is my fan loud"* ]]
+    [[ "$prompt" != *crash* ]]
+}
+
+@test "agent ask hands each agent its prompt the way that agent takes one" {
+    crash_env
+    fake_agent gemini
+    fake_agent aider
+    run "$PULSAR" agent ask --with gemini hello
+    [ "$(sed -n 1p "$AGENT_ARGS")" = -i ]
+    run "$PULSAR" agent ask --with aider hello
+    [ "$(sed -n 1p "$AGENT_ARGS")" = --read ]
+    [[ "$output" == *"paste this into aider"*"hello"* ]]
+}
+
+@test "agent default: the only one installed, else the one chosen, else it asks" {
+    crash_env
+    run "$PULSAR" agent default
+    [ "$status" -ne 0 ]
+    fake_agent claude
+    run "$PULSAR" agent default
+    [ "$output" = claude ]
+    fake_agent codex
+    run "$PULSAR" agent ask hello
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"which agent?"*"claude codex"* ]]
+    run "$PULSAR" agent default codex
+    [ "$status" -eq 0 ]
+    run "$PULSAR" agent default
+    [ "$output" = codex ]
+    run "$PULSAR" agent default gemini
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not installed"* ]]
+}

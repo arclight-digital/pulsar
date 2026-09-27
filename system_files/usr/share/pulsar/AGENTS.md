@@ -58,6 +58,7 @@ always reaches this system's CLI, and its `cli` check says when another
 | `pulsar doctor --json` | Health checks. Exit 1 if one fails. `pulsar doctor <check>` runs one; `pulsar doctor --help` lists them. |
 | `pulsar status --json` | Deployments: booted, staged, rollback, pinned, layered packages. |
 | `pulsar manifest --json` | Image version, variant (vanilla or nvidia), kernel, components, and the hardware under `.host`. |
+| `pulsar report --crash latest` | One of the user's crashes as systemd-coredump saw it: program, signal, package, unit, the crashing thread's stack trace, and that process's log lines. `pulsar doctor crashes` lists this boot's. |
 | `pulsar report` | All of the above plus failed units, recent warning+ journal lines, GPU driver and Flatpak state, as one redacted JSON document. Use it when something is broken. |
 | `pulsar doctor flatpak-gl` | Whether running Flatpak apps (Steam, in practice) have the NVIDIA driver. An app started before its GL extension arrived renders games black on the iGPU; the fix is quitting and reopening it. |
 | `pulsar update --check --json` | Whether a newer image is published. Exit 0 = current or staged, 10 = available, 1 = could not tell. |
@@ -119,7 +120,7 @@ first. The user can make the rpm-ostree and Flatpak ones prompt with
   `greenboot-healthcheck.service`, and on the nvidia image
   `pulsar-gl-nvidia.service` (Flatpak GL driver), `nvidia-cdi-refresh.service`
   and `pulsar-gpu-containers.service` (GPU containers). User units:
-  `pulsar-update-check.timer`, `pulsar-gl-check.path`,
+  `pulsar-update-check.timer`, `pulsar-gl-check.path`, `pulsar-crash-watch.path`,
   `gamescale-reconcile.service`, `podman-auto-update.timer`.
   Use `journalctl -u <unit>` for system units and
   `journalctl --user -u <unit>` for user units.

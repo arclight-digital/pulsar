@@ -1,0 +1,16 @@
+# Runs pulsar-crash-watch.service whenever systemd-coredump stores a core.
+# It writes each one into this directory, whoever crashed; the service then
+# looks only at this user's crashes, through coredumpctl.
+#
+# A USER unit because it ends in a desktop notification with a button that
+# starts the user's own agent. It does nothing for an account with no agent
+# installed: see crashes_notify in /usr/bin/pulsar.
+[Unit]
+Description=Offer the agent a look when one of your programs crashes
+
+[Path]
+PathChanged=/var/lib/systemd/coredump
+Unit=pulsar-crash-watch.service
+
+[Install]
+WantedBy=default.target

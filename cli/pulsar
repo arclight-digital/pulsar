@@ -708,7 +708,7 @@ check_disk() {
 
 # Ids, in the order they run. Each is check_<id with - as _>, and each is
 # the id its findings carry in --json.
-DOCTOR_CHECKS='scheduler ntsync gamemode mangohud greenboot nvidia flatpak-gl gpu-containers flathub fedora origin updates disk cli'
+DOCTOR_CHECKS='scheduler ntsync gamemode mangohud greenboot nvidia flatpak-gl gpu-containers flathub fedora origin updates disk crashes cli'
 
 doctor_help() {
     cat <<EOF
@@ -717,6 +717,10 @@ usage: pulsar doctor [check...]      health checks; exit 1 if one fails
                                      also notify the desktop, once per app
                                      instance, when a running Flatpak app
                                      lacks the NVIDIA driver (pulsar-gl-check)
+       pulsar doctor crashes --notify
+                                     also notify, once per program per boot,
+                                     with a button that asks your agent about
+                                     it (pulsar-crash-watch; only with an agent)
 
 checks: ${DOCTOR_CHECKS}
 --json gives {checks: [{id, status, summary, detail}], ok}. A check that
@@ -739,8 +743,11 @@ cmd_doctor() {
                 esac ;;
         esac
     done
-    if [ "$notify" = 1 ] && [ "${only[*]-}" != flatpak-gl ]; then
-        die "--notify goes with one check: pulsar doctor flatpak-gl --notify"
+    if [ "$notify" = 1 ]; then
+        case "${only[*]-}" in
+            flatpak-gl|crashes) ;;
+            *) die "--notify goes with one check: pulsar doctor flatpak-gl --notify, or crashes --notify" ;;
+        esac
     fi
     if [ ${#only[@]} -eq 0 ]; then
         read -ra run <<<"$DOCTOR_CHECKS"
@@ -760,7 +767,7 @@ cmd_doctor() {
             fi
         fi
     done
-    [ "$notify" = 0 ] || flatpak_gl_notify
+    [ "$notify" = 0 ] || "${only[0]//-/_}_notify"
     if [ "${JSON:-0}" = 1 ]; then
         printf '{"checks":[%s],"ok":%s}\n' "${CHECK_JSON%,}" "$([ "$RC" -eq 0 ] && echo true || echo false)"
     elif [ ${#only[@]} -eq 0 ]; then
@@ -1472,21 +1479,24 @@ AGENT_PREFIX=${PULSAR_AGENT_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/pulsar/
 AGENT_SHIMS=${PULSAR_AGENT_SHIMS:-$HOME/.local/bin}
 SHIM_MARK="# pulsar-agent-shim"
 
-# name <TAB> command <TAB> installer <TAB> package <TAB> description. Deliberately
+# name <TAB> command <TAB> installer <TAB> package <TAB> prompt <TAB> description.
+# prompt is how `agent ask` hands it a first message and stays interactive:
+# arg (a positional prompt), i (-i), prefill (--prompt fills the box without
+# sending), read (none: the report goes in with --read). Deliberately
 # nothing Microsoft-owned: GitHub Copilot's CLI is a fine opt-in for anyone who
 # wants it, but a row here is a default suggestion, and that is not one.
-AGENTS_TABLE='claude	claude	npm	@anthropic-ai/claude-code	Claude Code (Anthropic)
-codex	codex	npm	@openai/codex	Codex CLI (OpenAI)
-gemini	gemini	npm	@google/gemini-cli	Gemini CLI (Google)
-opencode	opencode	npm	opencode-ai	opencode (open source, any provider)
-aider	aider	uv	aider-chat	aider (open source, any provider)'
+AGENTS_TABLE='claude	claude	npm	@anthropic-ai/claude-code	arg	Claude Code (Anthropic)
+codex	codex	npm	@openai/codex	arg	Codex CLI (OpenAI)
+gemini	gemini	npm	@google/gemini-cli	i	Gemini CLI (Google)
+opencode	opencode	npm	opencode-ai	prefill	opencode (open source, any provider)
+aider	aider	uv	aider-chat	read	aider (open source, any provider)'
 
-# Loads one row into A_NAME A_BIN A_METHOD A_PKG A_DESC; fails on an unknown name.
+# Loads one row into A_NAME A_BIN A_METHOD A_PKG A_PROMPT A_DESC; fails on an unknown name.
 agent_row() {
     local line
     line=$(printf '%s\n' "$AGENTS_TABLE" | awk -F'\t' -v n="$1" '$1 == n') || true
     [ -n "$line" ] || return 1
-    IFS=$'\t' read -r A_NAME A_BIN A_METHOD A_PKG A_DESC <<<"$line"
+    IFS=$'\t' read -r A_NAME A_BIN A_METHOD A_PKG A_PROMPT A_DESC <<<"$line"
 }
 
 agent_names() { printf '%s\n' "$AGENTS_TABLE" | cut -f1 | paste -sd' ' -; }
@@ -1632,7 +1642,7 @@ agent_list() {
     local n b m p d state native notes=""
     if [ "${JSON:-0}" = 1 ]; then
         need jq
-        while IFS=$'\t' read -r n b m p d; do
+        while IFS=$'\t' read -r n b m p _ d; do
             state=available
             if is_our_shim "${AGENT_SHIMS}/${b}"; then state=installed
             elif native_launcher "$b" >/dev/null; then state=native
@@ -1643,7 +1653,7 @@ agent_list() {
         return 0
     fi
     printf '%-9s %-9s %-34s %-10s %s\n' NAME COMMAND INSTALL STATE DESCRIPTION
-    while IFS=$'\t' read -r n b m p d; do
+    while IFS=$'\t' read -r n b m p _ d; do
         state=-
         if is_our_shim "${AGENT_SHIMS}/${b}"; then
             state=installed
@@ -1882,7 +1892,7 @@ agent_status() {
     local guide=false guard=unknown n b m p d state native rows=""
     [ -r "$AGENTS_MD" ] && guide=true
     [ "$(id -u)" -eq 0 ] || guard=$(guard_state)
-    while IFS=$'\t' read -r n b m p d; do
+    while IFS=$'\t' read -r n b m p _ d; do
         state=""
         if is_our_shim "${AGENT_SHIMS}/${b}"; then
             state=installed
@@ -1928,6 +1938,10 @@ usage: pulsar agent                  the guide, installed agents, guard state
        pulsar agent list             the supported agents, and which are installed
        pulsar agent add <name>       install one coding agent CLI
        pulsar agent remove <name>    remove its command and package
+       pulsar agent default [name]   the agent 'ask' starts (default: the only one installed)
+       pulsar agent ask [--crash <pid|latest>] [--with <name>] [question]
+                                     start it on a redacted report of this machine,
+                                     and a crash if you name one
        pulsar agent guard [on|off]   make layering and system Flatpak installs ask
                                      for a password (on and off need root)
 
@@ -1967,6 +1981,14 @@ cmd_agent() {
             if [ "$sub" = add ]; then agent_install; else agent_remove; fi
             ;;
         guard) agent_guard "$@" ;;
+        ask)
+            no_json "agent ask"
+            need_user "agent ask"
+            agent_ask "$@" ;;
+        default)
+            no_json "agent default"
+            need_user "agent default"
+            agent_default "$@" ;;
         *) die "unknown agent command: ${sub} (see: pulsar agent --help)" ;;
     esac
 }
@@ -2222,9 +2244,269 @@ cmd_setup() {
 # ---------------------------------------------------------------------------
 SELF=${BASH_SOURCE[0]}
 
+# ---------------------------------------------------------------------------
+# crashes -- what systemd-coredump caught, for the person and for their agent.
+#
+# systemd-coredump already records every crash on Fedora, with a symbolized
+# stack trace of the crashing thread, and coredumpctl hands a user their own
+# crashes without root. Nothing needs adding to catch a crash; what was
+# missing is someone telling you, and a way to hand it to the agent you
+# already use. The core file itself never leaves the machine: only
+# coredumpctl's summary and the crashing thread's frames go into the report.
+#
+# Only this user's crashes, only this boot. A crash from before the last
+# reboot is still reachable by PID with --crash, just not announced.
+# ---------------------------------------------------------------------------
+
+# pid <TAB> time (us) <TAB> signal <TAB> exe, oldest first. `all` drops the
+# this-boot limit (an explicit PID may be from an earlier boot).
+crash_rows() {
+    have coredumpctl || return 0
+    local -a since=()
+    if [ "${1:-}" != all ]; then
+        local btime
+        btime=$(awk '$1 == "btime" { print $2 }' "${PULSAR_PROC_STAT:-/proc/stat}" 2>/dev/null) || btime=""
+        [ -z "$btime" ] || since=(--since="@${btime}")
+    fi
+    # exits 1 with "No coredumps found" when there are none: not an error here
+    coredumpctl list --json=short --no-pager "${since[@]}" 2>/dev/null \
+        | jq -r --argjson u "$(id -u)" \
+            '.[]? | select(.uid == $u) | [.pid, .time, .sig, .exe] | @tsv' 2>/dev/null || true
+}
+
+# latest | <pid> -> a pid of this user's that coredumpctl knows.
+crash_resolve() {
+    local want=$1 rows pid
+    case "$want" in
+        latest)
+            rows=$(crash_rows)
+            pid=$(printf '%s' "$rows" | tail -1 | cut -f1)
+            [ -n "$pid" ] || die "no crashes this boot (older ones: coredumpctl list, then --crash <pid>)" ;;
+        ''|*[!0-9]*) die "--crash wants a PID or 'latest' (got: ${want})" ;;
+        *)
+            rows=$(crash_rows all)
+            printf '%s\n' "$rows" | cut -f1 | grep -qx "$want" \
+                || die "no crash of yours with PID ${want} (see: coredumpctl list)"
+            pid=$want ;;
+    esac
+    printf '%s\n' "$pid"
+}
+
+# One crash as JSON: what coredumpctl says about it, the crashing thread's
+# frames (the first trace it prints), and that process's journal lines.
+crash_json() {
+    local pid=$1 info
+    info=$(coredumpctl -1 info --no-pager "$pid" 2>/dev/null) || { printf 'null'; return 0; }
+    local fields frames journal
+    fields=$(printf '%s\n' "$info" | awk '
+        /^ *[A-Z][A-Za-z ]*: / && !seen_msg {
+            k = $0; sub(/^ */, "", k); v = k; sub(/: .*/, "", k); sub(/^[^:]*: /, "", v)
+            if (k == "Message") { seen_msg = 1; next }
+            printf "%s\t%s\n", k, v
+        }')
+    frames=$(printf '%s\n' "$info" | awk '
+        /Stack trace of thread/ { if (done) exit; t = 1; next }
+        t && /^ *$/ { done = 1; t = 0; exit }
+        t && n < 40 { sub(/^ */, ""); print; n++ }')
+    journal=$(journalctl -b --no-pager -o json "_PID=${pid}" -n 30 2>/dev/null \
+        | jq -s -c 'map({
+            time: ((.__REALTIME_TIMESTAMP // "0") | tonumber / 1000000 | floor | todate),
+            priority: ((.PRIORITY // "?") | tostring),
+            message: (.MESSAGE | if type == "string" then . else "<binary message>" end)})' 2>/dev/null) \
+        || journal='[]'
+    [ -n "$journal" ] || journal='[]'
+    jq -n -c --arg fields "$fields" --arg frames "$frames" --argjson journal "$journal" '
+        ($fields | split("\n") | map(select(length > 0) | split("\t") | {(.[0]): .[1]}) | add // {}) as $f
+        | { executable: $f["Executable"], pid: ($f["PID"] // "" | split(" ")[0] | tonumber? // null),
+            # "(2h ago)" is true once; a saved report outlives it
+            signal: $f["Signal"], time: ($f["Timestamp"] // "" | sub(" \\([^)]*\\)$"; "")), package: $f["Package"],
+            unit: ($f["User Unit"] // $f["Unit"]), command_line: $f["Command Line"],
+            stack: ($frames | split("\n") | map(select(length > 0))),
+            journal: $journal }'
+}
+
+check_crashes() {
+    local rows
+    rows=$(crash_rows)
+    if [ -z "$rows" ]; then
+        have coredumpctl && record crashes ok "no crashes of yours this boot"
+        return 0
+    fi
+    local n summary latest
+    n=$(printf '%s\n' "$rows" | grep -c .)
+    # "wireplumber (5), chrome-headless (2)": most frequent first
+    summary=$(printf '%s\n' "$rows" | cut -f4 | xargs -r -n1 basename | sort | uniq -c | sort -rn \
+        | awk '{ printf "%s%s", (NR > 1 ? ", " : ""), ($1 > 1 ? $2 " (" $1 ")" : $2) }')
+    latest=$(printf '%s\n' "$rows" | tail -1 | cut -f4)
+    record crashes warn "${n} crash(es) of yours this boot: ${summary}" \
+        "latest: $(basename "$latest"). pulsar agent ask --crash latest, or pulsar report --crash latest --text"
+}
+
+# Once per program per boot, not once per crash: a service that aborts every
+# hundred minutes is one piece of news, not fourteen. Only when there is an
+# agent to hand it to -- without one this would be a crash nagger, and
+# `pulsar doctor` already lists them.
+crashes_notify() {
+    local agent
+    agent=$(agent_default_name 2>/dev/null) || return 0
+    agent_row "$agent" || return 0
+    local boot state="${UPDATE_STATE}/crash-notified" seen="" rows pid exe name
+    boot=$(cat "${PULSAR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null) || boot=unknown
+    [ -r "$state" ] && seen=$(awk -v b="$boot" '$1 == b' "$state")
+    rows=$(crash_rows)
+    [ -n "$rows" ] || return 0
+    local -a fresh=()
+    # newest crash per program, newest first
+    while IFS=$'\t' read -r pid _ _ exe; do
+        printf '%s\n' "$seen" | awk -v e="$exe" '$2 == e { f = 1 } END { exit !f }' && continue
+        case " ${fresh[*]-} " in *" ${exe} "*) continue ;; esac
+        fresh+=("$exe")
+        seen+=$'\n'"${boot} ${exe}"
+        name=$(basename "$exe")
+        crash_notify_one "$pid" "$name"
+    done < <(printf '%s\n' "$rows" | tac)
+    [ ${#fresh[@]} -gt 0 ] || return 0
+    mkdir -p "$UPDATE_STATE" && printf '%s\n' "$seen" | awk -v b="$boot" '$1 == b' > "$state"
+}
+
+crash_notify_one() {
+    local pid=$1 name=$2 title body
+    title="${name} crashed"
+    body="${A_DESC%% (*} can read the stack trace and the logs, and help you fix or report it. Nothing is sent to it unless you click."
+    have notify-send || return 0
+    # The click has to outlive this oneshot unit, so the waiting notification
+    # runs as a transient unit of its own. Without systemd-run it still says
+    # so, just without the button.
+    if ! have systemd-run; then
+        notify-send --app-name="Pulsar" --icon=dialog-warning "$title" \
+            "Details: pulsar agent ask --crash ${pid}" || true
+        return 0
+    fi
+    local ask script
+    ask="$(realpath "$SELF") agent ask --crash ${pid}"
+    # shellcheck disable=SC2016  # expanded by the transient unit's sh, not here
+    script='a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" "$2" "$3") || exit 0
+[ "$a" = ask ] || exit 0
+exec ptyxis --new-window -d "$HOME" -x "$4"'
+    systemd-run --user --collect --quiet --unit="pulsar-crash-${pid}" \
+        -- sh -c "$script" sh "Ask ${A_DESC%% (*}" "$title" "$body" "$ask" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# agent default / agent ask -- start the user's agent on a question about
+# this machine, with the report (and a crash) already in front of it.
+# ---------------------------------------------------------------------------
+AGENT_DEFAULT_FILE=${PULSAR_AGENT_DEFAULT:-${XDG_CONFIG_HOME:-$HOME/.config}/pulsar/agent}
+
+# Prints the path that runs agent $1 here, or fails if it is not installed.
+agent_command() {
+    agent_row "$1" || return 1
+    if is_our_shim "${AGENT_SHIMS}/${A_BIN}"; then
+        printf '%s\n' "${AGENT_SHIMS}/${A_BIN}"
+    else
+        native_launcher "$A_BIN"
+    fi
+}
+
+# The one set with `agent default`, else the only agent installed.
+agent_default_name() {
+    local n
+    if [ -r "$AGENT_DEFAULT_FILE" ]; then
+        n=$(head -1 "$AGENT_DEFAULT_FILE")
+        if agent_command "$n" >/dev/null; then printf '%s\n' "$n"; return 0; fi
+    fi
+    local -a found=()
+    while IFS=$'\t' read -r n _; do
+        agent_command "$n" >/dev/null && found+=("$n")
+    done <<<"$AGENTS_TABLE"
+    [ ${#found[@]} -eq 1 ] || return 1
+    printf '%s\n' "${found[0]}"
+}
+
+agent_default() {
+    [ $# -le 1 ] || die "usage: pulsar agent default [name]"
+    if [ $# -eq 0 ]; then
+        local n
+        if n=$(agent_default_name); then
+            printf '%s\n' "$n"
+        else
+            die "no default agent: pulsar agent default <name> (or install exactly one)"
+        fi
+        return 0
+    fi
+    agent_row "$1" || die "unknown agent: $1 (known: $(agent_names))"
+    agent_command "$1" >/dev/null || die "$1 is not installed (pulsar agent add $1)"
+    mkdir -p "$(dirname "$AGENT_DEFAULT_FILE")"
+    printf '%s\n' "$1" > "$AGENT_DEFAULT_FILE"
+    printf 'default agent: %s\n' "$1"
+}
+
+agent_ask() {
+    local crash="" with="" a
+    local -a q=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --crash) [ $# -ge 2 ] || die "--crash wants a PID or 'latest'"; crash=$2; shift ;;
+            --crash=*) crash=${1#--crash=} ;;
+            --with) [ $# -ge 2 ] || die "--with wants an agent name"; with=$2; shift ;;
+            --with=*) with=${1#--with=} ;;
+            -h|--help) agent_help; return 0 ;;
+            -*) die "unknown option: $1 (see: pulsar agent --help)" ;;
+            *) q+=("$1") ;;
+        esac
+        shift
+    done
+    local name cmd
+    name=${with:-$(agent_default_name)} \
+        || die "which agent? pulsar agent default <name>, or --with <name> (installed: $(agent_installed_names))"
+    cmd=$(agent_command "$name") || die "${name} is not installed (pulsar agent add ${name})"
+    agent_row "$name"
+    if [ -n "$crash" ]; then crash=$(crash_resolve "$crash") || exit 1; fi
+
+    # $XDG_RUNTIME_DIR: private to this user, gone at logout, and shared with
+    # the agents toolbox, so an agent in the box reads the same file.
+    local dir="${XDG_RUNTIME_DIR:-/tmp}/pulsar" file
+    ( umask 077; mkdir -p "$dir" ) || die "could not create ${dir}"
+    file="${dir}/report-$(date +%Y%m%dT%H%M%S).json"
+    printf 'writing a redacted report to %s\n' "$file" >&2
+    ( umask 077; "$SELF" report ${crash:+--crash "$crash"} > "$file" ) \
+        || die "could not write the report"
+
+    local prompt exe
+    prompt="Read ${file}: a redacted diagnosis report from this Pulsar machine. Run \`pulsar agent guide\` first if you have not read how this system works."
+    if [ -n "$crash" ]; then
+        exe=$(jq -r '.crash.executable // "a program"' "$file" 2>/dev/null) || exe="a program"
+        prompt+=" Its crash section is ${exe} crashing (PID ${crash}): the signal, the crashing thread's stack trace and that process's log lines."
+        [ ${#q[@]} -gt 0 ] || prompt+=" Explain what crashed and why, say whether it looks like a known bug (search for it), tell me what I can do about it now, and if it is a bug, help me report it upstream."
+    elif [ ${#q[@]} -eq 0 ]; then
+        prompt+=" Tell me what, if anything, looks wrong, most important first."
+    fi
+    [ ${#q[@]} -eq 0 ] || prompt+=" ${q[*]}"
+    prompt+=" Do not change the system without asking me first."
+
+    case "$A_PROMPT" in
+        arg)     exec "$cmd" "$prompt" ;;
+        i)       exec "$cmd" -i "$prompt" ;;
+        # opencode's --prompt fills the box without sending it
+        prefill) printf 'press Enter to send the question\n' >&2; exec "$cmd" --prompt "$prompt" ;;
+        # aider has no interactive first message: it gets the report as a
+        # read-only file, and the question to paste
+        read)    printf 'paste this into aider:\n\n%s\n\n' "$prompt" >&2; exec "$cmd" --read "$file" ;;
+        *)       die "internal error: no prompt style for ${name}" ;;
+    esac
+}
+
+agent_installed_names() {
+    local n out=""
+    while IFS=$'\t' read -r n _; do
+        agent_command "$n" >/dev/null && out+="${out:+ }${n}"
+    done <<<"$AGENTS_TABLE"
+    printf '%s\n' "${out:-none}"
+}
+
 report_help() {
     cat <<'EOF'
-usage: pulsar report [--text] [--lines N]
+usage: pulsar report [--text] [--lines N] [--crash <pid|latest>]
 
 A diagnosis bundle to paste into an issue or hand to a coding agent. JSON by
 default; --text renders the same data for people. No root needed, though
@@ -2244,6 +2526,10 @@ Included
               display devices and the driver bound to each, Secure Boot state
   flatpak     remotes with their options, app IDs with branch and origin,
               runtime count
+  crash       with --crash: one of your crashes as systemd-coredump saw it --
+              program, signal, package, unit, command line, the crashing
+              thread's stack trace, and that process's journal lines. Never
+              the core file itself
 
 Not included
   the full journal, anything from a previous boot, environment variables,
@@ -2393,10 +2679,12 @@ JQ_REDACT='
   walk(if type == "string" then scrub else . end)'
 
 cmd_report() {
-    local text=0 lines=50
+    local text=0 lines=50 crash=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --text) text=1 ;;
+            --crash) [ $# -ge 2 ] || die "--crash wants a PID or 'latest'"; shift; crash=$1 ;;
+            --crash=*) crash=${1#--crash=} ;;
             --lines) [ $# -ge 2 ] || die "--lines wants a number"; shift; lines=$1 ;;
             --lines=*) lines=${1#--lines=} ;;
             -h|--help) report_help; return 0 ;;
@@ -2424,6 +2712,13 @@ cmd_report() {
     jusr=$(journal_json user "$lines" "$fusr")
     gfx=$(graphics_json)
     fp=$(flatpak_json)
+    # Resolved on a line of its own: a die inside a nested $(...) would only
+    # end that subshell, and the report would go out with no crash in it.
+    local cr=null cpid
+    if [ -n "$crash" ]; then
+        cpid=$(crash_resolve "$crash") || exit 1
+        cr=$(crash_json "$cpid")
+    fi
 
     local host users
     host=${PULSAR_REPORT_HOSTNAME:-$(cat /proc/sys/kernel/hostname 2>/dev/null || true)}
@@ -2438,14 +2733,15 @@ cmd_report() {
         --argjson doctor "$doctor" --argjson status "$status" --argjson manifest "$manifest" \
         --argjson fsys "$fsys" --argjson fusr "$fusr" \
         --argjson jsys "$jsys" --argjson jusr "$jusr" \
-        --argjson gfx "$gfx" --argjson fp "$fp" '
+        --argjson gfx "$gfx" --argjson fp "$fp" --argjson cr "$cr" '
         { report: { schema: 1, tool: ("pulsar " + $version),
                     generated: (now | floor | todate), journal_lines: $lines,
                     note: "hostname, username, home path, MAC/IPv4 and secret-shaped values are redacted; best effort" },
           doctor: $doctor, status: $status, manifest: $manifest,
           units: { failed_system: $fsys, failed_user: $fusr },
           journal: { system: $jsys, user: $jusr },
-          graphics: $gfx, flatpak: $fp }' \
+          graphics: $gfx, flatpak: $fp }
+        + (if $cr == null then {} else {crash: $cr} end)' \
       | jq -c --arg home "${HOME:-}" --arg host "$host" --argjson users "$users" "$JQ_REDACT") \
       || die "could not assemble the report"
 
@@ -2467,6 +2763,12 @@ cmd_report() {
       (if .journal.system.note then "  note: \(.journal.system.note)" else empty end),
       "", "flatpak: \(.flatpak.app_count // 0) apps, \(.flatpak.runtime_count // 0) runtimes",
       rows([.flatpak.remotes[]? | "remote \(.name)  \(.url)  \(.options)"]),
+      (if .crash then
+        "", "crash: \(.crash.executable // "?")  pid \(.crash.pid // "?")  \(.crash.signal // "")",
+        "  \(.crash.time // "")  package: \(.crash.package // "-")  unit: \(.crash.unit // "-")",
+        rows(.crash.stack // []),
+        rows([.crash.journal[]? | "\(.time)  \(.message)"])
+       else empty end),
       "", .report.note'
 }
 
@@ -2825,7 +3127,9 @@ Desktop
 
 Agents
   pulsar agent             what this machine gives a coding agent:
-                           guide | list | add | remove | guard [on|off]
+                           guide | list | add | remove | default | guard [on|off]
+  pulsar agent ask         start your agent on a redacted report of this
+                           machine; --crash latest for the last crash
 
 Options
   --json                   JSON output, anywhere on the line. A command

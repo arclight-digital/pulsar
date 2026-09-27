@@ -110,7 +110,7 @@ pulsar pin [on|off]     keep the booted deployment         (root to change)
 pulsar checkpoint       snapshot /etc to diff or restore   (root)
 pulsar theme <command>  recolor the whole desktop
 pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale
-pulsar agent            guide | list | add | remove | guard [on|off]
+pulsar agent            guide | list | add | remove | default | ask | guard [on|off]
 ```
 
 **Handing the machine to an agent.** `pulsar agent guide` prints a briefing,
@@ -122,7 +122,8 @@ any terminal; none is installed by default, and one you installed yourself is
 left alone. `sudo pulsar agent guard on` makes layering and system Flatpak
 installs ask for your password, for the agent and for you, and
 `sudo pulsar checkpoint` before a session lets you diff and restore `/etc`
-after it. `pulsar report` is the one thing to paste when
+after it. When a program crashes, a notification offers to hand the crash
+to your agent (`pulsar agent ask --crash latest`). `pulsar report` is the one thing to paste when
 something is broken. What an agent can and cannot break here is in
 [docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md).
 

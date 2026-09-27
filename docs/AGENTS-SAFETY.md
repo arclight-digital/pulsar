@@ -161,6 +161,31 @@ Without a checkpoint:
   and `mv` carry the old SELinux label with them, and a file labelled
   `user_home_t` in `/etc` gets its reader denied.
 
+## Crashes, and what an agent is sent
+
+systemd-coredump records every crash. When one of your programs crashes and
+you have an agent installed, `pulsar-crash-watch.path` puts up one
+notification per program per boot, with an "Ask <agent>" button. Nothing is
+sent anywhere until you click it. The click opens a terminal on
+`pulsar agent ask --crash <pid>`, which:
+
+- writes `pulsar report --crash <pid>` to a file in `$XDG_RUNTIME_DIR` (yours
+  only, gone at logout). That is the usual report plus the crash:
+  coredumpctl's summary, the crashing thread's stack trace and that process's
+  journal lines, with the same redaction. **Never the core file**, which holds
+  the program's memory;
+- starts your default agent (`pulsar agent default`) with a prompt that names
+  the file and ends "Do not change the system without asking me first."
+
+From then on the agent reads the file like any other, and what it reads goes
+to its provider. That is the same exposure as pasting the report into it, and
+the button is the consent. A program's command line can carry secrets that
+the redaction does not recognize, so `pulsar report --crash <pid> --text`
+shows exactly what would go.
+
+With no agent installed the watcher stays silent. `pulsar doctor crashes`
+lists this boot's crashes either way.
+
 ## How agents find out about this machine
 
 The image ships one vendor-neutral briefing, `/usr/share/pulsar/AGENTS.md`.
