@@ -1,0 +1,34 @@
+# The third-party repos the image installs from, for the nightly gate only.
+#
+# scripts/nightly.sh asks these, and nothing else, which versions of the
+# add-on packages are current, so a night where only an add-on moved still
+# builds. The image does NOT use this file: it gets rpmfusion's own repo files
+# from the release RPMs, and writes the copr, mise and NVIDIA ones itself, in
+# the Containerfiles. These mirror those -- same metalinks, same baseurls --
+# and a repo added there has to be added here, or its updates wait for
+# something else to move. No gpgcheck: this only reads version numbers to
+# decide whether to build, and the build itself checks every signature.
+[pulsar-addon-rpmfusion-free]
+name=RPM Fusion free
+metalink=https://mirrors.rpmfusion.org/metalink?repo=free-fedora-$releasever&arch=$basearch
+[pulsar-addon-rpmfusion-free-updates]
+name=RPM Fusion free updates
+metalink=https://mirrors.rpmfusion.org/metalink?repo=free-fedora-updates-released-$releasever&arch=$basearch
+[pulsar-addon-rpmfusion-nonfree]
+name=RPM Fusion nonfree
+metalink=https://mirrors.rpmfusion.org/metalink?repo=nonfree-fedora-$releasever&arch=$basearch
+[pulsar-addon-rpmfusion-nonfree-updates]
+name=RPM Fusion nonfree updates
+metalink=https://mirrors.rpmfusion.org/metalink?repo=nonfree-fedora-updates-released-$releasever&arch=$basearch
+[pulsar-addon-rpmfusion-nonfree-nvidia-driver]
+name=RPM Fusion nonfree NVIDIA driver
+metalink=https://mirrors.rpmfusion.org/metalink?repo=nonfree-fedora-nvidia-driver-$releasever&arch=$basearch
+[pulsar-addon-copr-kernel-cachyos-addons]
+name=copr bieszczaders/kernel-cachyos-addons
+baseurl=https://download.copr.fedorainfracloud.org/results/bieszczaders/kernel-cachyos-addons/fedora-$releasever-$basearch/
+[pulsar-addon-mise]
+name=mise
+baseurl=https://mise.jdx.dev/rpm/
+[pulsar-addon-nvidia-container-toolkit]
+name=nvidia-container-toolkit
+baseurl=https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch

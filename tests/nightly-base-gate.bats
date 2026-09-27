@@ -67,6 +67,40 @@ setup() {
   REFS="${BATS_TEST_TMPDIR}/refs.log"
   : > "${REFS}"
   stub_podman amd64
+
+  # The other two things the gate asks about, answered "unchanged" unless a
+  # test says otherwise: the published image records this checkout's HEAD,
+  # and the add-on repos serve what it records. Without these every skip
+  # below would be a build for a reason the test is not about.
+  PUBLISHED_REV="$(git -C "${BATS_TEST_DIRNAME}/.." rev-parse HEAD)"
+  stub_dnf5 "${ADDONS_LIST}"
+  PUBLISHED_ADDONS="$(addons_hash "${ADDONS_LIST}")"
+}
+
+# What the add-on repos answer, as `name evr` lines. Every package the gate
+# asks for, because a missing one is itself a reason to build.
+ADDONS_LIST='akmod-nvidia-open 3:615.71.09-1.fc44
+ffmpeg 8.1.3-1.fc44
+mesa-va-drivers-freeworld 26.2.3-1.fc44
+mise 2026.9.14-1
+nvidia-container-toolkit-base 1.20.1-1
+nvidia-settings 3:615.71.09-1.fc44
+scx-scheds 1.1.3-3.fc44
+xorg-x11-drv-nvidia 3:615.71.09-3.fc44'
+
+# The hash the gate computes over that answer, computed the same way.
+addons_hash() {
+  sha256sum <<<"$(sort -u <<<"$1")" | cut -d' ' -f1
+}
+
+# dnf5 as the add-on repos: prints $1, or fails when $1 is "FAIL".
+stub_dnf5() {
+  if [ "$1" = FAIL ]; then
+    printf '#!/usr/bin/env bash\nexit 1\n' > "${BIN}/dnf5"
+  else
+    printf '#!/usr/bin/env bash\ncat <<"LIST"\n%s\nLIST\n' "$1" > "${BIN}/dnf5"
+  fi
+  chmod +x "${BIN}/dnf5"
 }
 
 # The base tag as quay actually serves it: an index naming one manifest per
@@ -112,10 +146,15 @@ manifest_digest() {
 # by the time it is asked -- is the point of the second comparison.
 stub_skopeo() {
   local published base
-  published="$(jq -nc --arg d "${1:-}" --arg h "${2:-}" --arg v "${4:-}" '{Labels: ({}
+  # The commit and add-on labels come from PUBLISHED_REV and
+  # PUBLISHED_ADDONS, set in setup() to "unchanged"; empty means absent.
+  published="$(jq -nc --arg d "${1:-}" --arg h "${2:-}" --arg v "${4:-}" \
+      --arg r "${PUBLISHED_REV:-}" --arg a "${PUBLISHED_ADDONS:-}" '{Labels: ({}
     | if $d == "" then . else .["digital.arclight.pulsar.base-digest"] = $d end
     | if $h == "" then . else .["digital.arclight.pulsar.base-inputhash"] = $h end
-    | if $v == "" then . else .["org.opencontainers.image.version"] = $v end)}')"
+    | if $v == "" then . else .["org.opencontainers.image.version"] = $v end
+    | if $r == "" then . else .["org.opencontainers.image.revision"] = $r end
+    | if $a == "" then . else .["digital.arclight.pulsar.addons-hash"] = $a end)}')"
   base="$(jq -nc --arg h "${3:-}" '{Labels: ({}
     | if $h == "" then . else .["rpmostree.inputhash"] = $h end)}')"
   cat > "${BIN}/skopeo" <<EOF
@@ -447,16 +486,35 @@ refuse() {
 # ran it would be a loop.
 # ---------------------------------------------------------------------------
 
+# A copy of the tree as a git repo of its own, one commit deep, so the gate's
+# "what changed since the published commit" has a history to ask. TREE is the
+# copy, and PUBLISHED_REV is set to its commit.
+TREE=
+make_tree() {
+  TREE="${BATS_TEST_TMPDIR}/tree"
+  mkdir -p "${TREE}/scripts" "${TREE}/system_files" "${TREE}/site"
+  cp "${NIGHTLY}" "${TREE}/scripts/nightly.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${TREE}/scripts/check.sh"
+  chmod +x "${TREE}/scripts/nightly.sh" "${TREE}/scripts/check.sh"
+  echo one > "${TREE}/system_files/motd"
+  echo one > "${TREE}/site/index.html"
+  git -C "${TREE}" init -q
+  tree_commit "the published build"
+  PUBLISHED_REV="$(git -C "${TREE}" rev-parse HEAD)"
+}
+
+tree_commit() {
+  git -C "${TREE}" add -A
+  git -C "${TREE}" -c user.name=t -c user.email=t@t commit -qm "$1"
+}
+
 night() {
-  local tree="${BATS_TEST_TMPDIR}/tree"
-  mkdir -p "${tree}/scripts"
-  cp "${NIGHTLY}" "${tree}/scripts/nightly.sh"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "${tree}/scripts/check.sh"
-  chmod +x "${tree}/scripts/nightly.sh" "${tree}/scripts/check.sh"
-  run --separate-stderr "${tree}/scripts/nightly.sh"
+  [ -n "${TREE}" ] || make_tree
+  run --separate-stderr "${TREE}/scripts/nightly.sh"
 }
 
 @test "a skipped night prints the line the build host scrapes" {
+  make_tree
   write_index "${AMD64_NOW}" "${ARM64_NOW}"
   stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
   night
@@ -507,4 +565,124 @@ stub_versions() {
   check
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"unreadable"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# The repo. For six weeks the gate asked about the base alone, and a fix
+# merged here waited for quay: 2026-09-26's ffcd17f sat unshipped behind a
+# quiet base. The published image records its commit; any change since to a
+# path that goes into the image builds.
+# ---------------------------------------------------------------------------
+
+tree_check() {
+  run --separate-stderr "${TREE}/scripts/nightly.sh" --base-check
+}
+
+@test "REGRESSION: a change to the image since the published commit builds" {
+  make_tree
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  echo two > "${TREE}/system_files/motd"
+  tree_commit "a fix"
+  tree_check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"image inputs changed since"* ]]
+  [[ "$output" == *"system_files/motd"* ]]
+}
+
+@test "a change to the site alone is not a reason to build" {
+  # The builder commits the site every night it publishes; if that counted,
+  # nothing would ever skip again.
+  make_tree
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  echo two > "${TREE}/site/index.html"
+  echo notes > "${TREE}/README.md"
+  tree_commit "site: package changelog"
+  tree_check
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"no image input changed"* ]]
+}
+
+@test "markdown inside the image still counts" {
+  make_tree
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  echo guide > "${TREE}/system_files/AGENTS.md"
+  tree_commit "agents guide"
+  tree_check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"system_files/AGENTS.md"* ]]
+}
+
+@test "builds when the published image records no commit" {
+  make_tree
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  PUBLISHED_REV=""
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  tree_check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"records no commit"* ]]
+}
+
+@test "builds when the published commit is not in this checkout" {
+  # Also what a manual build from a dirty tree records: <sha>-dirty.
+  make_tree
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  PUBLISHED_REV="${PUBLISHED_REV}-dirty"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  tree_check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"is not in this checkout"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# The add-ons: what the image installs from outside Fedora. A driver update in
+# rpmfusion, or a scx-scheds fix in the copr, waited for quay too.
+# ---------------------------------------------------------------------------
+
+@test "REGRESSION: an add-on that moved builds, and says which" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  stub_dnf5 "${ADDONS_LIST/615.71.09-3/615.71.10-1}"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"add-ons moved"* ]]
+  [[ "$output" == *"xorg-x11-drv-nvidia 3:615.71.10-1.fc44"* ]]
+}
+
+@test "unchanged add-ons, repo and base skip" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  check
+  [ "$status" -eq 3 ]
+}
+
+@test "builds when the add-on repos cannot be read" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  stub_dnf5 FAIL
+  check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"could not read the add-on repos"* ]]
+}
+
+@test "a repo that failed to load is not an add-on update" {
+  # dnf drops the packages of a repo it could not load and answers for the
+  # rest; hashing the survivors would read as every one of them moving.
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  stub_dnf5 "$(grep -v '^mise ' <<<"${ADDONS_LIST}")"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"could not read the add-on repos"* ]]
+}
+
+@test "builds when the published image records no add-on versions" {
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  PUBLISHED_ADDONS=""
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"records no add-on versions"* ]]
 }

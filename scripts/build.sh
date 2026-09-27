@@ -76,6 +76,8 @@ FEDORA_VERSION="${FEDORA_VERSION:-44}"
 BASE_IMAGE="${BASE_IMAGE:-quay.io/fedora-ostree-desktops/silverblue}"
 BASE_DIGEST=""
 BASE_INPUTHASH=""
+REVISION="$(git -C "${REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
+git -C "${REPO}" diff --quiet HEAD 2>/dev/null || REVISION="${REVISION}-dirty"
 
 VARIANT=all
 VERSION=""
@@ -485,6 +487,12 @@ rechunk() {
     --output "oci:${WORK_TARGET}/$3:build"
   )
   [ -n "${VERSION}" ] && run+=(--label "org.opencontainers.image.version=${VERSION}")
+  # The commit this was built from, on both variants: the first link from a
+  # digest back to its source, and what the nightly gate diffs against. A
+  # dirty tree says so -- `<sha>-dirty` is not a commit, and the gate reads
+  # an unknown commit as "cannot tell" and builds.
+  run+=(--label "org.opencontainers.image.revision=${REVISION}")
+  run+=(--label "org.opencontainers.image.source=${PULSAR_SOURCE_URL:-https://github.com/arclight-digital/pulsar}")
   # Vanilla only. The nvidia image derives from vanilla, not from silverblue,
   # so this label would name the wrong base there -- and the gate that reads it
   # reads it off the vanilla image anyway.
@@ -495,6 +503,10 @@ rechunk() {
       && run+=(--label "digital.arclight.pulsar.base-digest=${BASE_DIGEST}")
     [ -n "${BASE_INPUTHASH}" ] \
       && run+=(--label "digital.arclight.pulsar.base-inputhash=${BASE_INPUTHASH}")
+    # From nightly.sh, which read the add-on repos to decide this build was
+    # needed. Absent when it could not, so the next night asks again.
+    [ -n "${PULSAR_ADDONS_HASH:-}" ] \
+      && run+=(--label "digital.arclight.pulsar.addons-hash=${PULSAR_ADDONS_HASH}")
   fi
 
   # --previous-build pins the layer plan to what clients already run. The

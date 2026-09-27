@@ -43,14 +43,14 @@
 #   PULSAR_PUBLISH_BRANCH       branch the site commit lands on (default main)
 #   PULSAR_PUBLISH              yes (default) | dry-run | no
 #   PULSAR_CHANNEL              scheduled | manual. REQUIRED -- see below.
-#   PULSAR_FORCE_BUILD          yes to build even when the base image has not
-#                               changed -- see base_moved() below
+#   PULSAR_FORCE_BUILD          yes to build even when nothing the image is
+#                               made from has changed -- see anything_moved()
 #   PULSAR_MIN_FREE_GB          floor build.sh refuses to start under, in GB
 #                               (default 10, 0 disables). A full build cache
 #                               reports itself as whichever mirror the build
 #                               was talking to when the disk ran out.
 #
-# One argument, optional: --base-check answers the base_moved() question and
+# One argument, optional: --base-check answers the anything_moved() question and
 # exits without building anything. 0 it would build, 3 it would skip. Anything
 # else is refused with 2 rather than ignored -- a swallowed --manual builds and
 # publishes as scheduled, which is the one outcome this script is written to
@@ -131,12 +131,24 @@ main() {
 # and a handful of its layers are new around an otherwise identical package
 # set. See base_moved() for what is asked instead.
 #
-# WHAT THIS DOES NOT CATCH, deliberately, because catching it costs the build
-# hour it is trying to save: the packages installed ON TOP of the base can move
-# while the base is static -- scx-scheds from the copr, the rpmfusion bits,
-# mise, and the nvidia driver. A night where only those moved is skipped, and
-# picked up whenever the base next moves. To ship one without waiting, run with
-# PULSAR_FORCE_BUILD=yes.
+# THE BASE IS ONE OF THREE THINGS THE IMAGE IS MADE FROM, and for its first
+# six weeks this gate asked about it alone. The other two moved under it
+# unseen, and a night where only they moved was skipped until quay next
+# happened to publish a different package set:
+#
+#   this repo     a fix merged here -- 2026-09-26's ffcd17f, which takes a
+#                 false claim off the published manifest -- waited for Fedora.
+#                 See tree_moved(): the published image records the commit it
+#                 was built from, and any change since to a path that goes
+#                 into the image builds.
+#   the add-ons   the packages installed ON TOP of the base: rpmfusion's
+#                 ffmpeg and NVIDIA driver, scx-scheds from the copr, mise,
+#                 the NVIDIA container toolkit. A driver or security update
+#                 there sat unshipped. See addons_moved(): their current
+#                 versions are hashed, and the hash rides on the image.
+#
+# A night is skipped only when all three are where the published build left
+# them. To ship regardless, run with PULSAR_FORCE_BUILD=yes.
 #
 # FAILS OPEN, everywhere. Every path that cannot get a straight answer builds.
 # A gate that skips when it cannot see would stop shipping updates in silence,
@@ -303,6 +315,107 @@ base_moved() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# The repo. Paths that do not go into the image, for tree_moved(). Everything
+# else counts -- scripts/ included, since build.sh and the wallpaper renderer
+# shape the image without being copied into it. Wrong in the safe direction:
+# a path missing from this list costs a build, never a skipped fix.
+#
+# `glob` so `*.md` is the top-level documents only. Markdown under
+# system_files/ ships in the image, and a plain pathspec would exclude it too.
+# ---------------------------------------------------------------------------
+NOT_IMAGE=(
+  ':(exclude)site' ':(exclude)docs' ':(exclude)tests'
+  ':(exclude).impeccable' ':(exclude).preview' ':(exclude).claude'
+  ':(exclude)iso-config.toml' ':(exclude,glob)*.md'
+)
+
+tree_moved() {
+  local published rev changed n
+  published="$(image_labels "${IMAGE}:latest")"
+  rev="$(label_of "${published}" org.opencontainers.image.revision)"
+  [ -n "${rev}" ] \
+    || { echo "the published build records no commit; building" >&2; return 0; }
+  # A manual build from a dirty tree records <sha>-dirty, which is not a
+  # commit, and a commit this checkout has never seen cannot be diffed. Both
+  # are "cannot tell", which builds.
+  git -C "${REPO}" cat-file -e "${rev}^{commit}" 2>/dev/null \
+    || { echo "the published commit ${rev} is not in this checkout; building" >&2; return 0; }
+  changed="$(git -C "${REPO}" diff --name-only "${rev}" HEAD -- . "${NOT_IMAGE[@]}" 2>/dev/null)" \
+    || { echo "could not diff ${rev} against HEAD; building" >&2; return 0; }
+  if [ -z "${changed}" ]; then
+    echo "no image input changed since ${rev:0:12}"
+    return 1
+  fi
+  n="$(wc -l <<<"${changed}")"
+  echo "image inputs changed since ${rev:0:12} (${n}):"
+  head -n 10 <<<"${changed}" | sed 's/^/  /'
+  [ "${n}" -le 10 ] || echo "  ... and $((n - 10)) more"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# The add-ons. What the images install from outside Fedora, by name, and the
+# repos in scripts/addon-repos/ that serve them. A package added to a
+# Containerfile from one of those repos belongs here too.
+# ---------------------------------------------------------------------------
+ADDON_PACKAGES=(
+  ffmpeg mesa-va-drivers-freeworld                  # rpmfusion free
+  akmod-nvidia-open xorg-x11-drv-nvidia nvidia-settings  # rpmfusion nonfree
+  scx-scheds                                        # copr kernel-cachyos-addons
+  mise                                              # mise.jdx.dev
+  nvidia-container-toolkit-base                     # nvidia.github.io
+)
+
+# One hash of the newest version of each add-on, or nothing when the repos
+# cannot be read -- which the gate treats as moved, and which build.sh then
+# records as no label at all, so the next night asks again rather than
+# comparing against a guess. A second or two of metadata, not a build.
+addons_fingerprint() {
+  command -v dnf5 >/dev/null || return 0
+  local list
+  list="$(dnf5 -q \
+      --setopt=reposdir="${REPO}/scripts/addon-repos" \
+      --setopt=cachedir="${WORK_TMP}/dnf" \
+      --setopt=gpgcheck=0 --setopt=repo_gpgcheck=0 \
+      --releasever="${FEDORA_VERSION}" \
+      repoquery --latest-limit=1 --arch="$(uname -m),noarch" \
+      --qf '%{name} %{evr}\n' "${ADDON_PACKAGES[@]}" 2>/dev/null | sort -u)" || return 0
+  # Every package must answer. A repo that failed to load drops its packages
+  # silently, and a hash over the survivors would be a change that is not one.
+  local p
+  for p in "${ADDON_PACKAGES[@]}"; do
+    grep -q "^${p} " <<<"${list}" || return 0
+  done
+  printf '%s\n' "${list}" > "${WORK_TMP}/addons.txt"
+  sha256sum <<<"${list}" | cut -d' ' -f1
+}
+
+addons_moved() {
+  local last
+  last="$(label_of "$(image_labels "${IMAGE}:latest")" digital.arclight.pulsar.addons-hash)"
+  [ -n "${PULSAR_ADDONS_HASH:-}" ] \
+    || { echo "could not read the add-on repos; building" >&2; return 0; }
+  [ -n "${last}" ] \
+    || { echo "the published build records no add-on versions; building" >&2; return 0; }
+  if [ "${last}" = "${PULSAR_ADDONS_HASH}" ]; then
+    echo "add-ons unchanged: ${PULSAR_ADDONS_HASH:0:12}"
+    return 1
+  fi
+  echo "add-ons moved: ${last:0:12} -> ${PULSAR_ADDONS_HASH:0:12}"
+  sed 's/^/  /' "${WORK_TMP}/addons.txt" 2>/dev/null || true
+  return 0
+}
+
+# The whole question. base_moved() answers for manual and forced builds too,
+# so those never reach the other two.
+anything_moved() {
+  base_moved && return 0
+  tree_moved && return 0
+  addons_moved && return 0
+  return 1
+}
+
 # One ping, two callers. The dead-man's switch watches the TIMER, so any night
 # the timer did its job has to ping -- including a night that looked at the
 # base and decided correctly that there was nothing to build. Omission means
@@ -386,8 +499,11 @@ esac
 # reason the mismatch above is now a thing that can fail out loud. 3 rather
 # than 1 for "would skip": 1 is a broken run and 2 is a config error, and this
 # is neither.
+PULSAR_ADDONS_HASH="$(addons_fingerprint)"
+export PULSAR_ADDONS_HASH
+
 if [ "${1:-}" = --base-check ]; then
-  if base_moved; then echo "would build"; exit 0; fi
+  if anything_moved; then echo "would build"; exit 0; fi
   echo "would skip"
   exit 3
 fi
@@ -421,7 +537,7 @@ fi
 # still a night that should notice. Before next-version.sh, equally on purpose:
 # a build that does not happen must not consume a number in the published
 # series.
-if ! base_moved; then
+if ! anything_moved; then
   elapsed=$(( $(date -u +%s) - started ))
   echo
   # The build host scrapes this line to record the night as skipped, the way
@@ -429,12 +545,12 @@ if ! base_moved; then
   # tonight: '`. Keep the prefix exactly. Without it a skip reaches helios as a
   # success with no version, which is also what a log that lost its version
   # line looks like -- and the site cannot say "skipped" on a guess.
-  echo "no build tonight: base unchanged"
-  echo "nothing to build: no package in this image can have moved, so the"
+  echo "no build tonight: base, repo and add-ons unchanged"
+  echo "nothing to build: nothing this image is made from has moved, so the"
   echo "published build is still current. Skipping tonight."
   echo "  published    $(oras resolve "${IMAGE}:latest" 2>/dev/null || echo '<unknown>')"
   echo "  to override  PULSAR_FORCE_BUILD=yes"
-  ping_healthcheck "no build in ${elapsed}s: base unchanged"
+  ping_healthcheck "no build in ${elapsed}s: base, repo and add-ons unchanged"
   exit 0
 fi
 
