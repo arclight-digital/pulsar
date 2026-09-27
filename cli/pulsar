@@ -2105,12 +2105,81 @@ setting_write() {
 
 gate_id() { printf '%s' "$1" | sha256sum | cut -c1-16; }
 
+# Extra paths the user lets into the sandbox, global and this project's:
+# "path" or "path:rw", one per line. Never from the repo file: allowing is
+# loosening, and the agent can write that file.
+sandbox_allows() {
+    local root=$1
+    { [ ! -r "$AGENT_CONF" ] || awk -F' *= *' '$1 == "allow" { print $2 }' "$AGENT_CONF"
+      [ ! -r "$AGENT_PROJECTS" ] || awk -F'\t' -v p="$root" '$1 == "allow" && $2 == p { print $3 }' "$AGENT_PROJECTS"
+    } | awk '!seen[$0]++'
+}
+
+sandbox_allow() {
+    local want=$1 here=$2 root=$3 rw=$4 path entry tmp file
+    [ -n "$want" ] || die "usage: pulsar agent sandbox allow <path> [--rw] [--here]"
+    path=$(realpath -m "$want")
+    [ -e "$path" ] || die "no such path: ${path}"
+    case "$HOME/" in "${path%/}/"*) die "that would let the whole of ${path} in; allow the one file or folder you need" ;; esac
+    case "$path" in
+        "$HOME/.ssh"*|"$HOME/.gnupg"*|"$HOME/.local/share/keyrings"*|"$HOME/.config/gh"*|"$HOME/.password-store"*)
+            printf 'warning: %s holds keys or tokens; the sandbox is weaker with it in\n' "$path" >&2 ;;
+    esac
+    entry=$path; [ "$rw" = 0 ] || entry="${path}:rw"
+    tmp=$(mktemp)
+    if [ "$here" = 1 ]; then
+        file=$AGENT_PROJECTS
+        { [ ! -r "$file" ] || awk -F'\t' -v p="$root" -v e="$path" '!($1 == "allow" && $2 == p && ($3 == e || $3 == e ":rw"))' "$file"
+          printf 'allow\t%s\t%s\n' "$root" "$entry"; } > "$tmp"
+    else
+        file=$AGENT_CONF
+        { [ ! -r "$file" ] || awk -F' *= *' -v e="$path" '!($1 == "allow" && ($2 == e || $2 == e ":rw"))' "$file"
+          printf 'allow = %s\n' "$entry"; } > "$tmp"
+    fi
+    mkdir -p "$(dirname "$file")"; mv "$tmp" "$file"
+    printf 'allowed into the sandbox%s: %s (%s)\n' "$([ "$here" = 1 ] && printf ' for %s' "$root")" "$path" \
+        "$([ "$rw" = 1 ] && echo read-write || echo read-only)"
+}
+
+sandbox_disallow() {
+    local path tmp
+    path=$(realpath -m "$1")
+    tmp=$(mktemp)
+    if [ -r "$AGENT_CONF" ]; then
+        awk -F' *= *' -v e="$path" '!($1 == "allow" && ($2 == e || $2 == e ":rw"))' "$AGENT_CONF" > "$tmp" && mv "$tmp" "$AGENT_CONF"
+    fi
+    tmp=$(mktemp)
+    if [ -r "$AGENT_PROJECTS" ]; then
+        awk -F'\t' -v e="$path" '!($1 == "allow" && ($3 == e || $3 == e ":rw"))' "$AGENT_PROJECTS" > "$tmp" && mv "$tmp" "$AGENT_PROJECTS"
+    fi
+    rm -f "$tmp"
+    printf 'no longer allowed: %s\n' "$path"
+}
+
+# Programs the agent's own hooks run that live in $HOME and are not let in:
+# the sandbox cannot see them, and the hook fails on every call. Claude Code
+# only, for now: its hooks are in settings.json.
+sandbox_hook_hints() {
+    local name=$1 root=$2 cmd bin allows
+    [ "$name" = claude ] && [ -r "$HOME/.claude/settings.json" ] && have jq || return 0
+    allows=$(sandbox_allows "$root" | sed 's/:rw$//')
+    jq -r '.. | objects | .command? // empty | strings' "$HOME/.claude/settings.json" 2>/dev/null \
+        | awk '{ print $1 }' | sort -u | while IFS= read -r cmd; do
+            bin=$(command -v "$cmd" 2>/dev/null) || continue
+            case "$bin" in "$HOME"/*) ;; *) continue ;; esac
+            printf '%s\n' "$allows" | grep -qxF "$bin" && continue
+            printf 'note: your claude hooks run %s (%s), which the sandbox cannot see: pulsar agent sandbox allow %s\n' \
+                "$cmd" "$bin" "$bin" >&2
+        done
+}
+
 agent_sandbox() {
     local sub=${1:-} here=0 root a
     local -a rest=()
     shift || true
+    local rw=0
     for a in "$@"; do
-        case "$a" in --here) here=1 ;; *) rest+=("$a") ;; esac
+        case "$a" in --here) here=1 ;; --rw) rw=1 ;; *) rest+=("$a") ;; esac
     done
     root=$(project_root)
     case "$sub" in
@@ -2121,6 +2190,10 @@ agent_sandbox() {
             printf 'project  %s\n' "$root"
             printf 'sandbox  %s  (%s)\n' "${sb%%$'\t'*}" "${sb#*$'\t'}"
             printf 'push     %s  (%s)\n' "${push%%$'\t'*}" "${push#*$'\t'}"
+            local al
+            while IFS= read -r al; do
+                [ -z "$al" ] || printf 'allow    %s\n' "$al"
+            done < <(sandbox_allows "$root")
             if [ -d "$mirror" ]; then
                 git -C "$mirror" config --get-regexp '^remote\..*\.url$' 2>/dev/null \
                     | sed 's/^remote\.\(.*\)\.url /remote   \1 -> /; s/$/  (pinned)/'
@@ -2145,6 +2218,12 @@ agent_sandbox() {
             setting_write push "${rest[0]}" "$here" "$root"
             if [ "$here" = 1 ]; then printf 'push %s for %s\n' "${rest[0]}" "$root"; else printf 'push %s (global)\n' "${rest[0]}"; fi
             ;;
+        allow)
+            [ ${#rest[@]} -eq 1 ] || die "usage: pulsar agent sandbox allow <path> [--rw] [--here]"
+            sandbox_allow "${rest[0]}" "$here" "$root" "$rw" ;;
+        disallow)
+            [ ${#rest[@]} -eq 1 ] || die "usage: pulsar agent sandbox disallow <path>"
+            sandbox_disallow "${rest[0]}" ;;
         list)
             [ -r "$AGENT_PROJECTS" ] && [ -s "$AGENT_PROJECTS" ] || { printf 'no per-project settings\n'; return 0; }
             awk -F'\t' '{ printf "%-8s %-9s %s%s\n", $1, $3, $2, (system("test -d \"" $2 "\"") ? "  (gone)" : "") }' "$AGENT_PROJECTS"
@@ -2159,17 +2238,102 @@ agent_sandbox() {
     esac
 }
 
-# Where each agent keeps its login and settings: mounted read-write so one
-# sign-in serves both modes. Files and dirs; missing ones are created first,
-# or the agent would write them into the tmpfs and lose them.
-agent_state_paths() {
+# The sandbox's own home, per agent, persistent: its history and caches live
+# here. The user's settings flow IN at every start; nothing flows out but the
+# login. A sandboxed agent that edits its own settings -- adds a hook, an MCP
+# server -- edits this copy, which the next start overwrites, and which the
+# unsandboxed agent never reads. Mounting the real ~/.claude read-write would
+# let exactly that run on the host.
+SANDBOX_HOMES=${PULSAR_SANDBOX_HOMES:-${XDG_DATA_HOME:-$HOME/.local/share}/pulsar/sandbox}
+
+# What of the user's agent setup goes in, relative to $HOME:
+#   copy  small files the agent also writes (settings, its state file, the
+#         login): copied in at each start, over whatever the sandbox did
+#   ro    folders it only reads (skills, plugins, hooks): mounted read-only
+#         from the real ones, so nothing is copied and nothing can be planted
+agent_sync_paths() {
+    local f
     case "$1" in
-        claude)   printf '%s\n' "d $HOME/.claude" "f $HOME/.claude.json" ;;
-        codex)    printf '%s\n' "d ${CODEX_HOME:-$HOME/.codex}" ;;
-        gemini)   printf '%s\n' "d $HOME/.gemini" ;;
-        opencode) printf '%s\n' "d ${XDG_CONFIG_HOME:-$HOME/.config}/opencode" "d ${XDG_DATA_HOME:-$HOME/.local/share}/opencode" ;;
-        aider)    printf '%s\n' "f $HOME/.aider.conf.yml" ;;
+        claude)
+            printf 'copy %s\n' .claude.json .claude/settings.json .claude/settings.local.json \
+                .claude/keybindings.json .claude/.credentials.json
+            # CLAUDE.md and whatever it @-imports beside it
+            for f in "$HOME"/.claude/*.md; do [ ! -e "$f" ] || printf 'copy .claude/%s\n' "$(basename "$f")"; done
+            printf 'ro %s\n' .claude/commands .claude/agents .claude/skills .claude/rules .claude/hooks .claude/plugins ;;
+        codex)    printf 'copy %s\n' .codex/config.toml .codex/AGENTS.md .codex/auth.json
+                  printf 'ro %s\n' .codex/prompts .codex/skills ;;
+        gemini)   printf 'copy %s\n' .gemini/settings.json .gemini/GEMINI.md .gemini/oauth_creds.json .gemini/google_accounts.json
+                  printf 'ro %s\n' .gemini/commands .gemini/skills ;;
+        opencode) printf 'copy %s\n' .local/share/opencode/auth.json
+                  printf 'ro %s\n' .config/opencode ;;
+        aider)    printf 'copy %s\n' .aider.conf.yml ;;
     esac
+}
+
+# The login: the one thing copied back out, so both modes stay signed in.
+agent_cred_path() {
+    case "$1" in
+        claude)   printf '%s\n' .claude/.credentials.json ;;
+        codex)    printf '%s\n' .codex/auth.json ;;
+        gemini)   printf '%s\n' .gemini/oauth_creds.json ;;
+        opencode) printf '%s\n' .local/share/opencode/auth.json ;;
+        *)        return 1 ;;
+    esac
+}
+
+sandbox_sync_in() {
+    local name=$1 home=$2 how rel
+    mkdir -p "$home"; chmod 0700 "$home"
+    while read -r how rel; do
+        [ "$how" = copy ] && [ -n "$rel" ] || continue
+        if [ -e "$HOME/$rel" ]; then
+            mkdir -p "$(dirname "$home/$rel")"
+            cp -a --remove-destination "$HOME/$rel" "$home/$rel"
+        else
+            # gone on the host: gone in here too, not left over from before
+            rm -f "${home:?}/$rel"
+        fi
+    done < <(agent_sync_paths "$name")
+}
+
+# The read-only half, as podman -v arguments, one per line.
+sandbox_ro_mounts() {
+    local name=$1 how rel
+    while read -r how rel; do
+        [ "$how" = ro ] && [ -d "$HOME/$rel" ] || continue
+        printf '%s\n' "$HOME/$rel:$HOME/$rel:ro"
+    done < <(agent_sync_paths "$name")
+}
+
+# At the end of a session: the refreshed login goes back, if it is still
+# JSON, if it changed in here, and if the host's copy did NOT change meanwhile
+# (then the host's is newer, and the sandbox's may already be revoked).
+sandbox_creds_out() {
+    local name=$1 home=$2 before=$3 rel host in tmp
+    rel=$(agent_cred_path "$name") || return 0
+    host="$HOME/$rel"; in="$home/$rel"
+    [ -f "$in" ] || return 0
+    jq -e . "$in" >/dev/null 2>&1 || return 0
+    [ "$(sha256sum < "$host" 2>/dev/null | cut -c1-64)" = "$before" ] || return 0
+    cmp -s "$in" "$host" 2>/dev/null && return 0
+    mkdir -p "$(dirname "$host")"
+    tmp=$(mktemp "${host}.XXXXXX") && cp "$in" "$tmp" && chmod 0600 "$tmp" && mv "$tmp" "$host"
+}
+
+# Agent config in the project that an agent loads by itself: read-only in
+# here when it exists; created in here, it is defused when the session ends.
+PROJECT_AGENT_CONFIG='.claude .mcp.json .codex .gemini .opencode opencode.json opencode.jsonc'
+
+sandbox_defuse() {
+    local root=$1 existed=$2 p
+    for p in $PROJECT_AGENT_CONFIG; do
+        case " ${existed} " in *" ${p} "*) continue ;; esac
+        { [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; } || continue
+        rm -rf "${root}/${p}.from-sandbox"
+        mv "${root}/${p}" "${root}/${p}.from-sandbox"
+        printf 'note: the sandboxed agent created %s; renamed to %s.from-sandbox so no agent loads it. Read it, then rename it back if you want it.\n' \
+            "$p" "$p" >&2
+    done
 }
 
 sandbox_run() {
@@ -2193,11 +2357,21 @@ sandbox_run() {
     policy=$(setting_resolve push "$root"); policy=${policy%%$'\t'*}
     git -C "$mirror" config pulsar.push "$policy"
 
+    local home cred before=""
+    home="${SANDBOX_HOMES}/${name}"
+    sandbox_sync_in "$name" "$home"
+    if cred=$(agent_cred_path "$name") && [ -f "$HOME/$cred" ]; then
+        before=$(sha256sum < "$HOME/$cred" | cut -c1-64)
+    fi
+
     local -a args=(run --rm -i --userns=keep-id --security-opt label=disable
-        --mount "type=tmpfs,destination=${HOME},tmpfs-mode=0700,U=true"
+        -v "${home}:${HOME}"
         -v "${root}:${root}"
         -w "$PWD"
         -e "HOME=${HOME}" -e "USER=$(id -un)" -e PULSAR_SANDBOX=1
+        # Fedora adds ~/.local/bin only for login shells; an agent's hooks
+        # do not run in one, and it is where an allowed tool usually lives.
+        -e "PATH=${HOME}/.local/bin:${HOME}/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
         -e "TERM=${TERM:-xterm-256color}" -e "LANG=${LANG:-C.UTF-8}")
     [ ! -t 0 ] || args+=(-t)
     if [ -d "${root}/.git" ]; then
@@ -2205,14 +2379,15 @@ sandbox_run() {
         mkdir -p "${root}/.git/hooks"
         args+=(-v "${root}/.git/hooks:${root}/.git/hooks:ro")
     fi
-    local kind p
-    while read -r kind p; do
-        [ -n "$p" ] || continue
-        if [ ! -e "$p" ]; then
-            if [ "$kind" = d ]; then mkdir -p "$p"; else mkdir -p "$(dirname "$p")"; printf '{}\n' > "$p"; fi
-        fi
-        args+=(-v "${p}:${p}")
-    done < <(agent_state_paths "$name")
+    while IFS= read -r p; do
+        [ -z "$p" ] || args+=(-v "$p")
+    done < <(sandbox_ro_mounts "$name")
+    local p existed=""
+    for p in $PROJECT_AGENT_CONFIG; do
+        { [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; } || continue
+        existed+="${p} "
+        args+=(-v "${root}/${p}:${root}/${p}:ro")
+    done
     for p in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git"; do
         [ ! -e "$p" ] || args+=(-v "${p}:${p}:ro")
     done
@@ -2223,6 +2398,15 @@ sandbox_run() {
     else
         args+=(-v "$(dirname "$real"):$(dirname "$real"):ro")
     fi
+    local al
+    while IFS= read -r al; do
+        [ -n "$al" ] || continue
+        case "$al" in
+            *:rw) [ ! -e "${al%:rw}" ] || args+=(-v "${al%:rw}:${al%:rw}") ;;
+            *)    [ ! -e "$al" ] || args+=(-v "${al}:${al}:ro") ;;
+        esac
+    done < <(sandbox_allows "$root")
+    sandbox_hook_hints "$name" "$root"
     [ ! -r "$AGENTS_MD" ] || args+=(-v "${AGENTS_MD}:/usr/share/pulsar/AGENTS.md:ro")
     [ ! -d "$SKILLS_DIR" ] || args+=(-v "${SKILLS_DIR}:/usr/share/pulsar/skills:ro")
     # The agent's own API key, if the user exported one; nothing else of the env.
@@ -2236,7 +2420,11 @@ sandbox_run() {
     mkdir -p "$(dirname "$sock")"
     local n=0 rname url pin
     args+=(-v "${GATE_TOOL}:/usr/libexec/pulsar/pulsar-agent-gate:ro" -v "${sock}:/run/pulsar-gate.sock")
-    args+=(-e "GIT_CONFIG_KEY_0=protocol.ext.allow" -e "GIT_CONFIG_VALUE_0=always"); n=1
+    # .git/config is read-only in here, so `push -u` cannot record tracking
+    # (git says it did, after an error). autoSetupRemote makes a plain
+    # `git push` of a new branch work without it.
+    args+=(-e "GIT_CONFIG_KEY_0=protocol.ext.allow" -e "GIT_CONFIG_VALUE_0=always"
+           -e "GIT_CONFIG_KEY_1=push.autoSetupRemote" -e "GIT_CONFIG_VALUE_1=true"); n=2
     while read -r rname url; do
         [ -n "$url" ] || continue
         args+=(-e "GIT_CONFIG_KEY_${n}=url.ext::python3 /usr/libexec/pulsar/pulsar-agent-gate connect /run/pulsar-gate.sock %s ${rname}.insteadOf"
@@ -2250,8 +2438,8 @@ sandbox_run() {
 
     python3 "$GATE_TOOL" serve "$sock" "$mirror" 2>>"${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log" &
     local gate_pid=$!
-    # shellcheck disable=SC2064  # the pid and path are fixed now, on purpose
-    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'" EXIT
+    # shellcheck disable=SC2064  # the values are fixed now, on purpose
+    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'; sandbox_defuse '${root}' '${existed}'; sandbox_creds_out '${name}' '${home}' '${before}'" EXIT
     local waited=0
     while [ ! -S "$sock" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
     [ -S "$sock" ] || die "the push gate did not start (see ${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log)"
@@ -2316,6 +2504,9 @@ usage: pulsar agent                  the guide, installed agents, guard state
        pulsar agent sandbox push on|off|branches [--here]
                                      what the gate lets through (never force-push,
                                      deletes or tags)
+       pulsar agent sandbox allow <path> [--rw] [--here] | disallow <path>
+                                     let one more file or folder in (read-only
+                                     unless --rw): a tool the agent's hooks run
        pulsar agent sandbox list|repin
                                      per-project settings; re-pin this project's remotes
        pulsar agent run <name> [--sandbox|--no-sandbox] [-- args]

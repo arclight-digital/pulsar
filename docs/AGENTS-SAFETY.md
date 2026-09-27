@@ -130,13 +130,34 @@ What it sees:
   `core.fsmonitor` planted there would run on the host the next time *you*
   ran git in that repo; read-only, it can still commit but cannot change what
   git runs.
-- **Its own login and settings** (`~/.claude`, `~/.codex`, ...), so one
-  sign-in works in both modes; `~/.gitconfig`, read-only, so commits are
-  still yours; the guide and the skills.
+- **A home of its own**, one per agent (`~/.local/share/pulsar/sandbox/<agent>`),
+  where its history and caches live. Your agent setup comes in without
+  anything going back out:
+  - small files it also writes (settings, its state file, `CLAUDE.md`, the
+    login) are **copied in at every start**, over whatever the sandbox did to
+    its copy;
+  - folders it only reads (skills, plugins, hooks, commands) are **mounted
+    read-only** from the real ones, so nothing is copied and nothing planted;
+  - the **login is the one thing copied back**, so you sign in once for both
+    modes. Only if it is still JSON, changed inside, and your own copy did
+    not change meanwhile (then yours is newer).
 
-What it does not: the rest of `$HOME` (a private, empty tmpfs sits under
-those mounts), your SSH keys and agent, browser profiles, other projects,
-the session bus, `flatpak-spawn`. It refuses to start from `$HOME` itself.
+  This is why it is not your real `~/.claude`: an agent that could write its
+  own settings could add a hook or an MCP server there, and your unsandboxed
+  agent would run it on the host.
+- `~/.gitconfig`, read-only, so commits are still yours; the guide and the
+  skills; anything you `pulsar agent sandbox allow` (a tool your hooks run,
+  read-only unless `--rw`).
+
+What it does not: the rest of `$HOME`, your SSH keys and agent, browser
+profiles, other projects, the session bus, `flatpak-spawn`. It refuses to
+start from `$HOME` itself.
+
+**Project agent config** (`.claude/`, `.mcp.json`, `.codex/`, `.gemini/`,
+`.opencode/`, `opencode.json`) is read-only inside when it exists, like
+`.git/config`: your agent loads it by itself. One the sandbox *creates* is
+renamed to `<name>.from-sandbox` when the session ends, with a note, so no
+agent loads it until you have read it.
 
 **Push goes through a gate.** Inside, the project's remotes point at
 `pulsar-agent-gate`, which runs on the host for the length of the session.
@@ -181,6 +202,9 @@ What it does **not** do, said plainly:
   such install.
 - **What it writes into the project is yours to review.** A Makefile, a test
   script or an `.envrc` it edits runs when you run it.
+- **A session killed outright** (not ended: `kill -9`, a crash) skips the
+  end-of-session steps: new project agent config is not defused and a
+  refreshed login is not copied back.
 
 ## Undoing an `/etc` change
 
