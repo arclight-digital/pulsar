@@ -594,18 +594,21 @@ version_tag_is_free() {
   return 1
 }
 
+# The VERSION TAG ONLY. :latest and :<fedora> move in promote(), for every
+# variant together, once every variant has been built, checked and pushed.
+#
+# They used to move here, per variant, and vanilla's moved before nvidia had
+# even started building. A night whose nvidia half then failed left the two
+# :latest tags on different versions -- a split release, every vanilla
+# machine a build ahead of every nvidia one, for as long as nvidia kept
+# failing. Now a failure anywhere leaves both floating tags where they were,
+# and the only window in which they disagree is the few seconds between the
+# two promotions.
 push() {
-  local image="$1" layout="${WORK}/$2" t
-  say "pushing ${image}"
-  # The version tag goes FIRST, and the floating pair is appended rather than
-  # seeded. Both matter: --no-floating-tags has to be able to leave them out,
-  # and pushing the immutable tag before the moving ones means a failure
-  # part-way through can no longer leave :latest advertising a build whose
-  # version tag never landed -- which is what the check below only half
-  # achieved while latest was written first.
-  local -a tags=()
-  # Checked before ANY tag is written: aborting after latest has already moved
-  # would leave the registry advertising a build that was refused.
+  local image="$1" layout="${WORK}/$2"
+  say "pushing ${image}:${VERSION}"
+  # Checked before the tag is written: the version tag is the one thing here
+  # that promises not to move.
   if [ -n "${VERSION}" ]; then
     if [ "${ALLOW_EXISTING_VERSION}" = yes ]; then
       say "--allow-existing-version: not checking ${image}:${VERSION}"
@@ -615,28 +618,36 @@ push() {
       echo "if replacing it is genuinely what you want" >&2
       exit 1
     fi
-    tags+=("${VERSION}")
-  fi
-  if [ "${NO_FLOATING_TAGS}" = yes ]; then
-    say "--no-floating-tags: ${image}:${FEDORA_VERSION} and :latest stay where they are"
-  else
-    tags+=("${FEDORA_VERSION}" latest)
   fi
   # skopeo copies the already-compressed blobs verbatim; a podman pull/push
-  # round trip recompressed ~200 layers for nothing. After the first copy the
-  # registry holds every blob and the rest are manifest writes.
-  for t in "${tags[@]}"; do
-    skopeo copy --digestfile "${WORK}/digest-$2" \
-      "oci:${layout}:build" "docker://${image}:${t}"
-  done
+  # round trip recompressed ~200 layers for nothing.
+  skopeo copy --digestfile "${WORK}/digest-$2" \
+    "oci:${layout}:build" "docker://${image}:${VERSION}"
   echo "${image} digest: $(cat "${WORK}/digest-$2")"
 }
 
-# one variant, all the way through
-process() {
+# Move :<fedora> and :latest onto what push() published. The registry already
+# holds every blob by now, so these are manifest writes, seconds each, and
+# the digest cannot differ from the version tag's: it is the same layout.
+promote() {
+  local image="$1" layout="${WORK}/$2" t
+  for t in "${FEDORA_VERSION}" latest; do
+    skopeo copy --digestfile "${WORK}/digest-$2" \
+      "oci:${layout}:build" "docker://${image}:${t}"
+  done
+  echo "${image}:latest -> $(cat "${WORK}/digest-$2")"
+}
+
+# One variant after its build, in two halves. The rechunk is its own half
+# because it is the one step that must not overlap anything: see below.
+process_rechunk() {
+  [ "${DO_RECHUNK}" = yes ] || return 0
+  rechunk "$1" "$2" "$3"
+}
+
+process_ship() {
   local name="$1" image="$2" slot="$3"
   [ "${DO_RECHUNK}" = yes ] || return 0
-  rechunk "${name}" "${image}" "${slot}"
   if [ "${DO_VERIFY}" = yes ]; then
     assert_content "${name}" "${slot}"
     say "checking modes and ownership across the ${name} rechunk"
@@ -646,20 +657,73 @@ process() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# VANILLA SHIPS WHILE NVIDIA BUILDS. The nvidia build is CPU: the akmod
+# compile is most of it. Vanilla's checks and push are disk and network: an
+# os-release read across two hundred blobs, a podman export diffed against
+# the layout, several GB uploaded. Run one after the other they cost their
+# sum; side by side, roughly the longer of the two.
+#
+# THE RECHUNK STAYS SERIAL. It runs rpm-ostree in a container against this
+# same podman store, with a runroot of its own, and a second process building
+# into that store at the same moment would be two owners of one set of
+# overlay mounts. Everything after the rechunk reads the finished OCI layout
+# or goes through the host's own podman, which locks against a concurrent
+# build the way it always has.
+#
+# Vanilla's half logs to a file, printed whole when it is done, so the nvidia
+# build's log is not interleaved line by line with an upload.
+# ---------------------------------------------------------------------------
+SHIP_PID=""
+SHIP_LOG="${WORK}/vanilla-ship.log"
+trap '[ -n "${SHIP_PID}" ] && kill "${SHIP_PID}" 2>/dev/null; true' EXIT
+
+finish_vanilla_ship() {
+  [ -n "${SHIP_PID}" ] || return 0
+  local rc=0
+  wait "${SHIP_PID}" || rc=$?
+  SHIP_PID=""
+  say "vanilla checks and push, which ran alongside the nvidia build:"
+  cat "${SHIP_LOG}"
+  [ "${rc}" -eq 0 ] || { echo "vanilla failed its checks or its push (exit ${rc})" >&2; exit "${rc}"; }
+}
+
 check_space
 note_space "start"
 render_wallpapers
 if [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; then
   build_vanilla
   note_space "the vanilla build"
-  process vanilla "${IMAGE}" vanilla
+  process_rechunk vanilla "${IMAGE}" vanilla
   note_space "the vanilla rechunk"
+  if [ "${VARIANT}" = all ]; then
+    process_ship vanilla "${IMAGE}" vanilla > "${SHIP_LOG}" 2>&1 &
+    SHIP_PID=$!
+  else
+    process_ship vanilla "${IMAGE}" vanilla
+  fi
 fi
 if [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; then
   build_nvidia
   note_space "the nvidia build"
-  process nvidia "${IMAGE_NVIDIA}" nvidia
+  # Before the nvidia rechunk, not after: vanilla's metadata check runs a
+  # podman export, and the rechunk is the step nothing may overlap.
+  finish_vanilla_ship
+  process_rechunk nvidia "${IMAGE_NVIDIA}" nvidia
   note_space "the nvidia rechunk"
+  process_ship nvidia "${IMAGE_NVIDIA}" nvidia
+fi
+finish_vanilla_ship
+
+# Only now, with every variant built, checked and pushed under its version.
+if [ "${DO_PUSH}" = yes ]; then
+  if [ "${NO_FLOATING_TAGS}" = yes ]; then
+    say "--no-floating-tags: :${FEDORA_VERSION} and :latest stay where they are"
+  else
+    say "promoting ${VERSION} to :${FEDORA_VERSION} and :latest"
+    { [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; } && promote "${IMAGE}" vanilla
+    { [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; } && promote "${IMAGE_NVIDIA}" nvidia
+  fi
 fi
 report_space
 
