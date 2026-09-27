@@ -2733,3 +2733,74 @@ PROFILE_SNIPPET="${BATS_TEST_DIRNAME}/../system_files/etc/profile.d/pulsar-agent
     run env PULSAR_CLI_PATH="$cli" bash --norc -i -c ". '$PROFILE_SNIPPET'; type -t claude" 2>/dev/null
     [[ "$output" != *function* ]]
 }
+
+# ---------------------------------------------------------------------------
+# agent model: the quadlet it writes, the key, and the opencode provider.
+# systemctl is stubbed; nothing is pulled or run.
+# ---------------------------------------------------------------------------
+model_env() {
+    agent_env
+    export PULSAR_QUADLET_DIR="${BATS_TEST_TMPDIR}/quadlets" PULSAR_MODEL_DIR="${BATS_TEST_TMPDIR}/models"
+    export SYSTEMCTL_LOG="${BATS_TEST_TMPDIR}/systemctl.log"
+    printf '#!/bin/sh\necho "$*" >> "$SYSTEMCTL_LOG"\ncase "$*" in *is-active*) echo active ;; esac\n' > "${STUB}/systemctl"
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/podman"
+    chmod +x "${STUB}/systemctl" "${STUB}/podman"
+    UNIT="${PULSAR_QUADLET_DIR}/pulsar-model.container"
+}
+
+@test "agent model on: CUDA on the nvidia image, a key, 127.0.0.1 only, and no autostart" {
+    model_env
+    jq '.variant = "nvidia"' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    run "$PULSAR" agent model on --model owner/Some-GGUF:Q4_K_M
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -qx 'Image=ghcr.io/ggml-org/llama.cpp:server-cuda' "$UNIT"
+    grep -qx 'AddDevice=nvidia.com/gpu=all' "$UNIT"
+    grep -qx 'PublishPort=127.0.0.1:8080:8080' "$UNIT"
+    grep -q -- '-hf owner/Some-GGUF:Q4_K_M --jinja' "$UNIT"
+    grep -q -- '--api-key-file /run/model-key --cors-origins http://127.0.0.1:8080' "$UNIT"
+    ! grep -q '^\[Install\]' "$UNIT"
+    [ "$(stat -c %a "${HOME}/.config/pulsar/model-key")" = 600 ]
+    [ "$(wc -c < "${HOME}/.config/pulsar/model-key")" -eq 64 ]
+    grep -qx -- '--user restart pulsar-model.service' "$SYSTEMCTL_LOG"
+    run "$PULSAR" agent model on --model owner/Some-GGUF --at-login
+    grep -qx 'WantedBy=default.target' "$UNIT"
+}
+
+@test "agent model on: Vulkan where there is a GPU but no nvidia image, CPU where there is none" {
+    model_env
+    jq '.variant = "vanilla"' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    mkdir -p "${BATS_TEST_TMPDIR}/dri"
+    PULSAR_DRI="${BATS_TEST_TMPDIR}/dri" "$PULSAR" agent model on >/dev/null
+    grep -qx 'Image=ghcr.io/ggml-org/llama.cpp:server-vulkan' "$UNIT"
+    grep -qx 'AddDevice=/dev/dri' "$UNIT"
+    PULSAR_DRI="${BATS_TEST_TMPDIR}/none" "$PULSAR" agent model on >/dev/null
+    grep -qx 'Image=ghcr.io/ggml-org/llama.cpp:server' "$UNIT"
+    ! grep -q AddDevice "$UNIT"
+}
+
+@test "agent model adds opencode's provider beside its others, with the key, and off takes it back" {
+    model_env
+    mkdir -p "${HOME}/.config/opencode"
+    echo '{"model":"anthropic/claude","provider":{"mine":{"name":"Mine"}}}' > "${HOME}/.config/opencode/opencode.json"
+    "$PULSAR" agent model on --model owner/Coder-GGUF >/dev/null
+    local f="${HOME}/.config/opencode/opencode.json"
+    jq -e --arg k "$(cat "${HOME}/.config/pulsar/model-key")" '.model == "anthropic/claude" and .provider.mine.name == "Mine"
+        and .provider["pulsar-local"].options == {baseURL: "http://127.0.0.1:8080/v1", apiKey: $k}
+        and .provider["pulsar-local"].models["Coder-GGUF"].tool_call == true' "$f"
+    run "$PULSAR" agent model off
+    [ ! -e "$UNIT" ]
+    jq -e '.provider["pulsar-local"] == null and .provider.mine.name == "Mine"' "$f"
+    [[ "$output" == *"--purge deletes them"* ]]
+    "$PULSAR" agent model off --purge >/dev/null
+    [ ! -e "$PULSAR_MODEL_DIR" ]
+}
+
+@test "agent model refuses what is not a Hugging Face repo" {
+    model_env
+    run "$PULSAR" agent model on --model 'justaname'
+    [ "$status" -ne 0 ]
+    run "$PULSAR" agent model on --model 'a/b;rm -rf ~'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not a model reference"* ]]
+    [ ! -e "$UNIT" ]
+}

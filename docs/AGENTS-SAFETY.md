@@ -285,6 +285,26 @@ commands are there: update, rollback, checkpoint, guard and pin stay
 commands the user runs. An agent that could call them could undo the checks
 meant to hold it. The sandbox leaves the server out: it reads the host.
 
+## A local model
+
+`pulsar agent model on` runs llama.cpp's own server image as a rootless
+podman user service (a quadlet), for agents that take any provider: opencode
+gets a "Local (Pulsar)" provider added beside its others, and aider gets the
+command line. The image matches the hardware (CUDA on the nvidia image, the
+GPU through CDI; Vulkan where there is a /dev/dri; CPU otherwise), and
+llama.cpp fetches the model from Hugging Face into
+`~/.local/share/pulsar/models`. On the RTX 5080 a 0.5B model generated about
+550 tokens a second.
+
+It listens on `127.0.0.1` only, and it needs a key: llama.cpp's defaults are
+no key and CORS open to every origin, so any web page in the browser could
+have used it. The key is random, in `~/.config/pulsar/model-key` (0600), and
+CORS names only the server itself. It does not start at login unless you
+pass `--at-login`, because a loaded model holds gigabytes of VRAM on the
+machine the games run on. `off` stops and removes it and the provider;
+`--purge` deletes the models. A sandboxed agent cannot reach it yet: the
+sandbox's network does not include the host's loopback.
+
 ## Crashes, and what an agent is sent
 
 systemd-coredump records every crash. When one of your programs crashes and
