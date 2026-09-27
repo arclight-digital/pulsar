@@ -1,0 +1,13 @@
+# Where Pulsar's image signatures live: as sigstore attachments beside each
+# image in the registry, signed with the key at /etc/pki/containers/pulsar.pub
+# (keys/cosign.pub in the repo, the key the ISO checksums are signed with).
+#
+# STAGED, NOT ENFORCED. This file only says where to look. Nothing requires a
+# signature until /etc/containers/policy.json names that key for these
+# images, and that lands only once every published image carries one --
+# enforcing first would make every host refuse its next update. Hosts then
+# move from ostree-unverified-registry to ostree-image-signed, the transport
+# that consults the policy at all.
+docker:
+  ghcr.io/arclight-digital:
+    use-sigstore-attachments: true
