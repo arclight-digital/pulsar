@@ -45,7 +45,7 @@ const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
               <code>oras discover</code> lists it. The installer ISOs are signed with Pulsar’s cosign
               release key. The images themselves are not signed yet; signing them with that same key
               is coming, and this page will say so when it lands. On a Pulsar machine,{' '}
-              <code>pulsar attest</code> tells you the same about the image you booted.
+              <code>pulsar verify</code> tells you the same about the image you booted.
             </p>
             <p>
               An SPDX SBOM ships attached to each image, and every nightly is diffed against the one

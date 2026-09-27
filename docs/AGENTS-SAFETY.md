@@ -22,7 +22,7 @@ and none of them is Pulsar-specific. They come from the base system:
    disk.
 3. **Going back is one reboot.** `sudo pulsar rollback` makes the previous
    deployment the default. greenboot does it automatically when a boot fails
-   its health checks. `sudo pulsar pin` keeps a known-good deployment from
+   its health checks. `sudo pulsar pin on` keeps a known-good deployment from
    being garbage-collected.
 
 So the worst an agent can do to the OS is stage a bad deployment. You can
@@ -36,15 +36,17 @@ back after rebooting.
 | Target | Without your password | Undo |
 |---|---|---|
 | `/usr` (the OS image) | nothing | n/a |
-| Stage a deployment (`rpm-ostree install`, `upgrade`, `rollback`, `cleanup`) | **yes**, see below | `sudo rpm-ostree cleanup --pending` before a reboot, `sudo pulsar rollback` after |
-| System Flatpaks (install or remove) and Flatpak remotes (add, modify) | **yes**, see below | reinstall; `sudo pulsar setup apps` restores the defaults |
+| Stage a deployment (`rpm-ostree install`, `upgrade`, `rollback`, `cleanup`) | **yes**, see below; with guard on, only `upgrade` | `sudo rpm-ostree cleanup --pending` before a reboot, `sudo pulsar rollback` after |
+| System Flatpaks (install or remove) | **yes**, see below; with guard on, nothing | reinstall; `sudo pulsar setup apps` restores the defaults |
+| Flatpak remotes (add, modify) | nothing: polkit asks | n/a |
+| Reboot (`systemctl reboot`) | **yes**: stock systemd, for any active session | nothing to undo, but it boots whatever is staged |
 | `/etc` | nothing: it is root-owned | a copy you made first; `sudo ostree admin config-diff` shows what differs from the image |
 | `/usr/local`, `/opt` (links to `/var/usrlocal`, `/var/opt`) | nothing: they are root-owned | delete what was put there by hand. No update or rollback touches them |
 | `$HOME`: code, dotfiles, SSH keys, browser profiles | **everything** | your backups. Nothing here rolls `$HOME` back |
 | User Flatpaks and all Flatpak app data (`~/.var/app`) | everything | your backups |
 | Toolboxes, podman containers, user systemd units | everything | recreate them |
 
-**The two "yes" rows are stock Fedora, not a Pulsar choice.** Fedora's polkit
+**The "yes" rows are stock Fedora, not a Pulsar choice.** Fedora's polkit
 rules (`org.projectatomic.rpmostree1.rules`, `org.freedesktop.Flatpak.rules`)
 let a member of `wheel` in an active local session run these without a
 password prompt. An agent started from your desktop terminal is in that
@@ -53,6 +55,18 @@ next one. That is exactly the kind of change the deployment model makes
 reversible, and it is why this document does not call the rows a hole. It
 does make the AGENTS.md line "not being asked for a password is not
 permission" a real instruction rather than a nicety.
+
+**Guard makes them ask.** `sudo pulsar agent guard on` installs a polkit rule
+(`/etc/polkit-1/rules.d/49-pulsar-guard.rules`) that answers "ask for the
+admin password" for layering, `rollback`, `cleanup`, and system Flatpak
+installs and removals, before the stock rules can answer "yes". It is opt-in
+because it departs from Silverblue's defaults and costs a human one more
+prompt. It leaves `upgrade`, `repo-refresh` and Flatpak updates alone, which
+is what GNOME Software's background updates use. It does not gate reboot:
+logind's action is the one GNOME's own power menu uses, and making that ask
+for a password would make every shutdown ask too. `pulsar agent guard` shows
+what polkit answers for your session, and `sudo pulsar agent guard off` puts
+the defaults back.
 
 With `sudo`, all of `/etc` and `/var` is exposed too. That happens if you
 give an agent a password, set up passwordless sudo, or leave a cached sudo
@@ -92,7 +106,7 @@ Be exact about this when you make the pitch:
 
 ## The toolbox is not a sandbox
 
-`pulsar setup agent` installs each agent into a toolbox named `agents`. That
+`pulsar agent add` installs each agent into a toolbox named `agents`. That
 keeps Node, Python and the agent itself out of the image and off the host's
 package database, and `toolbox rm -f agents` deletes all of it. It is **not**
 an isolation boundary. The box shares your `$HOME`, your session bus and your
@@ -158,10 +172,11 @@ what not to touch.
 
 Agents discover it in two ways:
 
-1. **`pulsar agents-md`** prints it. This works for every agent, including one
-   that reads no instruction files at all: put "run `pulsar agents-md` first"
-   in a prompt.
-2. **`pulsar setup agent <name>`** links it into the one global instructions
+1. **`pulsar agent guide`** prints it. This works for every agent, including
+   one that reads no instruction files at all: put "run `pulsar agent guide`
+   first" in a prompt. `pulsar agent --json` adds what else the machine
+   gives it: the agents installed and whether guard is on.
+2. **`pulsar agent add <name>`** links it into the one global instructions
    path the chosen agent reads by itself, **only if that path is free**. It
    uses a symlink, so the link follows image updates:
    - Claude Code: `~/.claude/rules/pulsar.md`. User-level rules load in every
@@ -177,9 +192,10 @@ Agents discover it in two ways:
 
    **An agent installed its own way is supported too.** If a vendor's
    installer already put the command on `PATH` (Claude Code's `install.sh`
-   writes `~/.local/bin/claude`), `setup agent` leaves it exactly as it is,
-   never installs a second copy, and still links the guide. `--list` marks it
-   `native`, and `--remove` takes back only the link.
+   writes `~/.local/bin/claude`), `agent add` leaves it exactly as it is,
+   never installs a second copy, and still links the guide.
+   `pulsar agent list` marks it `native`, and `pulsar agent remove` takes back
+   only the link.
 
 Rejected alternatives:
 
@@ -202,13 +218,6 @@ Rejected alternatives:
 
 Each of these is a decision for the maintainer, not a default:
 
-- **Require a password for layering.** A polkit rule in
-  `/etc/polkit-1/rules.d/` returning `AUTH_ADMIN` for
-  `org.projectatomic.rpmostree1.install-uninstall-packages` would make the
-  "stage a deployment" row above say "nothing". The cost is one more prompt
-  for a human who layers something, and it departs from Silverblue's default.
-  It could be an opt-in recipe (`pulsar setup strict`) rather than image
-  policy.
 - **A sandboxed agent box.** A rootless podman container with only the
   project directory mounted, no `$HOME` and no session bus. That would give
   real isolation for `$HOME`, at the price of the agent losing your git

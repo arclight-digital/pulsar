@@ -267,10 +267,11 @@ setkey() { python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d[s
         "${BATS_TEST_TMPDIR}/r/.local/share/gtksourceview-5/styles/pulsar-tj.xml"
 }
 
-@test "theme is found after global flags too" {
+@test "theme is found after global flags too, and --json before it reaches the engine" {
+    # --json is honored or refused, never dropped: the engine decides
     PULSAR_THEME_ENGINE="$STUB" run "$PULSAR" --json theme current
     [ "$status" -eq 0 ]
-    [ "$output" = "current|" ]
+    [ "$output" = "current|--json|" ]
     PULSAR_THEME_ENGINE="$STUB" run "$PULSAR" --no-logo theme set nord --json
     [ "$output" = "set|nord|--json|" ]
 }

@@ -97,28 +97,32 @@ gives you a commented template for containers as rootless systemd units.
 ## The `pulsar` command
 
 ```text
-pulsar doctor        health snapshot, exit 1 if a check fails
-pulsar manifest      what is in this image, and what it is running on
-pulsar status        deployments: booted, staged, rollback, pins
-pulsar changelog     packages that moved in the latest published build
-pulsar sbom          this system's packages as SPDX 2.3
-pulsar attest        print (and run) the provenance check for this image
-pulsar update        fetch and stage an update      (root)
-pulsar rollback      boot the previous deployment   (root)
-pulsar pin | unpin   protect the booted deployment  (root)
-pulsar report        redacted diagnosis bundle, JSON or --text
-pulsar flatpak-gl    do running Flatpak apps have the NVIDIA driver?
-pulsar agents-md     the briefing a coding agent should read first
-pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale | agent <name>
+pulsar doctor [check]   health checks, exit 1 if one fails
+pulsar status           deployments: booted, staged, rollback, pins
+pulsar report           redacted diagnosis bundle, JSON or --text
+pulsar manifest         what is in this image, and what it runs on
+pulsar changelog        packages that moved in the latest published build
+pulsar sbom             this system's packages as SPDX 2.3
+pulsar verify           how to check where this image came from
+pulsar update           fetch and stage the newest image   (root; --check needs none)
+pulsar rollback         boot the previous deployment next  (root)
+pulsar pin [on|off]     keep the booted deployment         (root to change)
+pulsar checkpoint       snapshot /etc to diff or restore   (root)
+pulsar theme <command>  recolor the whole desktop
+pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale
+pulsar agent            guide | list | add | remove | guard [on|off]
 ```
 
-**Handing the machine to an agent.** `pulsar agents-md` prints a briefing,
+**Handing the machine to an agent.** `pulsar agent guide` prints a briefing,
 shipped in the image, that tells a coding agent how this system works:
 toolboxes for dev tools, Flatpaks for apps, never reboot, and what rollback
-does and does not undo. `pulsar setup agent claude` (or `codex`, `gemini`,
+does and does not undo. `pulsar agent add claude` (or `codex`, `gemini`,
 `opencode`, `aider`) installs that agent into its own toolbox and runs it from
 any terminal; none is installed by default, and one you installed yourself is
-left alone. `pulsar report` is the one thing to paste when
+left alone. `sudo pulsar agent guard on` makes layering and system Flatpak
+installs ask for your password, for the agent and for you, and
+`sudo pulsar checkpoint` before a session lets you diff and restore `/etc`
+after it. `pulsar report` is the one thing to paste when
 something is broken. What an agent can and cannot break here is in
 [docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md).
 

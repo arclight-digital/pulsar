@@ -1,0 +1,38 @@
+// pulsar agent guard -- turned on by `sudo pulsar agent guard on`, off by
+// `sudo pulsar agent guard off`. Inert where it ships
+// (/usr/share/pulsar/polkit); polkit reads it only from /etc/polkit-1/rules.d.
+//
+// Stock Fedora rules (org.projectatomic.rpmostree1.rules,
+// org.freedesktop.Flatpak.rules) let a wheel user in an active local session
+// do the actions below with no prompt. So can anything that user runs, a
+// coding agent included. This asks for the admin password instead, every
+// time. The file sorts before those rules, so it answers first.
+//
+// Not gated, on purpose: rpm-ostree upgrade and repo-refresh, and Flatpak
+// updates. Those are what GNOME Software does in the background, and they
+// only move to what the image and the remotes already publish. Rebase,
+// override, kargs and local RPMs already ask by default.
+//
+// root is not affected: rpm-ostree and flatpak do not consult polkit for it,
+// so `sudo pulsar update` and friends work as before.
+
+polkit.addRule(function(action, subject) {
+    var gated = [
+        // rpm-ostree: layer or remove packages, flip the default
+        // deployment, and delete the staged or rollback deployment
+        // (`cleanup -r` removes the undo).
+        "org.projectatomic.rpmostree1.install-uninstall-packages",
+        "org.projectatomic.rpmostree1.rollback",
+        "org.projectatomic.rpmostree1.cleanup",
+        // Flatpak: system-wide installs and removals. `--user` installs
+        // never reach polkit and are unaffected.
+        "org.freedesktop.Flatpak.app-install",
+        "org.freedesktop.Flatpak.runtime-install",
+        "org.freedesktop.Flatpak.app-uninstall",
+        "org.freedesktop.Flatpak.runtime-uninstall"
+    ];
+    if (gated.indexOf(action.id) >= 0) {
+        return polkit.Result.AUTH_ADMIN;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

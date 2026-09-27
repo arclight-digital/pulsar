@@ -83,21 +83,21 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
     [[ "$output" != *"gh attestation"* ]]
 }
 
-@test "attest runs the verify command the manifest carries, not a baked one" {
+@test "verify runs the verify command the manifest carries, not a baked one" {
     # The owner and registry are build-time facts: an image built from a fork
     # must verify against the fork, so the command comes from the manifest.
     # Naming a verifier that does not exist proves which one it reached for.
     cat > "$PULSAR_MANIFEST" <<'JSON'
 {"image":"pulsar","attestation":"definitely-not-a-real-verifier verify oci://x"}
 JSON
-    run "$PULSAR" attest
+    run "$PULSAR" verify
     [ "$status" -ne 0 ]
     [[ "$output" == *"definitely-not-a-real-verifier"* ]]
 }
 
-@test "attest refuses an image whose manifest has no attestation" {
+@test "verify refuses an image whose manifest has no attestation" {
     echo '{"image":"pulsar"}' > "$PULSAR_MANIFEST"
-    run "$PULSAR" attest
+    run "$PULSAR" verify
     [ "$status" -ne 0 ]
     [[ "$output" == *"not signed yet"* ]]
 }
@@ -163,10 +163,12 @@ JSON
 
 @test "root-only commands refuse to run as a normal user" {
     [ "$(id -u)" -eq 0 ] && skip "running as root"
-    for c in update rollback pin unpin; do
-        run "$PULSAR" "$c"
+    for c in update rollback "pin on" "pin off" "checkpoint list" "setup apps"; do
+        # shellcheck disable=SC2086
+        run "$PULSAR" $c
         [ "$status" -ne 0 ]
-        [[ "$output" == *"root"* ]]
+        # the exact command to rerun, not a neighbor that does something else
+        [[ "$output" == *"try: sudo pulsar ${c}"* ]]
     done
 }
 
@@ -640,9 +642,14 @@ PYEOF
 @test "commands that take no arguments reject them" {
     run "$PULSAR" doctor tomorrow
     [ "$status" -ne 0 ]
-    [[ "$output" == *"takes no arguments"* ]]
+    [[ "$output" == *"no such check: tomorrow"* ]]
     run "$PULSAR" manifest extra
     [ "$status" -ne 0 ]
+    [[ "$output" == *"takes no arguments"* ]]
+    # a recipe with a stray argument does not run
+    run "$PULSAR" setup devbox extra
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"takes no arguments"* ]]
 }
 
 @test "changelog renders a baseline as a baseline, not as zero changes" {
@@ -1063,42 +1070,42 @@ gl_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="flatpak-g
     [ "$status" -eq 0 ]
 }
 
-@test "flatpak-gl --notify says so once per stale instance, and again for a new one" {
+@test "doctor flatpak-gl --notify says so once per stale instance, and again for a new one" {
     stub_gl "$GL_NV"
     stub_notify
     deploy GL c1
     instance 111 com.valvesoftware.Steam "$GL_DEF"
-    run "$PULSAR" flatpak-gl --notify
+    run "$PULSAR" doctor flatpak-gl --notify
     [ "$status" -eq 0 ]
-    run "$PULSAR" flatpak-gl --notify
+    run "$PULSAR" doctor flatpak-gl --notify
     [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
     grep -q "Restart Steam" "$NOTIFY_LOG"
     # a second stale instance is news
     instance 222 com.valvesoftware.Steam "$GL_DEF"
-    run "$PULSAR" flatpak-gl --notify
+    run "$PULSAR" doctor flatpak-gl --notify
     [ "$(wc -l < "$NOTIFY_LOG")" -eq 2 ]
 }
 
-@test "flatpak-gl --notify stays quiet while the extension is still missing" {
+@test "doctor flatpak-gl --notify stays quiet while the extension is still missing" {
     # Restarting before it lands would get a second Steam with the same
     # problem; the install touches flatpak's marker and the check runs again.
     stub_gl ""
     stub_notify
     instance 1 com.valvesoftware.Steam "$GL_DEF"
-    run "$PULSAR" flatpak-gl --notify
+    run "$PULSAR" doctor flatpak-gl --notify
     [ "$status" -eq 0 ]
     [ ! -s "$NOTIFY_LOG" ]
 }
 
-@test "flatpak-gl: GL32 still to land is missing, not a reason to restart" {
+@test "doctor flatpak-gl: GL32 still to land is missing, not a reason to restart" {
     # gl-nvidia.sh installs GL, then GL32 in a second transaction. Between
     # the two a restarted Steam would still lack GL32.
     stub_gl "$GL_NV"
     stub_notify
     deploy GL c1
     instance 1 com.valvesoftware.Steam "$GL_DEF" "$GL32_DEF" "${GL_NV}=c1"
-    run "$PULSAR" flatpak-gl --notify
-    [[ "$output" == missing* ]]
+    run "$PULSAR" doctor flatpak-gl --notify
+    [[ "$output" == warn*"missing or incomplete"* ]]
     [ ! -s "$NOTIFY_LOG" ]
 }
 
@@ -1263,7 +1270,7 @@ containerEdits:
 YAML
 }
 
-gpu_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gpu-ctr") | .status + " " + .summary + " " + .detail'; }
+gpu_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gpu-containers") | .status + " " + .summary + " " + .detail'; }
 
 @test "doctor: a CDI spec for the running driver is ok and says how to use it" {
     stub_cdi 615.71.09 615.71.09
@@ -1339,7 +1346,7 @@ gpu_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gpu-ctr"
     # that this check never contributes a failure of its own.
     stub_cdi 615.71.09 610.57.04 0
     run "$PULSAR" doctor --json
-    [ "$(printf '%s' "$output" | jq -r '.checks[] | select(.id=="gpu-ctr") | .status')" = warn ]
+    [ "$(printf '%s' "$output" | jq -r '.checks[] | select(.id=="gpu-containers") | .status')" = warn ]
 }
 
 @test "doctor: the GPU container check is silent on vanilla and on pre-toolkit images" {
@@ -1490,21 +1497,21 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# agents-md: the machine's own briefing for a coding agent. What is worth
+# agent guide: the machine's own briefing for a coding agent. What is worth
 # pinning is that it is there, that it says nothing false about this CLI, and
 # that the image stays vendor-neutral.
 # ---------------------------------------------------------------------------
 REPO_AGENTS_MD="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/AGENTS.md"
 
-@test "agents-md prints the guide the image ships" {
-    PULSAR_AGENTS_MD="$REPO_AGENTS_MD" run "$PULSAR" agents-md
+@test "agent guide prints the guide the image ships" {
+    PULSAR_AGENTS_MD="$REPO_AGENTS_MD" run "$PULSAR" agent guide
     [ "$status" -eq 0 ]
     [[ "$output" == *"pulsar doctor --json"* ]]
     [[ "$output" == *"toolbox run -c"* ]]
 }
 
-@test "agents-md fails honestly on an image without the guide" {
-    PULSAR_AGENTS_MD="${BATS_TEST_TMPDIR}/nope.md" run "$PULSAR" agents-md
+@test "agent guide fails honestly on an image without the guide" {
+    PULSAR_AGENTS_MD="${BATS_TEST_TMPDIR}/nope.md" run "$PULSAR" agent guide
     [ "$status" -ne 0 ]
     [[ "$output" == *"no agent guide"* ]]
 }
@@ -1529,9 +1536,9 @@ REPO_AGENTS_MD="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/AGENTS.md"
 }
 
 
-@test "--help lists report and agents-md" {
+@test "--help lists report and agent" {
     run "$PULSAR" --help
-    for v in "pulsar report" "pulsar agents-md"; do
+    for v in "pulsar report" "pulsar agent"; do
         [[ "$output" == *"$v"* ]] || fail "usage() does not mention ${v}"
     done
 }
@@ -1550,15 +1557,15 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# setup agent. The contract worth pinning is mostly about what does NOT
+# agent add. The contract worth pinning is mostly about what does NOT
 # happen: nothing is installed until an agent is named, nothing runs as root,
 # nothing the user already has is replaced, and a vendor's own install is
 # kept rather than refused. toolbox is stubbed and plays the box.
 # ---------------------------------------------------------------------------
 agent_env() {
-    # setup agent refuses root by design, and the build host runs the suite
+    # agent add refuses root by design, and the build host runs the suite
     # as root: these are user-session tests
-    [ "$(id -u)" -eq 0 ] && skip "setup agent refuses root; these run as a user"
+    [ "$(id -u)" -eq 0 ] && skip "agent add refuses root; these run as a user"
     export HOME="${BATS_TEST_TMPDIR}/home"
     mkdir -p "$HOME"
     unset XDG_DATA_HOME XDG_CONFIG_HOME CODEX_HOME
@@ -1619,16 +1626,16 @@ EOF
     # when bats itself is in a toolbox. Pass straight through to the stub.
     printf '#!/bin/sh\n[ "$1" = --host ] && shift\nexec "$@"\n' > "${STUB}/flatpak-spawn"
     chmod +x "${STUB}/flatpak-spawn"
-    # A clean PATH, not the caller's: setup agent looks for native installs
+    # A clean PATH, not the caller's: agent add looks for native installs
     # on PATH, and a developer's own ~/.local/bin/claude would otherwise be
     # found and every install test would see "already installed".
     PATH="${STUB}:/usr/bin:/bin"
     export PATH
 }
 
-@test "setup agent --list shows every agent and installs nothing" {
+@test "agent list shows every agent and installs nothing" {
     agent_env
-    run "$PULSAR" setup agent --list
+    run "$PULSAR" agent list
     [ "$status" -eq 0 ]
     for n in claude codex gemini opencode aider; do [[ "$output" == *"$n"* ]]; done
     # the STATE column, not the prose under the table
@@ -1637,33 +1644,51 @@ EOF
     [ ! -s "$TOOLBOX_LOG" ]
 }
 
-@test "setup agent carries no Microsoft-owned default" {
+@test "agent, bare, says what the machine gives an agent, in text and JSON" {
     agent_env
-    run "$PULSAR" setup agent --list
+    # every gated action still silent: guard is off
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/pkcheck"; chmod +x "${STUB}/pkcheck"
+    run "$PULSAR" agent
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"guide    ${REPO_AGENTS_MD}"* ]]
+    [[ "$output" == *"none installed"* ]]
+    [[ "$output" == *"guard    off"* ]]
+    "$PULSAR" agent add claude >/dev/null
+    printf '#!/bin/sh\nexit 2\n' > "${STUB}/pkcheck"
+    run "$PULSAR" --json agent
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.guide.present == true
+        and .agents == [{"name":"claude","command":"claude","install":"installed"}]
+        and .guard == "on"'
+}
+
+@test "agent add carries no Microsoft-owned default" {
+    agent_env
+    run "$PULSAR" agent list
     [[ "$output" != *[Cc]opilot* ]]
     [[ "$output" != *GitHub* ]]
 }
 
-@test "setup agent rejects an unknown agent and names the known ones" {
+@test "agent add rejects an unknown agent and names the known ones" {
     agent_env
-    run "$PULSAR" setup agent definitely-not-an-agent
+    run "$PULSAR" agent add definitely-not-an-agent
     [ "$status" -ne 0 ]
     [[ "$output" == *"known: claude codex gemini opencode aider"* ]]
     [ ! -s "$TOOLBOX_LOG" ]
 }
 
-@test "setup agent refuses to run as root" {
+@test "agent add refuses to run as root" {
     agent_env
     unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"
-    run unshare -r env "PATH=${PATH}" "HOME=${HOME}" "$PULSAR" setup agent claude
+    run unshare -r env "PATH=${PATH}" "HOME=${HOME}" "$PULSAR" agent add claude
     [ "$status" -ne 0 ]
     [[ "$output" == *"must not run as root"* ]]
     [ ! -s "$TOOLBOX_LOG" ]
 }
 
-@test "setup agent creates the box, the runtime, the package and a shim" {
+@test "agent add creates the box, the runtime, the package and a shim" {
     agent_env
-    run "$PULSAR" setup agent claude
+    run "$PULSAR" agent add claude
     [ "$status" -eq 0 ] || fail "$output"
     grep -q 'toolbox --assumeyes create agents' "$TOOLBOX_LOG"
     grep -q 'run -c agents sudo dnf install -y nodejs npm' "$TOOLBOX_LOG"
@@ -1679,14 +1704,14 @@ EOF
     # after this CLI has exited, so it gets linted like any shipped script.
     command -v shellcheck >/dev/null || skip "shellcheck not installed"
     agent_env
-    "$PULSAR" setup agent claude >/dev/null
-    "$PULSAR" setup agent aider >/dev/null
+    "$PULSAR" agent add claude >/dev/null
+    "$PULSAR" agent add aider >/dev/null
     shellcheck -s sh "${HOME}/.local/bin/claude" "${HOME}/.local/bin/aider"
 }
 
 @test "the shim runs the agent in the box, with its arguments intact" {
     agent_env
-    "$PULSAR" setup agent codex >/dev/null
+    "$PULSAR" agent add codex >/dev/null
     : > "$TOOLBOX_LOG"
     run "${HOME}/.local/bin/codex" --version "two words"
     [ "$status" -eq 0 ]
@@ -1700,9 +1725,9 @@ EOF
 
 @test "a second agent reuses the box and the runtime" {
     agent_env
-    "$PULSAR" setup agent claude >/dev/null
+    "$PULSAR" agent add claude >/dev/null
     : > "$TOOLBOX_LOG"
-    run "$PULSAR" setup agent gemini
+    run "$PULSAR" agent add gemini
     [ "$status" -eq 0 ]
     run grep -E 'create|dnf install' "$TOOLBOX_LOG"
     [ "$status" -ne 0 ]
@@ -1714,7 +1739,7 @@ EOF
     agent_env
     mkdir -p "${HOME}/.local/bin"
     printf '#!/bin/sh\necho mine\n' > "${HOME}/.local/bin/claude"
-    run "$PULSAR" setup agent claude
+    run "$PULSAR" agent add claude
     [ "$status" -eq 0 ]
     [[ "$output" == *"already installed by its own installer"* ]]
     grep -qx 'echo mine' "${HOME}/.local/bin/claude"
@@ -1728,7 +1753,7 @@ EOF
     agent_env
     mkdir -p "${HOME}/.local/bin"
     printf '#!/bin/sh\necho mine\n' > "${HOME}/.local/bin/claude"
-    run "$PULSAR" setup agent --list
+    run "$PULSAR" agent list
     [ "$status" -eq 0 ]
     [[ "$output" == *"claude"*"native"* ]]
     [[ "$output" == *"${HOME}/.local/bin/claude"* ]]
@@ -1738,8 +1763,8 @@ EOF
     agent_env
     mkdir -p "${HOME}/.local/bin"
     printf '#!/bin/sh\necho mine\n' > "${HOME}/.local/bin/claude"
-    "$PULSAR" setup agent claude >/dev/null
-    run "$PULSAR" setup agent --remove claude
+    "$PULSAR" agent add claude >/dev/null
+    run "$PULSAR" agent remove claude
     [ "$status" -eq 0 ]
     grep -qx 'echo mine' "${HOME}/.local/bin/claude"
     [ ! -e "${HOME}/.claude/rules/pulsar.md" ]
@@ -1749,7 +1774,7 @@ EOF
 @test "the aider shim reads the guide whenever the image has it, not only at install" {
     agent_env
     export PULSAR_AGENTS_MD="${BATS_TEST_TMPDIR}/not-yet.md"
-    "$PULSAR" setup agent aider >/dev/null
+    "$PULSAR" agent add aider >/dev/null
     # written on an image without the guide ...
     grep -q -- "--read" "${HOME}/.local/bin/aider"
     # ... and passes it once the file exists
@@ -1758,41 +1783,41 @@ EOF
     [ "$status" -eq 0 ]
 }
 
-@test "setup agent links the machine guide where the agent reads it" {
+@test "agent add links the machine guide where the agent reads it" {
     agent_env
-    "$PULSAR" setup agent claude >/dev/null
-    "$PULSAR" setup agent codex >/dev/null
-    "$PULSAR" setup agent opencode >/dev/null
+    "$PULSAR" agent add claude >/dev/null
+    "$PULSAR" agent add codex >/dev/null
+    "$PULSAR" agent add opencode >/dev/null
     [ "$(readlink "${HOME}/.claude/rules/pulsar.md")" = "$REPO_AGENTS_MD" ]
     [ "$(readlink "${HOME}/.codex/AGENTS.md")" = "$REPO_AGENTS_MD" ]
     [ "$(readlink "${HOME}/.config/opencode/AGENTS.md")" = "$REPO_AGENTS_MD" ]
 }
 
-@test "setup agent leaves an existing instructions file alone" {
+@test "agent add leaves an existing instructions file alone" {
     agent_env
     mkdir -p "${HOME}/.codex"
     printf 'my own rules\n' > "${HOME}/.codex/AGENTS.md"
-    run "$PULSAR" setup agent codex
+    run "$PULSAR" agent add codex
     [ "$status" -eq 0 ]
     [[ "$output" == *"left alone"* ]]
     [ "$(cat "${HOME}/.codex/AGENTS.md")" = "my own rules" ]
 }
 
-@test "setup agent aider installs through uv and reads the guide from its shim" {
+@test "agent add aider installs through uv and reads the guide from its shim" {
     agent_env
-    run "$PULSAR" setup agent aider
+    run "$PULSAR" agent add aider
     [ "$status" -eq 0 ] || fail "$output"
     grep -q 'sudo dnf install -y uv' "$TOOLBOX_LOG"
     grep -q "UV_TOOL_BIN_DIR=${HOME}/.local/share/pulsar/agents/bin UV_PYTHON_INSTALL_DIR=${HOME}/.local/share/pulsar/agents/python uv tool install --force --python python3.12 --with pip aider-chat@latest" "$TOOLBOX_LOG"
     grep -qF -- "--read '${REPO_AGENTS_MD}'" "${HOME}/.local/bin/aider"
 }
 
-@test "setup agent --remove takes back what it made and nothing else" {
+@test "agent remove takes back what it made and nothing else" {
     agent_env
-    "$PULSAR" setup agent claude >/dev/null
+    "$PULSAR" agent add claude >/dev/null
     printf 'mine\n' > "${HOME}/.claude/rules/other.md"
     : > "$TOOLBOX_LOG"
-    run "$PULSAR" setup agent --remove claude
+    run "$PULSAR" agent remove claude
     [ "$status" -eq 0 ]
     [ ! -e "${HOME}/.local/bin/claude" ]
     [ ! -L "${HOME}/.claude/rules/pulsar.md" ]
@@ -1801,18 +1826,25 @@ EOF
     [[ "$output" == *"left in place"* ]]
 }
 
-@test "setup agent --remove leaves a foreign command at the shim path" {
+@test "agent remove leaves a foreign command at the shim path" {
     agent_env
     mkdir -p "${HOME}/.local/bin"
     printf 'mine\n' > "${HOME}/.local/bin/claude"
-    run "$PULSAR" setup agent --remove claude
+    run "$PULSAR" agent remove claude
     [ "$status" -eq 0 ]
     [ "$(cat "${HOME}/.local/bin/claude")" = mine ]
 }
 
-@test "setup --help lists the agent recipe" {
+@test "setup --help lists the recipes, and a recipe's --help runs nothing" {
     run "$PULSAR" setup --help
-    [[ "$output" == *"agent"* ]]
+    [[ "$output" == *"devbox"* ]]
+    # before this, --help went straight into distrobox assemble
+    local bin="${BATS_TEST_TMPDIR}/bin"; mkdir -p "$bin"
+    printf '#!/bin/sh\ntouch "%s/ran"\n' "$BATS_TEST_TMPDIR" > "${bin}/distrobox"; chmod +x "${bin}/distrobox"
+    PATH="${bin}:${PATH}" run "$PULSAR" setup devbox --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == "pulsar setup devbox"* ]]
+    [ ! -e "${BATS_TEST_TMPDIR}/ran" ]
 }
 
 @test "report: a generic hostname like 'fedora' is not redacted out of image names" {
@@ -1839,7 +1871,7 @@ EOF
     # From the user's dev box, which shares $HOME but has no node or uv,
     # running the entry point directly died on its shebang.
     agent_env
-    "$PULSAR" setup agent claude >/dev/null
+    "$PULSAR" agent add claude >/dev/null
     grep -q 'name="agents"' "${HOME}/.local/bin/claude"
     grep -q 'exec flatpak-spawn --host toolbox run -c' "${HOME}/.local/bin/claude"
 }
@@ -2025,4 +2057,103 @@ latest_checkpoint() { find "$PULSAR_CHECKPOINTS" -mindepth 1 -maxdepth 1 -printf
     cp_root restore ../../etc
     [ "$status" -ne 0 ]
     [[ "$output" == *"not a checkpoint id"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# agent guard. The rule itself is JavaScript polkit runs, so what is pinned
+# here is the plumbing and the promises the rule's list makes: the actions
+# the stock rules let through are gated, and updates are not.
+# ---------------------------------------------------------------------------
+REPO_GUARD_RULE="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/polkit/49-pulsar-guard.rules"
+
+guard_env() {
+    [ "$(id -u)" -eq 0 ] || unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"
+    export PULSAR_GUARD_RULE="$REPO_GUARD_RULE"
+    export PULSAR_POLKIT_RULES_DIR="${BATS_TEST_TMPDIR}/rules.d"
+}
+
+guard_root() {
+    local ns=(unshare -r)
+    [ "$(id -u)" -ne 0 ] || ns=()
+    run "${ns[@]}" env "PATH=${PATH}" "PULSAR_GUARD_RULE=${PULSAR_GUARD_RULE}" \
+        "PULSAR_POLKIT_RULES_DIR=${PULSAR_POLKIT_RULES_DIR}" "$PULSAR" agent guard "$@"
+}
+
+@test "agent guard on and off refuse a normal user; its status and help need no root" {
+    [ "$(id -u)" -eq 0 ] && skip "running as root"
+    run "$PULSAR" agent guard on
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"root"* ]]
+    run "$PULSAR" agent guard off
+    [ "$status" -ne 0 ]
+    run "$PULSAR" agent guard --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"guard off"* ]]
+}
+
+@test "agent guard on installs the rule, once, and off takes it back" {
+    guard_env
+    guard_root on
+    [ "$status" -eq 0 ] || fail "$output"
+    cmp "$REPO_GUARD_RULE" "${PULSAR_POLKIT_RULES_DIR}/49-pulsar-guard.rules"
+    [ "$(stat -c %a "${PULSAR_POLKIT_RULES_DIR}/49-pulsar-guard.rules")" = 644 ]
+    guard_root on
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already on"* ]]
+    guard_root off
+    [ "$status" -eq 0 ] || fail "$output"
+    [ ! -e "${PULSAR_POLKIT_RULES_DIR}/49-pulsar-guard.rules" ]
+    guard_root off
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already off"* ]]
+}
+
+@test "agent guard never overwrites or removes a rule it did not write" {
+    guard_env
+    mkdir -p "$PULSAR_POLKIT_RULES_DIR"
+    printf '// the admin'"'"'s own\n' > "${PULSAR_POLKIT_RULES_DIR}/49-pulsar-guard.rules"
+    guard_root on
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not ours"* ]]
+    guard_root off
+    [ "$status" -ne 0 ]
+    [ "$(cat "${PULSAR_POLKIT_RULES_DIR}/49-pulsar-guard.rules")" = "// the admin's own" ]
+}
+
+@test "agent guard, bare, reports what polkit answers" {
+    [ "$(id -u)" -eq 0 ] && skip "running as root"
+    local bin="${BATS_TEST_TMPDIR}/bin"; mkdir -p "$bin"
+    # layering is still silent, Flatpak installs already ask
+    cat > "${bin}/pkcheck" <<'SH'
+#!/bin/sh
+case "$2" in *Flatpak*) exit 2 ;; *) exit 0 ;; esac
+SH
+    chmod +x "${bin}/pkcheck"
+    PATH="${bin}:${PATH}" run "$PULSAR" agent guard
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"install-uninstall-packages"*"no prompt"* ]]
+    [[ "$output" == *"Flatpak.app-install"*"asks for a password"* ]]
+}
+
+@test "the guard rule gates what the stock rules let through, and never updates" {
+    local id
+    for id in org.projectatomic.rpmostree1.install-uninstall-packages \
+              org.projectatomic.rpmostree1.rollback \
+              org.projectatomic.rpmostree1.cleanup \
+              org.freedesktop.Flatpak.app-install org.freedesktop.Flatpak.runtime-install \
+              org.freedesktop.Flatpak.app-uninstall org.freedesktop.Flatpak.runtime-uninstall; do
+        grep -qF "\"${id}\"" "$REPO_GUARD_RULE" || fail "guard rule does not gate ${id}"
+    done
+    # GNOME Software's background updates go through these; gating them
+    # would turn every update into a password prompt.
+    for id in rpmostree1.upgrade rpmostree1.repo-refresh rpmostree1.client-management \
+              Flatpak.app-update Flatpak.runtime-update Flatpak.appstream-update; do
+        ! grep -qF "${id}\"" "$REPO_GUARD_RULE" || fail "guard rule gates ${id}"
+    done
+    # polkit merges /etc and /usr/share rules by file name; ours must sort
+    # before the stock rules it overrides, or they answer YES first.
+    [[ "49-pulsar-guard.rules" < "org.freedesktop.Flatpak.rules" ]]
+    [[ "49-pulsar-guard.rules" < "org.projectatomic.rpmostree1.rules" ]]
+    [[ "49-pulsar-guard.rules" < "empower.rules" ]]
+    grep -qF "pulsar agent guard" "$REPO_GUARD_RULE"
 }

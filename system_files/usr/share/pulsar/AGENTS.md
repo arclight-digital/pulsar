@@ -5,7 +5,9 @@ It does not behave like a mutable distro. Read this before changing
 anything outside the project you were asked to work on.
 
 This file ships in the OS image at `/usr/share/pulsar/AGENTS.md` and updates
-with it. `pulsar agents-md` prints it.
+with it. `pulsar agent guide` prints it, and `pulsar agent --json` says
+what else this machine gives you: which agents are installed, and whether
+guard is on (below).
 
 ## The filesystem
 
@@ -53,12 +55,14 @@ always reaches this system's CLI, and its `cli` check says when another
 
 | Command | Answers |
 |---|---|
-| `pulsar doctor --json` | Health checks. Exit 1 if one fails. |
+| `pulsar doctor --json` | Health checks. Exit 1 if one fails. `pulsar doctor <check>` runs one; `pulsar doctor --help` lists them. |
 | `pulsar status --json` | Deployments: booted, staged, rollback, pinned, layered packages. |
 | `pulsar manifest --json` | Image version, variant (vanilla or nvidia), kernel, components, and the hardware under `.host`. |
 | `pulsar report` | All of the above plus failed units, recent warning+ journal lines, GPU driver and Flatpak state, as one redacted JSON document. Use it when something is broken. |
-| `pulsar flatpak-gl` | Whether running Flatpak apps (Steam, in practice) have the NVIDIA driver. An app started before its GL extension arrived renders games black on the iGPU; the fix is quitting and reopening it. |
-| `pulsar update --check` | Whether a newer image is published. Exit 0 = current or staged, 10 = available, 1 = could not tell. |
+| `pulsar doctor flatpak-gl` | Whether running Flatpak apps (Steam, in practice) have the NVIDIA driver. An app started before its GL extension arrived renders games black on the iGPU; the fix is quitting and reopening it. |
+| `pulsar update --check --json` | Whether a newer image is published. Exit 0 = current or staged, 10 = available, 1 = could not tell. |
+| `pulsar pin --json` | Whether the booted deployment is pinned. |
+| `pulsar agent guard --json` | Whether layering and system Flatpak installs ask for a password here (`on`) or not (`off`). |
 
 ## Updates, rollback, and what they cover
 
@@ -72,7 +76,7 @@ always reaches this system's CLI, and its `cli` check says when another
 - `sudo pulsar rollback` makes the previous deployment the default for the
   next boot. greenboot also rolls back on its own if a boot fails its health
   checks.
-- `sudo pulsar pin` keeps the booted deployment from being garbage-collected.
+- `sudo pulsar pin on` keeps the booted deployment from being garbage-collected.
 
 **Rollback covers the OS image, not your data.** It does **not** undo changes
 to `$HOME`, `/var` (including `/usr/local` and `/opt`), Flatpak apps or their
@@ -99,9 +103,11 @@ asking, and do not try to get root another way.
 
 Some system changes **do not ask for a password** here. Stock Fedora polkit
 rules let an administrator's desktop session run `rpm-ostree install`,
-`upgrade`, `rollback` and `cleanup`, and install or remove system Flatpaks
-and change Flatpak remotes, without a prompt. If nothing asks you for a
-password, that does not mean you have permission. Ask the user first.
+`upgrade`, `rollback` and `cleanup`, and install or remove system Flatpaks,
+without a prompt. `systemctl reboot` does not prompt either. If nothing asks
+you for a password, that does not mean you have permission. Ask the user
+first. The user can make the rpm-ostree and Flatpak ones prompt with
+`sudo pulsar agent guard on`; `pulsar agent guard` shows which way it is.
 
 ## Logs
 
@@ -135,8 +141,8 @@ password, that does not mean you have permission. Ask the user first.
 - Run `sudo pip install` / `sudo npm install -g` on the host. They either fail
   on `/usr` or land in `/usr/local` (see above). Use a toolbox, `mise`, or a
   venv in the project.
-- `flatpak install` without `--user`, or `flatpak remote-add` /
-  `remote-modify`, unless the user asked. They change the system for every
-  account and do not prompt.
+- `flatpak install` or `flatpak uninstall` without `--user`, or
+  `flatpak remote-add` / `remote-modify`, unless the user asked. They change
+  the system for every account, and installs and removals do not prompt.
 - Disable `greenboot-healthcheck.service`. It is what makes a bad update roll
   itself back.

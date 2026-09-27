@@ -37,7 +37,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 need_root() {
     [ "$(id -u)" -eq 0 ] && return 0
-    die "'$1' changes the system and must run as root -- try: sudo pulsar $1"
+    die "'$1' needs root -- try: sudo pulsar $1"
 }
 
 # The mirror image, for setup recipes: they write to $HOME and talk to the
@@ -46,16 +46,21 @@ need_root() {
 # points nowhere near the actual mistake.
 need_user() {
     [ "$(id -u)" -ne 0 ] && return 0
-    die "'setup $1' configures your session and must not run as root -- drop the sudo"
+    die "'$1' configures your session and must not run as root -- drop the sudo"
 }
 
 need() { have "$1" || die "required tool not found: $1"; }
+
+# `--json` is accepted anywhere on the line. A command (or subcommand) that has
+# no JSON output calls this, so a script that asked for JSON gets an error, not
+# prose it will fail to parse -- or, for `update`, a real upgrade.
+no_json() { [ "${JSON:-0}" = 0 ] || die "'$1' has no --json output"; }
 
 # Commands that take no arguments say so, instead of silently ignoring what
 # they were given: `pulsar doctor tomorrow` should not run doctor today.
 no_args() {
     local c=$1; shift
-    case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+    case "${1:-}" in -h|--help) usage_for "$c"; exit 0 ;; esac
     [ $# -eq 0 ] || die "'${c}' takes no arguments (got: $*)"
 }
 
@@ -81,15 +86,17 @@ mf() {
 # ---------------------------------------------------------------------------
 CHECK_JSON=""
 RC=0
+RECORDED=0
 
 # record <id> <ok|warn|fail> <headline> [detail]
 record() {
     local id=$1 status=$2 head=$3 detail=${4:-}
-    local colour symbol
+    local color symbol
+    RECORDED=$((RECORDED + 1))
     case "$status" in
-        ok)   colour=$C_OK;   symbol="ok  " ;;
-        warn) colour=$C_WARN; symbol="warn" ;;
-        fail) colour=$C_FAIL; symbol="FAIL"; RC=1 ;;
+        ok)   color=$C_OK;   symbol="ok  " ;;
+        warn) color=$C_WARN; symbol="warn" ;;
+        fail) color=$C_FAIL; symbol="FAIL"; RC=1 ;;
         # a typo'd severity would otherwise die on an unbound variable three
         # lines down, attributed to nothing
         *)    die "internal error: record() called with status '${status}'" ;;
@@ -98,8 +105,8 @@ record() {
         CHECK_JSON+=$(jq -n -c --arg i "$id" --arg s "$status" --arg h "$head" --arg d "$detail" \
             '{id:$i, status:$s, summary:$h, detail:$d}'),
     else
-        printf '%s%s%s  %-11s %s\n' "$colour" "$symbol" "$C_RESET" "$id" "$head"
-        [ -n "$detail" ] && printf '           %s%s%s\n' "$C_DIM" "$detail" "$C_RESET"
+        printf '%s%s%s  %-14s %s\n' "$color" "$symbol" "$C_RESET" "$id" "$head"
+        [ -n "$detail" ] && printf '                     %s%s%s\n' "$C_DIM" "$detail" "$C_RESET"
     fi
     return 0
 }
@@ -528,16 +535,16 @@ check_gpu_containers() {
 
     local sebool=${PULSAR_SELINUX_BOOLEANS:-/sys/fs/selinux/booleans}/container_use_xserver_devices
     if [ "$found" -eq 0 ]; then
-        record gpu-ctr warn "no CDI spec, so containers cannot be given the GPU" \
+        record gpu-containers warn "no CDI spec, so containers cannot be given the GPU" \
                "sudo systemctl restart nvidia-cdi-refresh.service; journalctl -b -u nvidia-cdi-refresh.service"
     elif [ -n "$stale" ]; then
-        record gpu-ctr warn "stale CDI spec for driver ${running}: ${stale}" \
+        record gpu-containers warn "stale CDI spec for driver ${running}: ${stale}" \
                "the boot unit owns /var/run/cdi; a hand-written spec in /etc/cdi goes stale on every driver bump -- delete it"
     elif [ -r "$sebool" ] && [ "$(cut -d' ' -f1 "$sebool" 2>/dev/null)" = 0 ]; then
-        record gpu-ctr warn "CDI spec matches ${running}, but SELinux blocks containers from the GPU" \
+        record gpu-containers warn "CDI spec matches ${running}, but SELinux blocks containers from the GPU" \
                "container_use_xserver_devices is off: systemctl status pulsar-gpu-containers.service"
     else
-        record gpu-ctr ok "CDI spec matches driver ${running}" \
+        record gpu-containers ok "CDI spec matches driver ${running}" \
                "podman run --rm --device nvidia.com/gpu=all IMAGE"
     fi
 }
@@ -699,25 +706,64 @@ check_disk() {
     fi
 }
 
+# Ids, in the order they run. Each is check_<id with - as _>, and each is
+# the id its findings carry in --json.
+DOCTOR_CHECKS='scheduler ntsync gamemode mangohud greenboot nvidia flatpak-gl gpu-containers flathub fedora origin updates disk cli'
+
+doctor_help() {
+    cat <<EOF
+usage: pulsar doctor [check...]      health checks; exit 1 if one fails
+       pulsar doctor flatpak-gl --notify
+                                     also notify the desktop, once per app
+                                     instance, when a running Flatpak app
+                                     lacks the NVIDIA driver (pulsar-gl-check)
+
+checks: ${DOCTOR_CHECKS}
+--json gives {checks: [{id, status, summary, detail}], ok}. A check that
+does not apply here reports nothing, or status "skip" when named.
+EOF
+}
+
 cmd_doctor() {
-    [ "${JSON:-0}" = 1 ] || printf '%sPulsar health%s  %s\n\n' "$C_BOLD" "$C_RESET" "$(mf version)"
-    check_scheduler
-    check_ntsync
-    check_gamemode
-    check_mangohud
-    check_greenboot
-    check_nvidia
-    check_flatpak_gl
-    check_gpu_containers
-    check_flathub
-    check_fedora
-    check_origin
-    check_updates
-    check_disk
-    check_cli
+    local notify=0 a c before
+    local -a only=() run=()
+    for a in "$@"; do
+        case "$a" in
+            -h|--help) doctor_help; return 0 ;;
+            --notify) notify=1 ;;
+            -*) die "unknown option: ${a} (see: pulsar doctor --help)" ;;
+            *)
+                case " ${DOCTOR_CHECKS} " in
+                    *" ${a} "*) only+=("$a") ;;
+                    *) die "no such check: ${a} (checks: ${DOCTOR_CHECKS})" ;;
+                esac ;;
+        esac
+    done
+    if [ "$notify" = 1 ] && [ "${only[*]-}" != flatpak-gl ]; then
+        die "--notify goes with one check: pulsar doctor flatpak-gl --notify"
+    fi
+    if [ ${#only[@]} -eq 0 ]; then
+        read -ra run <<<"$DOCTOR_CHECKS"
+        [ "${JSON:-0}" = 1 ] || printf '%sPulsar health%s  %s\n\n' "$C_BOLD" "$C_RESET" "$(mf version)"
+    else
+        run=("${only[@]}")
+    fi
+    for c in "${run[@]}"; do
+        before=$RECORDED
+        "check_${c//-/_}"
+        # Named and silent: say so, rather than print nothing and exit 0.
+        if [ ${#only[@]} -gt 0 ] && [ "$RECORDED" = "$before" ]; then
+            if [ "${JSON:-0}" = 1 ]; then
+                CHECK_JSON+=$(jq -n -c --arg i "$c" '{id:$i, status:"skip", summary:"does not apply on this machine", detail:""}'),
+            else
+                printf 'skip  %-14s does not apply on this machine\n' "$c"
+            fi
+        fi
+    done
+    [ "$notify" = 0 ] || flatpak_gl_notify
     if [ "${JSON:-0}" = 1 ]; then
         printf '{"checks":[%s],"ok":%s}\n' "${CHECK_JSON%,}" "$([ "$RC" -eq 0 ] && echo true || echo false)"
-    else
+    elif [ ${#only[@]} -eq 0 ]; then
         printf '\n'
         [ "$RC" -eq 0 ] && printf '%sno failures%s\n' "$C_OK" "$C_RESET" \
                         || printf '%sone or more checks failed%s\n' "$C_FAIL" "$C_RESET"
@@ -728,10 +774,18 @@ cmd_doctor() {
 # ---------------------------------------------------------------------------
 # status / manifest
 # ---------------------------------------------------------------------------
+# The fields of `rpm-ostree status --json` that matter, and the only shape
+# Pulsar hands out: `status --json` and `report` both use it.
+STATUS_JQ='{ deployments: [ .deployments[]? | with_entries(select(.key | IN(
+    "booted", "staged", "pinned", "version", "timestamp", "checksum",
+    "container-image-reference", "container-image-reference-digest",
+    "requested-packages", "requested-local-packages",
+    "requested-base-removals", "requested-base-local-replacements"))) ] }'
+
 cmd_status() {
     need rpm-ostree
     local js; js=$(rpm-ostree status --json 2>/dev/null) || die "could not read deployment status"
-    if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$js"; return 0; fi
+    if [ "${JSON:-0}" = 1 ]; then printf '%s' "$js" | jq "$STATUS_JQ"; return 0; fi
     # The image reference sheds its whole transport prefix -- a single strip
     # left "docker://" behind on "ostree-image-signed:docker://ghcr.io/...".
     local tsv
@@ -1219,7 +1273,14 @@ cmd_update_check() {
     remote_version=$(printf '%s' "$inspect" | jq -r '.Labels["org.opencontainers.image.version"] // "?"')
     [ -n "$remote_digest" ] || die "${ref} returned a manifest with no digest"
 
+    # --json: one object whatever the answer; the exit code still carries it.
+    check_json() {
+        jq -n -c --arg s "$1" --arg b "$local_version" --arg l "$remote_version" --arg r "$ref" \
+            '{status: $s, booted: $b, latest: $l, image: $r}'
+    }
+
     if [ "$remote_digest" = "$local_digest" ]; then
+        if [ "${JSON:-0}" = 1 ]; then check_json current; return 0; fi
         printf 'up to date: %s (%s)\n' "$local_version" "$ref"
         return 0
     fi
@@ -1229,11 +1290,16 @@ cmd_update_check() {
     local staged_digest
     staged_digest=$(printf '%s' "$js" | jq -r '[ .deployments[]? | select(.staged == true) ][0] | ."container-image-reference-digest" // ""')
     if [ "$staged_digest" = "$remote_digest" ]; then
+        if [ "${JSON:-0}" = 1 ]; then check_json staged; return 0; fi
         printf 'staged: %s -- reboot to apply\n' "$remote_version"
         return 0
     fi
 
-    printf 'update available: %s -> %s\n' "$local_version" "$remote_version"
+    if [ "${JSON:-0}" = 1 ]; then
+        check_json available
+    else
+        printf 'update available: %s -> %s\n' "$local_version" "$remote_version"
+    fi
 
     if [ "$notify" = 1 ]; then
         # Once per published digest, not once per check. The state file is the
@@ -1256,14 +1322,38 @@ cmd_update_check() {
     return 10
 }
 
+update_help() {
+    cat <<'EOF'
+usage: sudo pulsar update [--apply]   fetch and stage the newest image; it
+                                      takes effect on the next boot. --apply
+                                      also reboots into it
+       pulsar update --check          is a newer image published? no root.
+                                      exit 0 up to date or already staged,
+                                      10 available, 1 could not tell
+         --notify                     with --check: a desktop notification,
+                                      once per published build
+         --json                       with --check: the answer as JSON
+
+Through bootc, or through rpm-ostree when packages are layered (bootc would
+drop them). Other flags pass through to whichever of the two runs.
+EOF
+}
+
 cmd_update() {
-    local arg
+    local arg check=0 notify=0
     for arg in "$@"; do
-        if [ "$arg" = --check ]; then
-            cmd_update_check "$@" || return $?
-            return 0
-        fi
+        case "$arg" in
+            -h|--help) update_help; return 0 ;;
+            --check) check=1 ;;
+            --notify) notify=1 ;;
+        esac
     done
+    if [ "$check" = 1 ]; then
+        cmd_update_check "$@" || return $?
+        return 0
+    fi
+    [ "$notify" = 0 ] || die "--notify goes with --check: pulsar update --check --notify"
+    no_json update
 
     need_root update
     local lay fix
@@ -1299,7 +1389,7 @@ cmd_update() {
 }
 
 # ---------------------------------------------------------------------------
-# flatpak-gl -- the doctor check above, on its own, for pulsar-gl-check.path
+# doctor flatpak-gl --notify -- the check on its own, for pulsar-gl-check.path
 # to run every time flatpak changes something. A stale app is the one
 # finding here worth interrupting someone for: the next game it launches is
 # black, and nothing else says why.
@@ -1309,22 +1399,9 @@ cmd_update() {
 # get them a second Steam with the same problem. When it lands, flatpak
 # touches its change marker, this runs again, and the scan reads `stale`.
 # ---------------------------------------------------------------------------
-cmd_flatpak_gl() {
-    local notify=0 f
-    for f in "$@"; do
-        case "$f" in
-            --notify) notify=1 ;;
-            *) die "'flatpak-gl' takes only --notify (got: ${f})" ;;
-        esac
-    done
-    flatpak_gl_scan
-    case "$FGL_STATUS" in
-        skip)    printf 'no NVIDIA driver loaded, or no flatpak; nothing to check\n' ;;
-        missing) printf 'missing: no GL.nvidia extension for driver %s\n' "$FGL_DRIVER" ;;
-        ok)      printf 'ok: running Flatpak apps have the NVIDIA %s driver\n' "$FGL_DRIVER" ;;
-        stale)   printf 'stale: %s started without the NVIDIA %s driver\n' "$FGL_APPS" "$FGL_DRIVER" ;;
-    esac
-    [ "$notify" = 1 ] && [ "$FGL_STATUS" = stale ] || return 0
+# Runs after check_flatpak_gl, which leaves the scan's findings in FGL_*.
+flatpak_gl_notify() {
+    [ "$FGL_STATUS" = stale ] || return 0
 
     # Once per app instance, not once per run: flatpak touches its marker
     # several times per transaction, and every one of those runs would see the
@@ -1346,23 +1423,19 @@ cmd_flatpak_gl() {
 }
 
 # ---------------------------------------------------------------------------
-# agents-md -- the machine's own briefing for a coding agent.
+# agent guide -- the machine's own briefing for a coding agent.
 #
 # One vendor-neutral file in the image, at a path that moves with every update,
 # so the guide can never describe a system older than the one it ships in.
 # This command is the discovery path that works for every agent, including the
-# ones that read nothing on their own: "run `pulsar agents-md`" is one line to
-# put in any prompt. The per-vendor pointers live in `setup agent`, written
+# ones that read nothing on their own: "run `pulsar agent guide`" is one line
+# to put in any prompt. The per-vendor pointers live in `agent add`, written
 # only for the agent the user actually chose.
 # ---------------------------------------------------------------------------
 AGENTS_MD=${PULSAR_AGENTS_MD:-/usr/share/pulsar/AGENTS.md}
 
-cmd_agents_md() {
-    [ -r "$AGENTS_MD" ] || die "no agent guide at ${AGENTS_MD} (this image predates it)"
-    cat "$AGENTS_MD"
-}
 # ---------------------------------------------------------------------------
-# setup agent -- a coding agent CLI, in a toolbox, on demand.
+# agent add -- a coding agent CLI, in a toolbox, on demand.
 #
 # Nothing here runs until somebody asks for a named agent. The image installs
 # no agent and favours none: the table below is the whole of the opinion, and
@@ -1494,7 +1567,7 @@ link_agent_context() {
     elif [ -e "$target" ] || [ -L "$target" ]; then
         # Never overwritten: it is the user's file, and a guide is not worth
         # losing someone's instructions over.
-        printf '%s already exists; left alone. The machine guide is %s (or: pulsar agents-md)\n' \
+        printf '%s already exists; left alone. The machine guide is %s (or: pulsar agent guide)\n' \
             "$target" "$AGENTS_MD"
     else
         mkdir -p "$(dirname "$target")"
@@ -1530,8 +1603,8 @@ write_agent_shim() {
 #!/bin/sh
 ${SHIM_MARK}
 # ${A_DESC}, run inside the '${AGENT_BOX}' toolbox.
-# Written by \`pulsar setup agent ${A_NAME}\`; remove with
-# \`pulsar setup agent --remove ${A_NAME}\`. Edits here are overwritten by a rerun.
+# Written by \`pulsar agent add ${A_NAME}\`; remove with
+# \`pulsar agent remove ${A_NAME}\`. Edits here are overwritten by a rerun.
 #
 # toolbox forwards only a fixed set of environment variables, so an API key
 # exported in this shell does not reach the agent. Log in through the agent
@@ -1556,8 +1629,20 @@ EOF
 }
 
 agent_list() {
-    printf '%-9s %-9s %-34s %-10s %s\n' NAME COMMAND INSTALL STATE DESCRIPTION
     local n b m p d state native notes=""
+    if [ "${JSON:-0}" = 1 ]; then
+        need jq
+        while IFS=$'\t' read -r n b m p d; do
+            state=available
+            if is_our_shim "${AGENT_SHIMS}/${b}"; then state=installed
+            elif native_launcher "$b" >/dev/null; then state=native
+            fi
+            jq -n -c --arg n "$n" --arg b "$b" --arg m "$m" --arg p "$p" --arg d "$d" --arg s "$state" \
+                '{name: $n, command: $b, installer: $m, package: $p, description: $d, state: $s}'
+        done <<<"$AGENTS_TABLE" | jq -s '.'
+        return 0
+    fi
+    printf '%-9s %-9s %-34s %-10s %s\n' NAME COMMAND INSTALL STATE DESCRIPTION
     while IFS=$'\t' read -r n b m p d; do
         state=-
         if is_our_shim "${AGENT_SHIMS}/${b}"; then
@@ -1668,11 +1753,183 @@ agent_remove() {
         "$AGENT_BOX" "$AGENT_BOX"
 }
 
+# ---------------------------------------------------------------------------
+# agent guard -- make the silent system changes ask for a password.
+#
+# Stock Fedora polkit rules let a wheel user in an active local session layer
+# packages, roll back, clean up deployments and install or remove system
+# Flatpaks with no prompt, and so can anything that user starts. The rule that
+# undoes that ships inert in the image; `on` copies it into /etc, where polkit
+# picks it up at once (it watches the directory). Opt-in, not image policy: it
+# departs from Silverblue's defaults and costs a human one more prompt.
+#
+# The state is read from polkit, not from the file: /etc/polkit-1/rules.d is
+# not readable by users, and what matters is what polkit answers anyway.
+# ---------------------------------------------------------------------------
+GUARD_RULE=${PULSAR_GUARD_RULE:-/usr/share/pulsar/polkit/49-pulsar-guard.rules}
+POLKIT_RULES_DIR=${PULSAR_POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}
+GUARD_MARKER='pulsar agent guard'
+GUARD_ACTIONS='org.projectatomic.rpmostree1.install-uninstall-packages
+org.projectatomic.rpmostree1.rollback
+org.projectatomic.rpmostree1.cleanup
+org.freedesktop.Flatpak.app-install
+org.freedesktop.Flatpak.app-uninstall'
+
+# action <TAB> yes|auth|no, for this process's session.
+guard_answers() {
+    local a rc
+    while IFS= read -r a; do
+        rc=0; pkcheck --action-id "$a" --process $$ >/dev/null 2>&1 || rc=$?
+        case "$rc" in
+            0) printf '%s\tyes\n' "$a" ;;
+            2) printf '%s\tauth\n' "$a" ;;
+            *) printf '%s\tno\n' "$a" ;;
+        esac
+    done <<<"$GUARD_ACTIONS"
+}
+
+# on: nothing gated goes through silently. off: all of it does. partial: a
+# mix, which a hand-edited rule or a newer stock rule could produce.
+guard_state() {
+    have pkcheck || { printf 'unknown\n'; return 0; }
+    local answers
+    answers=$(guard_answers | cut -f2 | sort -u | paste -sd' ' -)
+    case "$answers" in
+        yes)   printf 'off\n' ;;
+        *yes*) printf 'partial\n' ;;
+        *)     printf 'on\n' ;;
+    esac
+}
+
+agent_guard() {
+    local sub=${1:-status}
+    [ $# -le 1 ] || die "usage: pulsar agent guard [on | off]"
+    local dest
+    dest="${POLKIT_RULES_DIR}/$(basename "$GUARD_RULE")"
+    case "$sub" in
+        -h|--help)
+            cat <<'EOF'
+usage: pulsar agent guard           what polkit answers for your session
+       sudo pulsar agent guard on   layering, rollback, cleanup and system
+                                    Flatpak installs ask for a password
+       sudo pulsar agent guard off  back to the Fedora default (no prompt)
+
+It applies to you and to anything you run, a coding agent included.
+Updates are not gated, and root (sudo) is not affected.
+EOF
+            ;;
+        status)
+            [ "$(id -u)" -ne 0 ] || die "'agent guard' checks your session; drop the sudo"
+            need pkcheck
+            local a v label
+            if [ "${JSON:-0}" = 1 ]; then
+                need jq
+                guard_answers | jq -R -s --arg st "$(guard_state)" \
+                    '{state: $st, actions: [split("\n")[] | select(length > 0) | split("\t") | {id: .[0], answer: .[1]}]}'
+                return 0
+            fi
+            printf 'guard: %s\n\n' "$(guard_state)"
+            while IFS=$'\t' read -r a v; do
+                case "$v" in
+                    yes)  label='no prompt' ;;
+                    auth) label='asks for a password' ;;
+                    *)    label='denied' ;;
+                esac
+                printf '  %-58s %s\n' "$a" "$label"
+            done < <(guard_answers)
+            ;;
+        off)
+            no_json "agent guard off"
+            need_root "agent guard off"
+            if [ ! -e "$dest" ]; then
+                printf 'guard is already off (no %s)\n' "$dest"; return 0
+            fi
+            grep -qF "$GUARD_MARKER" "$dest" \
+                || die "${dest} is not the rule 'agent guard' installs; leaving it alone"
+            rm -f "$dest" || die "could not remove ${dest}"
+            printf 'guard off: removed %s\n' "$dest"
+            ;;
+        on)
+            no_json "agent guard on"
+            need_root "agent guard on"
+            [ -r "$GUARD_RULE" ] || die "the guard rule is not staged in this image (${GUARD_RULE})"
+            if [ -e "$dest" ] && cmp -s "$GUARD_RULE" "$dest"; then
+                printf 'guard is already on (%s)\n' "$dest"; return 0
+            fi
+            if [ -e "$dest" ] && ! grep -qF "$GUARD_MARKER" "$dest"; then
+                die "${dest} exists and is not ours; leaving it alone"
+            fi
+            install -D -m 0644 "$GUARD_RULE" "$dest" || die "could not write ${dest}"
+            # A new file in /etc gets its label from the directory, but make
+            # sure: polkitd cannot read a mislabeled rule.
+            if have restorecon; then restorecon "$dest" 2>/dev/null || true; fi
+            printf 'guard on: installed %s\n' "$dest"
+            printf 'these now ask for the admin password, for you and for anything you run:\n'
+            printf '  rpm-ostree install/uninstall, rollback, cleanup\n'
+            printf '  flatpak install/uninstall (system; --user is unaffected)\n'
+            printf 'updates are not gated. check: pulsar agent guard\n'
+            ;;
+        *) die "unknown guard command: ${sub} (see: pulsar agent guard --help)" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# agent, bare -- the one-screen answer to "what does this machine give an
+# agent": the guide, the agents installed, and whether guard is on. --json
+# is for the agent itself.
+# ---------------------------------------------------------------------------
+agent_status() {
+    local guide=false guard=unknown n b m p d state native rows=""
+    [ -r "$AGENTS_MD" ] && guide=true
+    [ "$(id -u)" -eq 0 ] || guard=$(guard_state)
+    while IFS=$'\t' read -r n b m p d; do
+        state=""
+        if is_our_shim "${AGENT_SHIMS}/${b}"; then
+            state=installed
+        elif native=$(native_launcher "$b"); then
+            state=native
+        fi
+        [ -z "$state" ] || rows+="${n}"$'\t'"${b}"$'\t'"${state}"$'\n'
+    done <<<"$AGENTS_TABLE"
+    if [ "${JSON:-0}" = 1 ]; then
+        need jq
+        printf '%s' "$rows" | jq -R -s --arg g "$AGENTS_MD" --argjson gp "$guide" --arg guard "$guard" '
+            {guide: {path: $g, present: $gp},
+             agents: [split("\n")[] | select(length > 0) | split("\t")
+                      | {name: .[0], command: .[1], install: .[2]}],
+             guard: $guard}'
+        return 0
+    fi
+    if [ "$guide" = true ]; then
+        printf 'guide    %s  (pulsar agent guide)\n' "$AGENTS_MD"
+    else
+        printf 'guide    none in this image\n'
+    fi
+    if [ -n "$rows" ]; then
+        while IFS=$'\t' read -r n b state; do
+            [ -n "$n" ] || continue
+            printf 'agent    %-9s %s\n' "$n" "$state"
+        done <<<"$rows"
+    else
+        printf 'agents   none installed  (pulsar agent list, pulsar agent add <name>)\n'
+    fi
+    case "$guard" in
+        on)      printf 'guard    on: layering and system Flatpak installs ask for a password\n' ;;
+        off)     printf 'guard    off: layering and system Flatpak installs do not prompt  (sudo pulsar agent guard on)\n' ;;
+        partial) printf 'guard    partial  (see: pulsar agent guard)\n' ;;
+        *)       printf 'guard    unknown  (run pulsar agent guard as yourself)\n' ;;
+    esac
+}
+
 agent_help() {
     cat <<EOF
-usage: pulsar setup agent <name>          install one coding agent CLI
-       pulsar setup agent --list          the supported agents, and which are installed
-       pulsar setup agent --remove <name> remove its command and package
+usage: pulsar agent                  the guide, installed agents, guard state
+       pulsar agent guide            print the guide a coding agent should read first
+       pulsar agent list             the supported agents, and which are installed
+       pulsar agent add <name>       install one coding agent CLI
+       pulsar agent remove <name>    remove its command and package
+       pulsar agent guard [on|off]   make layering and system Flatpak installs ask
+                                     for a password (on and off need root)
 
 Agents: $(agent_names). None is installed by default.
 
@@ -1680,47 +1937,93 @@ Each runs in the '${AGENT_BOX}' toolbox (created on first use), installed with
 its vendor's documented npm or uv method into ${AGENT_PREFIX},
 and gets a command in ${AGENT_SHIMS} that works from any host terminal.
 Nothing is layered onto the host and nothing needs root.
-Where the agent reads a global instructions file this recipe can own, it links
+Where the agent reads a global instructions file Pulsar can own, it links
 ${AGENTS_MD} there, and never overwrites a file that exists.
 EOF
 }
 
-setup_agent() {
-    local arg=${1:-}
-    case "$arg" in
-        ""|-h|--help) agent_help; return 0 ;;
-    esac
-    need_user agent
-    case "$arg" in
-        --list)
-            [ $# -eq 1 ] || die "'setup agent --list' takes no arguments"
-            agent_list ;;
-        --remove)
-            [ $# -eq 2 ] || die "usage: pulsar setup agent --remove <name>"
-            agent_row "$2" || die "unknown agent: $2 (known: $(agent_names))"
-            agent_remove ;;
-        -*) die "unknown option: ${arg} (see: pulsar setup agent --help)" ;;
-        *)
-            [ $# -eq 1 ] || die "'setup agent' installs one agent at a time (got: $*)"
-            agent_row "$arg" || die "unknown agent: ${arg} (known: $(agent_names))"
-            agent_install ;;
+cmd_agent() {
+    local sub=${1:-}
+    shift || true
+    case "$sub" in
+        "") agent_status ;;
+        -h|--help|help) agent_help ;;
+        guide)
+            no_args "agent guide" "$@"
+            no_json "agent guide"
+            [ -r "$AGENTS_MD" ] || die "no agent guide at ${AGENTS_MD} (this image predates it)"
+            cat "$AGENTS_MD"
+            ;;
+        list)
+            no_args "agent list" "$@"
+            need_user "agent list"
+            agent_list
+            ;;
+        add|remove)
+            no_json "agent ${sub}"
+            [ $# -eq 1 ] || die "usage: pulsar agent ${sub} <name>  (one of: $(agent_names))"
+            need_user "agent ${sub}"
+            agent_row "$1" || die "unknown agent: $1 (known: $(agent_names))"
+            if [ "$sub" = add ]; then agent_install; else agent_remove; fi
+            ;;
+        guard) agent_guard "$@" ;;
+        *) die "unknown agent command: ${sub} (see: pulsar agent --help)" ;;
     esac
 }
 
-cmd_rollback() { need_root rollback; need bootc; exec bootc rollback "$@"; }
+cmd_rollback() {
+    case "${1:-}" in
+        -h|--help)
+            printf 'usage: sudo pulsar rollback   make the previous deployment the default for the
+                              next boot. nothing reboots; other flags pass to bootc
+'
+            return 0 ;;
+    esac
+    no_json rollback
+    need_root rollback; need bootc
+    exec bootc rollback "$@"
+}
 
 cmd_pin() {
-    need_root pin; need ostree
+    local sub=${1:-}
+    [ $# -le 1 ] || die "usage: pulsar pin [on | off]"
+    case "$sub" in
+        -h|--help)
+            printf 'usage: pulsar pin            is the booted deployment pinned (kept through GC)?
+       sudo pulsar pin on    pin it
+       sudo pulsar pin off   unpin it
+'
+            return 0 ;;
+        "")
+            need rpm-ostree
+            local pinned
+            pinned=$(rpm-ostree status --json 2>/dev/null \
+                | jq -r '[.deployments[]? | select(.booted == true)][0].pinned // false') \
+                || die "could not read deployment status"
+            if [ "${JSON:-0}" = 1 ]; then
+                jq -n -c --argjson p "$pinned" '{pinned: $p}'
+            elif [ "$pinned" = true ]; then
+                printf 'the booted deployment is pinned (sudo pulsar pin off to release it)
+'
+            else
+                printf 'the booted deployment is not pinned (sudo pulsar pin on to keep it)
+'
+            fi
+            return 0 ;;
+        on|off) no_json "pin ${sub}"; need_root "pin ${sub}"; need ostree ;;
+        *) die "unknown pin command: ${sub} (see: pulsar pin --help)" ;;
+    esac
+    if [ "$sub" = off ]; then
+        ostree admin pin --unpin booted && printf 'unpinned the booted deployment
+'
+        return
+    fi
     # `booted`, not index 0. Index 0 is the staged deployment when there is
     # one (ostree then refuses: "Cannot pin staged deployment"), and after a
     # rollback or a pick from GRUB the booted one is index 1 -- so `0` pinned
     # the OTHER deployment and reported the booted one pinned, at exactly the
     # moment a pin is wanted.
     ostree admin pin booted && printf 'pinned the booted deployment; it will survive GC\n'
-}
-cmd_unpin() {
-    need_root unpin; need ostree
-    ostree admin pin --unpin booted && printf 'unpinned the booted deployment\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -1732,12 +2035,13 @@ cmd_unpin() {
 # per-build copies live in R2 and are linked from the manifest.
 # ---------------------------------------------------------------------------
 cmd_sbom() {
+    no_json sbom
     [ -x "$SBOM_TOOL" ] || die "sbom generator missing at ${SBOM_TOOL}"
     "$SBOM_TOOL" --local
 }
 
 # ---------------------------------------------------------------------------
-# attest -- prove where this image came from.
+# verify -- prove where this image came from.
 #
 # The verify command lives in the manifest rather than here because the owner
 # and registry are build-time facts: an image built from a fork must verify
@@ -1755,7 +2059,7 @@ cmd_sbom() {
 # to "how do I check this myself", and it is as true from a distrobox or a
 # laptop that has never booted Pulsar as it is from here.
 # ---------------------------------------------------------------------------
-cmd_attest() {
+cmd_verify() {
     local cmd; cmd=$(mf attestation)
     # No command is the honest state of every image since the build left
     # GitHub Actions in August: the GitHub attestations stopped, and signing
@@ -1810,18 +2114,41 @@ cmd_changelog() {
 # ---------------------------------------------------------------------------
 # setup -- the mutable-state recipes an image cannot bake.
 # ---------------------------------------------------------------------------
+SETUP_HELP='usage: pulsar setup <recipe>
+
+  apps        install the default Flatpaks (root)
+  devbox      create the default distrobox
+  gamemode    enroll accounts in the gamemode group, for renice (root)
+  quadlet     install the quadlet template and enable auto-update
+  gamescale   grant Flatpak launchers, from the staged copy (its own flags pass through)'
+
 cmd_setup() {
     local recipe=${1:-}
+    shift || true
+    no_json setup
+    case "$recipe" in
+        ""|-h|--help|help) printf '%s\n' "$SETUP_HELP"; return 0 ;;
+        # gamescale hands its arguments to upstream's installer, --help too
+        gamescale) ;;
+        *)
+            case "${1:-}" in
+                -h|--help)
+                    printf '%s\n' "$SETUP_HELP" | awk -v r="$recipe" '$1 == r { sub(/^ +/, ""); print "pulsar setup " $0; f = 1 } END { exit !f }' \
+                        || die "unknown recipe: ${recipe} (see: pulsar setup --help)"
+                    return 0 ;;
+            esac
+            [ $# -eq 0 ] || die "'setup ${recipe}' takes no arguments (got: $*)" ;;
+    esac
     case "$recipe" in
     devbox)
-        need_user devbox
+        need_user "setup devbox"
         need distrobox
         local ini=/usr/share/pulsar/distrobox.ini
         [ -r "$ini" ] || die "no distrobox manifest at ${ini}"
         distrobox assemble create --file "$ini"
         ;;
     quadlet)
-        need_user quadlet
+        need_user "setup quadlet"
         local tpl=/usr/share/pulsar/templates/example.container
         local dir="${HOME}/.config/containers/systemd"
         [ -r "$tpl" ] || die "no quadlet template at ${tpl}"
@@ -1861,25 +2188,17 @@ cmd_setup() {
         exec "$script"
         ;;
     gamescale)
-        need_user gamescale
+        need_user "setup gamescale"
         # Delegates to upstream's installer against the copy staged in the
         # image, so this runs offline from pinned, hash-verified files and the
         # ~/.local copy matches the image exactly. Reimplementing the flatpak
         # grants here would drift from upstream the moment they change one.
         local src=/usr/share/pulsar/gamescale/install.sh
         [ -x "$src" ] || die "gamescale is not staged in this image (${src})"
-        shift || true
         printf 'running the staged gamescale installer (offline, pinned)\n'
         "$src" "$@"
         ;;
-    agent)
-        shift || true
-        setup_agent "$@"
-        ;;
-    ""|-h|--help)
-        printf 'usage: pulsar setup <recipe>\n\n  apps        install the default Flatpaks (root)\n  devbox      create the default distrobox\n  gamemode    enrol accounts in the gamemode group, for renice (root)\n  quadlet     install the quadlet template and enable auto-update\n  gamescale   grant flatpak launchers, from the staged copy\n  agent       install a coding agent CLI into a toolbox (see: setup agent --help)\n'
-        ;;
-    *) die "unknown recipe: ${recipe} (try: pulsar setup --help)" ;;
+    *) die "unknown recipe: ${recipe} (see: pulsar setup --help)" ;;
     esac
 }
 
@@ -2094,13 +2413,7 @@ cmd_report() {
     doctor=$(json_or_null env NO_COLOR=1 "$SELF" doctor --json)
     if have rpm-ostree; then
         status=$(json_or_null rpm-ostree status --json)
-        status=$(printf '%s' "$status" | jq -c 'if . == null then null else
-            { deployments: [ .deployments[]? | with_entries(select(.key | IN(
-                "booted", "staged", "pinned", "version", "timestamp", "checksum",
-                "container-image-reference", "container-image-reference-digest",
-                "requested-packages", "requested-local-packages",
-                "requested-base-removals", "requested-base-local-replacements"))) ] }
-            end')
+        status=$(printf '%s' "$status" | jq -c "if . == null then null else ${STATUS_JQ} end")
     else
         status=null
     fi
@@ -2170,12 +2483,12 @@ theme_usage() {
 usage: pulsar theme <command>
 
   list                      the themes, with swatches; * marks the current one
-  set <theme>               re-colour the desktop: accent, light/dark, GTK4 and
+  set <theme>               recolor the desktop: accent, light/dark, GTK4 and
                             GTK3 apps, Ptyxis, btop, Text Editor, the top bar
                             and quick settings, the wallpaper
     --variant dark|light    pin one variant (default: follow Dark Style)
     --restart | --no-restart
-                            open GTK apps keep the old colours until they
+                            open GTK apps keep the old colors until they
                             restart; by default you are asked, once per switch
   next | prev               cycle themes
   bg-next                   cycle the current theme's wallpapers
@@ -2329,6 +2642,12 @@ checkpoint_create() {
 }
 
 checkpoint_list() {
+    if [ "${JSON:-0}" = 1 ]; then
+        local -a metas=()
+        [ -d "$CHECKPOINTS" ] && mapfile -t metas < <(find "$CHECKPOINTS" -mindepth 2 -maxdepth 2 -name meta.json | sort)
+        if [ ${#metas[@]} -eq 0 ]; then printf '[]\n'; else jq -s -c '.' "${metas[@]}"; fi
+        return 0
+    fi
     [ -d "$CHECKPOINTS" ] || { printf 'no checkpoints\n'; return 0; }
     local m any=0
     for m in "$CHECKPOINTS"/*/meta.json; do
@@ -2451,8 +2770,15 @@ cmd_checkpoint() {
     case "${1:-}" in
         -h|--help|help) checkpoint_help; return 0 ;;
     esac
-    need_root checkpoint
     local sub=${1:-create}
+    case "$sub" in
+        list) ;;
+        *) no_json "checkpoint ${sub}" ;;
+    esac
+    case "$sub" in
+        list|diff|restore|drop) need_root "checkpoint ${sub}" ;;
+        *) need_root checkpoint ;;
+    esac
     case "$sub" in
         create)  shift || true; checkpoint_create "$@" ;;
         list)    shift; [ $# -eq 0 ] || die "'checkpoint list' takes no arguments"; checkpoint_list ;;
@@ -2470,57 +2796,62 @@ usage() {
     cat <<'EOF'
 pulsar -- manage a Pulsar system
 
-  pulsar manifest          what is in this image, and what it is running on
-  pulsar doctor            health snapshot (exit 1 if a check fails);
-                           the default when no command is given
+Health
+  pulsar doctor [check]    health checks; exit 1 if one fails. the default
+                           command. see: pulsar doctor --help
   pulsar status            deployments: booted, staged, rollback, pins
+  pulsar report            a diagnosis bundle to paste: doctor, status,
+                           manifest, failed units, recent warnings, graphics,
+                           Flatpak. JSON; --text for people. redacted
+
+This image
+  pulsar manifest          what is in this image, and what it runs on
   pulsar changelog         packages that moved in the latest published build
   pulsar sbom              this system's packages as SPDX 2.3
-  pulsar attest            how to verify this image (image signing is coming;
-                           until then it says what can and cannot be checked)
+  pulsar verify            how to check where this image came from
 
-  pulsar update            fetch and stage an update        (root)
-                           through bootc, or through rpm-ostree if you have
-                           layered packages, which bootc would drop
-  pulsar update --check    is a newer image published? no root needed.
-                           exit 0 up to date or already staged, 10 available,
-                           1 could not tell. add --notify for a desktop
-                           notification, once per published build
-  pulsar flatpak-gl        do running Flatpak apps have the NVIDIA driver?
-                           an app started before its GL extension arrived
-                           renders games on the iGPU. --notify says so once
-  pulsar agents-md         print the guide a coding agent should read first
-  pulsar rollback          boot the previous deployment     (root)
-  pulsar pin | unpin       protect the booted deployment    (root)
-  pulsar checkpoint        snapshot /etc and pin the booted (root)
-                           deployment; then list | diff | restore | drop.
-                           see: pulsar checkpoint --help
+Updates and undo
+  pulsar update            fetch and stage the newest image       (root)
+  pulsar update --check    is a newer image published? exit 10 if so
+  pulsar rollback          boot the previous deployment next      (root)
+  pulsar pin [on|off]      keep the booted deployment through GC  (root)
+  pulsar checkpoint        snapshot /etc and pin, to diff or      (root)
+                           restore later: list | diff | restore | drop
 
-  pulsar report            diagnosis bundle to paste: doctor, status,
-                           manifest, failed units, warning+ journal lines,
-                           graphics, flatpak. JSON; --text for people.
-                           redacted; see: pulsar report --help
-
-  pulsar theme <command>   re-colour the whole desktop in one step:
-                           list | set <theme> | revert | ...  see: pulsar theme
-
+Desktop
+  pulsar theme <command>   recolor the whole desktop: list | set <theme> |
+                           revert | ...
   pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
-  pulsar setup agent <name>
-                           a coding agent CLI in a toolbox, run from the
-                           host: claude | codex | gemini | opencode | aider.
-                           none by default; --list, --remove <name>
+
+Agents
+  pulsar agent             what this machine gives a coding agent:
+                           guide | list | add | remove | guard [on|off]
 
 Options
+  --json                   JSON output, anywhere on the line. A command
+                           without it says so rather than print text.
+                           `manifest --json` puts host facts under "host", so
+                           `jq 'del(.host)'` is the baked manifest
   --logo, --no-logo        force or suppress the mark in `manifest`
-  --json                   machine-readable output (doctor, status, manifest,
-                           changelog; report is JSON already); everything
-                           else ignores it.
-                           `manifest --json` adds the host facts under a
-                           "host" key, so `jq 'del(.host)'` is the baked
-                           manifest and two machines on the same build still
-                           compare equal
-  --version, --help
+  --version, --help        pulsar help <command> for one command
 EOF
+}
+
+# The lines of usage() for one command, for its --help when it has no help
+# of its own. A command whose lines are missing gets the whole usage.
+usage_for() {
+    local lines
+    lines=$(usage | awk -v c="$1" '
+        /^  pulsar / { f = ($2 == c) }
+        /^[^ ]/ || /^$/ { f = 0 }
+        f')
+    if [ -n "$lines" ]; then printf '%s\n' "$lines"; else usage; fi
+}
+
+cmd_help() {
+    [ $# -le 1 ] || die "usage: pulsar help [command]"
+    [ -n "${1:-}" ] || { usage; return 0; }
+    exec "$SELF" "$1" --help
 }
 
 main() {
@@ -2529,13 +2860,18 @@ main() {
     # (`pulsar --json theme current`) are this CLI's, and like every other
     # command that does not use them, theme ignores them; --help/--version
     # there still mean what they always did.
-    local i=0 a
+    local i=0 a pre_json=0
     for a in "$@"; do
         i=$((i + 1))
         case "$a" in
             -h|--help|-V|--version) break ;;
+            --json) pre_json=1 ;;
             -*) continue ;;
-            theme) shift "$i"; cmd_theme "$@"; exit $? ;;
+            theme)
+                shift "$i"
+                # the engine owns --json; one given before `theme` is passed on
+                if [ "$pre_json" = 1 ]; then set -- "$@" --json; fi
+                cmd_theme "$@"; exit $? ;;
             *) break ;;
         esac
     done
@@ -2561,29 +2897,33 @@ main() {
     shift || true
     # jq is needed by nearly everything -- but not by help, which is how you
     # find out what this is on a box that lacks jq.
-    case "$cmd" in help|agents-md) ;; *) need jq ;; esac
-    # update/rollback pass their arguments through to the upgrade tool (which
-    # has flags worth passing, --check among them); setup hands them to its
-    # recipe.
-    # Everything else takes none and says so.
+    case " $* " in
+        *" -h "*|*" --help "*) ;;
+        *) case "$cmd" in help|agent) ;; *) need jq ;; esac ;;
+    esac
+    # Commands with JSON output handle --json themselves, per subcommand
+    # where only some have it. The rest refuse it here.
     case "$cmd" in
-        manifest)  no_args manifest "$@";  cmd_manifest ;;
-        doctor)    no_args doctor "$@";    cmd_doctor ;;
-        status)    no_args status "$@";    cmd_status ;;
-        update)    cmd_update "$@" ;;
-        flatpak-gl) cmd_flatpak_gl "$@" ;;
-        rollback)  cmd_rollback "$@" ;;
-        pin)       no_args pin "$@";       cmd_pin ;;
-        unpin)     no_args unpin "$@";     cmd_unpin ;;
-        changelog) no_args changelog "$@"; cmd_changelog ;;
-        sbom)      no_args sbom "$@";      cmd_sbom ;;
-        attest)    no_args attest "$@";    cmd_attest ;;
-        setup)     cmd_setup "$@" ;;
-        report)    cmd_report "$@" ;;
-        agents-md) no_args agents-md "$@"; cmd_agents_md ;;
+        doctor|status|manifest|changelog|report|update|pin|checkpoint|agent|help) ;;
+        *) no_json "$cmd" ;;
+    esac
+    # Commands without subcommands or flags take no arguments and say so.
+    case "$cmd" in
+        doctor)     cmd_doctor "$@" ;;
+        status)     no_args status "$@";    cmd_status ;;
+        report)     cmd_report "$@" ;;
+        manifest)   no_args manifest "$@";  cmd_manifest ;;
+        changelog)  no_args changelog "$@"; cmd_changelog ;;
+        sbom)       no_args sbom "$@";      cmd_sbom ;;
+        verify)     no_args verify "$@";    cmd_verify ;;
+        update)     cmd_update "$@" ;;
+        rollback)   cmd_rollback "$@" ;;
+        pin)        cmd_pin "$@" ;;
         checkpoint) cmd_checkpoint "$@" ;;
-        help)      usage ;;
-        *)         usage >&2; die "unknown command: ${cmd}" ;;
+        setup)      cmd_setup "$@" ;;
+        agent)      cmd_agent "$@" ;;
+        help)       cmd_help "$@" ;;
+        *)          usage >&2; die "unknown command: ${cmd}" ;;
     esac
 }
 

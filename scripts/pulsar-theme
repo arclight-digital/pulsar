@@ -92,7 +92,7 @@ class Color:
         if len(s) == 3:
             s = "".join(c * 2 for c in s)
         if not re.fullmatch(r"[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", s):
-            raise ValueError(f"not a colour: {s!r}")
+            raise ValueError(f"not a color: {s!r}")
         return cls(*(int(s[i:i + 2], 16) / 255 for i in (0, 2, 4)))
 
     @property
@@ -847,7 +847,7 @@ class Gtk4(Target):
 
 
 class Gtk3(Target):
-    name, desc, live = "gtk3", "adw-gtk3 / Adwaita named colours in gtk-3.0/gtk.css", "new windows only"
+    name, desc, live = "gtk3", "adw-gtk3 / Adwaita named colors in gtk-3.0/gtk.css", "new windows only"
 
     def apply(self, tx, theme, vm):
         # GTK3 has no media queries: it gets the variant for the scheme in
@@ -1201,7 +1201,7 @@ def conf_put(k, v):
 # with unsaved work raises its own "save changes?" dialog and stays open.
 # Nothing is ever killed; only apps that actually exited are relaunched.
 
-NOTE = "open apps pick up the new colours when they are relaunched"
+NOTE = "open apps pick up the new colors when they are relaunched"
 # Terminals: quitting one ends every shell in it. Their palette is live anyway.
 NEVER_RESTART = {"org.gnome.Ptyxis", "org.gnome.Ptyxis.Devel", "org.gnome.Console", "org.gnome.Terminal",
                  "digital.arclight.Pulsar.ThemePicker"}
@@ -1331,7 +1331,7 @@ def restart_apps(apps, wait=6.0):
                 continue
             a = pending.pop(i)
             if i in SERVICE_QUIT:
-                out.append((a, "closed; reopen it and it is in the new colours"))
+                out.append((a, "closed; reopen it and it is in the new colors"))
             elif "true" in (_bus("NameHasOwner", i) or ""):
                 out.append((a, "restarted"))  # re-activated on demand already
             else:
@@ -1434,7 +1434,7 @@ def customised():
     for f in (CONFIG / "gtk-4.0" / "gtk.css", CONFIG / "gtk-3.0" / "gtk.css"):
         if f.exists() and uread(f).strip() and MARK_BEGIN not in uread(f):
             why.append(f"own {f.relative_to(HOME)}")
-    for k, label in [("/org/gnome/desktop/interface/accent-color", "chose an accent colour"),
+    for k, label in [("/org/gnome/desktop/interface/accent-color", "chose an accent color"),
                      ("/org/gnome/desktop/interface/gtk-theme", "set a GTK theme"),
                      ("/org/gnome/desktop/background/picture-uri", "chose a wallpaper"),
                      ("/org/gnome/desktop/background/picture-uri-dark", "chose a wallpaper"),
@@ -1598,7 +1598,7 @@ def cmd_init(theme="pulsar", force=False):
             atomic_write(STATE / WELCOME_PENDING, json.dumps({"shortcut": rec["shortcut"]}).encode())
         else:
             notify("Pulsar theme applied",
-                   ("Super+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colours. "
+                   ("Super+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colors. "
                    "pulsar theme revert puts stock GNOME back.")
     atomic_write(stamp, json.dumps(rec, indent=1).encode())
     pending.unlink(missing_ok=True)
@@ -1920,7 +1920,7 @@ def main(argv=None):
     au = sub.add_parser("audit", help="WCAG contrast checks for themes (exit 1 on failure)")
     au.add_argument("themes", nargs="*")
     sub.add_parser("notice", help="deliver the notification init queued (pulsar-theme-notice.service)")
-    it = sub.add_parser("init", help="first-login: apply the Pulsar theme once, unless the look is already customised")
+    it = sub.add_parser("init", help="first-login: apply the Pulsar theme once, unless the look is already customized")
     it.add_argument("--theme", default="pulsar")
     it.add_argument("--force", action="store_true")
     sub.add_parser("next")

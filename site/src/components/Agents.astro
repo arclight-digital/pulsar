@@ -8,7 +8,7 @@ import { REPO } from '../data/site';
 const JOBS = [
   {
     t: 'It reads the manual first',
-    d: 'The image ships a briefing for coding agents: tools go in a toolbox, apps are Flatpaks, never reboot, and what rollback does and doesn’t undo. pulsar agents-md prints it, and setup puts it where each agent already looks.',
+    d: 'The image ships a briefing for coding agents: tools go in a toolbox, apps are Flatpaks, never reboot, and what rollback does and doesn’t undo. pulsar agent guide prints it, and pulsar agent add puts it where each agent already looks.',
   },
   {
     t: 'Add an agent in one line',
@@ -29,7 +29,7 @@ const JOBS = [
 ];
 
 const EXAMPLE = [
-  'pulsar setup agent claude',
+  'pulsar agent add claude',
   'pulsar report --text',
   'podman run --device nvidia.com/gpu=all IMAGE',
 ].join('\n');

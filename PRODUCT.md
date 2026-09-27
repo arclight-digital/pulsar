@@ -37,7 +37,7 @@ never as the pitch. Four pillars, in this order on the home page:
    recolouring the whole desktop at once; shipped in the image, exact revert,
    graceful restarts, on by default.
 2. **The safest machine to hand to an agent.** AGENTS.md in the image,
-   `pulsar setup agent`, `pulsar report`, GPU containers; the limit (rollback
+   `pulsar agent` (add, guard), `pulsar checkpoint`, `pulsar report`, GPU containers; the limit (rollback
    covers the OS, not $HOME) is stated on the page.
 3. **Games that just work.** gamescale (formerly the lead claim), the gaming
    stack, the Flatpak GPU-driver fix, the default launchers.

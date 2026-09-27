@@ -199,7 +199,7 @@ class Welcome(Adw.ApplicationWindow):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         head.append(label("MAKE IT YOURS", ["wl-kicker"]))
         head.append(label("Pick a look", ["wl-title"]))
-        head.append(label("One click recolours everything: apps, terminal, editor, top bar and wallpaper. "
+        head.append(label("One click recolors everything: apps, terminal, editor, top bar and wallpaper. "
                           "This window changes with it.", ["wl-lede"]))
 
         row = Gtk.Box(spacing=12, css_classes=["wl-switchrow"], halign=Gtk.Align.CENTER)
@@ -293,7 +293,7 @@ class Welcome(Adw.ApplicationWindow):
         a.append(Gtk.Image(icon_name="utilities-terminal-symbolic", pixel_size=34, halign=Gtk.Align.START,
                            css_classes=["wl-fact-icon"]))
         a.append(label("Ready for coding agents", ["wl-h"], 0))
-        a.append(markup("<tt>pulsar setup agent</tt> installs an agent's command-line tool in a toolbox, "
+        a.append(markup("<tt>pulsar agent add</tt> installs an agent's command-line tool in a toolbox, "
                         "away from the system. <tt>/usr/share/pulsar/AGENTS.md</tt> briefs any agent on how "
                         "this machine works, and what it should ask you before touching.", ["wl-body"], 0))
         cols.append(g)

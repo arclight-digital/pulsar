@@ -239,12 +239,12 @@ RUN for attempt in 1 2 3; do \
 #                   ships disabled, and that is asserted below.
 #
 # `gh` was here once, carried as an admitted exception to the rule above so
-# that `pulsar attest` had its verifier on a fresh install. The exception is
+# that `pulsar verify` (then `attest`) had its verifier on a fresh install. The exception is
 # withdrawn: by its own entry it extended nothing about what the OS can DO and
 # worked fine in a distrobox, which is the test every other line here has to
 # pass. Verifying is something you do TO this image, from wherever you already
 # are, and one convenience is not worth a vendor's client in the base layer.
-# `pulsar attest` still prints the exact command; it just no longer pretends
+# `pulsar verify` still prints the exact command; it just no longer pretends
 # the tool is the OS's problem. Do not add it back without a reason the rule
 # above does not already answer.
 # ---------------------------------------------------------------------------
@@ -621,7 +621,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       > /usr/share/pulsar/manifest.json && \
     jq -e '.version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \
     pulsar --version && \
-    { pulsar agents-md | grep -q 'pulsar doctor --json' || \
+    { pulsar agent guide | grep -q 'pulsar doctor --json' || \
       { echo "FATAL: /usr/share/pulsar/AGENTS.md is missing or gutted; an agent told to read it would learn nothing about this machine"; exit 1; }; } && \
     for t in jq skopeo notify-send; do \
       command -v "$t" >/dev/null || \

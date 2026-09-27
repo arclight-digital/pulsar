@@ -18,4 +18,4 @@ Type=oneshot
 # lets the transaction finish first. The 2026-09-26 install that left Steam
 # without a driver took seventeen.
 ExecStartPre=/usr/bin/sleep 20
-ExecStart=/usr/bin/pulsar flatpak-gl --notify
+ExecStart=/usr/bin/pulsar doctor flatpak-gl --notify
