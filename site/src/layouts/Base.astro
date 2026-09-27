@@ -53,7 +53,9 @@ const ogImage = new URL('/og.jpg', Astro.site).href;
 // The page's own share card, looked up by route in src/og/cards.ts, which is
 // also the list src/pages/og/[card].jpg.ts renders. cardFor throws on a route
 // with no card, so a new page fails the build until it has one.
-const card = cardFor(path);
+// noindex pages (the 404) are never shared on purpose: they borrow the
+// home card rather than each needing an entry in the list.
+const card = cardFor(noindex ? '/' : path);
 const cardImage = new URL(cardUrl(card), Astro.site).href;
 
 // Structured data, honest only: everything here is real and verifiable, and
