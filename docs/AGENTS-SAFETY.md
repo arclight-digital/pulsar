@@ -6,7 +6,8 @@ when an agent has changed something you want back.
 
 The short version: the operating system is hard to damage and easy to
 restore. **Your data is not.** An agent that runs as you can do anything to
-`$HOME` that you can, and no part of this image rolls that back.
+`$HOME` that you can, and rollback never touches it. A checkpoint can put your
+settings back; your documents and projects are git's and your backups' job.
 
 ## Why the OS half holds
 
@@ -42,7 +43,7 @@ back after rebooting.
 | Reboot (`systemctl reboot`) | **yes**: stock systemd, for any active session | nothing to undo, but it boots whatever is staged |
 | `/etc` | nothing: it is root-owned | a copy you made first; `sudo ostree admin config-diff` shows what differs from the image |
 | `/usr/local`, `/opt` (links to `/var/usrlocal`, `/var/opt`) | nothing: they are root-owned | delete what was put there by hand. No update or rollback touches them |
-| `$HOME`: code, dotfiles, SSH keys, browser profiles | **everything**; sandboxed, only the project it was started in | your backups. Nothing here rolls `$HOME` back |
+| `$HOME`: code, dotfiles, SSH keys, browser profiles | **everything**; sandboxed, only the project it was started in | settings (dotfiles, `~/.config`, `~/.local/bin`, `~/.ssh`): a checkpoint taken first. Everything else: your backups |
 | User Flatpaks and all Flatpak app data (`~/.var/app`) | everything | your backups |
 | Toolboxes, podman containers, user systemd units | everything | recreate them |
 
@@ -89,7 +90,8 @@ Be exact about this when you make the pitch:
   change, so none of it has a deployment to roll back to. The sandbox (below)
   narrows this to the one project the agent was started in, and takes
   force-push and your keys off the table; inside that project, git and
-  backups are still the defense.
+  backups are still the defense. A checkpoint taken before the session
+  (below) can put your settings back, not your documents or projects.
 - **`/etc` across rollback.** Each deployment has its own `/etc`, and updates
   carry local edits forward with a three-way merge. Rollback boots the old
   deployment's copy. That can bring back files you wanted changed, or keep an
@@ -229,32 +231,42 @@ What it does **not** do, said plainly:
 
 The OS half already has an undo. `/etc` is the piece that matters most after
 an agent session. It holds sshd config, sudoers, network and firewall config,
-and it survives rollback in ways that are hard to reason about. Its undo is
-`pulsar checkpoint`:
+and it survives rollback in ways that are hard to reason about. Your settings
+are the other: an agent's changes land in a shell rc, a git or ssh config, a
+GNOME setting or a script in `~/.local/bin` as often as in `/etc`. The undo
+for both is `pulsar checkpoint`:
 
 ```
-sudo pulsar checkpoint "before the agent"   # snapshot /etc, pin the booted deployment
+sudo pulsar checkpoint "before the agent"   # snapshot /etc and your settings, pin the booted deployment
 sudo pulsar checkpoint diff                  # what changed, appeared, vanished since
 sudo pulsar checkpoint restore <id>          # put changed and deleted files back
 sudo pulsar checkpoint drop <id>             # delete it, and unpin what it pinned
 ```
 
 A checkpoint keeps `/etc` as a tar with owners, modes, ACLs and SELinux
-labels, so a restored file comes back as it was, label included. It also pins
-the booted deployment so the OS state it describes cannot be garbage
-collected. `restore` does not delete files added since: it lists them, because
-one of them may be the change you wanted. It discards a deployment staged
-since the checkpoint, and if a newer one has already been booted it tells you
-to `sudo pulsar rollback` instead of rebooting for you.
+labels, so a restored file comes back as it was, label included. It keeps the
+settings of the user who ran `sudo` too: the dotfiles at the top of the home
+folder, `~/.config` without its caches, `~/.local/bin` and `~/.ssh`, read and
+written back as that user, never as root, so a symlink an agent planted there
+reaches nothing the user could not. Over 512 MB the home half is skipped with
+a note; `--no-home` skips it on purpose. It also pins the booted deployment so
+the OS state it describes cannot be garbage collected.
 
-It restores **all** of `/etc` that changed since, not only what the agent
-touched. Read `diff` before `restore`.
+`restore` does not delete files added since: it lists them, because one of
+them may be the change you wanted. It discards a deployment staged since the
+checkpoint, and if a newer one has already been booted it tells you to
+`sudo pulsar rollback` instead of rebooting for you. Services read `/etc` when
+they start, and GNOME reads its settings at login, so restart the one or log
+out for the other.
+
+It restores **all** of `/etc` and your settings that changed since, not only
+what the agent touched. Read `diff` before `restore`.
 
 It needs root on purpose, for every subcommand including `list` and `diff`:
 the snapshot holds shadow and private keys, and an agent that can take and
 restore its own checkpoints can also erase the evidence of what it did. It
-does not cover `$HOME`, the rest of `/var`, Flatpak data, or anything sent
-over the network.
+does not cover documents, projects, `~/.local/share`, the rest of `/var`,
+Flatpak data, or anything sent over the network.
 
 Without a checkpoint:
 
@@ -266,7 +278,7 @@ Without a checkpoint:
 - A file you want back to the image's version can be copied from
   `/usr/etc/<path>`, which holds the image's pristine `/etc`.
 - After putting a file back by hand, run `sudo restorecon -v <file>`. `cp -a`
-  and `mv` carry the old SELinux label with them, and a file labelled
+  and `mv` carry the old SELinux label with them, and a file labeled
   `user_home_t` in `/etc` gets its reader denied.
 
 ## The MCP server
@@ -387,7 +399,7 @@ Rejected alternatives:
   are enterprise policy locations: loaded for every user, not excludable by
   them, and specific to one vendor. Shipping one by default would make the
   image take a side, which the no-agent-by-default rule exists to prevent.
-  They are still the right tool for an organisation that deploys Pulsar, and
+  They are still the right tool for an organization that deploys Pulsar, and
   one line (`@/usr/share/pulsar/AGENTS.md`) is all they need.
 
 ## Proposals, not built

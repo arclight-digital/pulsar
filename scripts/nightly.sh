@@ -730,9 +730,9 @@ echo "pulsar nightly starting $(date -u -Iseconds) (${CHANNEL})"
 # build something other than what was asked for. Just say what is being built.
 echo "building $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 
-# A manual build is allowed to run from a dirty checkout -- publish.sh's
-# worktree refusal only guards the site commit, which a manual build skips, and
-# building what you just edited is usually the whole reason for starting one.
+# A manual build is allowed to run from a dirty checkout -- it makes no site
+# commit, and building what you just edited is usually the whole reason for
+# starting one.
 # It is not allowed to be silent about it: the line above stops describing what
 # was built, and the version tag outlives that fact.
 if [ "${CHANNEL}" = manual ] && ! git diff --quiet HEAD 2>/dev/null; then

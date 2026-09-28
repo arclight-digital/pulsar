@@ -29,8 +29,10 @@
 #   --digest-nvidia D    in --work, so the normal case passes neither
 #   --prev-digest D      the :latest digest from BEFORE the push -- see below
 #   --work DIR           where build.sh left its digest files and layouts
-#   --branch NAME        branch to commit site/ to (default: $GITHUB_REF_NAME,
-#                        else the current branch; refused when detached)
+#   --branch NAME        the site repo's branch to commit to (default:
+#                        $GITHUB_REF_NAME, else main)
+#   --site-repo URL      the site's repo (default: $PULSAR_SITE_REPO, else
+#                        https://github.com/arclight-digital/pulsar-site.git)
 #   --git-token-file P   token for the site commit, if the checkout has no
 #                        credentials of its own
 #   --no-promote         this build is not the published one. Per-build R2 keys
@@ -74,6 +76,7 @@ DIGEST_NVIDIA=""
 PREV_DIGEST="${PREV_DIGEST:-}"
 WORK="${PULSAR_BUILD_WORK:-${XDG_CACHE_HOME:-${HOME}/.cache}/pulsar-build}"
 BRANCH="${GITHUB_REF_NAME:-}"
+SITE_REPO="${PULSAR_SITE_REPO:-https://github.com/arclight-digital/pulsar-site.git}"
 GIT_TOKEN_FILE="${PULSAR_GIT_TOKEN_FILE:-}"
 DRY_RUN=no
 NO_PROMOTE=no
@@ -88,6 +91,7 @@ while [ $# -gt 0 ]; do
     --prev-digest)    PREV_DIGEST="${2:-}"; shift ;;
     --work)           WORK="${2:?}"; shift ;;
     --branch)         BRANCH="${2:?}"; shift ;;
+    --site-repo)      SITE_REPO="${2:?}"; shift ;;
     --git-token-file) GIT_TOKEN_FILE="${2:?}"; shift ;;
     --dry-run)        DRY_RUN=yes ;;
     --no-promote)     NO_PROMOTE=yes ;;
@@ -382,9 +386,15 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
 # ---------------------------------------------------------------------------
 # The page.
 #
-# This step commits DATA, not markup. The site is an Astro project (site/), and
-# Astro reads site/src/data/*.json at build time to render the manifest card
-# and the changelog list. Nothing here renders HTML.
+# This step commits DATA, not markup, to the site's own repo (--site-repo). The
+# site is an Astro project, and Astro reads src/data/*.json at build time to
+# render the manifest card and the changelog list. Nothing here renders HTML.
+#
+# It also refreshes the site's upstream/: the files of THIS repo the site reads
+# (its upstream.list names them -- brand marks, fonts, the wallpaper shader,
+# docs/*.md), copied from this checkout, which is the source the image was just
+# built from. So the page matches the published image, and never documents a
+# feature a night before the image that has it.
 #
 # It used to. site/build.sh was a dependency-free shell script -- Cloudflare's
 # builder had no jq -- so the fragments were pre-rendered here by
@@ -394,9 +404,8 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
 # page. site/version.txt went with them: the hero's build chip reads
 # manifest.version, so there is one fact instead of two that could disagree.
 #
-# The commit touches only site/. Nothing schedules off a push any more --
-# the nightly is a systemd timer on the build host -- so the only thing this
-# commit wakes is Cloudflare's git integration, which is the point.
+# Nothing schedules off a push to the site repo but Cloudflare's git
+# integration, which builds and deploys it -- which is the point.
 # ---------------------------------------------------------------------------
 publish_site() {
   # The manifest card is a transcript of the image's own baked manifest, never
@@ -416,7 +425,8 @@ publish_site() {
   # An ephemeral builder's checkout has no credentials of its own. The token
   # goes into a 0600 file rather than into the remote URL, which git prints
   # back in error messages, or an http.extraheader, which is visible in ps.
-  local -a cfg=(-C "${REPO}" -c user.name=pulsar-ci -c user.email=ci@arclight.build)
+  local SITE="${STAGE}/site"
+  local -a cfg=(-C "${SITE}" -c user.name=pulsar-ci -c user.email=ci@arclight.build)
   if [ -n "${GIT_TOKEN_FILE}" ]; then
     CRED="${STAGE}/git-credentials"
     ( umask 077
@@ -440,11 +450,30 @@ publish_site() {
   # exactly that way, without complaint. Rendering has since moved into the
   # site build, so only the sync-first half of that lesson still applies here.
   publish() {
+    if [ ! -d "${SITE}/.git" ]; then
+      git -c "credential.helper=${CRED:+store --file=${CRED}}" clone -q --depth=1 \
+        --branch "${BRANCH}" "${SITE_REPO}" "${SITE}" || return 1
+    fi
     git "${cfg[@]}" fetch -q --depth=1 origin "${BRANCH}" || return 1
     git "${cfg[@]}" reset -q --hard FETCH_HEAD           || return 1
 
-    cp "${STAGE}/changelog.json" "${REPO}/site/src/data/changelog.json" || return 1
-    cp "${STAGE}/manifest.json"  "${REPO}/site/src/data/manifest.json"  || return 1
+    cp "${STAGE}/changelog.json" "${SITE}/src/data/changelog.json" || return 1
+    cp "${STAGE}/manifest.json"  "${SITE}/src/data/manifest.json"  || return 1
+
+    # upstream/: exactly what upstream.list names, from this checkout. Rebuilt
+    # from empty, so a file dropped from the list (or from this repo) leaves.
+    [ -s "${SITE}/upstream.list" ] || { echo "the site repo has no upstream.list" >&2; return 1; }
+    rm -rf "${SITE}/upstream"
+    local pat f n=0
+    while IFS= read -r pat; do
+      case "${pat}" in ''|'#'*) continue ;; esac
+      for f in $(cd "${REPO}" && compgen -G "${pat}" || true); do
+        mkdir -p "${SITE}/upstream/$(dirname "${f}")"
+        cp "${REPO}/${f}" "${SITE}/upstream/${f}" || return 1
+        n=$((n + 1))
+      done
+    done < "${SITE}/upstream.list"
+    [ "${n}" -gt 0 ] || { echo "upstream.list matched nothing in ${REPO}" >&2; return 1; }
 
     # Compare CONTENT, not the file. Every build stamps fresh timestamps and
     # digests, so a byte comparison always differs and would commit every
@@ -453,12 +482,13 @@ publish_site() {
     local norm mnorm new old new_mf old_mf
     norm='del(.generated, .from, .to)'
     new=$(jq -S "${norm}" "${STAGE}/changelog.json")
-    old=$(git -C "${REPO}" show "HEAD:site/src/data/changelog.json" 2>/dev/null | jq -S "${norm}" 2>/dev/null || echo "__none__")
+    old=$(git -C "${SITE}" show "HEAD:src/data/changelog.json" 2>/dev/null | jq -S "${norm}" 2>/dev/null || echo "__none__")
     mnorm='del(.version, .built)'
     new_mf=$(jq -S "${mnorm}" "${STAGE}/manifest.json")
-    old_mf=$(git -C "${REPO}" show "HEAD:site/src/data/manifest.json" 2>/dev/null | jq -S "${mnorm}" 2>/dev/null || echo "__none__")
-    if [ "${new}" = "${old}" ] && [ "${new_mf}" = "${old_mf}" ]; then
-      echo "no package or manifest changes since the last commit; nothing to commit"
+    old_mf=$(git -C "${SITE}" show "HEAD:src/data/manifest.json" 2>/dev/null | jq -S "${mnorm}" 2>/dev/null || echo "__none__")
+    git "${cfg[@]}" add -A upstream || return 1
+    if [ "${new}" = "${old}" ] && [ "${new_mf}" = "${old_mf}" ] && git "${cfg[@]}" diff --cached --quiet -- upstream; then
+      echo "no package, manifest or upstream changes since the last commit; nothing to commit"
       return 2
     fi
 
@@ -466,13 +496,13 @@ publish_site() {
     # first run -- when these files are not in the repo yet -- it reported
     # "unchanged" and skipped the commit, which is precisely the run that had
     # to make it. That is why site/changelog.json was never committed.
-    git "${cfg[@]}" add site/src/data/changelog.json \
-                        site/src/data/manifest.json || return 1
+    git "${cfg[@]}" add src/data/changelog.json \
+                        src/data/manifest.json || return 1
     git "${cfg[@]}" commit -q -m "site: package changelog for ${VERSION}" || return 1
     git "${cfg[@]}" push -q origin "HEAD:${BRANCH}"
   }
 
-  say "committing the build data the site renders from"
+  say "committing the build data and upstream files the site renders from"
   # A push can still lose a race with a commit that landed in the last second.
   # That is a retry, not a merge: resync and render again.
   local attempt rc
@@ -494,27 +524,20 @@ publish_site() {
 site_preflight() {
   [ "${DRY_RUN}" = yes ] && return 0
 
-  # publish() resets the worktree hard. On a builder that is a fresh clone and
-  # costs nothing; on a workstation it would take uncommitted work with it, so
-  # it is refused up front rather than explained afterwards.
-  if ! git -C "${REPO}" diff --quiet || ! git -C "${REPO}" diff --cached --quiet; then
-    die "the worktree is dirty and the site commit resets it; commit, stash, or --dry-run"
-  fi
-
-  if [ -z "${BRANCH}" ]; then
-    BRANCH="$(git -C "${REPO}" symbolic-ref --quiet --short HEAD || true)"
-    [ -n "${BRANCH}" ] || die "detached HEAD and no --branch: nothing says where the site commit goes"
-  fi
+  # The site commit is made in a clone of the site's repo under ${STAGE}, not
+  # in this checkout, which it only reads (upstream/). So a dirty checkout is
+  # no obstacle -- but what it publishes into upstream/ is whatever is on disk.
+  BRANCH="${BRANCH:-main}"
 
   [ -z "${GIT_TOKEN_FILE}" ] || [ -r "${GIT_TOKEN_FILE}" ] \
     || die "cannot read ${GIT_TOKEN_FILE}"
   return 0
 }
 
-# publish_site resets the worktree, which replaces this file underneath the
-# running shell. Everything therefore lives in functions -- bash parses a
-# function whole -- and the only top-level statement after them is this call,
-# by which point there is nothing left to re-read.
+# Everything lives in functions, and the only top-level statement after them
+# is this call. (publish_site once reset this checkout, rewriting this file
+# underneath the running shell; bash parses a function whole. It works in its
+# own clone of the site repo now, but the shape costs nothing to keep.)
 main() {
   # ONE predicate for the preflight and the thing it preflights. Every check in
   # site_preflight exists for publish_site -- the dirty-worktree refusal, the
