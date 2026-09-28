@@ -14,6 +14,9 @@ gnome-shell and HOME/XDG under a scratch dir. It never touches a host session.
   scenario.py restart          graceful restart: clean Text Editor restarts,
                                one with unsaved text keeps its dialog.
   scenario.py picker           screenshot the picker
+  scenario.py desktops [theme...]
+                               the site's desktop pictures: every theme x
+                               variant with glass and light on
 """
 import json
 import os
@@ -496,12 +499,42 @@ def picker():
     stop_shell()
 
 
+def desktops(only):
+    """The site's desktop pictures: every theme x variant with the effects on,
+    as a new account has them (the gate's own account has them off). Apps
+    start after each theme is set, since GTK takes the glass half at launch."""
+    for k in ("glass", "window-glass", "lighting", "power-on"):
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    start_shell()
+    for slug, modes in theme_list().items():
+        if only and slug not in only:
+            continue
+        for mode in modes:
+            kill_apps()
+            pt("set", slug, "--no-restart")
+            if len(modes) == 2:
+                dconf("/org/gnome/desktop/interface/color-scheme", "'prefer-dark'" if mode == "dark" else "'default'")
+            # the theme's wallpaper, when the builder's render is not in
+            # this image (WALLS: a directory of <slug>-<mode>.png)
+            wall = pathlib.Path(os.environ.get("WALLS", "/nonexistent")) / f"{slug}-{mode}.png"
+            if wall.exists():
+                for k in ("picture-uri", "picture-uri-dark"):
+                    dconf(f"/org/gnome/desktop/background/{k}", f"'file://{wall}'")
+            time.sleep(1.5)
+            launch_apps()
+            time.sleep(2)
+            screenshot(f"{slug}-{mode}-desktop")
+            print(f"  {slug:12} {mode:5} shot", flush=True)
+    kill_apps()
+    stop_shell()
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "gate"
     rc = 0
     try:
         rc = {"gate": lambda: gate(sys.argv[2:]), "firstlogin": firstlogin, "restart": restart,
-              "picker": picker}[mode]() or 0
+              "picker": picker, "desktops": lambda: desktops(sys.argv[2:])}[mode]() or 0
     finally:
         kill_apps()
         for p in procs:
