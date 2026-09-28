@@ -29,7 +29,7 @@ const code = rows.map(([key, value]) => `${key}${' '.repeat(gutter - key.length)
 
 <figure class="manifest">
   <arc-code-block class="theme-fixed-dark" filename="pulsar manifest" code={code}></arc-code-block>
-  <figcaption class="hint">the image's own manifest — rendered, not written</figcaption>
+  <figcaption class="hint">The image’s own manifest, rendered as it is.</figcaption>
 </figure>
 
 <style>
@@ -42,8 +42,5 @@ const code = rows.map(([key, value]) => `${key}${' '.repeat(gutter - key.length)
   }
   figcaption {
     margin-top: var(--space-sm);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    letter-spacing: 0.02em;
   }
 </style>

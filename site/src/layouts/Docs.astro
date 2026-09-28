@@ -17,12 +17,43 @@ interface Props {
 }
 const { title, description, path, headings = [], fullTitle, jsonLd = [] } = Astro.props;
 const here = (href: string) => path === href;
+const current = DOCS_NAV.flatMap((g) => g.links).find((l) => here(hrefOf(l)));
 ---
 
 <Base title={fullTitle ?? `${title} — Pulsar docs`} crumb={title} description={description} path={path} jsonLd={jsonLd}>
   <main id="main" class="page">
     <arc-container size="lg">
     <div class="docs">
+    {/* A phone gets the same list folded shut above the article, so the first
+        screen is the page, not the menu. Two copies, one shown at a time: a
+        <details> cannot be held open on desktop without script. */}
+    <details class="fold">
+      <summary>
+        <arc-icon name="list" size="sm"></arc-icon>
+        <span class="fold-k">Docs</span>
+        {current && <span class="fold-here">{current.label}</span>}
+        <arc-icon class="fold-caret" name="caret-down" size="sm"></arc-icon>
+      </summary>
+      <nav class="fold-nav" aria-label="Docs">
+        {
+          DOCS_NAV.map((g) => (
+            <div class="group">
+              <p class="group-h">{g.heading}</p>
+              <ul>
+                {g.links.map((l) => (
+                  <li>
+                    <a href={hrefOf(l)} aria-current={here(hrefOf(l)) ? 'page' : undefined}>
+                      <arc-icon name={l.icon} size="sm"></arc-icon>
+                      <span>{l.label}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        }
+      </nav>
+    </details>
     <nav class="side" aria-label="Docs">
       {
         DOCS_NAV.map((g) => (
@@ -92,14 +123,16 @@ const here = (href: string) => path === href;
     text-transform: uppercase;
     color: var(--text-muted);
   }
-  .side ul {
+  .side ul,
+  .fold-nav ul {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
     gap: 2px;
   }
-  .side a {
+  .side a,
+  .fold-nav a {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
@@ -110,17 +143,63 @@ const here = (href: string) => path === href;
     font-size: var(--text-sm);
     transition: color 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
   }
-  .side a:hover {
+  .side a:hover,
+  .fold-nav a:hover {
     color: var(--text-primary);
     background: color-mix(in oklab, var(--text-primary) 5%, transparent);
   }
-  .side a[aria-current='page'] {
+  .side a[aria-current='page'],
+  .fold-nav a[aria-current='page'] {
     color: var(--accent-primary);
     background: color-mix(in oklab, var(--accent-primary) 10%, transparent);
   }
-  .side arc-icon {
+  .side arc-icon,
+  .fold-nav arc-icon {
     flex: none;
     color: inherit;
+  }
+
+  /* ---- the phone's folded menu ------------------------------------------ */
+  .fold {
+    display: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+  }
+  .fold summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-height: 2.75rem;
+    padding: var(--space-sm) var(--space-md);
+    cursor: pointer;
+    list-style: none;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+  }
+  .fold summary::-webkit-details-marker {
+    display: none;
+  }
+  .fold-k {
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
+    font-size: var(--label-inline-size);
+    letter-spacing: var(--label-spacing);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .fold-here {
+    color: var(--text-primary);
+  }
+  .fold-caret {
+    margin-left: auto;
+    transition: transform 0.2s var(--ease-out);
+  }
+  .fold[open] .fold-caret {
+    transform: rotate(180deg);
+  }
+  .fold-nav {
+    padding: 0 var(--space-sm) var(--space-md);
   }
 
   /* ---- the article ------------------------------------------------------ */
@@ -191,7 +270,7 @@ const here = (href: string) => path === href;
     border-top: 1px solid var(--border-subtle);
     vertical-align: top;
   }
-  .prose :global(th) {
+  .prose :global(thead th) {
     color: var(--text-muted);
     font-family: var(--font-label);
     font-weight: var(--label-weight);
@@ -214,10 +293,10 @@ const here = (href: string) => path === href;
       gap: var(--space-xl);
     }
     .side {
-      position: static;
-      max-height: none;
-      padding-bottom: var(--space-lg);
-      border-bottom: 1px solid var(--border-subtle);
+      display: none;
+    }
+    .fold {
+      display: block;
     }
   }
 </style>

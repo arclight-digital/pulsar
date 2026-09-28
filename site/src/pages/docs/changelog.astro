@@ -37,7 +37,6 @@ const TOC = [
   headings={TOC}
   jsonLd={JSONLD}
 >
-  <p class="above"><arc-badge variant="primary" class="mono">{version}</arc-badge></p>
   <h1>What changed last night</h1>
   <p class="intro">
     Each new image compared with the one before it, package by package, from the package list
@@ -70,6 +69,7 @@ const TOC = [
     }
     <p class="lede">{arithmetic()}</p>
     <p class="prov mono">
+      <arc-badge variant="primary" size="sm" class="mono">{version}</arc-badge>
       {
         digest.fromDigest && digest.toDigest && (
           <>
@@ -99,9 +99,6 @@ const TOC = [
 </Docs>
 
 <style>
-  .above {
-    margin: 0 0 var(--space-md);
-  }
   .lead-say,
   .lead-pkg {
     font-family: var(--font-display);
@@ -134,6 +131,7 @@ const TOC = [
   }
   .prov {
     display: flex;
+    align-items: center;
     flex-wrap: wrap;
     gap: var(--space-sm) var(--space-md);
     font-size: var(--text-xs);

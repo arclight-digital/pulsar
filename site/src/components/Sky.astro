@@ -32,7 +32,7 @@ const { deck = true } = Astro.props;
 
 {deck && (
 <div class="deck" role="group" aria-label="Backdrop" id="lookSeg" hidden>
-  <span class="deck-note">the shipped wallpapers, live · more in the theme picker</span>
+  <span class="deck-note">The wallpapers Pulsar ships, live. More in the theme picker.</span>
   <div class="picker">
     {
       LOOKS.map((name, index) => (
@@ -95,9 +95,7 @@ const { deck = true } = Astro.props;
   /* on the sky itself, not on the chip below it: it takes the page's text
      color, so a light page's pale sky keeps it readable */
   .deck-note {
-    font-family: var(--font-mono);
-    font-size: var(--label-size);
-    letter-spacing: 0.04em;
+    font-size: var(--text-xs);
     color: var(--text-secondary);
   }
 

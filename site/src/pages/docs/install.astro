@@ -13,7 +13,7 @@ const DESCRIPTION =
 const ENROL = 'sudo mokutil --import /etc/pki/pulsar/MOK.der\nsudo systemctl reboot';
 const TAKE = `mokutil --test-key /etc/pki/pulsar/MOK.der   # ...is already enrolled\nsudo bootc switch ${IMAGES.nvidia}:latest\nsudo systemctl reboot`;
 const CHECK = 'modinfo -F signer nvidia\nnvidia-smi';
-const switchTo = (image: string) => `sudo bootc switch ${image}:latest\nsudo systemctl reboot`;
+const switchTo = (image: string) => `sudo bootc switch \\\n  ${image}:latest\nsudo systemctl reboot`;
 const JSONLD = [
   {
     '@type': 'TechArticle',

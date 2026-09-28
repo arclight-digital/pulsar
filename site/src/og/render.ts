@@ -28,13 +28,12 @@ export const H = 630; // the Open Graph standard size
 const MAX_BYTES = 200 * 1024;
 
 // The site's own tokens (src/styles/tokens.css): ink ground, star type,
-// cyan and periwinkle accents.
+// the cyan accent.
 const INK = '#0B0E1A';
 const DEEP = '#070912';
 const STAR = '#E9EDF7';
 const MUTED = '#A9B1CC';
 const CYAN = '#3ECBFF';
-const PERI = '#8FA8FF';
 
 // Read from the project root rather than from import.meta.url: this module is
 // bundled into dist/.prerender/chunks before it runs, so a path relative to
@@ -71,13 +70,20 @@ const LOCKUP_RATIO = 1600 / 452;
 const SILK = dataUri('image/jpeg', asset(SITE, 'assets-static', 'silk-still-dark.jpg'));
 const GAMESCALE = dataUri('image/svg+xml', asset(SITE, 'assets-static', 'gamescale.svg'));
 
+/** The smallest type any card may set: 11px on a 500px-wide feed preview,
+    6.5px on a 300px thumbnail. Anything smaller is texture, not text, so
+    h() refuses it and the build fails rather than ship a line nobody reads. */
+const MIN_TEXT = 26;
+
 /** Satori takes React-shaped nodes; this is the whole of what it needs. */
 type Node = { type: string; props: Record<string, unknown> };
 type Child = Node | string | null | false;
-const h = (type: string, style: Record<string, unknown>, ...children: Child[]): Node => ({
-  type,
-  props: { style, children: children.filter((c) => c !== null && c !== false) },
-});
+const h = (type: string, style: Record<string, unknown>, ...children: Child[]): Node => {
+  if (typeof style.fontSize === 'number' && style.fontSize < MIN_TEXT) {
+    throw new Error(`og: ${style.fontSize}px text is below the ${MIN_TEXT}px floor`);
+  }
+  return { type, props: { style, children: children.filter((c) => c !== null && c !== false) } };
+};
 const img = (src: string, width: number, height: number, style: Record<string, unknown> = {}): Node => ({
   type: 'img',
   props: { src, width, height, style },
@@ -132,14 +138,14 @@ function headline(text: string, size: number, maxWidth: number): Node {
   );
 }
 
-function sub(text: string, size = 28): Node {
+function sub(text: string, size = 30): Node {
   return h('div', { display: 'flex', fontSize: size, fontWeight: 400, lineHeight: 1.3, color: MUTED, marginTop: 18 }, text);
 }
 
 // The page's dark code block: deep ink, a hairline in periwinkle, a soft
-// cyan glow under it, a small language label. No window chrome: the site
-// draws commands as code blocks, not as windows.
-function panel(label: string, ...children: Child[]): Node {
+// cyan glow under it. No window chrome, and no language label: at thumbnail
+// size a label is a smudge, and the $ already says what this is.
+function panel(...children: Child[]): Node {
   return h(
     'div',
     {
@@ -149,29 +155,15 @@ function panel(label: string, ...children: Child[]): Node {
       border: '1px solid rgba(143, 168, 255, 0.28)',
       borderRadius: 18,
       boxShadow: '0 0 60px rgba(62, 203, 255, 0.14)',
-      padding: '22px 32px 28px',
+      padding: '26px 32px',
     },
-    h(
-      'div',
-      {
-        display: 'flex',
-        fontFamily: 'JetBrains Mono',
-        fontSize: 17,
-        color: PERI,
-        letterSpacing: 1.5,
-        textTransform: 'uppercase',
-        marginBottom: 14,
-        opacity: 0.8,
-      },
-      label,
-    ),
     ...children,
   );
 }
 
 // JetBrains Mono's advance is 0.6em, so a line's width is known from its length.
 const MONO_ADVANCE = 0.6;
-const NOTE_SCALE = 0.72;
+const NOTE_SCALE = 0.8;
 const NOTE_GAP = 40;
 
 function termLine(line: Line, size: number, cmdCols: number): Node {
@@ -200,11 +192,13 @@ function termMeasure(lines: Line[]) {
   return { cmdCols, ems, gap: noteCols ? NOTE_GAP : 0 };
 }
 
-/** The widest line sets the terminal's type size, up to a comfortable maximum. */
+/** The widest line sets the terminal's type size, up to a comfortable maximum.
+    Its comments are set smaller, and they have to clear the floor too. */
 function termSize(lines: Line[], width: number): number {
   const { ems, gap } = termMeasure(lines);
-  const size = Math.min(34, Math.floor((width - 64 - gap) / ems));
-  if (size < 20) throw new Error(`og: a terminal line is too long to read on a card (${size}px)`);
+  const size = Math.min(36, Math.floor((width - 64 - gap) / ems));
+  const least = lines.some((l) => l.note) ? Math.ceil(MIN_TEXT / NOTE_SCALE) : MIN_TEXT;
+  if (size < least) throw new Error(`og: a terminal line is too long to read on a card (${size}px); shorten it`);
   return size;
 }
 
@@ -225,8 +219,8 @@ function assertFits(card: Card, headSize: number, width: number, visualHeight: n
   }
   if (lines > 2) throw new Error(`og: card "${card.slug}" headline runs to ${lines} lines; keep it to two`);
   const used =
-    (PAD - 12) + 52 + // top padding and the lockup row
-    lines * headSize * 1.06 + (card.sub ? 18 + 28 * 1.3 : 0) +
+    (PAD - 12) + 64 + // top padding and the lockup row
+    lines * headSize * 1.06 + (card.sub ? 18 + 30 * 1.3 : 0) +
     visualHeight + PAD +
     2 * 28; // the least breathing room between the three rows
   if (used > H) throw new Error(`og: card "${card.slug}" needs ${Math.round(used)}px of ${H}; shorten it`);
@@ -236,10 +230,10 @@ function topRow(card: Card): Node {
   return h(
     'div',
     { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: W - 2 * PAD },
-    lockup(52),
+    lockup(64),
     h(
       'div',
-      { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 20, color: MUTED, letterSpacing: 0.5 },
+      { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 26, color: MUTED },
       `${SITE_HOST}${card.path === '/' ? '' : card.path}`,
     ),
   );
@@ -252,14 +246,14 @@ async function inner(card: Card): Promise<Node> {
   const width = W - 2 * PAD;
   let visual: Node;
 
-  // the panel's chrome: padding top and bottom, the label and its margin
-  const PANEL = 22 + 28 + 17 * 1.2 + 14;
+  // the panel's chrome: its padding, top and bottom
+  const PANEL = 26 + 26;
   if (v.kind === 'terminal') {
     const iconW = v.icon ? 112 + 36 : 0;
     const size = termSize(v.lines, width - iconW);
     const { cmdCols } = termMeasure(v.lines);
     assertFits(card, HEAD, width, PANEL + v.lines.length * size * 1.5);
-    const block = panel(v.label, ...v.lines.map((l) => termLine(l, size, cmdCols)));
+    const block = panel(...v.lines.map((l) => termLine(l, size, cmdCols)));
     visual = v.icon
       ? h(
           'div',
@@ -278,16 +272,15 @@ async function inner(card: Card): Promise<Node> {
       s.removed && `−${s.removed} removed`,
     ].filter(Boolean) as string[];
     const tally = changelog.baseline ? 'First build.' : counts.length ? counts.join('  ·  ') : 'Nothing moved.';
-    assertFits(card, HEAD, width, PANEL + 60 * 1.1 + 10 + 26 * 1.2);
+    assertFits(card, HEAD, width, PANEL + 60 * 1.1 + 10 + 28 * 1.2);
     visual = panel(
-      'latest build',
       h(
         'div',
         { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' },
         h('div', { display: 'flex', fontFamily: 'JetBrains Mono', fontWeight: 700, fontSize: 60, color: CYAN, lineHeight: 1.1 }, version),
-        h('div', { display: 'flex', fontSize: 28, color: STAR }, buildDate),
+        h('div', { display: 'flex', fontSize: 30, color: STAR }, buildDate),
       ),
-      h('div', { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 26, color: MUTED, marginTop: 10 }, tally),
+      h('div', { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 28, color: MUTED, marginTop: 10 }, tally),
     );
   } else {
     throw new Error(`og: card "${card.slug}" has a visual only the home card draws`);
@@ -373,10 +366,10 @@ async function home(card: Card): Promise<Node> {
       lockup(84),
       h('div', { display: 'flex', height: 40 }),
       headline(card.headline, 58, 500),
-      card.sub ? sub(card.sub, 26) : null,
+      card.sub ? sub(card.sub, 30) : null,
       h(
         'div',
-        { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 20, color: MUTED, marginTop: 40 },
+        { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 26, color: MUTED, marginTop: 40 },
         SITE_HOST,
       ),
     ),

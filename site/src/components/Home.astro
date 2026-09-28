@@ -17,7 +17,7 @@ import Version from './Version.astro';
 import Base from '../layouts/Base.astro';
 import { changelog, version } from '../data/build';
 import { arithmetic, digest } from '../data/digest';
-import { THEMES, variant } from '../data/themes';
+import { THEMES, label, variant } from '../data/themes';
 
 const lead = digest.lead;
 const extra = lead ? lead.members.length - 1 : 0;
@@ -26,16 +26,18 @@ const headline = digest.baseline ? 'First build.' : digest.quiet ? 'Nothing move
 const DESCRIPTION =
   'A stylish, atomic, agentic Linux, built nightly on Fedora: sixteen GNOME themes in one command, a machine you can hand to a coding agent, and games that just run.';
 
-// The desktop, as the theme harness photographed it in Pulsar's own theme.
-const DESKTOP = variant(THEMES[0]!, 'dark').desktop;
+// The desktop, as the theme harness photographed it: Pulsar Holo, the house's
+// other theme, since the themes section below opens on Pulsar's own.
+const HOLO = THEMES.find((t) => t.slug === 'pulsar-holo') ?? THEMES[0]!;
+const DESKTOP = variant(HOLO, 'dark').desktop;
 
 // The nightly loop, left to right: what happens between one build and the
 // next, including the part nobody has to do anything for.
 const LOOP = [
-  { i: 'moon', k: 'Tonight', t: 'A new system is built', d: 'From the latest Fedora packages, on a fresh machine, and compared with yesterday’s line by line.' },
-  { i: 'bell', k: 'Tomorrow', t: 'You’re told', d: 'One quiet notification when there’s something new. Nothing installs itself.' },
-  { i: 'arrow-clockwise', k: 'Your restart', t: 'It takes over', d: 'The new system is set up beside the one you’re using and swaps in when you restart.' },
-  { i: 'shield-check', k: 'If it fails', t: 'It undoes itself', d: 'If it can’t boot, your computer goes back to the last good one, on its own.' },
+  { i: 'moon', t: 'Tonight, a new system is built', d: 'From the latest Fedora packages, on a fresh machine, and compared with yesterday’s line by line.' },
+  { i: 'bell', t: 'When it’s ready, you’re told', d: 'One quiet notification when there’s something new. Nothing installs itself.' },
+  { i: 'arrow-clockwise', t: 'When you restart, it takes over', d: 'The new system waits beside the one you’re using and swaps in cleanly, between one session and the next.' },
+  { i: 'shield-check', t: 'If it fails, it undoes itself', d: 'If it can’t boot, your computer goes back to the last good one, on its own.' },
 ];
 
 const ROT = [
@@ -83,35 +85,31 @@ const GAMING = [
       <section class="chapter intro" id="about" aria-labelledby="about-h">
         <div class="intro-copy">
           <h2 id="about-h" class="statement">
-            Linux that <span class="lift">looks after itself.</span>
+            Set up well. <span class="lift">Kept that way.</span>
           </h2>
           <p class="big">
             Pulsar makes the hard choices for you, then keeps them working, so the computer gets out of
             your way.
           </p>
           <p>
-            A new, tested system is built every night. When one’s ready you’re told, and it takes over
-            when you next restart. If it ever fails to start, your computer goes back to the last good
-            one by itself.
+            The GNOME desktop environment plus 16 unique themes — and easily add your own. Your games
+            are ready the moment you log in. Your coding agent gets the whole machine to help with, and
+            no way to break it.
           </p>
-          <p>
-            It’s GNOME, in sixteen themes. Steam and the rest of the gaming stack are ready when you log
-            in. And there’s room for a coding agent to help you, without the power to break anything.
-          </p>
-          <p class="own">We chose the parts and tuned the details. It’s still your computer: change anything.</p>
+          <p class="own">We sweated the details. It’s still your computer: go change something.</p>
         </div>
         <figure class="desk">
           <div class="desk-frame">
             <img
               src={DESKTOP}
-              alt="The Pulsar desktop in Pulsar’s own theme: GNOME with the top bar, a terminal and the wallpaper."
+              alt={`The Pulsar desktop in the ${label(HOLO)} theme: GNOME with the top bar, a terminal and the wallpaper.`}
               width="1600"
               height="1000"
               loading="lazy"
               decoding="async"
             />
           </div>
-          <figcaption>The actual desktop, as the image ships it. Not a mockup.</figcaption>
+          <figcaption>{label(HOLO)}, one of the sixteen. A real screenshot, not a mockup.</figcaption>
         </figure>
       </section>
 
@@ -132,7 +130,6 @@ const GAMING = [
             LOOP.map((s, i) => (
               <li class={`station${i === LOOP.length - 1 ? ' safety' : ''}`}>
                 <span class="badge" aria-hidden="true"><arc-icon name={s.i} size="md"></arc-icon></span>
-                <span class="when">{s.k}</span>
                 <p class="st-t">{s.t}</p>
                 <p class="st-d">{s.d}</p>
               </li>
@@ -288,9 +285,7 @@ const GAMING = [
   }
   .desk figcaption {
     margin-top: var(--space-sm);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    letter-spacing: 0.02em;
+    font-size: var(--text-sm);
     color: var(--text-muted);
   }
 
@@ -336,14 +331,6 @@ const GAMING = [
     border-color: var(--color-success);
     color: var(--color-success);
     box-shadow: 0 0 10px color-mix(in oklab, var(--color-success) 45%, transparent);
-  }
-  .when {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    margin-bottom: var(--space-xs);
   }
   .st-t {
     font-family: var(--font-display);

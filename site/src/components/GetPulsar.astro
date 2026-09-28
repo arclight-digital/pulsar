@@ -48,7 +48,9 @@ const STOPS = [
   },
 ];
 
-const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
+// Broken after the verb, so the short first line leaves the Copy button its
+// own corner and a phone scrolls only the image name.
+const switchTo = (image: string) => `sudo bootc switch \\\n  ${image}:latest`;
 const ENROL = 'sudo mokutil --import /etc/pki/pulsar/MOK.der\nsudo systemctl reboot';
 const VERIFY = [
   `cosign verify-blob ${ISOS.vanilla}.sha256 \\`,
@@ -137,8 +139,7 @@ const VERIFY = [
 
   <div class="switch" aria-labelledby="switch-h">
     <div class="switch-copy">
-      <p class="switch-or">Or, without a USB stick</p>
-      <h3 id="switch-h">Switch from Fedora Silverblue, Kinoite, or any atomic Fedora</h3>
+      <h3 id="switch-h">No USB stick? Switch from Fedora Silverblue, Kinoite, or any atomic Fedora</h3>
       <p>
         One command and a restart. Your files, apps and settings stay exactly where they are, and
         the system you had is still one restart away if you change your mind.
@@ -371,13 +372,6 @@ const VERIFY = [
     border-radius: var(--radius-xl);
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-  }
-  .switch-or {
-    margin: 0 0 var(--space-xs) !important;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    letter-spacing: 0.04em;
-    color: var(--accent-primary) !important;
   }
   .switch h3 {
     font-size: var(--text-2xl);

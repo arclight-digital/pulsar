@@ -23,7 +23,7 @@ export type Visual =
   /** Three real desktop screenshots, from site/assets-static/themes. */
   | { kind: 'desktops'; themes: { slug: string; variant: 'dark' | 'light' }[] }
   /** A dark code block, the way the page's own arc-code-block draws one. */
-  | { kind: 'terminal'; label: string; lines: Line[]; icon?: string }
+  | { kind: 'terminal'; lines: Line[]; icon?: string }
   /** The latest build, from the build data the changelog page renders. */
   | { kind: 'build' };
 
@@ -39,7 +39,7 @@ export interface Card {
   visual: Visual;
 }
 
-// "2026-09-26T03:00:09Z" -> "26 September 2026". UTC and spelled out, so the
+// "2026-09-26T03:00:09Z" -> "September 26, 2026". UTC and spelled out, so the
 // card reads the same wherever the build runs and whoever reads it.
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -48,7 +48,7 @@ const MONTHS = [
 function longDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) throw new Error(`og cards: unreadable build date ${iso}`);
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
 }
 
 export const buildDate = longDate(changelog.generated);
@@ -64,20 +64,19 @@ export const CARDS: Card[] = [
   {
     slug: 'home',
     path: '/',
-    headline: 'A stylish, atomic, agentic Linux.',
-    sub: 'Sixteen desktop themes in one command.',
-    alt: 'The Pulsar logo beside three screenshots of the same desktop in the Gruvbox, Catppuccin and Pulsar themes, with the line: a stylish, atomic, agentic Linux.',
+    headline: 'Your lighthouse in the sky.',
+    sub: 'A stylish, atomic, agentic Linux.',
+    alt: 'The Pulsar logo beside three screenshots of the same desktop in the Gruvbox, Catppuccin and Pulsar themes, with the line: your lighthouse in the sky.',
     visual: { kind: 'desktops', themes: HOME_THEMES },
   },
   {
     slug: 'install',
     path: '/docs/install',
-    headline: 'One command, one reboot.',
-    sub: 'Already on Fedora Silverblue? Switch in place.',
-    alt: `The Pulsar logo and the install command in a dark terminal: sudo bootc switch ${IMAGES.vanilla}:latest.`,
+    headline: 'Install it fresh, or switch in place.',
+    sub: 'A free ISO, or one command from any atomic Fedora.',
+    alt: `The Pulsar logo and the switch command in a dark terminal: sudo bootc switch ${IMAGES.vanilla}:latest.`,
     visual: {
       kind: 'terminal',
-      label: 'bash',
       lines: [{ cmd: `sudo bootc switch ${IMAGES.vanilla}:latest` }, { cmd: 'sudo systemctl reboot' }],
     },
   },
@@ -88,13 +87,12 @@ export const CARDS: Card[] = [
     alt: 'The Pulsar logo and three pulsar commands in a dark terminal: theme set, doctor and rollback.',
     visual: {
       kind: 'terminal',
-      label: 'bash',
-      // Each comment is the CLI's own help text for that command (cli.astro's
-      // USAGE, which is verbatim from cli/pulsar), trimmed to fit.
+      // Each comment says what the CLI's own help text says for that command,
+      // in few enough words to stay readable at thumbnail size.
       lines: [
-        { cmd: 'pulsar theme set tokyo-night', note: 're-color the whole desktop' },
-        { cmd: 'pulsar doctor', note: 'health snapshot' },
-        { cmd: 'sudo pulsar rollback', note: 'boot the previous deployment' },
+        { cmd: 'pulsar theme set tokyo-night', note: 'recolor everything' },
+        { cmd: 'pulsar doctor', note: 'is it healthy?' },
+        { cmd: 'sudo pulsar rollback', note: 'undo an update' },
       ],
     },
   },
@@ -105,7 +103,6 @@ export const CARDS: Card[] = [
     alt: 'The Pulsar logo, the gamescale icon, and the command that sets gamescale up for Steam in a dark terminal.',
     visual: {
       kind: 'terminal',
-      label: 'bash',
       icon: 'gamescale',
       lines: [{ cmd: 'pulsar setup gamescale --platform steam' }],
     },
@@ -118,7 +115,6 @@ export const CARDS: Card[] = [
     alt: `The Pulsar logo and the command that lists the package list attached to the image: oras discover ${IMAGES.vanilla}:latest.`,
     visual: {
       kind: 'terminal',
-      label: 'bash',
       lines: [{ cmd: `oras discover ${IMAGES.vanilla}:latest` }],
     },
   },
@@ -130,6 +126,35 @@ export const CARDS: Card[] = [
     visual: { kind: 'build' },
   },
   {
+    slug: 'agents',
+    path: '/docs/agents-safety',
+    headline: 'The safest machine to hand an agent.',
+    sub: 'It can help with anything. It can’t break the system.',
+    alt: 'The Pulsar logo and two commands in a dark terminal: pulsar agent sandbox on and pulsar agent guard on.',
+    visual: {
+      kind: 'terminal',
+      lines: [
+        { cmd: 'pulsar agent sandbox on', note: 'one project, no keys' },
+        { cmd: 'pulsar agent guard on', note: 'installs ask first' },
+      ],
+    },
+  },
+  {
+    slug: 'themes',
+    path: '/docs/theming',
+    headline: 'Sixteen themes, one command.',
+    sub: 'The whole desktop changes together, and back.',
+    alt: 'The Pulsar logo and three pulsar theme commands in a dark terminal: list, set catppuccin and revert.',
+    visual: {
+      kind: 'terminal',
+      lines: [
+        { cmd: 'pulsar theme list', note: 'all sixteen' },
+        { cmd: 'pulsar theme set catppuccin', note: 'the whole desktop' },
+        { cmd: 'pulsar theme revert', note: 'stock GNOME, exactly' },
+      ],
+    },
+  },
+  {
     slug: 'docs',
     path: '/docs',
     headline: 'How Pulsar works',
@@ -137,8 +162,7 @@ export const CARDS: Card[] = [
     alt: 'A dark code block with pulsar agent guide and pulsar doctor, the commands the docs start from.',
     visual: {
       kind: 'terminal',
-      label: 'terminal',
-      lines: [{ cmd: 'pulsar agent guide', note: 'how this machine works' }, { cmd: 'pulsar doctor', note: 'is everything as it should be' }],
+      lines: [{ cmd: 'pulsar agent guide', note: 'how this machine works' }, { cmd: 'pulsar doctor', note: 'is it all healthy?' }],
     },
   },
 ];
