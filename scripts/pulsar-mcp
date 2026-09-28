@@ -181,6 +181,10 @@ def handle(msg):
 
 
 def main():
+    if sys.stdin.isatty():
+        # a person ran it: say what it is waiting for (stderr, never the protocol stream)
+        sys.stderr.write("pulsar mcp: an MCP server, waiting for JSON-RPC on stdin. An agent starts it, "
+                         "not you: `pulsar agent add` registers it. Ctrl-D or Ctrl-C to quit.\n")
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -205,4 +209,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

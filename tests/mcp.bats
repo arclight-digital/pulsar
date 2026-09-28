@@ -71,3 +71,16 @@ init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
     run rpc 'not json' "$init"
     echo "$output" | jq -s -e '.[0].error.code == -32700 and .[1].result.serverInfo.name == "pulsar"'
 }
+
+@test "run by hand in a terminal it says what it is, and Ctrl-C leaves no traceback" {
+    run python3 - "$MCP" <<'PY'
+import os, pty, signal, subprocess, sys, time
+m, s = pty.openpty()
+p = subprocess.Popen(["python3", sys.argv[1]], stdin=s, stdout=s, stderr=s)
+time.sleep(0.5); p.send_signal(signal.SIGINT); p.wait(); time.sleep(0.1)
+print(os.read(m, 4096).decode(), "exit", p.returncode)
+PY
+    [[ "$output" == *"waiting for JSON-RPC"* ]]
+    [[ "$output" != *Traceback* ]]
+    [[ "$output" == *"exit 130"* ]]
+}
