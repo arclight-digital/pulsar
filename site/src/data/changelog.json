@@ -1,84 +1,57 @@
 {
-  "generated": "2026-09-27T03:45:18Z",
+  "generated": "2026-09-28T03:20:10Z",
   "from": {
-    "ref": "ghcr.io/arclight-digital/pulsar@sha256:5e6409b328659dc7cec4734f3afa9393fc1389093eee2ea13f8d8260f03b0543",
-    "digest": "sha256:5e6409b328659dc7cec4734f3afa9393fc1389093eee2ea13f8d8260f03b0543"
-  },
-  "to": {
     "ref": "ghcr.io/arclight-digital/pulsar@sha256:b63661d463f60b386740f95c6c76a2b50eb752cfe716723fdd2c6ecdb50191f5",
     "digest": "sha256:b63661d463f60b386740f95c6c76a2b50eb752cfe716723fdd2c6ecdb50191f5"
   },
+  "to": {
+    "ref": "ghcr.io/arclight-digital/pulsar@sha256:d2cc5ceb01e29c00e2308b477969094bf0a5025fbc81b052161dbbe502c01c90",
+    "digest": "sha256:d2cc5ceb01e29c00e2308b477969094bf0a5025fbc81b052161dbbe502c01c90"
+  },
   "summary": {
-    "added": 2,
+    "added": 0,
     "removed": 0,
-    "upgraded": 9,
+    "upgraded": 6,
     "downgraded": 0,
     "changed": 0
   },
-  "added": [
-    {
-      "name": "adw-gtk3-theme",
-      "version": "6.4-3.fc44"
-    },
-    {
-      "name": "mesa-va-drivers-freeworld",
-      "version": "26.2.3-1.fc44"
-    }
-  ],
+  "added": [],
   "removed": [],
   "changed": [
     {
-      "name": "firefox",
-      "from": "156.0-1.fc44",
-      "to": "156.0.1-1.fc44",
+      "name": "distribution-gpg-keys",
+      "from": "1.121-1.fc44",
+      "to": "1.123-1.fc44",
       "direction": "upgraded"
     },
     {
-      "name": "firefox-langpacks",
-      "from": "156.0-1.fc44",
-      "to": "156.0.1-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "fwupd",
-      "from": "2.1.7-1.fc44",
-      "to": "2.1.8-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "fwupd-plugin-modem-manager",
-      "from": "2.1.7-1.fc44",
-      "to": "2.1.8-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "fwupd-plugin-uefi-capsule-data",
-      "from": "2.1.7-1.fc44",
-      "to": "2.1.8-1.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libheif",
-      "from": "1.23.4-6.fc44",
-      "to": "1.23.5-3.fc44",
-      "direction": "upgraded"
-    },
-    {
-      "name": "libheif-ffmpeg",
-      "from": "1.23.4-6.fc44",
-      "to": "1.23.5-3.fc44",
+      "name": "mise",
+      "from": "2026.9.14-1",
+      "to": "2026.9.15-1",
       "direction": "upgraded"
     },
     {
       "name": "python3-boto3",
-      "from": "1.43.96-1.fc44",
-      "to": "1.43.99-1.fc44",
+      "from": "1.43.99-1.fc44",
+      "to": "1.43.102-1.fc44",
       "direction": "upgraded"
     },
     {
       "name": "python3-botocore",
-      "from": "1.43.96-1.fc44",
-      "to": "1.43.99-1.fc44",
+      "from": "1.43.99-1.fc44",
+      "to": "1.43.102-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "vim-data",
+      "from": "2:9.2.1119-1.fc44",
+      "to": "2:9.2.1129-1.fc44",
+      "direction": "upgraded"
+    },
+    {
+      "name": "vim-minimal",
+      "from": "2:9.2.1119-1.fc44",
+      "to": "2:9.2.1129-1.fc44",
       "direction": "upgraded"
     }
   ]
