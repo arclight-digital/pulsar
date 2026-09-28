@@ -67,6 +67,13 @@ const FONTS = [
 // the logo, not a second drawing of it. 1600x452, cropped to the art plus 3%.
 const LOCKUP = dataUri('image/png', asset(REPO, 'assets', 'brand', 'png', 'pulsar-lockup-horizontal.png'));
 const LOCKUP_RATIO = 1600 / 452;
+// The mark alone, drawn huge and faint off the corner: the card's own
+// lighthouse. Shrunk first, so a 1024px PNG does not blow the byte budget.
+const MARK_SIZE = 900;
+const MARK = dataUri(
+  'image/png',
+  await sharp(asset(REPO, 'assets', 'brand', 'png', 'pulsar-mark-1024.png')).resize(MARK_SIZE).png().toBuffer(),
+);
 const SILK = dataUri('image/jpeg', asset(SITE, 'assets-static', 'silk-still-dark.jpg'));
 const GAMESCALE = dataUri('image/svg+xml', asset(SITE, 'assets-static', 'gamescale.svg'));
 
@@ -106,10 +113,9 @@ async function desktopShot(slug: string, v: 'dark' | 'light', width: number): Pr
 }
 
 const PAD = 64;
-/** The inner cards' headline size: 16px at a 300px-wide thumbnail. */
-const HEAD = 66;
 
-/** The ground every card shares: the silk still, darkened toward the type. */
+/** The ground every card shares: the silk still, darkened toward the type,
+    and the footer's spectrum line along the bottom edge. */
 function ground(scrim: string, ...children: Child[]): Node {
   return h(
     'div',
@@ -117,113 +123,199 @@ function ground(scrim: string, ...children: Child[]): Node {
     img(SILK, W, H, { position: 'absolute', top: 0, left: 0, objectFit: 'cover' }),
     h('div', { position: 'absolute', top: 0, left: 0, width: W, height: H, display: 'flex', backgroundImage: scrim }),
     ...children,
+    h('div', {
+      position: 'absolute',
+      left: 0,
+      bottom: 0,
+      width: W,
+      height: 5,
+      display: 'flex',
+      backgroundImage: 'linear-gradient(90deg, #3ECBFF 0%, #8FA8FF 45%, #5B53E6 75%, #3ECBFF 100%)',
+    }),
   );
 }
+
+/** The mark, huge and faint, bleeding off the top-right corner over a cyan
+    bloom: behind everything, so the type never competes with it. */
+const beacon = (): Node[] => [
+  h('div', {
+    position: 'absolute',
+    top: -260,
+    right: -260,
+    width: 760,
+    height: 760,
+    display: 'flex',
+    backgroundImage: 'radial-gradient(circle, rgba(62, 203, 255, 0.22) 0%, rgba(62, 203, 255, 0) 65%)',
+  }),
+  // far enough off the corner that the solid core is gone and only the lit
+  // arc sweeps in above the URL
+  img(MARK, MARK_SIZE, MARK_SIZE, { position: 'absolute', top: -520, right: -520, opacity: 0.32 }),
+];
 
 const lockup = (height: number) => img(LOCKUP, Math.round(height * LOCKUP_RATIO), height);
 
-function headline(text: string, size: number, maxWidth: number): Node {
-  return h(
-    'div',
-    {
-      display: 'flex',
-      fontSize: size,
-      fontWeight: 700,
-      lineHeight: 1.06,
-      letterSpacing: -0.015 * size,
-      color: STAR,
-      maxWidth,
-    },
-    text,
-  );
+
+// ---- the poster ------------------------------------------------------------
+// Each inner card is a poster: the page's promise is the picture, set as
+// large as it fits, tight, with its closing phrase lit on a line of its own
+// the way the site's .lift is. The one real command the page is about runs
+// along the bottom as a quiet strip, the way a poster carries its small print.
+
+// Host Grotesk Bold averages under 0.55em a character; JetBrains Mono's
+// advance is exactly 0.6em. Satori clips nothing and reports nothing, so the
+// layout is measured here from the same numbers it is drawn with, and a card
+// that would not fit fails the build instead of shipping cut off.
+const GROTESK = 0.55;
+const MONO = 0.6;
+const LEAD = 0.98;
+
+/** Lines a run of words needs at a size: the fewest a greedy fill manages. */
+function wrap(text: string, size: number, width: number): number {
+  return balance(text.split(' ').filter(Boolean), size, width).length;
 }
 
-function sub(text: string, size = 30): Node {
-  return h('div', { display: 'flex', fontSize: size, fontWeight: 400, lineHeight: 1.3, color: MUTED, marginTop: 18 }, text);
+/** Breaks words into the fewest lines that fit, then evens them out: of every
+    way to break into that many lines, the one whose longest line is shortest.
+    A headline never ends on a lone short word, and no line runs long while
+    the next sits nearly empty. Headlines are a handful of words, so trying
+    every break is cheap. */
+function balance(words: string[], size: number, width: number): string[] {
+  const perLine = Math.floor(width / (size * GROTESK));
+  const len = (ws: string[]) => ws.join(' ').length;
+  if (!words.length) return [];
+  let fewest = 1;
+  let run = 0;
+  for (const w of words) {
+    if (run && run + 1 + w.length > perLine) {
+      fewest += 1;
+      run = w.length;
+    } else run += (run ? 1 : 0) + w.length;
+  }
+  let best: string[][] | null = null;
+  let bestScore = Infinity;
+  const tryFrom = (at: number, left: number, acc: string[][]) => {
+    if (left === 1) {
+      const lines = [...acc, words.slice(at)];
+      const lens = lines.map(len);
+      if (Math.max(...lens) > perLine) return;
+      // the longest line first, then how uneven the lines are
+      const score = Math.max(...lens) * 1000 + (Math.max(...lens) - Math.min(...lens));
+      if (score < bestScore) {
+        bestScore = score;
+        best = lines;
+      }
+      return;
+    }
+    for (let end = at + 1; end <= words.length - (left - 1); end++) tryFrom(end, left - 1, [...acc, words.slice(at, end)]);
+  };
+  tryFrom(0, fewest, []);
+  return (best ?? [words]).map((ws) => ws.join(' '));
 }
 
-// The page's dark code block: deep ink, a hairline in periwinkle, a soft
-// cyan glow under it. No window chrome, and no language label: at thumbnail
-// size a label is a smudge, and the $ already says what this is.
-function panel(...children: Child[]): Node {
+/** The headline's lines at a size: the plain part, then the lit part on its own. */
+function headLines(card: Card, size: number, width: number): number {
+  const lift = card.lift ?? '';
+  const plain = card.headline.slice(0, card.headline.length - lift.length).trim();
+  return wrap(plain, size, width) + wrap(lift, size, width);
+}
+
+/** The largest size, from a poster's to a sign's, whose headline fits the room. */
+function fitHead(card: Card, width: number, room: number): number {
+  for (const size of [112, 104, 96, 88, 80, 72, 66]) {
+    const lines = headLines(card, size, width);
+    if (lines <= 3 && lines * size * LEAD <= room) return size;
+  }
+  throw new Error(`og: card "${card.slug}" headline will not fit at any poster size; shorten it`);
+}
+
+// The site's .lift: the promise's key phrase in the accent, glowing, on a
+// line of its own. Every line is broken here, balanced, and drawn as its own
+// row, rather than left to Satori's greedy wrap.
+function headline(text: string, size: number, maxWidth: number, lift = ''): Node {
+  if (lift && !text.endsWith(lift)) throw new Error(`og: "${lift}" is not the end of "${text}"`);
+  const words = (t: string) => t.split(' ').filter(Boolean);
+  const plain = balance(words(text.slice(0, text.length - lift.length)), size, maxWidth);
+  const lit = balance(words(lift), size, maxWidth);
+  const row = (t: string, on: boolean) =>
+    h(
+      'div',
+      on
+        ? { display: 'flex', whiteSpace: 'pre', color: CYAN, textShadow: '0 0 36px rgba(62, 203, 255, 0.6)' }
+        : { display: 'flex', whiteSpace: 'pre', color: STAR },
+      t,
+    );
   return h(
     'div',
     {
       display: 'flex',
       flexDirection: 'column',
-      backgroundColor: 'rgba(7, 9, 18, 0.9)',
-      border: '1px solid rgba(143, 168, 255, 0.28)',
-      borderRadius: 18,
-      boxShadow: '0 0 60px rgba(62, 203, 255, 0.14)',
-      padding: '26px 32px',
+      fontSize: size,
+      fontWeight: 700,
+      lineHeight: LEAD,
+      letterSpacing: -0.025 * size,
+      maxWidth,
     },
-    ...children,
+    ...plain.map((t) => row(t, false)),
+    ...lit.map((t) => row(t, true)),
   );
 }
 
-// JetBrains Mono's advance is 0.6em, so a line's width is known from its length.
-const MONO_ADVANCE = 0.6;
-const NOTE_SCALE = 0.8;
-const NOTE_GAP = 40;
+const SUB = 30;
+function sub(text: string, size = SUB): Node {
+  return h('div', { display: 'flex', fontSize: size, fontWeight: 400, lineHeight: 1.3, color: MUTED, marginTop: 22 }, text);
+}
 
-function termLine(line: Line, size: number, cmdCols: number): Node {
+// The small print: one real command on a hairline-topped strip, the prompt in
+// cyan and its comment beside it. Sized to the longest thing it must hold,
+// never under the floor.
+const STRIP = 30;
+function strip(line: Line, width: number, icon?: string): Node {
+  const iconW = icon ? 56 + 20 : 0;
+  const cols = 2 + line.cmd.length + (line.note ? 3 + line.note.length : 0);
+  const size = Math.min(STRIP, Math.floor((width - iconW) / (cols * MONO)));
+  if (size < MIN_TEXT) throw new Error(`og: "${line.cmd}" is too long for a card's strip (${size}px); shorten it`);
   return h(
     'div',
-    { display: 'flex', alignItems: 'baseline', fontFamily: 'JetBrains Mono', lineHeight: 1.5, whiteSpace: 'pre' },
-    h('span', { color: CYAN, fontSize: size, marginRight: size * MONO_ADVANCE }, '$'),
-    // Commands share one column width, so their comments line up.
-    h(
-      'span',
-      line.note
-        ? { color: STAR, fontSize: size, width: cmdCols * size * MONO_ADVANCE + NOTE_GAP }
-        : { color: STAR, fontSize: size },
-      line.cmd,
-    ),
-    line.note ? h('span', { color: MUTED, fontSize: Math.round(size * NOTE_SCALE) }, `# ${line.note}`) : null,
+    {
+      display: 'flex',
+      alignItems: 'center',
+      width,
+      paddingTop: 22,
+      borderTop: '1px solid rgba(143, 168, 255, 0.3)',
+      fontFamily: 'JetBrains Mono',
+      whiteSpace: 'pre',
+    },
+    icon ? img(GAMESCALE, 56, 56, { marginRight: 20 }) : null,
+    h('span', { color: CYAN, fontSize: size }, '$ '),
+    h('span', { color: STAR, fontSize: size }, line.cmd),
+    line.note ? h('span', { color: MUTED, fontSize: size }, `   # ${line.note}`) : null,
   );
 }
 
-/** Characters in the widest command, and that plus its comment in px per em. */
-function termMeasure(lines: Line[]) {
-  const cmdCols = Math.max(...lines.map((l) => l.cmd.length));
-  const noteCols = Math.max(0, ...lines.map((l) => (l.note ? l.note.length + 2 : 0)));
-  // in em of the command size: "$ " + the command column + gap + the comment
-  const ems = (2 + cmdCols) * MONO_ADVANCE + (noteCols ? noteCols * MONO_ADVANCE * NOTE_SCALE : 0);
-  return { cmdCols, ems, gap: noteCols ? NOTE_GAP : 0 };
-}
-
-/** The widest line sets the terminal's type size, up to a comfortable maximum.
-    Its comments are set smaller, and they have to clear the floor too. */
-function termSize(lines: Line[], width: number): number {
-  const { ems, gap } = termMeasure(lines);
-  const size = Math.min(36, Math.floor((width - 64 - gap) / ems));
-  const least = lines.some((l) => l.note) ? Math.ceil(MIN_TEXT / NOTE_SCALE) : MIN_TEXT;
-  if (size < least) throw new Error(`og: a terminal line is too long to read on a card (${size}px); shorten it`);
-  return size;
-}
-
-// Satori clips nothing and reports nothing: a card whose content runs off
-// the bottom renders without complaint. So the inner layout is budgeted here
-// from the same numbers it is drawn with, and a card that would not fit fails
-// the build instead. Host Grotesk Bold averages under 0.55em a character.
-function assertFits(card: Card, headSize: number, width: number, visualHeight: number) {
-  const perLine = Math.floor(width / (headSize * 0.55));
-  const words = card.headline.split(' ');
-  let lines = 1;
-  let run = 0;
-  for (const w of words) {
-    if (run && run + 1 + w.length > perLine) {
-      lines += 1;
-      run = w.length;
-    } else run += (run ? 1 : 0) + w.length;
-  }
-  if (lines > 2) throw new Error(`og: card "${card.slug}" headline runs to ${lines} lines; keep it to two`);
-  const used =
-    (PAD - 12) + 64 + // top padding and the lockup row
-    lines * headSize * 1.06 + (card.sub ? 18 + 30 * 1.3 : 0) +
-    visualHeight + PAD +
-    2 * 28; // the least breathing room between the three rows
-  if (used > H) throw new Error(`og: card "${card.slug}" needs ${Math.round(used)}px of ${H}; shorten it`);
+function buildStrip(width: number): Node {
+  const s = changelog.summary;
+  const counts = [
+    s.added && `+${s.added} added`,
+    s.upgraded && `${s.upgraded} upgraded`,
+    s.downgraded && `${s.downgraded} downgraded`,
+    s.changed && `${s.changed} changed`,
+    s.removed && `−${s.removed} removed`,
+  ].filter(Boolean) as string[];
+  const tally = changelog.baseline ? 'first build' : counts.length ? counts.join(' · ') : 'nothing moved';
+  return h(
+    'div',
+    {
+      display: 'flex',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      width,
+      paddingTop: 22,
+      borderTop: '1px solid rgba(143, 168, 255, 0.3)',
+      fontFamily: 'JetBrains Mono',
+    },
+    h('span', { color: CYAN, fontSize: 30, fontWeight: 700 }, version),
+    h('span', { color: MUTED, fontSize: 28 }, `${tally} · ${buildDate}`),
+  );
 }
 
 function topRow(card: Card): Node {
@@ -239,55 +331,26 @@ function topRow(card: Card): Node {
   );
 }
 
-const INNER_SCRIM = 'linear-gradient(180deg, rgba(11,14,26,0.55) 0%, rgba(11,14,26,0.35) 45%, rgba(11,14,26,0.8) 100%)';
+const INNER_SCRIM = 'linear-gradient(180deg, rgba(11,14,26,0.55) 0%, rgba(11,14,26,0.35) 45%, rgba(11,14,26,0.85) 100%)';
 
 async function inner(card: Card): Promise<Node> {
   const v = card.visual;
   const width = W - 2 * PAD;
-  let visual: Node;
+  const top = PAD - 12;
+  const STRIP_H = 22 + (v.kind === 'terminal' && v.icon ? 56 : STRIP * 1.3);
+  // what the headline has once the lockup row, the sub, the strip and the
+  // air between them are paid for
+  const room = H - top - 64 - 40 - (card.sub ? 22 + SUB * 1.3 : 0) - 40 - STRIP_H - PAD;
+  const size = fitHead(card, width - 60, room);
 
-  // the panel's chrome: its padding, top and bottom
-  const PANEL = 26 + 26;
-  if (v.kind === 'terminal') {
-    const iconW = v.icon ? 112 + 36 : 0;
-    const size = termSize(v.lines, width - iconW);
-    const { cmdCols } = termMeasure(v.lines);
-    assertFits(card, HEAD, width, PANEL + v.lines.length * size * 1.5);
-    const block = panel(...v.lines.map((l) => termLine(l, size, cmdCols)));
-    visual = v.icon
-      ? h(
-          'div',
-          { display: 'flex', alignItems: 'center' },
-          img(GAMESCALE, 112, 112, { marginRight: 36 }),
-          h('div', { display: 'flex', flexGrow: 1, flexDirection: 'column' }, block),
-        )
-      : block;
-  } else if (v.kind === 'build') {
-    const s = changelog.summary;
-    const counts = [
-      s.added && `+${s.added} added`,
-      s.upgraded && `${s.upgraded} upgraded`,
-      s.downgraded && `${s.downgraded} downgraded`,
-      s.changed && `${s.changed} changed`,
-      s.removed && `−${s.removed} removed`,
-    ].filter(Boolean) as string[];
-    const tally = changelog.baseline ? 'First build.' : counts.length ? counts.join('  ·  ') : 'Nothing moved.';
-    assertFits(card, HEAD, width, PANEL + 60 * 1.1 + 10 + 28 * 1.2);
-    visual = panel(
-      h(
-        'div',
-        { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' },
-        h('div', { display: 'flex', fontFamily: 'JetBrains Mono', fontWeight: 700, fontSize: 60, color: CYAN, lineHeight: 1.1 }, version),
-        h('div', { display: 'flex', fontSize: 30, color: STAR }, buildDate),
-      ),
-      h('div', { display: 'flex', fontFamily: 'JetBrains Mono', fontSize: 28, color: MUTED, marginTop: 10 }, tally),
-    );
-  } else {
-    throw new Error(`og: card "${card.slug}" has a visual only the home card draws`);
-  }
+  let visual: Node;
+  if (v.kind === 'terminal') visual = strip(v.line, width, v.icon);
+  else if (v.kind === 'build') visual = buildStrip(width);
+  else throw new Error(`og: card "${card.slug}" has a visual only the home card draws`);
 
   return ground(
     INNER_SCRIM,
+    ...beacon(),
     h(
       'div',
       {
@@ -296,7 +359,7 @@ async function inner(card: Card): Promise<Node> {
         left: 0,
         width: W,
         height: H,
-        padding: `${PAD - 12}px ${PAD}px ${PAD}px`,
+        padding: `${top}px ${PAD}px ${PAD}px`,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
@@ -305,7 +368,7 @@ async function inner(card: Card): Promise<Node> {
       h(
         'div',
         { display: 'flex', flexDirection: 'column' },
-        headline(card.headline, HEAD, width),
+        headline(card.headline, size, width - 60, card.lift),
         card.sub ? sub(card.sub) : null,
       ),
       visual,
@@ -365,7 +428,7 @@ async function home(card: Card): Promise<Node> {
       },
       lockup(84),
       h('div', { display: 'flex', height: 40 }),
-      headline(card.headline, 58, 500),
+      headline(card.headline, 64, 560, card.lift),
       card.sub ? sub(card.sub, 30) : null,
       h(
         'div',

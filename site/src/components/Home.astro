@@ -85,7 +85,7 @@ const GAMING = [
       <section class="chapter intro" id="about" aria-labelledby="about-h">
         <div class="intro-copy">
           <h2 id="about-h" class="statement">
-            Set up well. <span class="lift">Kept that way.</span>
+            Set up with care, <span class="lift">and it stays that way.</span>
           </h2>
           <p class="big">
             Pulsar makes the hard choices for you, then keeps them working, so the computer gets out of
@@ -96,7 +96,7 @@ const GAMING = [
             are ready the moment you log in. Your coding agent gets the whole machine to help with, and
             no way to break it.
           </p>
-          <p class="own">We sweated the details. It’s still your computer: go change something.</p>
+          <p class="own">We sweated the small stuff so you don’t have to. It’s still your computer, though, so poke around and make it a little weird.</p>
         </div>
         <figure class="desk">
           <div class="desk-frame">
@@ -245,7 +245,10 @@ const GAMING = [
     letter-spacing: -0.035em;
     margin: 0 0 var(--space-lg);
   }
+  /* the promise's second half on its own line, so the glow never starts
+     mid-line */
   .lift {
+    display: block;
     color: var(--accent-primary);
     text-shadow: var(--glow-xs);
   }

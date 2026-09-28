@@ -16,14 +16,14 @@
 import { changelog, version } from '../data/build';
 import { IMAGES } from '../data/site';
 
-/** A line of a terminal visual: a command after a prompt, with an optional comment beside it. */
+/** A card's command: after a prompt, with an optional comment beside it. */
 export type Line = { cmd: string; note?: string };
 
 export type Visual =
   /** Three real desktop screenshots, from site/assets-static/themes. */
   | { kind: 'desktops'; themes: { slug: string; variant: 'dark' | 'light' }[] }
-  /** A dark code block, the way the page's own arc-code-block draws one. */
-  | { kind: 'terminal'; lines: Line[]; icon?: string }
+  /** One real command, as the poster's small print along the bottom. */
+  | { kind: 'terminal'; line: Line; icon?: string }
   /** The latest build, from the build data the changelog page renders. */
   | { kind: 'build' };
 
@@ -32,6 +32,9 @@ export interface Card {
   slug: string;
   path: string;
   headline: string;
+  /** the headline's closing words, lit in the accent the way the site's
+      .lift is; must be how the headline ends */
+  lift?: string;
   /** a short second line under the headline; optional */
   sub?: string;
   /** og:image:alt, describing the picture rather than repeating the page */
@@ -65,6 +68,7 @@ export const CARDS: Card[] = [
     slug: 'home',
     path: '/',
     headline: 'Your lighthouse in the sky.',
+    lift: 'in the sky.',
     sub: 'A stylish, atomic, agentic Linux.',
     alt: 'The Pulsar logo beside three screenshots of the same desktop in the Gruvbox, Catppuccin and Pulsar themes, with the line: your lighthouse in the sky.',
     visual: { kind: 'desktops', themes: HOME_THEMES },
@@ -73,55 +77,43 @@ export const CARDS: Card[] = [
     slug: 'install',
     path: '/docs/install',
     headline: 'Install it fresh, or switch in place.',
+    lift: 'switch in place.',
     sub: 'A free ISO, or one command from any atomic Fedora.',
-    alt: `The Pulsar logo and the switch command in a dark terminal: sudo bootc switch ${IMAGES.vanilla}:latest.`,
-    visual: {
-      kind: 'terminal',
-      lines: [{ cmd: `sudo bootc switch ${IMAGES.vanilla}:latest` }, { cmd: 'sudo systemctl reboot' }],
-    },
+    alt: `The Pulsar logo, the line "Install it fresh, or switch in place.", and the switch command: sudo bootc switch ${IMAGES.vanilla}:latest.`,
+    visual: { kind: 'terminal', line: { cmd: `sudo bootc switch ${IMAGES.vanilla}:latest` } },
   },
   {
     slug: 'cli',
     path: '/docs/cli',
     headline: 'One command for the whole system.',
-    alt: 'The Pulsar logo and three pulsar commands in a dark terminal: theme set, doctor and rollback.',
-    visual: {
-      kind: 'terminal',
-      // Each comment says what the CLI's own help text says for that command,
-      // in few enough words to stay readable at thumbnail size.
-      lines: [
-        { cmd: 'pulsar theme set tokyo-night', note: 'recolor everything' },
-        { cmd: 'pulsar doctor', note: 'is it healthy?' },
-        { cmd: 'sudo pulsar rollback', note: 'undo an update' },
-      ],
-    },
+    lift: 'the whole system.',
+    alt: 'The Pulsar logo, the line "One command for the whole system.", and the command pulsar theme set tokyo-night.',
+    // the comment says what the CLI's own help text says, in few enough
+    // words to read at thumbnail size
+    visual: { kind: 'terminal', line: { cmd: 'pulsar theme set tokyo-night', note: 'recolor everything' } },
   },
   {
     slug: 'gamescale',
     path: '/docs/gamescale',
     headline: 'Your screen’s real resolution, for one game.',
-    alt: 'The Pulsar logo, the gamescale icon, and the command that sets gamescale up for Steam in a dark terminal.',
-    visual: {
-      kind: 'terminal',
-      icon: 'gamescale',
-      lines: [{ cmd: 'pulsar setup gamescale --platform steam' }],
-    },
+    lift: 'for one game.',
+    alt: 'The Pulsar logo, the gamescale icon, and the command that sets gamescale up for Steam.',
+    visual: { kind: 'terminal', icon: 'gamescale', line: { cmd: 'pulsar setup gamescale --platform steam' } },
   },
   {
     slug: 'provenance',
     path: '/docs/provenance',
     headline: 'Every image has a paper trail.',
+    lift: 'a paper trail.',
     sub: 'Full package list attached, diffed every night.',
     alt: `The Pulsar logo and the command that lists the package list attached to the image: oras discover ${IMAGES.vanilla}:latest.`,
-    visual: {
-      kind: 'terminal',
-      lines: [{ cmd: `oras discover ${IMAGES.vanilla}:latest` }],
-    },
+    visual: { kind: 'terminal', line: { cmd: `oras discover ${IMAGES.vanilla}:latest` } },
   },
   {
     slug: 'changelog',
     path: '/docs/changelog',
     headline: 'What changed last night.',
+    lift: 'last night.',
     alt: `The Pulsar logo and the latest build, ${version}, built ${buildDate}, with its package counts.`,
     visual: { kind: 'build' },
   },
@@ -129,41 +121,28 @@ export const CARDS: Card[] = [
     slug: 'agents',
     path: '/docs/agents-safety',
     headline: 'The safest machine to hand an agent.',
+    lift: 'hand an agent.',
     sub: 'It can help with anything. It can’t break the system.',
-    alt: 'The Pulsar logo and two commands in a dark terminal: pulsar agent sandbox on and pulsar agent guard on.',
-    visual: {
-      kind: 'terminal',
-      lines: [
-        { cmd: 'pulsar agent sandbox on', note: 'one project, no keys' },
-        { cmd: 'pulsar agent guard on', note: 'installs ask first' },
-      ],
-    },
+    alt: 'The Pulsar logo, the line "The safest machine to hand an agent.", and the command pulsar agent sandbox on.',
+    visual: { kind: 'terminal', line: { cmd: 'pulsar agent sandbox on', note: 'one project, no keys' } },
   },
   {
     slug: 'themes',
     path: '/docs/theming',
     headline: 'Sixteen themes, one command.',
+    lift: 'one command.',
     sub: 'The whole desktop changes together, and back.',
-    alt: 'The Pulsar logo and three pulsar theme commands in a dark terminal: list, set catppuccin and revert.',
-    visual: {
-      kind: 'terminal',
-      lines: [
-        { cmd: 'pulsar theme list', note: 'all sixteen' },
-        { cmd: 'pulsar theme set catppuccin', note: 'the whole desktop' },
-        { cmd: 'pulsar theme revert', note: 'stock GNOME, exactly' },
-      ],
-    },
+    alt: 'The Pulsar logo, the line "Sixteen themes, one command.", and the command pulsar theme set catppuccin.',
+    visual: { kind: 'terminal', line: { cmd: 'pulsar theme set catppuccin', note: 'the whole desktop' } },
   },
   {
     slug: 'docs',
     path: '/docs',
-    headline: 'How Pulsar works',
+    headline: 'How Pulsar works, top to bottom.',
+    lift: 'top to bottom.',
     sub: 'Install, themes, agents, and how every image is built and signed.',
-    alt: 'A dark code block with pulsar agent guide and pulsar doctor, the commands the docs start from.',
-    visual: {
-      kind: 'terminal',
-      lines: [{ cmd: 'pulsar agent guide', note: 'how this machine works' }, { cmd: 'pulsar doctor', note: 'is it all healthy?' }],
-    },
+    alt: 'The Pulsar logo, the line "How Pulsar works, top to bottom.", and the command pulsar agent guide.',
+    visual: { kind: 'terminal', line: { cmd: 'pulsar agent guide', note: 'how this machine works' } },
   },
 ];
 
