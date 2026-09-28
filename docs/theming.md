@@ -172,14 +172,15 @@ build ships none, and every theme falls back to the brand pair.
 
 The Shell extension adds a set of effects, all on by default and each a
 switch -- in the extension's page in the Extensions app and under Effects in
-the theme picker (`org.gnome.shell.extensions.pulsar-theme`). GNOME keeps the
+the theme picker (`org.gnome.shell.extensions.pulsar-theme`), where Reset
+puts them all back to the defaults. GNOME keeps the
 structure -- layout, radii, type, timing; the effects add only material and
 light, and every outline stays the theme's own.
 
 | Key | What it does |
 |---|---|
 | `glass` | Menus (every popup, the panel's and everyone else's), the top bar, the OSDs and notification banners go translucent over a live blur of whatever is really beneath them, with a soft drop shadow. The dash gets the same light and shadow without a blur: only the overview's flat ground is ever behind it. |
-| `window-glass` | GTK apps' chrome goes a little translucent over the same live blur: the engine writes libadwaita's window ground, header bars and sidebars with alpha in `gtk.css`, and the extension draws the blur inside each GTK window, so it follows the window into the overview. The terminal's background goes to 85% (Ptyxis's own per-profile `opacity`, left alone if you set your own). Content (views, cards, dialogs, popovers) stays solid. Apps opened after a change pick up the GTK half; the terminal changes live. Needs `glass`. |
+| `window-glass` | GTK apps' chrome goes a little translucent over the same live blur: the engine writes libadwaita's window ground, header bars and sidebars with alpha in `gtk.css`, and the extension draws the blur inside each GTK window, so it follows the window into the overview. The terminal's background goes to 85% (Ptyxis's own per-profile `opacity`, left alone if you set your own). Content (views, cards, dialogs, popovers) stays solid; cards go a step lighter with a hairline edge, so they do not sink into the blurred ground. Apps opened after a change pick up the GTK half; the terminal changes live. Switched off, windows already open keep their blur until they close (GTK read the translucent sheet at launch, and without the blur they would be see-through). Needs `glass`. |
 | `lighting` | The button that opened a menu glows, and a shader lights the rim facing it, a little spill, a glint inside the edge, faint scatter and grain, and the date menu's divider. OSDs are lit from the bottom edge, banners from the top. While the battery is low the edge warms all the way round (the theme's orange), and it goes the theme's red when the battery is critical or on a critical banner. Phosphor and Amber (`shell_glow` in their theme.toml) also give the clock and headings a phosphor glow. |
 | `power-on` | As a surface appears its rim traces out from the light, in the Shell's own animation time (so it is instant with animations off). Needs `lighting`. |
 | `focus-brackets` | Four corner brackets lock onto the control the keyboard is on and glide between controls, beside the stock focus ring. Not on a control under the pointer (hovering a menu item moves key focus too). |

@@ -324,6 +324,20 @@ class Variant:
         c["headerbar_bg"] = glass("headerbar", 0.35)
         c["sidebar_bg"] = glass("sidebar", 0.35)
         c["window_backdrop"] = glass("window", 0.35)
+        # Over the blur the ground is close in value to the cards on it, and
+        # they sank into it: a step lighter, and a hairline of light round
+        # each (cards, boxed lists and their separate rows).
+        card = self.p["card"]
+        if g:
+            dark = self.mode == "dark"
+            card = card.mix(self.p["foreground"], 0.05) if dark else card.mix(WHITE, 0.6)
+            edge = f"rgba({self.p['foreground'].rgb}, 0.09)" if dark else "rgba(255, 255, 255, 0.7)"
+            drop = "rgba(0, 0, 6, 0.25)" if dark else "rgba(0, 0, 6, 0.08)"
+            c["glass_cards"] = (".card, .boxed-list, .boxed-list-separate > row {\n"
+                                f"  box-shadow: inset 0 0 0 1px {edge}, 0 1px 3px {drop};\n}}\n")
+        else:
+            c["glass_cards"] = ""
+        c["card_bg"] = card.hex
         c["text_glow"] = (f"text-shadow: 0 0 6px rgba({self.p['accent'].rgb}, 0.55);"
                           if self.shell_glow else "")
         c["gnome_accent"] = self.gnome_accent

@@ -23,9 +23,9 @@
   --secondary-sidebar-bg-color: {{window}};
   --secondary-sidebar-fg-color: {{foreground}};
   --secondary-sidebar-backdrop-color: {{window}};
-  --card-bg-color: {{card}};
+  --card-bg-color: {{card_bg}};
   --card-fg-color: {{foreground}};
-  --thumbnail-bg-color: {{card}};
+  --thumbnail-bg-color: {{card_bg}};
   --thumbnail-fg-color: {{foreground}};
   --dialog-bg-color: {{popover}};
   --dialog-fg-color: {{foreground}};
@@ -36,3 +36,4 @@
   --active-toggle-bg-color: {{selection}};
   --active-toggle-fg-color: {{foreground}};
 }
+{{glass_cards}}
