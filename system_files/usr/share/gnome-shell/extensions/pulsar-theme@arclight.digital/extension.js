@@ -20,7 +20,9 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+import {Glass} from './glass.js';
 
 export default class PulsarThemeExtension extends Extension {
     enable() {
@@ -68,9 +70,18 @@ export default class PulsarThemeExtension extends Extension {
                 this._reload();
         });
         this._reload();
+        // Glass and light (glass.js), switched by this extension's own
+        // settings: the Extensions app's preferences and the theme picker.
+        this._injections = new InjectionManager();
+        this._glass = new Glass(this.getSettings(), this._injections);
     }
 
     disable() {
+        this._injections?.clear();
+        this._injections = null;
+        this._glass?.destroy();
+        this._glass = null;
+        Glass.release();
         this._monitor?.disconnect(this._monitorId);
         this._monitor?.cancel();
         this._monitor = null;

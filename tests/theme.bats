@@ -134,6 +134,32 @@ setup() {
     grep -q "^enabled-extensions=.*'gamescale@arclight.digital'.*'pulsar-theme@arclight.digital'" zz1-pulsar-theme.gschema.override
 }
 
+@test "the extension's effects: its schema, every key on by default, and every screen that shows them" {
+    ext="${REPO}/system_files/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital"
+    xml="${REPO}/system_files/usr/share/glib-2.0/schemas/org.gnome.shell.extensions.pulsar-theme.gschema.xml"
+    [ "$(jq -r '."settings-schema"' "${ext}/metadata.json")" = org.gnome.shell.extensions.pulsar-theme ]
+    grep -q 'id="org.gnome.shell.extensions.pulsar-theme"' "$xml"
+    for k in glass window-glass lighting power-on focus-brackets; do
+        python3 - "$xml" "$k" <<'PY'
+import sys, xml.etree.ElementTree as ET
+key = ET.parse(sys.argv[1]).find(f".//key[@name='{sys.argv[2]}']")
+assert key is not None and key.get("type") == "b" and key.findtext("default").strip() == "true", sys.argv[2]
+PY
+        grep -q "'${k}'" "${ext}/prefs.js"
+        grep -q "\"${k}\"" "${REPO}/scripts/pulsar-theme-picker"
+    done
+    # the tint slider: a 0..1 double, on both screens
+    grep -q '<key name="glass-tint" type="d">' "$xml"
+    grep -q '<range min="0.0" max="1.0"/>' "$xml"
+    grep -q "'glass-tint'" "${ext}/prefs.js"
+    grep -q '"glass-tint"' "${REPO}/scripts/pulsar-theme-picker"
+    # the classes glass.js toggles are the ones the Shell sheet keys off
+    for c in pulsar-glass pulsar-lit; do
+        grep -q "'${c}'" "${ext}/glass.js"
+        grep -q "\.${c} " "${PULSAR_THEME_TEMPLATES}/gnome-shell.css"
+    done
+}
+
 @test "every theme's wallpapers are named .jxl or are brand files" {
     run grep -rhE '^(dark|light) = ' "$PULSAR_THEME_PATH"
     [ "$status" -eq 0 ]

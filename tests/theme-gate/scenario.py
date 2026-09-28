@@ -218,9 +218,11 @@ def selector_drift():
         else GATE / "templates" / "gnome-shell.css"
     tpl = re.sub(r"/\*.*?\*/", "", tpl_path.read_text(), flags=re.S)
     missing = set()
+    # Classes the extension itself puts on the UI group (glass.js), not the Shell's.
+    ours = {".pulsar-glass", ".pulsar-lit", ".pulsar-focus-brackets", ".pulsar-panel-shadow", ".pulsar-panel-hairline"}
     for sel in re.findall(r"([^{}]+)\{", tpl):
         for tok in re.findall(r"[.#][A-Za-z][\w-]*", sel):
-            if not re.search(re.escape(tok) + r"(?![\w-])", stock):
+            if tok not in ours and not re.search(re.escape(tok) + r"(?![\w-])", stock):
                 missing.add(tok)
     return sorted(missing)
 

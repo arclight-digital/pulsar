@@ -3,6 +3,7 @@ name = "Amber"
 author = "Pulsar; after P3 amber-phosphor terminals"
 source = "dark: upstream palette, by hand"
 prefer = "dark"
+shell_glow = true
 
 [dark]
 accent = "#ffb000"

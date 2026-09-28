@@ -77,7 +77,7 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
    the theme: flat ones transparent, raised ones a foreground tint, and hover
    and press as tints too, which reads right on dark and light alike. */
 .calendar .calendar-day-heading, .calendar .calendar-day,
-.calendar .calendar-month-header .calendar-month-label,
+.calendar .calendar-month-header .calendar-month-label, .calendar .calendar-month-header .pager-button,
 .button.flat, .icon-button.flat,
 .message .message-header .flat.message-expand-button,
 .message .message-header .flat.message-close-button,
@@ -106,7 +106,7 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .audio-device-selection-dialog .audio-selection-box .audio-selection-device:active {
   background-color: rgba({{foreground_rgb}}, 0.14); }
 
-.button, .calendar .calendar-month-header .pager-button,
+.button,
 .notification-button, .modal-dialog .modal-dialog-button-box .modal-dialog-button,
 .message .message-header .message-expand-button, .message .message-header .message-close-button,
 .message-notification-group .message-collapse-button,
@@ -129,6 +129,10 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .weather-button:hover, .message:hover { background-color: st-mix({{foreground}}, {{background_raised}}, 6%); }
 .search-section-content, .app-folder-dialog, .workspace-switcher, .resize-popup {
   background-color: {{popover}}; color: {{foreground}}; }
+
+/* The month arrows are flat now (above); their icons are stock white, which
+   vanishes on a light popover. */
+.calendar .calendar-month-header .pager-button { color: {{foreground}}; }
 
 /* Calendar text is stock white in every state; the date header above it
    too. Theme foreground here, before the dimming rules below, which then
@@ -196,3 +200,77 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .quick-toggle:checked:active, .quick-toggle-has-menu:checked .quick-toggle-menu-button:active {
   background-color: {{accent}}; color: {{accent_fg}}; }
 .button.default:hover, .calendar .calendar-day.calendar-today:selected:hover { background-color: {{accent_hover}}; color: {{accent_fg}}; }
+
+/* Glass and light. The extension adds .pulsar-glass and .pulsar-lit to the
+   Shell's UI group while each is on (its settings; never on the lock screen
+   or in high contrast), and draws the blur and the light itself -- see
+   glass.js. This sheet owns only the material: the same elevated tint the
+   solid menu paints, at the Glass tint slider's alpha, over a blur glass.js darkens (or on a light
+   theme lightens), so text on it stays readable. Inner cards become a faint lift instead of a
+   solid step. */
+/* The edge stays the theme's own (the border above), so glass and solid
+   menus share one outline. No stock box-shadow under glass: its tight 4px
+   ring reads as a hard cut around the glass, and glass.js draws a soft,
+   deep one of its own. */
+.pulsar-glass .popup-menu-content, .pulsar-glass .candidate-popup-content, .pulsar-glass .quick-settings {
+  background-color: transparent; box-shadow: none;
+  -pulsar-glass-tint: rgba({{popover_rgb}}, {{glass_alpha}}); }
+.pulsar-glass .quick-toggle-menu, .pulsar-glass .message, .pulsar-glass .events-button,
+.pulsar-glass .world-clocks-button, .pulsar-glass .weather-button, .pulsar-glass .calendar {
+  background-color: {{glass_card}}; box-shadow: inset 0 0 0 1px rgba({{blue_rgb}}, 0.1); }
+.pulsar-glass .calendar:hover, .pulsar-glass .events-button:hover, .pulsar-glass .world-clocks-button:hover,
+.pulsar-glass .weather-button:hover, .pulsar-glass .message:hover { background-color: {{glass_card_hover}}; }
+/* The top bar over its blurred wallpaper. The overview's own transparent
+   bar is restated, or this rule would win on order. */
+.pulsar-glass #panel { background-color: {{glass_panel}}; }
+/* a ledge: a lit hairline where the bar ends, one device pixel at any scale,
+   drawn by glass.js in these colors (CSS can only say one logical pixel) */
+.pulsar-panel-hairline { color: {{foreground}}; -pulsar-light: {{accent}}; }
+/* The top bar's shadow, drawn under the windows (glass.js): on the desktop only. */
+.pulsar-panel-shadow {
+  background-gradient-direction: vertical;
+  background-gradient-start: {{panel_shadow}};
+  background-gradient-end: transparent; }
+.pulsar-glass #panel:overview { background-color: transparent; }
+
+/* The OSDs (volume, brightness) and notification banners are glass too.
+   Restated after the .message card above: a banner is a .message. */
+.pulsar-glass .osd-window, .pulsar-glass .notification-banner, .pulsar-glass .notification-banner:hover {
+  background-color: transparent; box-shadow: none;
+  -pulsar-glass-tint: rgba({{popover_rgb}}, {{glass_alpha}}); }
+/* The dash: no blur (all that is behind it is the overview's flat ground),
+   but the same material otherwise -- lit from above, a hairline edge, and
+   a soft shadow that floats it over the overview. */
+.pulsar-glass #dash .dash-background {
+  background-gradient-direction: vertical;
+  background-gradient-start: st-mix({{foreground}}, {{popover}}, 7%);
+  background-gradient-end: {{popover}};
+  border: 1px solid rgba({{foreground_rgb}}, 0.08);
+  box-shadow: 0 10px 28px 0 {{panel_shadow}}; }
+/* running apps' dots glow like the light */
+.pulsar-lit .app-grid-running-dot { box-shadow: 0 0 6px 0 rgba({{accent_rgb}}, 0.7); }
+
+/* The light's colors, which glass.js reads off each lit surface: the
+   accent, a neutral for the divider, and the warning edge -- warm while the
+   battery is low, the theme's red for a critical banner or a battery about
+   to run out. Those two keep their meaning in every theme. */
+.popup-menu-content, .quick-settings, .osd-window, .notification-banner {
+  -pulsar-light: {{accent}}; -pulsar-light-neutral: {{blue}};
+  -pulsar-light-warn: {{orange}}; -pulsar-light-alert: {{red}}; }
+/* The keyboard-focus brackets glass.js draws around the focused control,
+   beside the stock focus ring, never instead of it. */
+.pulsar-focus-brackets { color: {{accent}}; }
+/* The widget that opened the menu is the light source, so it reads as an
+   emitter while its menu is open: a tinted pill with a soft glow, the clock
+   pill for the date menu, the button itself for the rest. */
+/* (a panel button with its menu open is :active in GNOME 50, :checked before) */
+.pulsar-lit #panel .panel-button:active, .pulsar-lit #panel .panel-button:checked {
+  background-color: rgba({{accent_rgb}}, 0.14); box-shadow: 0 0 10px rgba({{accent_rgb}}, 0.22); }
+.pulsar-lit #panel .panel-button.clock-display:active, .pulsar-lit #panel .panel-button.clock-display:checked {
+  background-color: transparent; box-shadow: none; }
+.pulsar-lit #panel .panel-button.clock-display:active .clock, .pulsar-lit #panel .panel-button.clock-display:checked .clock {
+  background-color: rgba({{accent_rgb}}, 0.16); box-shadow: 0 0 10px rgba({{accent_rgb}}, 0.25); }
+.pulsar-lit .calendar .calendar-day.calendar-today { box-shadow: 0 0 8px rgba({{accent_rgb}}, 0.2); }
+/* A CRT theme's clock and headings glow like its phosphor (empty for the rest). */
+.pulsar-lit #panel .clock, .pulsar-lit .datemenu-today-button .date-label,
+.pulsar-lit .calendar .calendar-month-header .calendar-month-label { {{text_glow}} }

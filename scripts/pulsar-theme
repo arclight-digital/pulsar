@@ -217,6 +217,9 @@ class Variant:
 
     def __init__(self, mode, raw):
         self.mode = mode
+        self.shell_glow = False     # set by Theme from its top-level key
+        self.window_glass = False   # set by the gtk4 target from the Shell extension's switch
+        self.glass_alpha = 0.65     # set by the shell target from the Glass tint slider
         p = {}
         for k, v in raw.items():
             if isinstance(v, str) and (v.startswith("#") or re.fullmatch(r"[0-9a-fA-F]{6}", v)):
@@ -289,6 +292,40 @@ class Variant:
             c[k + "_rgb"] = v.rgb
             c[k + "_strip"] = v.hex[1:]
         c["mode"] = self.mode
+        # The glass's inner cards: a faint lift of the text color on dark, a
+        # frosted white on light (the Shell sheet's .pulsar-glass block).
+        if self.mode == "dark":
+            c["glass_card"] = f"rgba({self.p['foreground'].rgb}, 0.045)"
+            c["glass_card_hover"] = f"rgba({self.p['foreground'].rgb}, 0.09)"
+        else:
+            c["glass_card"] = "rgba(255, 255, 255, 0.62)"
+            c["glass_card_hover"] = "rgba(255, 255, 255, 0.82)"
+        # The top bar's glass: the deep ground on dark; on light the ground
+        # itself, lifted toward white (the deep one reads as flat grey there).
+        c["glass_alpha"] = self.glass_alpha
+        if self.mode == "dark":
+            c["glass_panel"] = f"rgba({self.p['background_deep'].rgb}, {self.glass_alpha})"
+            c["panel_shadow"] = "rgba(0, 0, 0, 0.3)"
+        else:
+            c["glass_panel"] = f"rgba({self.p['background'].mix(WHITE, 0.35).rgb}, {self.glass_alpha})"
+            c["panel_shadow"] = f"rgba({self.p['foreground'].rgb}, 0.1)"
+        # A CRT theme's text glows like its phosphor while Lighting is on
+        # (the Shell sheet's .pulsar-lit block); every other theme's is an
+        # empty rule.
+        # Glass windows: the window ground goes translucent over the blur the
+        # Shell extension puts behind GTK windows, and the header bar and
+        # sidebar become tints over it (they paint on top of the window
+        # ground, so their alpha compounds: 1 - 0.28 * 0.65 ~ 82% where they
+        # are). Content -- views, cards, dialogs, popovers -- stays opaque.
+        g = self.window_glass
+        def glass(k, a):
+            return f"alpha({self.p[k].hex}, {a})" if g else self.p[k].hex
+        c["window_bg"] = glass("window", 0.72)
+        c["headerbar_bg"] = glass("headerbar", 0.35)
+        c["sidebar_bg"] = glass("sidebar", 0.35)
+        c["window_backdrop"] = glass("window", 0.35)
+        c["text_glow"] = (f"text-shadow: 0 0 6px rgba({self.p['accent'].rgb}, 0.55);"
+                          if self.shell_glow else "")
         c["gnome_accent"] = self.gnome_accent
         return c
 
@@ -305,6 +342,8 @@ class Theme:
         self.author = raw.get("author", "")
         self.source = raw.get("source", "")
         self.variants = {m: Variant(m, raw[m]) for m in ("dark", "light") if m in raw}
+        for v in self.variants.values():
+            v.shell_glow = bool(raw.get("shell_glow", False))
         if not self.variants:
             raise ValueError(f"{path}: needs a [dark] and/or [light] palette")
         self.prefer = raw.get("prefer", "dark" if "dark" in self.variants else "light")
@@ -887,15 +926,61 @@ class Scheme(Target):
         tx.set("/org/gnome/desktop/interface/accent-color", gv_str(v.gnome_accent))
 
 
+def glass_tint():
+    """The Shell extension's Glass tint slider, 0 (clear) to 1 (fully tinted),
+    as the alpha of the glass surfaces' own tint: 0.35 to 0.95."""
+    try:
+        t = float(gsettings_get("org.gnome.shell.extensions.pulsar-theme", "glass-tint"))
+    except (TypeError, ValueError):
+        t = 0.5
+    return round(0.35 + 0.6 * min(max(t, 0.0), 1.0), 3)
+
+
+GLASS_MARK = "pulsar window-glass: "
+
+
+def window_glass_written():
+    """The glass state gtk4 was last written for: True, False, or None when
+    unknown (never written, or written before the mark existed)."""
+    try:
+        text = (CONFIG / "gtk-4.0" / "gtk.css").read_text(errors="replace")
+    except OSError:
+        return None
+    i = text.find(GLASS_MARK)
+    if i < 0:
+        return None
+    return text[i + len(GLASS_MARK):].startswith("on")
+
+
+def window_glass():
+    """Whether GTK windows go translucent: only while the Shell extension is
+    enabled and would draw its blur behind them -- Glass and Glass windows
+    on, high contrast off. Otherwise translucent windows would show the
+    desktop sharp. Off when the extension's schema is not installed."""
+    sid = "org.gnome.shell.extensions.pulsar-theme"
+    if gsettings_get(sid, "glass") != "true" or gsettings_get(sid, "window-glass") != "true":
+        return False
+    if gsettings_get("org.gnome.desktop.a11y.interface", "high-contrast") == "true":
+        return False
+    if gsettings_get("org.gnome.shell", "disable-user-extensions") == "true":
+        return False
+    return f"'{EXT_UUID}'" in (gsettings_get("org.gnome.shell", "enabled-extensions") or "")
+
+
 class Gtk4(Target):
     name, desc, live = "gtk4", "libadwaita CSS variables in gtk-4.0/gtk.css", "new windows only: GTK reads gtk.css once at startup"
 
     def apply(self, tx, theme, vm):
+        glass = window_glass()
+        for v in theme.variants.values():
+            v.window_glass = glass
         def wrap(m, body):
             if m is None:
                 return body
             return f"@media (prefers-color-scheme: {m}) {{\n{body}}}\n"
-        block = f"/* {css_comment(theme.name)} */\n" + variant_blocks(theme, vm, "gtk4.css", wrap)
+        # the glass state it was written for, which `window-glass --if-stale` reads
+        block = (f"/* {css_comment(theme.name)} */\n/* {GLASS_MARK}{'on' if glass else 'off'} */\n" +
+                 variant_blocks(theme, vm, "gtk4.css", wrap))
         p = CONFIG / "gtk-4.0" / "gtk.css"
         tx.edit(p, managed(p, block), {"kind": "block"})
 
@@ -915,6 +1000,9 @@ class Gtk3(Target):
         tx.edit(p, managed(p, f"/* {css_comment(theme.name)} ({mode}) */\n" + block), {"kind": "block"})
         if any(d.joinpath("themes", "adw-gtk3").is_dir() for d in (DATA, pathlib.Path("/usr/share"))):
             tx.set("/org/gnome/desktop/interface/gtk-theme", gv_str("adw-gtk3-dark" if mode == "dark" else "adw-gtk3"))
+
+
+PTYXIS_GLASS_OPACITY = "0.85"
 
 
 class Ptyxis(Target):
@@ -939,8 +1027,21 @@ class Ptyxis(Target):
             uuids = [u]
             tx.set("/org/gnome/Ptyxis/profile-uuids", "[" + gv_str(u) + "]")
             tx.set("/org/gnome/Ptyxis/default-profile-uuid", gv_str(u))
+        glass = window_glass()
         for u in uuids:
             tx.set(f"/org/gnome/Ptyxis/Profiles/{u}/palette", gv_str(pid))
+            # Glass windows: the terminal's background goes translucent over
+            # the blur the Shell extension draws behind the window. Only a
+            # profile at the default or at our own value: an opacity the user
+            # picked is theirs.
+            key = f"/org/gnome/Ptyxis/Profiles/{u}/opacity"
+            try:
+                cur = float(dconf_read(key) or 1.0)
+            except ValueError:
+                cur = None
+            # (compared as numbers: dconf reads 0.80 back as 0.80000000000000004)
+            if cur is not None and any(abs(cur - v) < 1e-6 for v in (1.0, float(PTYXIS_GLASS_OPACITY))):
+                tx.set(key, PTYXIS_GLASS_OPACITY if glass else "1.0")
         # Ptyxis ships interface-style='dark' regardless of the desktop; a
         # two-variant theme only follows the Dark Style toggle with 'system'.
         tx.set("/org/gnome/Ptyxis/interface-style", gv_str("system" if (vm == "both" and theme.both) else
@@ -1008,6 +1109,7 @@ class Shell(Target):
         # one sheet per scheme; the extension swaps them when Dark Style flips
         for scheme in ("dark", "light"):
             mode = scheme if (vm == "both" and scheme in theme.variants) else (theme.prefer if vm == "both" else vm)
+            theme.variants[mode].glass_alpha = glass_tint()
             css = render_tpl(template("gnome-shell.css"), theme.variants[mode].ctx(), "gnome-shell.css")
             tx.write(STATE / "shell" / f"gnome-shell-{scheme}.css", f"/* {css_comment(theme.name)} ({mode}) */\n" + css)
         eff = gsettings_get("org.gnome.shell", "enabled-extensions")
@@ -1724,6 +1826,26 @@ def cmd_follow_scheme():
         cmd_set(theme, "both", redo, restart_policy="none")
 
 
+def cmd_window_glass(if_stale=False):
+    """The Shell extension's Glass windows switch changed: redo just the
+    halves it touches -- GTK4 (apps opened from now on) and the terminal's
+    background (live) -- never asking about open apps (the extension runs
+    this in the background). With if_stale, only when gtk4 was written for
+    the other state: the extension asks this each time it is enabled, since
+    a theme set while it was off wrote opaque windows."""
+    if if_stale and window_glass_written() == window_glass():
+        return
+    st = current_state()
+    redo = [t for t in ("gtk4", "ptyxis", "shell") if t in st.get("targets", [])]
+    if not st.get("theme") or not redo:
+        return
+    try:
+        theme = load_theme(st["theme"])
+    except SystemExit:
+        return
+    cmd_set(theme, st.get("variant", "both"), redo, restart_policy="none")
+
+
 def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask", extra=None,
             without=None):
     """`only` is a subset (bg-next is only=['wallpaper']): stale files and the
@@ -2029,6 +2151,8 @@ def main(argv=None):
     sub.add_parser("prev")
     sub.add_parser("bg-next")
     sub.add_parser("follow-scheme", help="re-apply the GTK3 half after a Dark Style flip (the Shell extension calls this)")
+    wg = sub.add_parser("window-glass", help="re-apply the GTK4 half after the Glass windows switch (the Shell extension calls this)")
+    wg.add_argument("--if-stale", action="store_true", help="only when it was written for the other glass state")
     sub.add_parser("current")
     rv = sub.add_parser("revert")
     rv.add_argument("--to", choices=["stock", "image"], default="stock",
@@ -2049,7 +2173,7 @@ def main(argv=None):
     # behind a `set` that flips Dark Style itself (Dracula, Alucard): it
     # waits, then reads the NEW theme's state, instead of rewriting GTK3 for
     # the old one mid-switch. Held until exit; the fd closes with the process.
-    if a.cmd in ("set", "next", "prev", "bg-next", "follow-scheme", "revert", "init") and \
+    if a.cmd in ("set", "next", "prev", "bg-next", "follow-scheme", "window-glass", "revert", "init") and \
             not getattr(a, "dry_run", False):
         STATE.mkdir(parents=True, exist_ok=True)
         global LOCK
@@ -2101,6 +2225,8 @@ def main(argv=None):
         cmd_bg_next()
     elif a.cmd == "follow-scheme":
         cmd_follow_scheme()
+    elif a.cmd == "window-glass":
+        cmd_window_glass(a.if_stale)
     elif a.cmd == "current":
         print(json.dumps(current_state(), indent=1) or "none")
     elif a.cmd == "revert":

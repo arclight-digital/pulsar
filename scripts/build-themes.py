@@ -240,6 +240,7 @@ THEMES = [
     # warm hues stay recognisably warm, desaturated toward the tint. The
     # contrast fit below then holds all of them to the usual floors.
     dict(slug="phosphor", name="Phosphor", author="Pulsar; after P1 green-phosphor terminals", prefer="dark",
+         shell_glow=True,
          dark=V(pal=dict(background="#050a06", foreground="#5dff8a", foreground_dim="#3fc46a", muted="#2f7a45",
                          selection="#0f3a1c", accent="#33ff66",
                          red="#e38a6d", orange="#e0b55c", yellow="#c8ff5c", green="#33ff66", cyan="#66ffd0",
@@ -258,6 +259,7 @@ THEMES = [
          ]),
 
     dict(slug="amber", name="Amber", author="Pulsar; after P3 amber-phosphor terminals", prefer="dark",
+         shell_glow=True,
          dark=V(pal=dict(background="#0a0703", foreground="#ffb000", foreground_dim="#c98a14", muted="#8a6420",
                          selection="#3a2608", accent="#ffb000",
                          red="#ff6a3d", orange="#ff8c1a", yellow="#ffd24a", green="#b8c94a", cyan="#a8d4b0",
@@ -425,6 +427,9 @@ def main():
                 if k in out:
                     lines.append(f'{k} = "{out[k]}"')
         lines.insert(3, f'source = "{"; ".join(srcs)}"')
+        if t.get("shell_glow"):
+            # the Shell's text glows like the phosphor while Lighting is on
+            lines.insert(5, "shell_glow = true")
         lines.append("")
         lines.append("[wallpaper]")
         for mode in ("dark", "light"):

@@ -6,3 +6,13 @@ welcome-dialog-last-shown-version='999'
 
 [org.gnome.desktop.interface]
 enable-animations=false
+
+# The gate measures each theme's palette in the pixels; glass and light layer
+# over it (blur, translucency, rim light) and would move every sample. The
+# effects have their own shots; here the account is an opted-out one.
+[org.gnome.shell.extensions.pulsar-theme]
+glass=false
+window-glass=false
+lighting=false
+power-on=false
+focus-brackets=false

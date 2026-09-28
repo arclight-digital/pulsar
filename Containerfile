@@ -739,6 +739,8 @@ RUN set -eu; \
     rm -rf /tmp/schemas && mkdir /tmp/schemas && \
     glib-compile-schemas --targetdir=/tmp/schemas /usr/share/glib-2.0/schemas && \
     ext=$(HOME=/tmp GSETTINGS_SCHEMA_DIR=/tmp/schemas gsettings get org.gnome.shell enabled-extensions) && \
+    fx=$(HOME=/tmp GSETTINGS_SCHEMA_DIR=/tmp/schemas gsettings get org.gnome.shell.extensions.pulsar-theme glass) || \
+      { echo "FATAL: the pulsar-theme extension's settings schema does not compile; its prefs and the picker's Effects would crash"; exit 1; }; \
     rm -rf /tmp/schemas; \
     for u in gamescale@arclight.digital pulsar-theme@arclight.digital; do \
       case "${ext}" in *"'${u}'"*) ;; *) echo "FATAL: ${u} is not in the default enabled-extensions (${ext})"; exit 1 ;; esac; \

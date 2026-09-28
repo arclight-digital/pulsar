@@ -27,6 +27,17 @@ sys.path.insert(0, str(HERE))
 import pulsar_theme_cards as cards  # noqa: E402
 
 
+# The Shell extension's effects (its prefs.js shows the same): key, title,
+# subtitle, the key it needs on.
+EFFECTS = (
+    ("glass", "Glass", "Menus, the top bar, OSDs and banners are translucent over a blur of what is behind them", None),
+    ("window-glass", "Glass windows", "App windows are a little translucent too; apps opened afterwards pick it up", "glass"),
+    ("lighting", "Lighting", "Menus catch light from the button that opened them; the edge warms when the battery is low", None),
+    ("power-on", "Power-on", "The edge traces out from the light as a menu opens", "lighting"),
+    ("focus-brackets", "Focus brackets", "Corner brackets lock onto the control the keyboard is on", None),
+)
+
+
 class Picker(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Themes", default_width=1080, default_height=760)
@@ -36,6 +47,9 @@ class Picker(Adw.ApplicationWindow):
         hb.set_title_widget(Adw.WindowTitle(title="Themes",
                                             subtitle="Enter to apply · Esc to close · type to search"))
         tv.add_top_bar(hb)
+        fx = self._effects()
+        if fx:
+            hb.pack_end(fx)
         # Type anywhere to filter: the search bar captures keys from the window.
         self.search = Gtk.SearchEntry(placeholder_text="Search themes", hexpand=True)
         sb = Gtk.SearchBar(child=Adw.Clamp(child=self.search, maximum_size=420), show_close_button=False)
@@ -86,6 +100,42 @@ class Picker(Adw.ApplicationWindow):
         key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         key.connect("key-pressed", self._key)
         self.add_controller(key)
+
+    def _effects(self):
+        """The Shell extension's glass and light switches (the same keys as its
+        page in the Extensions app), in a popover off the header bar. None
+        when the schema is not installed."""
+        sid = "org.gnome.shell.extensions.pulsar-theme"
+        if not Gio.SettingsSchemaSource.get_default().lookup(sid, True):
+            return None
+        self.fx_settings = Gio.Settings(schema_id=sid)
+        rows = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
+        for key, title, subtitle, needs in EFFECTS:
+            row = Adw.SwitchRow(title=title, subtitle=subtitle)
+            self.fx_settings.bind(key, row, "active", Gio.SettingsBindFlags.DEFAULT)
+            if needs:
+                self.fx_settings.bind(needs, row, "sensitive", Gio.SettingsBindFlags.GET)
+            rows.append(row)
+            if key == "glass":
+                rows.append(self._tint_row())
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=360,
+                      margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
+        box.append(Gtk.Label(label="Effects", xalign=0, css_classes=["heading"]))
+        box.append(rows)
+        box.append(Gtk.Label(label="High contrast turns them all off.", xalign=0, wrap=True,
+                             css_classes=["dim-label", "caption"]))
+        return Gtk.MenuButton(icon_name="applications-graphics-symbolic", tooltip_text="Effects",
+                              popover=Gtk.Popover(child=box))
+
+    def _tint_row(self):
+        """Glass tint: clear to fully tinted."""
+        row = Adw.ActionRow(title="Glass tint", subtitle="From clear to fully tinted")
+        scale = Gtk.Scale(adjustment=Gtk.Adjustment(lower=0, upper=1, step_increment=0.05, page_increment=0.1),
+                          draw_value=False, hexpand=True, width_request=160, valign=Gtk.Align.CENTER)
+        self.fx_settings.bind("glass-tint", scale.get_adjustment(), "value", Gio.SettingsBindFlags.DEFAULT)
+        self.fx_settings.bind("glass", row, "sensitive", Gio.SettingsBindFlags.GET)
+        row.add_suffix(scale)
+        return row
 
     def _in_search(self):
         f = self.get_focus()

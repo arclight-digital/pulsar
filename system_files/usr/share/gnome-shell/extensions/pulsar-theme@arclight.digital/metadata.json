@@ -1,7 +1,8 @@
 {
   "uuid": "pulsar-theme@arclight.digital",
   "name": "Pulsar Theme",
-  "description": "Layers the stylesheet written by `pulsar theme` over the Shell theme, and reloads it when it changes.",
+  "description": "Layers the stylesheet written by `pulsar theme` over the Shell theme, and reloads it when it changes. Adds glass and light to menus and the top bar.",
   "shell-version": ["50"],
+  "settings-schema": "org.gnome.shell.extensions.pulsar-theme",
   "url": "https://github.com/arclight-digital/pulsar"
 }

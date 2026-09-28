@@ -13,7 +13,7 @@ it deliberately does not.
 | picker (libadwaita) | `/usr/libexec/pulsar/pulsar-theme-picker`, "Themes" in the app grid |
 | 16 themes: 12 dark + light; Dracula, Phosphor and Amber dark only; Alucard light only | `/usr/share/pulsar/themes/<slug>/theme.toml` + `backgrounds/*.jxl` |
 | per-target templates | `/usr/share/pulsar/theme/templates/` |
-| Shell extension | `/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital` |
+| Shell extension (+ glass and light) | `/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital`, settings schema `org.gnome.shell.extensions.pulsar-theme` |
 | image default | `zz1-pulsar-theme.gschema.override`: `enabled-extensions` only |
 | first-login units | `pulsar-theme-init.service`, `pulsar-theme-notice.service` (user, `--global`) |
 | GTK3 recoloring | `adw-gtk3-theme` |
@@ -165,6 +165,42 @@ to JPEG XL at quality 99 (about 1.2 MB each; q97 kept only ~60% of the
 film grain in dark gradients, and that grain is also the dither, so they
 banded; both shaders also add a +-1-step triangular dither last). A `--no-wallpapers`
 build ships none, and every theme falls back to the brand pair.
+
+## Glass and light
+
+The Shell extension adds a set of effects, all on by default and each a
+switch -- in the extension's page in the Extensions app and under Effects in
+the theme picker (`org.gnome.shell.extensions.pulsar-theme`). GNOME keeps the
+structure -- layout, radii, type, timing; the effects add only material and
+light, and every outline stays the theme's own.
+
+| Key | What it does |
+|---|---|
+| `glass` | Menus (every popup, the panel's and everyone else's), the top bar, the OSDs and notification banners go translucent over a live blur of whatever is really beneath them, with a soft drop shadow. The dash gets the same light and shadow without a blur: only the overview's flat ground is ever behind it. |
+| `window-glass` | GTK apps' chrome goes a little translucent over the same live blur: the engine writes libadwaita's window ground, header bars and sidebars with alpha in `gtk.css`, and the extension draws the blur inside each GTK window, so it follows the window into the overview. The terminal's background goes to 85% (Ptyxis's own per-profile `opacity`, left alone if you set your own). Content (views, cards, dialogs, popovers) stays solid. Apps opened after a change pick up the GTK half; the terminal changes live. Needs `glass`. |
+| `lighting` | The button that opened a menu glows, and a shader lights the rim facing it, a little spill, a glint inside the edge, faint scatter and grain, and the date menu's divider. OSDs are lit from the bottom edge, banners from the top. While the battery is low the edge warms all the way round (the theme's orange), and it goes the theme's red when the battery is critical or on a critical banner. Phosphor and Amber (`shell_glow` in their theme.toml) also give the clock and headings a phosphor glow. |
+| `power-on` | As a surface appears its rim traces out from the light, in the Shell's own animation time (so it is instant with animations off). Needs `lighting`. |
+| `focus-brackets` | Four corner brackets lock onto the control the keyboard is on and glide between controls, beside the stock focus ring. Not on a control under the pointer (hovering a menu item moves key focus too). |
+
+All of it is off on the lock screen (a copy of the windows must never show
+through it) and in high contrast. `window-glass` has an engine half, so it
+is on only while the extension is enabled with `glass` and `window-glass`
+on and high contrast off (`window_glass()` in the engine); flipping any of
+those makes the extension run `pulsar-theme window-glass`, which rewrites
+just the GTK4 and terminal halves. The Shell sheet's `.pulsar-glass` and `.pulsar-lit`
+blocks key off classes the extension puts on the UI group, so a theme's
+stylesheet decides the material and the extension draws the rest
+(`glass.js` says why the blur lives beside each menu rather than in it:
+GNOME paints menus through an offscreen buffer). The blur is real,
+cheap and redone every frame: it keeps a half-size copy of the pixels
+already drawn beneath a surface, patching in only what each frame redraws,
+runs it down a dual-filter (Kawase) pyramid and back up, and draws it
+through a full-resolution mask that rounds the corners -- what
+Shell.BlurEffect's background mode does, minus its square corners. A glass
+window's surfaces sit at opacity 254 of 255 so Mutter still paints what is
+beneath their opaque parts: skipped, those pixels would be the window's own
+last frame, blurred back into itself. The theme gate's scratch
+account has every effect off, since they move the pixels it measures.
 
 ## When GNOME changes
 

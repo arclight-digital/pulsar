@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The pulsar-theme Shell extension's own settings: the glass and light it
+     adds to menus and the top bar. Shown in the Extensions app (prefs.js)
+     and in the theme picker. High contrast turns both off regardless. -->
+<schemalist>
+  <schema id="org.gnome.shell.extensions.pulsar-theme" path="/org/gnome/shell/extensions/pulsar-theme/">
+    <key name="glass" type="b">
+      <default>true</default>
+      <summary>Glass</summary>
+      <description>Menus and the top bar are translucent over a blur of what is behind them.</description>
+    </key>
+    <key name="lighting" type="b">
+      <default>true</default>
+      <summary>Lighting</summary>
+      <description>Menus catch light from the button that opened them.</description>
+    </key>
+    <key name="glass-tint" type="d">
+      <range min="0.0" max="1.0"/>
+      <default>0.5</default>
+      <summary>Glass tint</summary>
+      <description>How tinted the glass is, from clear (0) to fully tinted (1).</description>
+    </key>
+    <key name="window-glass" type="b">
+      <default>true</default>
+      <summary>Glass windows</summary>
+      <description>App windows' chrome (the window ground, header bars, sidebars) is a little translucent over a blur of the wallpaper; content stays solid. Apps opened afterwards pick it up.</description>
+    </key>
+    <key name="power-on" type="b">
+      <default>true</default>
+      <summary>Power-on</summary>
+      <description>A surface's rim traces out from the light when it appears. Needs Lighting.</description>
+    </key>
+    <key name="focus-brackets" type="b">
+      <default>true</default>
+      <summary>Focus brackets</summary>
+      <description>Corner brackets lock onto the control the keyboard is on, beside the focus ring.</description>
+    </key>
+  </schema>
+</schemalist>

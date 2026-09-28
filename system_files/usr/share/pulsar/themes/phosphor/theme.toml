@@ -3,6 +3,7 @@ name = "Phosphor"
 author = "Pulsar; after P1 green-phosphor terminals"
 source = "dark: upstream palette, by hand"
 prefer = "dark"
+shell_glow = true
 
 [dark]
 accent = "#33ff66"
