@@ -590,6 +590,13 @@ LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
 # describe the image that contains it -- adding it changes what it describes.
 # `pulsar sbom` reads the live rpm database instead, which is the same source
 # and is correct by construction; the published per-build copies live in R2.
+#
+# The scheduler row names the scheduler that RUNS. scx_bpfland attaches only
+# on a kernel whose BTF can load it (check-scx-btf.sh above stages
+# scx-supported); on one that cannot, the machine runs stock EEVDF. The row
+# used to say scx_bpfland regardless, beside "scheduler_btf: malformed" --
+# true, and read as a failure by everyone who saw it, including on the site,
+# which prints this file.
 # ---------------------------------------------------------------------------
 ARG PULSAR_CHANGELOG_URL="https://getpulsar.dev/changelog.json"
 COPY cli/pulsar /usr/bin/pulsar
@@ -615,8 +622,8 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       --arg base      "fedora-silverblue:${FEDORA_VERSION}" \
       --arg built     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg kernel    "$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)" \
-      --arg scheduler "scx_bpfland" \
-      --arg scxbtf    "$([ -e /usr/lib/pulsar/scx-supported ] && echo ok || echo malformed)" \
+      --arg scheduler "$([ -e /usr/lib/pulsar/scx-supported ] && echo scx_bpfland || echo eevdf)" \
+      --arg scx       "$([ -e /usr/lib/pulsar/scx-supported ] && echo on || echo "off: this kernel can't load it")" \
       --arg gamescope "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamescope)" \
       --arg gamemode  "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamemode)" \
       --arg mangohud  "$(rpm -q --qf '%{VERSION}-%{RELEASE}' mangohud)" \
@@ -626,7 +633,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       --arg changelog "${PULSAR_CHANGELOG_URL}" \
       '{image:$image, variant:$variant, version:$version, base:$base, built:$built, \
         kernel:$kernel, \
-        components:{scheduler:$scheduler, scheduler_btf:$scxbtf, \
+        components:{scheduler:$scheduler, sched_ext:$scx, \
                     gamescope:$gamescope, gamemode:$gamemode, mangohud:$mangohud, \
                     mesa:$mesa, \
                     mesa_va:(if $mesava == "" then "fedora" else "freeworld" end), \
