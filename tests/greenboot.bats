@@ -110,6 +110,15 @@ EOF
     [[ "$output" == *"0 carrying"* ]]
 }
 
+@test "BTF gate: a 7.2 kernel's _impl twins keep aux by design and still pass" {
+    # captured from 7.2.7-200.fc44: scx_bpf_cid_curr(cid) is public and clean,
+    # scx_bpf_cid_curr_impl(cid, aux) is the kernel-side twin
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" \
+        --dump "${BATS_TEST_DIRNAME}/fixtures/btf-clean-impl.txt"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"3 clean, 0 carrying"* ]]
+}
+
 @test "BTF gate: kfuncs carrying the implicit aux argument fail" {
     run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" \
         --dump "${BATS_TEST_DIRNAME}/fixtures/btf-malformed.txt"

@@ -13,6 +13,12 @@
 # lavd. It is a kernel packaging defect, nothing a scheduler flag can work
 # around, and it is invisible until a machine boots and the unit dies.
 #
+# From 7.2 the implicit-argument kfuncs come in pairs: the public name
+# without aux, which is what a BPF program links against, and a
+# scx_bpf_*_impl twin that keeps aux by design, which the kernel calls behind
+# it. Only the public names are judged; flagging the _impl twins kept a
+# correctly built 7.2.7 (47 of them) marked broken and the scheduler off.
+#
 # So the build asks the question instead of the user's laptop. A clean kernel
 # gets /usr/lib/pulsar/scx-supported and scx.service starts; a broken one does
 # not, and systemd skips the unit rather than failing it three times. The day
@@ -96,9 +102,10 @@ esac
 
 [ -s "${work}/dump.txt" ] || die "BTF dump is empty"
 
-# A malformed kfunc is one whose final parameter is the implicit prog aux
-# pointer. Matching on the parameter NAME is what upstream's own diagnostic
-# does, and the name is stable across every affected kernel.
+# A malformed kfunc is a PUBLIC one whose final parameter is the implicit
+# prog aux pointer (an _impl twin keeps it by design: see the top). Matching
+# on the parameter NAME is what upstream's own diagnostic does, and the name
+# is stable across every affected kernel.
 python3 - "${work}/dump.txt" <<'PY'
 import re, sys
 
@@ -121,6 +128,8 @@ for ln in lines:
     if not m:
         continue
     name, tid = m.groups()
+    if name.endswith("_impl"):
+        continue
     params = protos.get(tid, [])
     (malformed if params and params[-1] == "aux" else clean).append((name, params))
 
