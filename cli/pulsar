@@ -3867,6 +3867,7 @@ as_owner() {
 # top-level dotfiles, and ~/.config (less anything that is a cache),
 # ~/.local/bin and ~/.ssh. Directories are listed too, so their modes come
 # back; sockets and pipes are not files to keep.
+# shellcheck disable=SC2016  # a script for the user's own sh, expanded there
 HOME_LIST='cd "$1" || exit 1
 find . -mindepth 1 -maxdepth 1 -name ".?*" \( -type f -o -type l \) -print0
 for d in .config .local/bin .ssh; do
@@ -3877,6 +3878,7 @@ for d in .config .local/bin .ssh; do
 done'
 
 # The same line format as etc_manifest, for the paths in the NUL list on stdin.
+# shellcheck disable=SC2016  # a script for the user's own sh, expanded there
 HOME_MANIFEST='cd "$1" || exit 1
 list=$(mktemp); cat > "$list"
 sums=$(mktemp)
