@@ -56,7 +56,9 @@ transaction:
 - a Ptyxis palette on every profile, following Dark Style
 - a GtkSourceView scheme pair; Text Editor also recolors its own window
   from it
-- btop's TTY theme, which draws with the terminal palette
+- a btop theme for the scheme in effect, redone by `follow-scheme` like
+  GTK3 (btop's own TTY theme would follow the terminal, but draws its
+  labels in ANSI white: pale gray on a light palette)
 - the wallpaper pair
 - two Shell stylesheets in `~/.local/state/pulsar-theme/shell/`, which the
   extension layers over the stock Shell theme and swaps on Dark Style

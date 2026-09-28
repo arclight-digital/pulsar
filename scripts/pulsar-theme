@@ -1122,18 +1122,14 @@ class Btop(Target):
     name, desc, live = "btop", "btop theme + color_theme in btop.conf", "live (SIGUSR2 reloads btop)"
 
     def apply(self, tx, theme, vm):
+        # btop has one theme file and no light/dark notion, so like GTK3 it is
+        # written for the scheme in effect and follow-scheme redoes it on a
+        # flip. (Its built-in TTY theme would follow the terminal for free,
+        # but draws its labels in ANSI white, pale gray on a light palette.)
+        # No painted background: the terminal's own ground is right.
         conf = CONFIG / "btop" / "btop.conf"
-        if vm == "both" and theme.both:
-            # btop has one theme file and no light/dark notion. Its built-in
-            # TTY theme draws with the terminal's 16 colours, and the Ptyxis
-            # palette already flips with Dark Style, so btop follows for free.
-            # and no painted background: TTY paints it with ANSI color0, which
-            # is a mid-tone on light palettes; the terminal's own ground is right
-            tx.edit(conf, conf_set_many(conf, {"color_theme": '"TTY"', "theme_background": "False"}),
-                    {"kind": "conf", "keys": ["color_theme", "theme_background"]})
-            tx.hook("signal btop", lambda: subprocess.run(["pkill", "-USR2", "-x", "btop"], check=False))
-            return
-        mode = theme.prefer if vm == "both" else vm
+        mode = (current_scheme() if theme.both else theme.prefer) if vm == "both" else vm
+        mode = mode if mode in theme.variants else theme.prefer
         path = CONFIG / "btop" / "themes" / f"pulsar-{theme.slug}.theme"
         tx.write(path, render_tpl(template("btop.theme"), theme.variants[mode].ctx(), "btop.theme"))
         tx.edit(conf, conf_set_many(conf, {"color_theme": f'"{path}"', "theme_background": "False"}),
@@ -1811,11 +1807,12 @@ def cmd_init(theme="pulsar", force=False):
 
 def cmd_follow_scheme():
     """GTK3 has no media queries, so its gtk.css and gtk-theme are written for
-    the scheme in effect at the switch; everything else follows Dark Style on
-    its own. On a flip, redo just that half. A no-op unless a two-variant
+    the scheme in effect at the switch, and so are btop's theme and the
+    agents'; everything else follows Dark Style on its own. On a flip, redo
+    just those. A no-op unless a two-variant
     theme is applied in "both" mode with gtk3 among its targets."""
     st = current_state()
-    redo = [t for t in ("gtk3", "agents") if t in st.get("targets", [])]
+    redo = [t for t in ("gtk3", "btop", "agents") if t in st.get("targets", [])]
     if not st.get("theme") or st.get("variant", "both") != "both" or not redo:
         return
     try:

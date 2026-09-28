@@ -509,6 +509,23 @@ PY
     [ "$(key /org/gnome/desktop/interface/color-scheme)" = "'default'" ]
 }
 
+@test "btop gets a real theme for the scheme in effect, and follows a Dark Style flip" {
+    # not the built-in TTY theme: it draws labels in ANSI white, pale on light
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    conf="$XDG_CONFIG_HOME/btop/btop.conf"
+    file="$XDG_CONFIG_HOME/btop/themes/pulsar-pulsar.theme"
+    grep -qx "color_theme = \"$file\"" "$conf"
+    dark=$(grep '^theme\[main_fg\]' "$file")
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme >/dev/null
+    grep -qx "color_theme = \"$file\"" "$conf"
+    light=$(grep '^theme\[main_fg\]' "$file")
+    [ -n "$dark" ] && [ -n "$light" ] && [ "$dark" != "$light" ]
+    ! grep -q '"TTY"' "$conf"
+}
+
 @test "follow-scheme does nothing with no theme applied, or a single-mode one" {
     fake_dconf
     python3 "$ENGINE" follow-scheme
