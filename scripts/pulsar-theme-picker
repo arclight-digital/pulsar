@@ -120,12 +120,28 @@ class Picker(Adw.ApplicationWindow):
                 rows.append(self._tint_row())
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=360,
                       margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
-        box.append(Gtk.Label(label="Effects", xalign=0, css_classes=["heading"]))
+        head = Gtk.Box(spacing=6)
+        head.append(Gtk.Label(label="Effects", xalign=0, hexpand=True, css_classes=["heading"]))
+        head.append(self._reset_button())
+        box.append(head)
         box.append(rows)
         box.append(Gtk.Label(label="High contrast turns them all off.", xalign=0, wrap=True,
                              css_classes=["dim-label", "caption"]))
         return Gtk.MenuButton(icon_name="applications-graphics-symbolic", tooltip_text="Effects",
                               popover=Gtk.Popover(child=box))
+
+    def _reset_button(self):
+        """Every effect and the tint back to the defaults; only live while
+        something differs from them."""
+        s = self.fx_settings
+        keys = s.props.settings_schema.list_keys()
+        button = Gtk.Button(label="Reset", tooltip_text="Put every effect and the tint back to the defaults",
+                            css_classes=["flat"], valign=Gtk.Align.CENTER)
+        button.connect("clicked", lambda *_: [s.reset(k) for k in keys])
+        changed = lambda *_: button.set_sensitive(any(s.get_user_value(k) is not None for k in keys))
+        s.connect("changed", changed)
+        changed()
+        return button
 
     def _tint_row(self):
         """Glass tint: clear to fully tinted."""
