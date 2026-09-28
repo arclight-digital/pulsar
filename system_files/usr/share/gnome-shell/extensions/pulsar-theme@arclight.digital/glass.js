@@ -1438,6 +1438,37 @@ class PanelGlass {
     }
 }
 
+// Mutter skips painting whatever is beneath a surface's opaque region, but
+// only under a surface at full opacity. Glass beneath or inside such a
+// window then blurs that window's own last frame back in around its edges.
+// So these surfaces sit at 254 of 255: everything beneath is painted, and
+// one step of opacity cannot be seen. Returns the surfaces it changed.
+function uncull(actor, skip = null, into = new Set()) {
+    for (const c of actor.get_children()) {
+        if (c === skip)
+            continue;
+        // a subsurface is a child of its parent's surface actor
+        if (c.opacity === 255 && GObject.type_name_from_instance(c).includes('SurfaceActor')) {
+            c.opacity = 254;
+            into.add(c);
+        }
+        uncull(c, skip, into);
+    }
+    return into;
+}
+
+function recull(surfaces) {
+    for (const c of surfaces ?? []) {
+        if (c.opacity === 254)
+            c.opacity = 255;
+    }
+}
+
+// Popovers, menus and tooltips: GTK's are windows of their own, opaque, and
+// they open over glass windows.
+const POPUP_TYPES = [Meta.WindowType.DROPDOWN_MENU, Meta.WindowType.POPUP_MENU, Meta.WindowType.COMBO,
+    Meta.WindowType.TOOLTIP, Meta.WindowType.MENU];
+
 const GLASS_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY];
 
 // The live blur inside one window actor, under its surfaces, cut to the
@@ -1475,37 +1506,16 @@ class WindowGlass {
     }
 
     // GTK tells the compositor which parts of a window are opaque (cards,
-    // boxed lists), and Mutter then skips painting whatever is beneath
-    // those parts. Under them, the pixels this blurs are last frame's: the
-    // window itself, glass included, blurred back in around each card's
-    // edge until it ran to neon. Mutter skips only beneath a surface at
-    // full opacity, so its surfaces go to 254 of 255: everything beneath
-    // is painted, and the one step of opacity cannot be seen.
+    // boxed lists): see uncull().
     _uncull() {
-        if (this._win.is_fullscreen())
-            return;
-        const walk = a => {
-            for (const c of a.get_children()) {
-                if (c === this._backdrop)
-                    continue;
-                // a subsurface is a child of its parent's surface actor
-                if (c.opacity === 255 && GObject.type_name_from_instance(c).includes('SurfaceActor')) {
-                    c.opacity = 254;
-                    (this._surfaces ??= new Set()).add(c);
-                }
-                walk(c);
-            }
-        };
-        walk(this._actor);
+        if (!this._win.is_fullscreen())
+            this._surfaces = uncull(this._actor, this._backdrop, this._surfaces ?? new Set());
     }
 
     // back to full opacity: fullscreen (a game keeps direct scanout, which
     // a translucent surface would lose) or the glass going away
     _recull() {
-        for (const c of this._surfaces ?? []) {
-            if (c.opacity === 254)
-                c.opacity = 255;
-        }
+        recull(this._surfaces);
         this._surfaces = null;
     }
 
@@ -1689,6 +1699,11 @@ export class Glass {
         this._panel = null;
         this._brackets = null;
         this._windows = new Map();      // window actor -> WindowGlass
+        // Windows that opened while window glass was on. GTK reads its
+        // stylesheet at launch, so they stay translucent for life: switched
+        // off, they keep their blur until they close (without it they would
+        // be see-through), and only windows opened after follow the switch.
+        this._glassy = new WeakSet();
         this._battery = null;           // 'warn' / 'alert' / null, from UPower
         this._a11y = new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.interface'});
         const self = this;
@@ -1718,7 +1733,10 @@ export class Glass {
         this._engine('window-glass', '--if-stale');
         global.display.connectObject('window-created', (_d, win) => {
             // the actor exists once the window is shown
-            laterAdd(() => this._trackWindow(win.get_compositor_private()));
+            laterAdd(() => {
+                this._trackWindow(win.get_compositor_private());
+                this._trackPopup(win);
+            });
         }, this);
         this._a11y.connectObject('changed::high-contrast', () => {
             this._sync();
@@ -1880,10 +1898,28 @@ export class Glass {
         }
     }
 
-    _trackWindow(actor) {
-        if (!this.windows || !actor || this._windows.has(actor) || !WindowGlass.wanted(actor))
+    // A popover over a glass window, uncull()ed for as long as it is open.
+    _trackPopup(win) {
+        const actor = win.get_compositor_private();
+        if (!actor || !POPUP_TYPES.includes(win.get_window_type()) || !this._windows.size)
+            return;
+        const surfaces = uncull(actor);
+        this._popups ??= new Map();
+        this._popups.set(actor, surfaces);
+        actor.connectObject(
+            'damaged', () => uncull(actor, null, surfaces),
+            'destroy', () => this._popups?.delete(actor),
+            this);
+    }
+
+    // `glassy`: one that opened translucent, kept whatever the switch says
+    _trackWindow(actor, glassy = false) {
+        if (!(this.windows || (glassy && this._allowed)) || !actor || this._windows.has(actor) ||
+            !WindowGlass.wanted(actor))
             return;
         this._windows.set(actor, new WindowGlass(this, actor));
+        if (this.windows)
+            this._glassy.add(actor);
     }
 
     forgetWindow(actor) {
@@ -1923,8 +1959,13 @@ export class Glass {
             this._trackOsds();
         if (this.windows)
             global.get_window_actors().forEach(a => this._trackWindow(a));
-        else
+        else if (!this._allowed)
             [...this._windows.keys()].forEach(a => this.forgetWindow(a));
+        else
+            // switched off: the translucent ones keep their blur (back after
+            // a lock too); the rest go
+            global.get_window_actors().forEach(a => this._glassy.has(a)
+                ? this._trackWindow(a, true) : this.forgetWindow(a));
 
         for (const s of this._surfaces.values())
             s.sync();
@@ -1951,6 +1992,11 @@ export class Glass {
         global.display.disconnectObject(this);
         for (const a of [...this._windows.keys()])
             this.forgetWindow(a);
+        for (const [a, surfaces] of this._popups ?? []) {
+            a.disconnectObject(this);
+            recull(surfaces);
+        }
+        this._popups = null;
         Scratch.clear();
         const ui = Main.layoutManager.uiGroup;
         ui.remove_style_class_name('pulsar-glass');
