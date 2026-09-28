@@ -125,8 +125,9 @@ edit can disappear without anyone removing it. Before changing a file there,
 copy it (`sudo cp -a <file> <file>.pre-agent`) so it can be put back by hand,
 and `sudo ostree admin config-diff` lists every `/etc` file that differs from
 what the image ships. Before a session that will touch `/etc`, suggest the
-user run `sudo pulsar checkpoint`: it snapshots `/etc` so they can diff and
-restore it afterwards. It is theirs to run, not yours, and so are its `diff`,
+user run `sudo pulsar checkpoint`: it snapshots `/etc` and their settings
+(dotfiles, `~/.config`, `~/.local/bin`, `~/.ssh`) so they can diff and restore
+them afterwards. It is theirs to run, not yours, and so are its `diff`,
 `restore` and `drop`.
 
 A file moved into `/etc` with `mv`, or copied with `cp -a` from somewhere like

