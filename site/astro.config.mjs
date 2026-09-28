@@ -9,6 +9,9 @@ import changelog from './src/data/changelog.json' with { type: 'json' };
 // written. The home page and the changelog both render it, so their lastmod is
 // that stamp; the other pages change only when the repo does, and a guessed
 // date is worse than none, so they carry no lastmod at all.
+// the old addresses of pages that moved into /docs; see `redirects`
+const MOVED = ['/install', '/cli', '/gamescale', '/provenance', '/changelog'];
+
 const NIGHTLY = changelog.generated ? new Date(changelog.generated).toISOString() : undefined;
 
 // Static output. The deploy target is an assets-only Cloudflare Worker (see
@@ -36,6 +39,16 @@ export default defineConfig({
   // then serves /install and redirects /install/ to it -- instead of the
   // reverse, which had every canonical pointing at a redirect.
   trailingSlash: 'never',
+  // The inner pages moved into the docs. Each old address stays a page that
+  // points at the new one, with the new one as its canonical, so a link in a
+  // README, an old notification or a search result still lands.
+  redirects: {
+    '/install': '/docs/install',
+    '/cli': '/docs/cli',
+    '/gamescale': '/docs/gamescale',
+    '/provenance': '/docs/provenance',
+    '/changelog': '/docs/changelog',
+  },
   integrations: [
     arcDsd(),
     sitemap({
@@ -44,16 +57,16 @@ export default defineConfig({
       // the 404 page.
       filter: (page) => {
         const path = new URL(page).pathname;
-        return !path.startsWith('/preview/') && path !== '/404';
+        return !path.startsWith('/preview/') && path !== '/404' && !MOVED.includes(path);
       },
       // the home page and the changelog change every night; the rest when
       // the repo does
       serialize: (item) => {
         const path = new URL(item.url).pathname;
-        const nightly = path === '/' || path === '/changelog';
+        const nightly = path === '/' || path === '/docs/changelog';
         item.changefreq = nightly ? 'daily' : 'weekly';
         if (nightly && NIGHTLY) item.lastmod = NIGHTLY;
-        item.priority = path === '/' ? 1 : path === '/install' ? 0.9 : 0.7;
+        item.priority = path === '/' ? 1 : path === '/docs/install' ? 0.9 : 0.7;
         return item;
       },
     }),

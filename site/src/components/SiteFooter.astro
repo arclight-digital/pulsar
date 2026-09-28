@@ -2,15 +2,17 @@
 // The close. Pinned dark in both themes, the way the terminals are: the page
 // ends on ink, under a spectrum line that is the palette read left to right.
 import ByArclight from './ByArclight.astro';
+import Mark from './Mark.astro';
 import { REPO, SUPPORT_URL } from '../data/site';
 
 const SITE = [
-  { label: 'Install', href: '/install' },
+  { label: 'Install', href: '/docs/install' },
+  { label: 'Docs', href: '/docs' },
   { label: 'Themes', href: '/#themes' },
-  { label: 'gamescale', href: '/gamescale' },
-  { label: 'Provenance', href: '/provenance' },
-  { label: 'Changelog', href: '/changelog' },
-  { label: 'The pulsar command', href: '/cli' },
+  { label: 'gamescale', href: '/docs/gamescale' },
+  { label: 'Provenance', href: '/docs/provenance' },
+  { label: 'Changelog', href: '/docs/changelog' },
+  { label: 'The pulsar command', href: '/docs/cli' },
 ];
 
 const MACHINE = [
@@ -24,21 +26,11 @@ const MACHINE = [
 
 <div class="foot theme-fixed-dark">
   <div class="spectrum" aria-hidden="true"></div>
-  <arc-footer contained="xl" no-border>
+  <arc-footer contained="lg" no-border>
     <div slot="logo" class="brand">
       {/* Static, and the small drawing: the brand package's placement for a
           44px footer mark. The pulse belongs to the top bar and the hero. */}
-      <img
-        data-mark
-        data-dark="/assets/pulsar-mark-small.svg"
-        data-light="/assets/pulsar-mark-small-light.svg"
-        src="/assets/pulsar-mark-small.svg"
-        alt=""
-        width="44"
-        height="44"
-        loading="lazy"
-        decoding="async"
-      />
+      <Mark kind="small" size={44} class="foot-mark" />
       <div>
         <p class="word">PULSAR</p>
         <p class="brandline">Stylish · atomic · agentic</p>
@@ -93,6 +85,9 @@ const MACHINE = [
   .foot {
     background: var(--bg-deep);
     color: var(--text-primary);
+    /* room under the colophon for the fixed scroll-to-top button, which sits
+       bottom-left and would otherwise cover its last line at the page's end */
+    padding-bottom: var(--space-3xl);
   }
   .spectrum {
     height: 2px;
@@ -103,7 +98,7 @@ const MACHINE = [
     align-items: center;
     gap: var(--space-md);
   }
-  .brand img {
+  .brand :global(.foot-mark) {
     display: block;
   }
   .word {

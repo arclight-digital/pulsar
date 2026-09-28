@@ -1,0 +1,96 @@
+---
+// The mark, in its three placements, following the page's theme: both
+// drawings are inlined (see src/lib/mark.ts) and the page's light/dark state
+// picks one, so a theme flip swaps the drawing and a theme pick recolours it,
+// with no script and no request.
+//
+//   hero   the large animated cut over the pulsar-mark-light re-box
+//   bar    the top bar's animated cut, and the small light cut
+//   small  the static small cut (20-56px), the footer's
+import { markSvg } from '../lib/mark';
+
+interface Props {
+  kind: 'hero' | 'bar' | 'small';
+  /** the box, in px; the drawing fills it. Set here rather than by a
+      parent's stylesheet, so the size cannot lose a specificity tie. */
+  size: number;
+  /** the easter egg's hook, hero only -- see src/scripts/spin.ts */
+  spin?: boolean;
+  class?: string;
+  style?: string;
+}
+
+const { kind, size, spin = false, class: className = '', style = '' } = Astro.props;
+
+const FILES = {
+  hero: ['pulsar-animated-large.svg', 'pulsar-mark-light.svg'],
+  bar: ['pulsar-animated.svg', 'pulsar-mark-small-light.svg'],
+  small: ['pulsar-mark-small.svg', 'pulsar-mark-small-light.svg'],
+} as const;
+
+const [darkFile, lightFile] = FILES[kind];
+const dark = markSvg(darkFile, false);
+const light = markSvg(lightFile, true);
+---
+
+<span
+  class={`mk ${className}`}
+  style={`--mk-size: ${size}px; ${style}`}
+  data-spin={spin ? '' : undefined}
+  aria-hidden="true"
+>
+  <span class="mk-d" set:html={dark} />
+  <span class="mk-l" set:html={light} />
+</span>
+
+<style>
+  .mk {
+    position: relative;
+    display: inline-block;
+    flex: none;
+    /* --mk-fit lets a parent resize it at a breakpoint: the inline
+       --mk-size would beat any stylesheet that set --mk-size itself */
+    width: var(--mk-fit, var(--mk-size));
+    height: var(--mk-fit, var(--mk-size));
+  }
+  .mk-d,
+  .mk-l {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .mk :global(svg) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .mk-l {
+    display: none;
+  }
+  :global(:root[data-theme='light']) .mk-d {
+    display: none;
+  }
+  :global(:root[data-theme='light']) .mk-l {
+    display: block;
+  }
+  @media (prefers-color-scheme: light) {
+    :global(:root[data-theme='auto']) .mk-d {
+      display: none;
+    }
+    :global(:root[data-theme='auto']) .mk-l {
+      display: block;
+    }
+  }
+  /* A surface pinned dark (the footer always, the top bar off the home page)
+     keeps the colour-on-dark cut whatever the page theme is: the light cut's
+     deep-violet core on near-black is the thing its -light file exists to
+     avoid. Important, because it has to beat the theme rules above at any
+     specificity they are written at. */
+  :global(.theme-fixed-dark) .mk-d {
+    display: block !important;
+  }
+  :global(.theme-fixed-dark) .mk-l {
+    display: none !important;
+  }
+</style>

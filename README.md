@@ -232,7 +232,7 @@ Signing moves to Pulsar's own cosign release key: the one that already signs
 the installer ISOs, published at [`keys/cosign.pub`](keys/cosign.pub). Until
 that lands, the SBOM and the nightly diff are the paper trail. Each nightly is
 diffed against the one before it from those SBOMs — rendered at
-[getpulsar.dev/changelog](https://getpulsar.dev/changelog),
+[getpulsar.dev/docs/changelog](https://getpulsar.dev/docs/changelog),
 served raw as [changelog.json](https://getpulsar.dev/changelog.json),
 and on the machine as `pulsar changelog`. Nothing in it is written by hand.
 

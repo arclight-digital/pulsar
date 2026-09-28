@@ -1,0 +1,177 @@
+---
+import Docs from '../../layouts/Docs.astro';
+import { APP_ID, ORG_ID, REPO } from '../../data/site';
+
+const DESCRIPTION =
+  'One command for an atomic Linux desktop: re-color GNOME in one step, check the system’s health, set up a coding agent in a toolbox, update, and roll back.';
+
+// The CLI's own usage text, verbatim from cli/pulsar. A transcript, not a
+// retyping: if the help changes, this is the place that has to change with it.
+const USAGE = [
+  "pulsar -- manage a Pulsar system",
+  "",
+  "Health",
+  "  pulsar doctor [check]    health checks; exit 1 if one fails. the default",
+  "                           command. see: pulsar doctor --help",
+  "  pulsar status            deployments: booted, staged, rollback, pins",
+  "  pulsar report            a diagnosis bundle to paste: doctor, status,",
+  "                           manifest, failed units, recent warnings, graphics,",
+  "                           Flatpak. JSON; --text for people. redacted",
+  "",
+  "This image",
+  "  pulsar manifest          what is in this image, and what it runs on",
+  "  pulsar changelog         packages that moved in the latest published build",
+  "  pulsar sbom              this system's packages as SPDX 2.3",
+  "  pulsar verify            how to check where this image came from",
+  "",
+  "Updates and undo",
+  "  pulsar update            fetch and stage the newest image       (root)",
+  "  pulsar update --check    is a newer image published? exit 10 if so",
+  "  pulsar rollback          boot the previous deployment next      (root)",
+  "  pulsar pin [on|off]      keep the booted deployment through GC  (root)",
+  "  pulsar checkpoint        snapshot /etc and pin, to diff or      (root)",
+  "                           restore later: list | diff | restore | drop",
+  "",
+  "Desktop",
+  "  pulsar theme <command>   recolor the whole desktop: list | set <theme> |",
+  "                           revert | ...",
+  "  pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale",
+  "",
+  "Agents",
+  "  pulsar agent             what this machine gives a coding agent:",
+  "                           guide | list | add | remove | default | run |",
+  "                           sandbox [on|off] | guard [on|off]",
+  "  pulsar agent model on    a local model for agents, on this machine's GPU",
+  "  pulsar agent ask         start your agent on a redacted report of this",
+  "                           machine; --crash latest for the last crash",
+  "  pulsar mcp               this machine's facts as MCP tools, for any agent",
+  "                           (agent add registers it). nothing in it needs root",
+  "",
+  "Options",
+  "  --json                   JSON output, anywhere on the line. A command",
+  "                           without it says so rather than print text.",
+  "                           `manifest --json` puts host facts under \"host\", so",
+  "                           `jq 'del(.host)'` is the baked manifest",
+  "  --logo, --no-logo        force or suppress the mark in `manifest`",
+  "  --version, --help        pulsar help <command> for one command",
+];
+
+const usage = USAGE.join('\n');
+
+const JSONLD = [
+  {
+    '@type': 'TechArticle',
+    headline: 'The pulsar command',
+    description: DESCRIPTION,
+    about: { '@id': APP_ID },
+    author: { '@id': ORG_ID },
+    publisher: { '@id': ORG_ID },
+    url: new URL('/docs/cli', Astro.site).href,
+  },
+];
+const DEVBOX = 'pulsar setup devbox    # distrobox assemble from /usr/share/pulsar/distrobox.ini';
+const TOC = [
+  { id: 'usage', label: 'Everything it does', level: 2 },
+  { id: 'theme', label: 'theme', level: 2 },
+  { id: 'agents', label: 'For coding agents', level: 2 },
+  { id: 'doctor', label: 'Why doctor exists', level: 2 },
+  { id: 'update', label: 'update, not upgrade', level: 2 },
+  { id: 'setup', label: 'For development', level: 2 },
+];
+---
+
+<Docs
+  title="The pulsar command"
+  fullTitle="The pulsar command — themes, health, agents and rollback"
+  description={DESCRIPTION}
+  path="/docs/cli"
+  headings={TOC}
+  jsonLd={JSONLD}
+>
+  <h1>The pulsar command</h1>
+  <p class="intro">
+    One command for everything you do with an atomic system: make it look like yours, check it’s
+    healthy, see what changed, hand it to an agent, and undo it if you need to.
+  </p>
+
+  <h2 id="usage">Everything it does</h2>
+  <arc-code-block class="theme-fixed-dark" filename="pulsar --help" code={usage}></arc-code-block>
+
+  <h2 id="theme">theme: the whole desktop, one step</h2>
+  <p>
+    <code>pulsar theme set nord</code> re-colors the accent, the apps, the terminal, the text
+    editor, btop, the top bar, quick settings and the wallpaper together, as one change.{' '}
+    <code>pulsar theme list</code> shows what ships; any base16 scheme imports beside them.
+  </p>
+  <p>
+    <code>pulsar theme revert</code> puts stock GNOME back exactly. Apps that were already open are
+    offered a restart, and each is asked to quit the way Ctrl+Q asks, so unsaved work keeps its
+    dialog. Nothing is ever killed. <a href="/docs/theming">More in Themes</a>.
+  </p>
+
+  <h2 id="agents">For coding agents</h2>
+  <p>
+    <code>pulsar agent guide</code> prints the briefing the image ships for coding agents: how this
+    system differs from a mutable one, and what not to touch. <code>pulsar agent add claude</code>{' '}
+    (or <code>codex</code>, <code>gemini</code>, <code>opencode</code>, <code>aider</code>) installs
+    that agent into its own toolbox and runs it from any terminal. None ships by default, and one you
+    installed yourself is left alone. <code>sudo pulsar agent guard on</code> makes layering and
+    system app installs ask for your password, for the agent and for you.
+  </p>
+  <p>
+    <code>pulsar report</code> is the one thing to paste when something is broken: health checks,
+    failed services, recent warnings, the GPU and Flatpak state, as JSON or <code>--text</code>, with
+    hostname, username and addresses redacted. What an agent can and cannot reach is in{' '}
+    <a href="/docs/agents-safety">Agents and safety</a>.
+  </p>
+
+  <h2 id="doctor">Why doctor exists</h2>
+  <p>
+    <code>systemctl is-active scx.service</code> reported active for minutes at a stretch while no
+    scheduler was attached and the machine ran stock EEVDF. Unit state is not system state. So{' '}
+    <code>doctor</code> reads <code>/sys/kernel/sched_ext/state</code> and the other places where
+    the truth actually lives, and <code>--json</code> makes it scriptable. Only a <em>fail</em> sets
+    a nonzero exit; a scheduler that did not attach merely warns, because the machine is entirely
+    usable without one.
+  </p>
+  <p>
+    Reads go through <code>rpm-ostree</code>, which works unprivileged; only the commands that
+    change the system ask for root. <code>bootc status</code> needs root even to read, and a health
+    check you need sudo for is one you will not run. <code>pulsar sbom</code> is generated, never
+    baked: a file inside the image cannot describe the image containing it, so it reads the live rpm
+    database, through the same script the nightly uses.
+  </p>
+
+  <h2 id="update">update, not upgrade</h2>
+  <p>
+    Use <code>pulsar update</code> rather than <code>bootc upgrade</code> directly if you have
+    layered anything with <code>rpm-ostree install</code>. bootc’s model is the container image
+    alone: it does not know about your layer and will not carry it forward.
+  </p>
+  <p>
+    <code>pulsar update</code> checks the booted deployment first and hands off to{' '}
+    <code>rpm-ostree upgrade</code> when there is something to preserve; <code>pulsar doctor</code>{' '}
+    tells you which side of that line you are on. <code>pulsar update --check</code> answers “is
+    there a newer image” without root, and <code>--notify</code> turns that into a desktop
+    notification, once per published build.
+  </p>
+
+  <h2 id="setup">For development</h2>
+  <p>
+    <code>bpftrace</code>, <code>bcc-tools</code>, <code>sysstat</code> and <code>perf</code> are on
+    the host because a container cannot attach probes to the host kernel. <code>mise</code> and{' '}
+    <code>direnv</code> handle toolchains, so compilers and SDKs are pinned per project instead of
+    layered into the image. A default dev box is one command away:
+  </p>
+  <arc-code-block class="theme-fixed-dark" language="bash" filename="devbox" code={DEVBOX}></arc-code-block>
+  <p>
+    <code>podman-auto-update.timer</code> is enabled for user sessions, and a commented quadlet
+    template lives at <code>/usr/share/pulsar/templates/example.container</code>: containers as
+    systemd units, rootless, in a file you can version (<code>pulsar setup quadlet</code>).
+  </p>
+  <p>
+    <code>pulsar setup gamescale</code> runs the installer copy staged in the image for Flatpak
+    launchers. <a href="/docs/gamescale#flatpak">Why that step exists</a>.
+  </p>
+  <p class="hint">The source is <a href={`${REPO}/blob/main/cli/pulsar`}>cli/pulsar</a>, one shell script.</p>
+</Docs>

@@ -1,0 +1,154 @@
+---
+import Ledger from '../../components/Ledger.astro';
+import Version from '../../components/Version.astro';
+import Docs from '../../layouts/Docs.astro';
+import { changelog, version } from '../../data/build';
+import { arithmetic, digest } from '../../data/digest';
+import { APP_ID, IMAGES } from '../../data/site';
+
+const DESCRIPTION =
+  'Every package added, removed or upgraded in last night’s Pulsar build, diffed from the SBOMs attached to the images themselves. None of it is written by hand.';
+
+const lead = digest.lead;
+const extra = lead ? lead.members.length - 1 : 0;
+
+// The one page whose freshness is a fact the build knows: the diff's own stamp.
+const JSONLD = [
+  {
+    '@type': 'WebPage',
+    name: `What changed in Pulsar ${version}`,
+    description: DESCRIPTION,
+    dateModified: changelog.generated,
+    about: { '@id': APP_ID },
+    url: new URL('/docs/changelog', Astro.site).href,
+  },
+];
+const TOC = [
+  { id: 'last-night', label: 'Last night', level: 2 },
+  { id: 'every-package', label: 'Every package that moved', level: 2 },
+];
+---
+
+<Docs
+  title="Changelog"
+  fullTitle={`Pulsar ${version} changelog — every package that moved`}
+  description={DESCRIPTION}
+  path="/docs/changelog"
+  headings={TOC}
+  jsonLd={JSONLD}
+>
+  <p class="above"><arc-badge variant="primary" class="mono">{version}</arc-badge></p>
+  <h1>What changed last night</h1>
+  <p class="intro">
+    Each new image compared with the one before it, package by package, from the package list
+    attached to both. Generated, not written.
+  </p>
+
+  <h2 id="last-night">Last night</h2>
+  <div class="lead">
+    {
+      digest.baseline ? (
+        <p class="lead-say">First build.</p>
+      ) : digest.quiet ? (
+        <p class="lead-say">Nothing moved.</p>
+      ) : (
+        lead && (
+          <p class="lead-tx">
+            <span class="lead-pkg">
+              {lead.label}
+              {extra > 0 && <span class="lead-with">+{extra} related</span>}
+            </span>
+            <span class="lead-ver" aria-hidden="true">
+              <Version delta={lead.delta} from={lead.from} to={lead.to} />
+            </span>
+            <span class="sr-only">
+              {lead.label}, {lead.from} to {lead.to}
+            </span>
+          </p>
+        )
+      )
+    }
+    <p class="lede">{arithmetic()}</p>
+    <p class="prov mono">
+      {
+        digest.fromDigest && digest.toDigest && (
+          <>
+            <span class="dim">image</span>
+            <span>{digest.fromDigest}</span>
+            <span class="dim" aria-hidden="true">→</span>
+            <span>{digest.toDigest}</span>
+          </>
+        )
+      }
+      <span><span class="dim">diffed</span> <time datetime={changelog.generated}>{changelog.generated}</time></span>
+    </p>
+    {/* Filled by src/scripts/beacon.ts when the newest nightly built
+        nothing, which is the night this heading would otherwise be
+        wrong about. Hidden in the served HTML: skips commit nothing. */}
+    <p class="hint skip-note" data-skip-note hidden></p>
+  </div>
+
+  <h2 id="every-package">Every package that moved</h2>
+  <Ledger />
+  <p class="hint">
+    Every row, unsummarized: <a href="/changelog.json">changelog.json</a>. The package list it was
+    computed from ships attached to the&nbsp;image:{' '}
+    <code>oras discover {IMAGES.vanilla}:latest</code>. On a Pulsar machine,{' '}
+    <code>pulsar changelog</code> prints the same&nbsp;list.
+  </p>
+</Docs>
+
+<style>
+  .above {
+    margin: 0 0 var(--space-md);
+  }
+  .lead-say,
+  .lead-pkg {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: clamp(2.2rem, 5vw, 4rem);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+  }
+  .lead-say {
+    margin: 0 0 var(--space-md);
+  }
+  .lead-tx {
+    display: grid;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-md);
+  }
+  .lead-with {
+    display: inline-block;
+    vertical-align: 0.9em;
+    margin-left: var(--space-sm);
+    font-family: var(--font-mono);
+    font-weight: var(--font-mono-weight);
+    font-size: var(--text-sm);
+    letter-spacing: 0;
+    color: var(--accent-primary);
+  }
+  .lead-ver {
+    font-size: var(--text-lg);
+  }
+  .prov {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-md);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    margin: 0;
+  }
+  .dim {
+    color: var(--text-ghost);
+  }
+  .hint {
+    margin-top: var(--space-xl);
+  }
+  /* after .hint, which it also is: it belongs to the line above it, not to
+     the section below */
+  .skip-note {
+    margin: var(--space-sm) 0 0;
+  }
+</style>

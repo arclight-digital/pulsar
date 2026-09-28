@@ -1,0 +1,223 @@
+---
+// The docs shell, after arcui.dev's: the sidebar of guides grouped by what you
+// came to do, the article, and a table of contents that follows the scroll.
+// It sits inside the site's own Base, so the bar, the footer and the theme
+// picker are the ones every page wears.
+import Base from './Base.astro';
+import { DOCS_NAV, hrefOf } from '../data/docs';
+
+interface Props {
+  title: string;
+  description: string;
+  path: string;
+  headings?: { id: string; label: string; level: number }[];
+  /** the <title>, when the page's name alone says too little to a search result */
+  fullTitle?: string;
+  jsonLd?: Record<string, unknown>[];
+}
+const { title, description, path, headings = [], fullTitle, jsonLd = [] } = Astro.props;
+const here = (href: string) => path === href;
+---
+
+<Base title={fullTitle ?? `${title} — Pulsar docs`} crumb={title} description={description} path={path} jsonLd={jsonLd}>
+  <main id="main" class="page">
+    <arc-container size="lg">
+    <div class="docs">
+    <nav class="side" aria-label="Docs">
+      {
+        DOCS_NAV.map((g) => (
+          <div class="group">
+            <p class="group-h">{g.heading}</p>
+            <ul>
+              {g.links.map((l) => (
+                <li>
+                  <a href={hrefOf(l)} aria-current={here(hrefOf(l)) ? 'page' : undefined}>
+                    <arc-icon name={l.icon} size="sm"></arc-icon>
+                    <span>{l.label}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </nav>
+
+    <article class="prose">
+      <slot />
+    </article>
+
+    <aside class="toc" aria-label="On this page">
+      {
+        headings.length > 0 && (
+          <>
+            <arc-scroll-spy progress="both">
+              {headings.map((h) => (
+                <arc-spy-link target={h.id} level={h.level - 2}>{h.label}</arc-spy-link>
+              ))}
+            </arc-scroll-spy>
+          </>
+        )
+      }
+    </aside>
+    </div>
+    </arc-container>
+  </main>
+</Base>
+
+<style>
+  .docs {
+    display: grid;
+    grid-template-columns: 15rem minmax(0, 1fr) 14rem;
+    gap: var(--space-2xl);
+    align-items: start;
+    padding-bottom: var(--space-3xl);
+  }
+  .side,
+  .toc {
+    position: sticky;
+    top: calc(var(--space-3xl) + var(--space-md));
+    max-height: calc(100svh - var(--space-4xl));
+    overflow-y: auto;
+  }
+  .group + .group {
+    margin-top: var(--space-lg);
+  }
+  .group-h {
+    margin: 0 0 var(--space-sm);
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
+    font-size: var(--label-inline-size);
+    letter-spacing: var(--label-spacing);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .side ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 2px;
+  }
+  .side a {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: var(--text-sm);
+    transition: color 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
+  }
+  .side a:hover {
+    color: var(--text-primary);
+    background: color-mix(in oklab, var(--text-primary) 5%, transparent);
+  }
+  .side a[aria-current='page'] {
+    color: var(--accent-primary);
+    background: color-mix(in oklab, var(--accent-primary) 10%, transparent);
+  }
+  .side arc-icon {
+    flex: none;
+    color: inherit;
+  }
+
+  /* ---- the article ------------------------------------------------------ */
+  .prose {
+    min-width: 0;
+    max-width: 46rem;
+  }
+  .prose :global(h1) {
+    font-size: clamp(2rem, 4vw, 3rem);
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    margin: 0 0 var(--space-lg);
+  }
+  .prose :global(h2) {
+    font-size: var(--text-2xl);
+    margin: var(--space-2xl) 0 var(--space-md);
+  }
+  .prose :global(h3) {
+    font-size: var(--text-lg);
+    margin: var(--space-xl) 0 var(--space-sm);
+  }
+  .prose :global(.intro) {
+    font-size: var(--text-lg);
+    color: var(--text-secondary);
+    max-width: 56ch;
+  }
+  /* The home page's two-column sections, reused here, stack: the reading
+     column is narrower than the breakpoint they split at. */
+  .prose :global(.pipe),
+  .prose :global(.gs) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .prose :global(.iso) {
+    margin-bottom: var(--space-lg);
+  }
+  .prose :global(arc-code-block),
+  .prose :global(arc-alert) {
+    display: block;
+    margin: var(--space-md) 0;
+  }
+  .prose :global(p),
+  .prose :global(li) {
+    color: var(--text-secondary);
+    text-wrap: pretty;
+  }
+  .prose :global(strong) {
+    color: var(--text-primary);
+  }
+  .prose :global(pre) {
+    padding: var(--space-md) var(--space-lg);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    overflow-x: auto;
+    font-size: var(--text-sm);
+  }
+  .prose :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+    margin: var(--space-md) 0;
+    display: block;
+    overflow-x: auto;
+  }
+  .prose :global(th),
+  .prose :global(td) {
+    text-align: left;
+    padding: var(--space-sm) var(--space-md) var(--space-sm) 0;
+    border-top: 1px solid var(--border-subtle);
+    vertical-align: top;
+  }
+  .prose :global(th) {
+    color: var(--text-muted);
+    font-family: var(--font-label);
+    font-weight: var(--label-weight);
+    font-size: var(--label-inline-size);
+    letter-spacing: var(--label-spacing);
+    text-transform: uppercase;
+  }
+
+  @media (max-width: 72rem) {
+    .docs {
+      grid-template-columns: 14rem minmax(0, 1fr);
+    }
+    .toc {
+      display: none;
+    }
+  }
+  @media (max-width: 48rem) {
+    .docs {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-xl);
+    }
+    .side {
+      position: static;
+      max-height: none;
+      padding-bottom: var(--space-lg);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+  }
+</style>

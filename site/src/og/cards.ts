@@ -71,7 +71,7 @@ export const CARDS: Card[] = [
   },
   {
     slug: 'install',
-    path: '/install',
+    path: '/docs/install',
     headline: 'One command, one reboot.',
     sub: 'Already on Fedora Silverblue? Switch in place.',
     alt: `The Pulsar logo and the install command in a dark terminal: sudo bootc switch ${IMAGES.vanilla}:latest.`,
@@ -83,7 +83,7 @@ export const CARDS: Card[] = [
   },
   {
     slug: 'cli',
-    path: '/cli',
+    path: '/docs/cli',
     headline: 'One command for the whole system.',
     alt: 'The Pulsar logo and three pulsar commands in a dark terminal: theme set, doctor and rollback.',
     visual: {
@@ -100,7 +100,7 @@ export const CARDS: Card[] = [
   },
   {
     slug: 'gamescale',
-    path: '/gamescale',
+    path: '/docs/gamescale',
     headline: 'Your screen’s real resolution, for one game.',
     alt: 'The Pulsar logo, the gamescale icon, and the command that sets gamescale up for Steam in a dark terminal.',
     visual: {
@@ -112,7 +112,7 @@ export const CARDS: Card[] = [
   },
   {
     slug: 'provenance',
-    path: '/provenance',
+    path: '/docs/provenance',
     headline: 'Every image has a paper trail.',
     sub: 'Full package list attached, diffed every night.',
     alt: `The Pulsar logo and the command that lists the package list attached to the image: oras discover ${IMAGES.vanilla}:latest.`,
@@ -124,17 +124,32 @@ export const CARDS: Card[] = [
   },
   {
     slug: 'changelog',
-    path: '/changelog',
+    path: '/docs/changelog',
     headline: 'What changed last night.',
     alt: `The Pulsar logo and the latest build, ${version}, built ${buildDate}, with its package counts.`,
     visual: { kind: 'build' },
   },
+  {
+    slug: 'docs',
+    path: '/docs',
+    headline: 'How Pulsar works',
+    sub: 'Install, themes, agents, and how every image is built and signed.',
+    alt: 'A dark code block with pulsar agent guide and pulsar doctor, the commands the docs start from.',
+    visual: {
+      kind: 'terminal',
+      label: 'terminal',
+      lines: [{ cmd: 'pulsar agent guide', note: 'how this machine works' }, { cmd: 'pulsar doctor', note: 'is everything as it should be' }],
+    },
+  },
 ];
 
-/** The card for a route. Throws, so a page without one fails the build. */
+/** The card for a route. Throws, so a page without one fails the build. A
+    page under /docs without a card of its own shares the docs card. */
 export function cardFor(path: string): Card {
-  const norm = path.length > 1 ? path.replace(/\/+$/, '') : path;
-  const card = CARDS.find((c) => c.path === norm);
+  const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  const card =
+    CARDS.find((c) => c.path === trimmed) ??
+    (trimmed.startsWith('/docs/') ? CARDS.find((c) => c.path === '/docs') : undefined);
   if (!card) {
     throw new Error(
       `og: no share card for route "${path}". Add one to site/src/og/cards.ts.`,

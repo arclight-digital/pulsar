@@ -1,0 +1,113 @@
+---
+import Pipeline from '../../components/Pipeline.astro';
+import Docs from '../../layouts/Docs.astro';
+import { APP_ID, IMAGES, ORG_ID, REPO } from '../../data/site';
+
+const DESCRIPTION =
+  'Every Pulsar image ships its full package list as an SPDX SBOM and is diffed package by package each night. The NVIDIA module and ISOs are signed; images aren’t yet.';
+
+const JSONLD = [
+  {
+    '@type': 'TechArticle',
+    headline: 'Every Pulsar image has a paper trail',
+    description: DESCRIPTION,
+    about: { '@id': APP_ID },
+    author: { '@id': ORG_ID },
+    publisher: { '@id': ORG_ID },
+    url: new URL('/docs/provenance', Astro.site).href,
+  },
+];
+const SBOM = `oras discover ${IMAGES.vanilla}:latest`;
+const TOC = [
+  { id: 'one-night', label: 'One night’s build', level: 2 },
+  { id: 'verify', label: 'Check it yourself', level: 2 },
+  { id: 'keys', label: 'Two variants, one key', level: 2 },
+  { id: 'by-hand', label: 'Builds started by hand', level: 2 },
+];
+---
+
+<Docs
+  title="Provenance"
+  fullTitle="Pulsar provenance — SBOMs and a nightly package diff"
+  description={DESCRIPTION}
+  path="/docs/provenance"
+  headings={TOC}
+  jsonLd={JSONLD}
+>
+  <h1>Every image has a paper trail</h1>
+  <p class="intro">
+    The machine that runs Pulsar never compiles anything. A build machine that exists for one night
+    builds every image and attaches its full package list, and the keys that matter never touch it.
+  </p>
+
+  <h2 id="one-night">One night’s build</h2>
+  <Pipeline compact />
+
+  <h2 id="verify">Check it yourself</h2>
+  <p>
+    Every published image carries its full package list as an SPDX SBOM, attached in the registry,
+    so you can read it from whatever machine you already trust: <code>oras discover</code> lists it.
+    The installer ISOs are signed with Pulsar’s cosign release key. The images themselves are not
+    signed yet; signing them with that same key is coming, and this page will say so when it lands.
+    On a Pulsar machine, <code>pulsar verify</code> tells you the same about the image you booted.
+  </p>
+  <arc-code-block class="theme-fixed-dark" language="bash" filename="sbom" code={SBOM}></arc-code-block>
+  <p>
+    Every nightly is diffed against the one before it, package by package, from those SBOMs. The
+    diff is rendered in the <a href="/docs/changelog">changelog</a>, served raw as{' '}
+    <a href="/changelog.json">changelog.json</a>, and readable on the machine as{' '}
+    <code>pulsar changelog</code>. Nothing in it is written by hand.
+  </p>
+  <arc-description-list class="endpoints" layout="horizontal">
+    <arc-description-item term="changelog.json"><a href="/changelog.json">the night’s diff, as the build wrote it</a></arc-description-item>
+    <arc-description-item term="manifest.json"><a href="/manifest.json">the image’s baked manifest</a></arc-description-item>
+    <arc-description-item term="cosign.pub"><a href={`${REPO}/blob/main/keys/cosign.pub`}>the release key that signs the ISOs</a></arc-description-item>
+  </arc-description-list>
+  <p class="hint">How to check an ISO, step by step: <a href="/docs/signing">Signing</a>.</p>
+
+  <h2 id="keys">Two variants, one key</h2>
+  <p>
+    The NVIDIA variant builds <code>nvidia-open</code> against the image’s exact kernel and signs
+    it. Blackwell has no closed-driver option, which is fine: the open module is the better one now
+    anyway.
+  </p>
+  <p>
+    <code>Containerfile</code> declares no build secrets, so it is safe to build anywhere.{' '}
+    <code>Containerfile.nvidia</code> needs the Secure&nbsp;Boot signing key, which it never holds.
+    The key lives on the signing host; the build carries a bearer token, sends each module’s bytes,
+    and attaches the detached signature that comes back. Neither key nor token reaches an image
+    layer.
+  </p>
+  <p>
+    The public half ships in <strong>both</strong> images so the key can be enrolled before the
+    driver is in play. The NVIDIA build fails if the module’s signer doesn’t match that cert, so a
+    stale cert becomes a failed build instead of a black screen at boot.
+  </p>
+  <p>
+    <strong>Running this yourself?</strong> Fork it and use your own key. Enrolling this cert means
+    your machine permanently trusts modules its owner signs, which is not a relationship you want
+    with a stranger’s laptop. The standard image needs no keys at all.
+  </p>
+
+  <h2 id="by-hand">Builds started by hand</h2>
+  <p>
+    <strong>A build somebody starts by hand defines nothing.</strong> The scheduled nightly is the
+    published one. A hand-started build is tagged <code>-dev</code> out of its own series:{' '}
+    <code>:latest</code> does not move onto it, the SBOM baseline the next night diffs against is
+    left alone, and no site commit lands. A <code>-dev</code> tag in the registry is a debugging
+    image that was never released, and a machine booted on one says so in its boot menu.
+  </p>
+  <p class="hint">
+    One person’s laptop OS, over-engineered on purpose, MIT-licensed.{' '}
+    <a href={REPO}>The whole thing is public.</a>
+  </p>
+</Docs>
+
+<style>
+  .endpoints {
+    display: block;
+    margin: var(--space-md) 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+</style>

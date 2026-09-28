@@ -3,7 +3,7 @@
 // real table, tabular figures, and the one row that is the panel's actual mode
 // marked as the answer rather than described as one.
 interface Props {
-  /** the home page links out; /gamescale is the destination */
+  /** the home page links out; /docs/gamescale is the destination */
   compact?: boolean;
 }
 
@@ -77,7 +77,7 @@ const MODES = [
     </p>
     {
       compact ? (
-        <arc-button href="/gamescale" variant="secondary">How gamescale works</arc-button>
+        <arc-button href="/docs/gamescale" variant="secondary">How gamescale works</arc-button>
       ) : (
         <p class="hint">
           The script, its top-bar indicator, and the reconcile unit ship in the image at a

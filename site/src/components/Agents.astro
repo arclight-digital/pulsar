@@ -1,118 +1,312 @@
 ---
-// Pillar two: the machine you can hand to an agent. Headings are the jobs, not
-// the features, and every one maps to a command that ships in the image. The
-// limit is stated on the page, not buried: rollback covers the OS, never the
-// home folder -- docs/AGENTS-SAFETY.md is the long version, linked below.
-import { REPO } from '../data/site';
+// The agent pillar, as two columns you can read across: what an agent CAN do
+// on this machine, and what it CAN'T. The second column is the point -- it is
+// what nobody can promise on a mutable system -- so it gets the same weight
+// as the first, not a footnote. Every row ends in the command that makes it
+// true, and every command ships in the image.
+//
+// The notification is the real one: its words are crash_notify_one's in
+// cli/pulsar, drawn here the way GNOME draws a notification, as the one
+// picture that shows an agent being handed a problem.
+//
+// The limit is stated on the page, not buried: rollback covers the system,
+// never the home folder. docs/AGENTS-SAFETY.md is the long version.
 
-const JOBS = [
+const CAN = [
   {
-    t: 'It reads the manual first',
-    d: 'The image ships a briefing for coding agents: tools go in a toolbox, apps are Flatpaks, never reboot, and what rollback does and doesn’t undo. pulsar agent guide prints it, and pulsar agent add puts it where each agent already looks.',
+    i: 'robot',
+    t: 'Arrive when you do',
+    d: 'Pick Claude Code, Codex, Gemini, opencode or aider the first time you log in, or none. Each one lives in its own box, away from the system.',
+    c: 'pulsar agent add claude',
   },
   {
-    t: 'Add an agent in one line',
-    d: 'Claude Code, Codex, Gemini, opencode or aider, each installed into its own toolbox and run from any terminal. None ships by default, and one you installed yourself is left alone.',
+    i: 'compass',
+    t: 'Know the machine',
+    d: 'It gets a briefing on how Pulsar works, and tools to check its health, its updates and its crashes for itself.',
+    c: 'pulsar mcp',
   },
   {
-    t: 'Something broke? Paste one thing',
-    d: 'pulsar report gathers health checks, failed services, recent warnings, the GPU and Flatpak state into one document, with your hostname, username and addresses taken out. When a program crashes, one click hands its stack trace and logs to your agent.',
+    i: 'bug',
+    t: 'Take a crash off your hands',
+    d: 'Click the notification and it reads the stack trace and the logs, explains what happened, and helps you report it.',
+    c: 'pulsar agent ask --crash latest',
   },
   {
-    t: 'Run models on your own GPU',
-    d: 'On the NVIDIA image, any container can ask for the graphics card by name. A small model generated 307 tokens a second on the GPU, 58 on the CPU.',
+    i: 'palette',
+    t: 'Make you a theme',
+    d: 'Describe a look. It builds the theme, checks it is readable, and applies it when you say so.',
+    c: 'skill: pulsar-theme',
   },
   {
-    t: 'Keep it in the project',
-    d: 'Sandbox mode shows an agent only the project it is working on, not the rest of your home folder. It can still push, through a gate that holds your keys for it: no force-push, no deleting branches.',
-  },
-  {
-    t: 'Let it try things',
-    d: 'The system is read-only and every change to it is a new version you can boot out of. A bad update rolls itself back before you notice.',
+    i: 'cpu',
+    t: 'Think on your own hardware',
+    d: 'Run a model on your graphics card, for an agent that needs no account at all.',
+    c: 'pulsar agent model on',
   },
 ];
 
-const EXAMPLE = [
-  'pulsar agent add claude',
-  'pulsar report --text',
-  'podman run --device nvidia.com/gpu=all IMAGE',
-].join('\n');
+const CANT = [
+  {
+    i: 'shield-check',
+    t: 'Break the system',
+    d: 'The system is read-only. Every change becomes a new version, and the last good one is a restart away.',
+    c: 'pulsar rollback',
+  },
+  {
+    i: 'lock-key',
+    t: 'Install things behind your back',
+    d: 'Turn on guard and installing system software asks for your password, for your agent and for you.',
+    c: 'pulsar agent guard on',
+  },
+  {
+    i: 'folder-lock',
+    t: 'Wander through your home folder',
+    d: 'In the sandbox it sees one project. It can push your code, but it never holds your keys, and it can’t force-push or delete.',
+    c: 'pulsar agent sandbox on',
+  },
+  {
+    i: 'clock-counter-clockwise',
+    t: 'Change settings without a trace',
+    d: 'Take a checkpoint before a session. Afterwards, see exactly what changed and put any of it back.',
+    c: 'pulsar checkpoint',
+  },
+];
 ---
 
-<section class="chapter" id="agents">
-  <h2>The safest machine to hand to an agent</h2>
-  <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
-  <p class="lede">
-    An agent on Pulsar can build, test and experiment all day.
-    {' '}<span class="sent">The one thing it cannot do is leave you with a broken&nbsp;system.</span>
-  </p>
+<section class="chapter" id="agents" aria-labelledby="agents-h">
+  <div class="head">
+    <div>
+      <h2 id="agents-h">Your agent, at home</h2>
+      <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+      <p class="lede">
+        Pulsar is built to be handed to a coding agent. It can help you understand, fix and shape
+        the whole machine.
+        {' '}<span class="sent">It can’t break&nbsp;it.</span>
+      </p>
+    </div>
+
+    {/* The real notification, drawn. Not a control: the page has nothing to
+        hand an agent, so the button is a picture of one. */}
+    <figure class="notice" aria-label="The notification Pulsar shows when a program crashes">
+      <div class="note" aria-hidden="true">
+        <p class="note-app">
+          <arc-icon name="warning" size="sm"></arc-icon>
+          Pulsar <span>· now</span>
+        </p>
+        <p class="note-title">wireplumber crashed</p>
+        <p class="note-body">
+          Claude Code can read the stack trace and the logs, and help you fix or report it. Nothing
+          is sent to it unless you click.
+        </p>
+        <span class="note-btn">Ask Claude Code</span>
+      </div>
+      <figcaption>What a crash looks like on Pulsar. The click is the only way anything reaches your agent.</figcaption>
+    </figure>
+  </div>
 
   <div class="split">
-    <dl class="jobs">
-      {
-        JOBS.map((j) => (
-          <div class="job">
-            <dt>{j.t}</dt>
-            <dd>{j.d}</dd>
-          </div>
-        ))
-      }
-    </dl>
-    <div class="side">
-      <arc-code-block class="theme-fixed-dark" language="bash" filename="terminal" code={EXAMPLE}></arc-code-block>
+    <div class="col can">
+      <h3 class="col-h">It can</h3>
+      <ul class="rows">
+        {
+          CAN.map((r) => (
+            <li class="row">
+              <span class="row-i" aria-hidden="true"><arc-icon name={r.i} size="md"></arc-icon></span>
+              <div class="row-x">
+                <p class="row-t">{r.t}</p>
+                <p class="row-d">{r.d}</p>
+                <code class="row-c">{r.c}</code>
+              </div>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+    <div class="col cant">
+      <h3 class="col-h">It can’t</h3>
+      <ul class="rows">
+        {
+          CANT.map((r) => (
+            <li class="row">
+              <span class="row-i" aria-hidden="true"><arc-icon name={r.i} size="md"></arc-icon></span>
+              <div class="row-x">
+                <p class="row-t">{r.t}</p>
+                <p class="row-d">{r.d}</p>
+                <code class="row-c">{r.c}</code>
+              </div>
+            </li>
+          ))
+        }
+      </ul>
       <p class="limit">
-        <strong>What it can’t protect:</strong> your home folder. Rollback covers the operating
-        system, not your files, so git and backups still do their usual job.{' '}
-        <a href={`${REPO}/blob/main/docs/AGENTS-SAFETY.md`}>Exactly what an agent can and can’t touch&nbsp;→</a>
+        <strong>One honest limit.</strong> Rollback covers the system, not your files. For anything
+        you don’t fully trust, use the sandbox, and keep your backups.{' '}
+        <a href="/docs/agents-safety">Exactly what an agent can reach&nbsp;→</a>
       </p>
     </div>
   </div>
 </section>
 
 <style>
-  .split {
+  .head {
     display: grid;
     grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
     gap: var(--space-2xl);
-    align-items: start;
-    margin-top: var(--space-lg);
+    align-items: center;
   }
-  .jobs {
+  .lede {
+    max-width: 52ch;
+  }
+  .sent {
+    color: var(--text-primary);
+  }
+
+  /* ---- the notification, drawn the way GNOME draws one ------------------ */
+  .notice {
     margin: 0;
-    border-bottom: 1px solid var(--border-subtle);
+    display: grid;
+    gap: var(--space-sm);
+    justify-items: center;
   }
-  .job {
-    padding: var(--space-md) 0;
-    border-top: 1px solid var(--border-subtle);
+  .note {
+    width: min(100%, 24rem);
+    padding: var(--space-md) var(--space-lg) var(--space-lg);
+    border-radius: var(--radius-xl);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.55), var(--glow-hover);
+    color: var(--text-primary);
+    transform: rotate(-1.2deg);
   }
-  .job:first-child {
-    border-top: 0;
-    padding-top: 0;
+  .note p {
+    margin: 0;
   }
-  dt {
+  .note-app {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-bottom: var(--space-sm) !important;
+  }
+  .note-app arc-icon {
+    color: var(--accent-primary);
+  }
+  .note-app span {
+    color: var(--text-ghost);
+  }
+  .note-title {
     font-family: var(--font-display);
     font-weight: var(--font-display-weight);
     font-size: var(--text-md);
-    color: var(--text-primary);
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--space-xs) !important;
   }
-  dd {
+  .note-body {
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-md) !important;
+  }
+  .note-btn {
+    display: block;
+    text-align: center;
+    padding: var(--space-sm);
+    border-radius: var(--radius-md);
+    background: color-mix(in oklab, var(--accent-primary) 16%, transparent);
+    color: var(--accent-primary);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-sm);
+  }
+  .notice figcaption {
+    max-width: 30ch;
+    text-align: center;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  /* ---- can / can't ------------------------------------------------------ */
+  .split {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2xl);
+    margin-top: var(--space-2xl);
+  }
+  .col-h {
+    font-size: clamp(2rem, 4vw, 3rem);
+    line-height: 1;
+    letter-spacing: -0.03em;
+    margin: 0 0 var(--space-lg);
+  }
+  .can .col-h {
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
+  }
+  .cant .col-h {
+    color: var(--text-primary);
+  }
+  .rows {
+    list-style: none;
     margin: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: var(--space-md);
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .row-i {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    background: color-mix(in oklab, var(--text-primary) 6%, transparent);
+    color: var(--text-secondary);
+  }
+  .can .row-i {
+    background: color-mix(in oklab, var(--accent-primary) 12%, transparent);
+    color: var(--accent-primary);
+  }
+  .row-x {
+    min-width: 0;
+  }
+  .row p {
+    margin: 0;
+  }
+  .row-t {
+    font-family: var(--font-display);
+    font-weight: var(--font-display-weight);
+    font-size: var(--text-md);
+    line-height: var(--heading-lh);
+    color: var(--text-primary);
+    margin-bottom: var(--space-xs) !important;
+  }
+  .row-d {
     color: var(--text-secondary);
     text-wrap: pretty;
   }
-  .side {
-    display: grid;
-    gap: var(--space-lg);
-    position: sticky;
-    top: calc(var(--space-3xl) + var(--space-md));
+  .row-c {
+    display: inline-block;
+    margin-top: var(--space-sm);
+    padding: 2px var(--space-sm);
+    border-radius: var(--radius-sm);
+    background: var(--chip);
+    border: 1px solid var(--chip-line);
+    color: var(--on-chip);
+    font-size: var(--text-xs);
   }
-  .side arc-code-block {
-    display: block;
-    min-width: 0;
+  .can .row-c {
+    color: var(--cyan);
   }
   .limit {
-    margin: 0;
+    margin: var(--space-lg) 0 0;
+    padding: var(--space-md) var(--space-lg);
+    border-radius: var(--radius-lg);
+    background: color-mix(in oklab, var(--color-warning) 8%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-warning) 28%, transparent);
     color: var(--text-secondary);
     text-wrap: pretty;
   }
@@ -120,16 +314,20 @@ const EXAMPLE = [
     color: var(--text-primary);
   }
   .limit a {
-    display: inline-block;
-    margin-top: var(--space-xs);
+    white-space: nowrap;
   }
+
   @media (max-width: 56rem) {
+    .head,
     .split {
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-xl);
     }
-    .side {
-      position: static;
+    .notice {
+      justify-items: start;
+    }
+    .notice figcaption {
+      text-align: left;
     }
   }
 </style>

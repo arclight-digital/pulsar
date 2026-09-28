@@ -1,5 +1,6 @@
 ---
-// Starting from bare metal: the weekly installers and how to check one.
+// The install doc's fresh-install section: the weekly installers, and how
+// to check one. One column: it lives in the docs' reading column.
 import DownloadRow from './DownloadRow.astro';
 import { COSIGN_PUB, ISOS } from '../data/site';
 
@@ -28,7 +29,7 @@ const shown = [
 ].join('\n');
 ---
 
-<div class="iso" id="iso">
+<div class="iso">
   <p class="lede">
     A weekly installer ISO for each variant, built from the published image itself — the same
     Anaconda installer stock Silverblue uses, landing directly in Pulsar.{' '}
@@ -71,9 +72,9 @@ const shown = [
 <style>
   .grid {
     display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    /* explicit, or the implicit column sizes to the longest filename */
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-xl);
-    align-items: start;
   }
   .isos {
     list-style: none;
@@ -93,11 +94,5 @@ const shown = [
   .hint {
     margin-top: var(--space-md);
     margin-bottom: 0;
-  }
-  @media (max-width: 56rem) {
-    .grid {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-xl);
-    }
   }
 </style>

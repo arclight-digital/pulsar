@@ -7,6 +7,7 @@
 // until scrolled, following the page theme. Inner pages open on prose and
 // pin the bar dark, which on the pale theme lifts to a deep color derived
 // from the accent rather than sitting there as a black slab.
+import Mark from './Mark.astro';
 import { version } from '../data/build';
 import { REPO } from '../data/site';
 
@@ -17,36 +18,21 @@ interface Props {
 
 const { path, immersive } = Astro.props;
 
-const ITEMS = [
-  { href: '/install', label: 'Install' },
-  { href: '/gamescale', label: 'gamescale' },
-  { href: '/provenance', label: 'Provenance' },
-  { href: '/changelog', label: 'Changelog' },
-  { href: '/cli', label: 'CLI' },
-];
-
-const active = (href: string) => path === href || path.startsWith(`${href}/`);
+// Two destinations, both on the right: the docs, and the install section the
+// hero's "Get started" also lands on. Everything else the old nav listed is a
+// section of the home page or a link in the footer.
+const onDocs = path === '/docs' || path.startsWith('/docs/');
 ---
 
 <arc-top-bar
   fixed
-  contained="xl"
+  contained="lg"
   immersive={immersive || undefined}
-  nav-align="left"
-  mobile-menu="nav"
   home-href="/"
   class:list={['bar', { 'theme-fixed-dark': !immersive }]}
 >
   <a slot="logo" class="lockup" href="/" aria-label="Pulsar home">
-    <img
-      data-mark
-      data-dark="/assets/pulsar-animated.svg"
-      data-light="/assets/pulsar-mark-small-light.svg"
-      src="/assets/pulsar-animated.svg"
-      alt=""
-      width="28"
-      height="28"
-    />
+    <Mark kind="bar" size={28} class="bar-mark" />
     <span class="word">PULSAR</span>
   </a>
   {/* The build names the product; it is not something you can do, so it sits
@@ -55,16 +41,9 @@ const active = (href: string) => path === href || path.startsWith(`${href}/`);
   <arc-badge slot="subtitle" variant="primary" size="sm" class="bar-build">
     <span data-build-version>{version}</span>
   </arc-badge>
-  <arc-navigation-menu slot="center" label="Site">
-    {
-      ITEMS.map((item) => (
-        <arc-nav-item active={active(item.href) || undefined}>
-          <a href={item.href}>{item.label}</a>
-        </arc-nav-item>
-      ))
-    }
-  </arc-navigation-menu>
   <div slot="actions" class="actions">
+    <arc-button href="/docs" variant="secondary" size="sm" aria-current={onDocs ? 'page' : undefined}>Docs</arc-button>
+    <arc-button href="/#install" variant="primary" size="sm">Install</arc-button>
     <arc-theme-toggle icon-only size="md"></arc-theme-toggle>
     <arc-icon-button
       href={REPO}
@@ -84,7 +63,7 @@ const active = (href: string) => path === href || path.startsWith(`${href}/`);
     color: inherit;
     text-decoration: none;
   }
-  .lockup img {
+  .lockup :global(.bar-mark) {
     display: block;
   }
   .word {
@@ -108,5 +87,29 @@ const active = (href: string) => path === href || path.startsWith(`${href}/`);
     display: inline-flex;
     align-items: center;
     gap: var(--space-xs);
+  }
+  /* the two destinations, then a step, then the two icons */
+  .actions arc-button + arc-theme-toggle {
+    margin-left: var(--space-md);
+  }
+  .actions arc-button {
+    display: inline-block;
+  }
+  /* No nav and no sidebar: ARC's bar still renders its hamburger on narrow
+     screens, where it would toggle nothing. Hidden through its documented
+     part -- a dead control removed, not a part restyled. */
+  .bar::part(menu-btn) {
+    display: none;
+  }
+  /* a phone keeps the mark, both buttons and the theme toggle; the word is
+     the hero's first line, and the source link is also in the footer */
+  @media (max-width: 30rem) {
+    .actions arc-icon-button,
+    .word {
+      display: none;
+    }
+    .actions arc-button + arc-theme-toggle {
+      margin-left: var(--space-sm);
+    }
   }
 </style>

@@ -13,6 +13,19 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Every anchor lands below the fixed bar, with a little air. A margin on the
+   target rather than scroll-padding on the page: the docs' scroll-spy sets
+   the same margin on its own targets (its offset, 80px by default), so the two
+   agree instead of adding up. */
+[id] {
+  scroll-margin-top: calc(var(--nav-height, 64px) + var(--space-md));
+}
+/* A section already opens on its own padding, so it can tuck that much of
+   itself under the bar: its heading lands the same short way below it. */
+section[id] {
+  scroll-margin-top: calc(var(--nav-height, 64px) - var(--space-xl));
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

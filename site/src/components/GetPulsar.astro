@@ -1,0 +1,445 @@
+---
+// #install on the home page, and the page's one destination: "Get started"
+// in the hero lands here. The ISO is the first-class path, because most
+// people arriving have a machine to put Pulsar on, not an atomic Fedora to
+// switch. The switch is the second path, for the people who already do.
+//
+// Two downloads as two panels, then the path from a USB stick to a desktop as
+// three stops on one lit line, in order, then the switch. Every
+// fact here is the installer's own behaviour: iso-config.toml leaves the disk
+// picker and partitioning to the person installing, and the install ends on a
+// screen you can read rather than rebooting on its own.
+import { COSIGN_PUB, IMAGES, ISO_BASE, ISOS } from '../data/site';
+
+const DOWNLOADS = [
+  {
+    key: 'standard',
+    icon: 'laptop',
+    name: 'Pulsar',
+    who: 'A great starting point for almost any computer: laptops and desktops with Intel or AMD graphics. Everything works out of the box, with nothing extra to set up.',
+    file: ISOS.vanilla,
+    note: null,
+  },
+  {
+    key: 'nvidia',
+    icon: 'graphics-card',
+    name: 'Pulsar for NVIDIA',
+    who: 'For computers with NVIDIA GeForce RTX graphics. The NVIDIA driver comes built in, ready for games and local models on your first boot.',
+    file: ISOS.nvidia,
+    note: 'With Secure Boot on, the driver needs a one-time key enrollment (MOK) after you install.',
+  },
+];
+
+const STOPS = [
+  {
+    i: 'usb',
+    t: 'Put it on a USB stick',
+    d: 'Any stick of 8 GB or more. In GNOME Disks, pick the stick and choose Restore Disk Image; on another system, Fedora Media Writer does the same.',
+  },
+  {
+    i: 'hard-drives',
+    t: 'Start from the stick and install',
+    d: 'The installer asks which disk to use and how to lay it out, and changes nothing until you say so. Whatever you choose to erase is gone, so back it up first.',
+  },
+  {
+    i: 'sign-in',
+    t: 'Log in',
+    d: 'Pulsar greets you once: pick a theme, bring a coding agent if you want one, and you are home. Your apps finish installing in the background.',
+  },
+];
+
+const switchTo = (image: string) => `sudo bootc switch ${image}:latest`;
+const ENROL = 'sudo mokutil --import /etc/pki/pulsar/MOK.der\nsudo systemctl reboot';
+const VERIFY = [
+  `cosign verify-blob ${ISOS.vanilla}.sha256 \\`,
+  `  --key ${COSIGN_PUB} \\`,
+  `  --signature ${ISOS.vanilla}.sha256.sig \\`,
+  '  --insecure-ignore-tlog=true \\',
+  `&& sha256sum -c ${ISOS.vanilla}.sha256`,
+].join('\n');
+---
+
+<section class="chapter install" id="install" aria-labelledby="install-h">
+  <h2 id="install-h">Get Pulsar</h2>
+  <arc-divider class="h-rule" align="left" variant="line-gradient"></arc-divider>
+  <p class="lede">
+    One download and a USB stick. It’s free, and the whole of it is open source.
+  </p>
+
+  <div class="downloads">
+    {
+      DOWNLOADS.map((d) => (
+        <div class={`dl dl-${d.key}`}>
+          <span class="dl-icon" aria-hidden="true"><arc-icon name={d.icon} size="lg"></arc-icon></span>
+          <h3 class="dl-name">{d.name}</h3>
+          <p class="dl-who">{d.who}</p>
+          {d.note && (
+            <p class="dl-note">
+              <arc-icon name="warning" size="sm"></arc-icon>
+              <span>{d.note} <a href="#mok">How</a></span>
+            </p>
+          )}
+          <div class="dl-act">
+            <arc-button href={`${ISO_BASE}/${d.file}`} variant={d.key === 'standard' ? 'primary' : 'secondary'} size="lg">
+              Download
+            </arc-button>
+            <span class="dl-meta">
+              <span class="mono">{d.file}</span>
+              <span>x86_64 · about 5–6 GB · rebuilt weekly</span>
+            </span>
+          </div>
+          <p class="dl-sums">
+            <a href={`${ISO_BASE}/${d.file}.sha256`}>.sha256</a>
+            <a href={`${ISO_BASE}/${d.file}.sha256.sig`}>.sha256.sig</a>
+            <a href={`${ISO_BASE}/${d.file}.json`}>.json</a>
+          </p>
+        </div>
+      ))
+    }
+  </div>
+
+  <ol class="path" aria-label="From the download to your desktop">
+    {
+      STOPS.map((s, i) => (
+        <li class="stop">
+          <span class="num" aria-hidden="true"><arc-icon name={s.i} size="md"></arc-icon></span>
+          <h3>{s.t}</h3>
+          <p>{s.d}</p>
+        </li>
+      ))
+    }
+  </ol>
+
+  <div class="asides">
+    <details class="fold" id="mok">
+      <summary>On the NVIDIA version with Secure Boot on? Enroll the driver’s key, once.</summary>
+      <div class="fold-body">
+        <p>
+          The driver is signed with Pulsar’s key so Secure Boot can stay on. Tell your firmware to
+          trust that key: run this, choose a one-time password, and restart. A blue screen asks for
+          <arc-kbd>Enroll MOK</arc-kbd> and that password, and then never again.
+        </p>
+        <arc-code-block class="theme-fixed-dark" language="bash" filename="enroll the key" code={ENROL}></arc-code-block>
+        <p class="hint"><a href="/docs/install#secure-boot">Every screen of it, step by step →</a></p>
+      </div>
+    </details>
+    <details class="fold">
+      <summary>Check the download is really ours.</summary>
+      <div class="fold-body">
+        <p>
+          Each ISO’s checksum is signed with Pulsar’s release key, which never leaves the machine
+          that signs. This checks the signature, then the ISO against the checksum.
+        </p>
+        <arc-code-block class="theme-fixed-dark" language="bash" filename="verify" code={VERIFY}></arc-code-block>
+      </div>
+    </details>
+  </div>
+
+  <div class="switch" aria-labelledby="switch-h">
+    <div class="switch-copy">
+      <p class="switch-or">Or, without a USB stick</p>
+      <h3 id="switch-h">Switch from Fedora Silverblue, Kinoite, or any atomic Fedora</h3>
+      <p>
+        One command and a restart. Your files, apps and settings stay exactly where they are, and
+        the system you had is still one restart away if you change your mind.
+      </p>
+    </div>
+    <div class="switch-cmds">
+      <arc-code-block class="theme-fixed-dark" language="bash" filename="Pulsar" code={switchTo(IMAGES.vanilla)}></arc-code-block>
+      <arc-code-block class="theme-fixed-dark" language="bash" filename="Pulsar for NVIDIA" code={switchTo(IMAGES.nvidia)}></arc-code-block>
+    </div>
+  </div>
+</section>
+
+<style>
+  .lede {
+    max-width: 62ch;
+  }
+
+  /* ---- the two downloads ------------------------------------------------ */
+  .downloads {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: var(--space-xl) 0 var(--space-2xl);
+    border-block: 1px solid var(--border-subtle);
+  }
+  .dl {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-xl) var(--space-xl) var(--space-lg) 0;
+    transition: background-color 0.3s var(--ease-out);
+  }
+  .dl + .dl {
+    padding-left: var(--space-xl);
+    border-left: 1px solid var(--border-subtle);
+  }
+  .dl-icon {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-lg);
+    background: color-mix(in oklab, var(--accent-primary) 12%, transparent);
+    border: 1px solid color-mix(in oklab, var(--accent-primary) 30%, transparent);
+    color: var(--accent-primary);
+  }
+  .dl-name {
+    font-size: clamp(1.75rem, 3.2vw, 2.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .dl-nvidia .dl-name {
+    color: var(--text-primary);
+  }
+  .dl-who {
+    margin: 0;
+    max-width: 38ch;
+    color: var(--text-secondary);
+    text-wrap: pretty;
+  }
+  .dl-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin: 0;
+    max-width: 44ch;
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+  .dl-note arc-icon {
+    flex: none;
+    margin-top: 2px;
+    color: var(--color-warning);
+  }
+  .dl-note a {
+    color: var(--text-secondary);
+  }
+  .dl-act {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-md) var(--space-lg);
+    margin-top: auto;
+    padding-top: var(--space-sm);
+  }
+  .dl-act arc-button {
+    display: inline-block;
+    min-height: 3rem;
+  }
+  .dl-meta {
+    display: grid;
+    gap: 2px;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    min-width: 0;
+  }
+  .dl-meta .mono {
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+  .dl-sums {
+    display: flex;
+    gap: var(--space-md);
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+  .dl-sums a {
+    color: var(--text-muted);
+    text-decoration: none;
+    padding-block: var(--space-xs);
+  }
+  .dl-sums a:hover {
+    color: var(--accent-primary);
+    text-shadow: var(--glow-xs);
+  }
+
+  /* ---- the path: three stops on one lit line ---------------------------- */
+  .path {
+    list-style: none;
+    margin: 0 0 var(--space-2xl);
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-xl);
+    position: relative;
+  }
+  /* the line the stops sit on, lit left to right in the palette */
+  .path::before {
+    content: '';
+    position: absolute;
+    top: calc(1.5rem - 0.5px);
+    left: 1.5rem;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary) 60%, transparent);
+    opacity: 0.55;
+  }
+  .stop {
+    position: relative;
+    min-width: 0;
+  }
+  .num {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 3rem;
+    height: 3rem;
+    margin-bottom: var(--space-md);
+    border-radius: var(--radius-full);
+    background: var(--bg-deep);
+    border: 1px solid var(--accent-primary);
+    box-shadow: var(--glow-sm);
+    color: var(--accent-primary);
+  }
+  .stop h3 {
+    font-size: var(--text-lg);
+    line-height: var(--heading-lh);
+    margin: 0 0 var(--space-xs);
+  }
+  .stop p {
+    margin: 0;
+    color: var(--text-secondary);
+    text-wrap: pretty;
+  }
+
+  /* ---- the two things some people need --------------------------------- */
+  .asides {
+    display: grid;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-2xl);
+    max-width: 52rem;
+  }
+  .fold summary {
+    cursor: pointer;
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-full);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    transition: border-color 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out);
+  }
+  .fold summary::-webkit-details-marker {
+    display: none;
+  }
+  .fold summary::before {
+    content: '+';
+    font-family: var(--font-mono);
+    color: var(--accent-primary);
+  }
+  .fold[open] summary::before {
+    content: '−';
+  }
+  .fold summary:hover {
+    border-color: var(--border-bright);
+    box-shadow: var(--glow-hover);
+  }
+  .fold-body {
+    padding: var(--space-md) 0 var(--space-md) var(--space-md);
+    max-width: 62ch;
+  }
+  .fold-body p {
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-md);
+  }
+  .fold-body arc-code-block {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .fold-body .hint {
+    margin: var(--space-sm) 0 0;
+  }
+
+  /* ---- the second way in ------------------------------------------------ */
+  /* the second way in gets a ground of its own, so it reads as a path, not
+     a footnote to the first */
+  .switch {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--space-2xl);
+    align-items: center;
+    padding: var(--space-xl);
+    border-radius: var(--radius-xl);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+  }
+  .switch-or {
+    margin: 0 0 var(--space-xs) !important;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    letter-spacing: 0.04em;
+    color: var(--accent-primary) !important;
+  }
+  .switch h3 {
+    font-size: var(--text-2xl);
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-md);
+  }
+  .switch p {
+    margin: 0;
+    color: var(--text-secondary);
+    text-wrap: pretty;
+  }
+  .switch-cmds {
+    display: grid;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+  .switch-cmds arc-code-block {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  @media (max-width: 56rem) {
+    .downloads {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .dl {
+      padding-right: 0;
+    }
+    .dl + .dl {
+      padding-left: 0;
+      border-left: 0;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .path {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-lg);
+    }
+    /* the line runs down the numbers instead of across */
+    .path::before {
+      top: 1.5rem;
+      bottom: 1.5rem;
+      left: calc(1.5rem - 0.5px);
+      right: auto;
+      width: 1px;
+      height: auto;
+      background: linear-gradient(180deg, var(--accent-primary), var(--accent-secondary) 60%, transparent);
+    }
+    .stop {
+      display: grid;
+      grid-template-columns: 3rem minmax(0, 1fr);
+      column-gap: var(--space-md);
+    }
+    .num {
+      grid-row: span 2;
+      margin-bottom: 0;
+    }
+    .switch {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-lg);
+      padding: var(--space-lg);
+    }
+  }
+</style>

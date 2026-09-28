@@ -92,12 +92,15 @@ const { deck = true } = Astro.props;
   .deck[hidden] {
     display: none;
   }
+  /* on the sky itself, not on the chip below it: it takes the page's text
+     color, so a light page's pale sky keeps it readable */
   .deck-note {
     font-family: var(--font-mono);
     font-size: var(--label-size);
     letter-spacing: 0.04em;
-    color: var(--on-chip);
+    color: var(--text-secondary);
   }
+
   .picker {
     display: inline-flex;
     padding: var(--space-xs);
@@ -143,9 +146,11 @@ const { deck = true } = Astro.props;
     outline-offset: 2px;
   }
 
+  /* Too narrow for the picker and the floating theme button to share the
+     bottom edge: the picker steps up above the button. */
   @media (max-width: 40rem) {
     .deck {
-      bottom: var(--space-md);
+      bottom: calc(var(--space-lg) + 2.75rem + var(--space-md));
     }
     .deck-note {
       display: none;

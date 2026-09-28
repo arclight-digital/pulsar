@@ -1,0 +1,9 @@
+# The inner pages moved into the docs. Cloudflare reads this before it looks
+# for a file, so these are real 301s, and a browser carries an old link's
+# #section across them; the meta-refresh pages astro.config.mjs writes for the
+# same paths are the fallback for anything that serves dist/ without it.
+/install     /docs/install     301
+/cli         /docs/cli         301
+/gamescale   /docs/gamescale   301
+/provenance  /docs/provenance  301
+/changelog   /docs/changelog   301
