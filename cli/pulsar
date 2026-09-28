@@ -17,6 +17,16 @@
 # is the wrong tool. See cmd_update.
 set -euo pipefail
 
+# A systemd system service, a timer or cron starts this with no HOME at all,
+# and under set -u the first path built from it kills the script before
+# doctor, status or manifest -- none of which need a home -- print a word.
+# The account's own home from passwd, as a login would set it; / if even that
+# is missing, so nothing written under it lands in the working directory.
+if [ -z "${HOME:-}" ]; then
+    HOME=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)
+    export HOME=${HOME:-/}
+fi
+
 VERSION="1.0.0"
 MANIFEST=${PULSAR_MANIFEST:-/usr/share/pulsar/manifest.json}
 SBOM_TOOL=${PULSAR_SBOM_TOOL:-/usr/libexec/pulsar/rpm-sbom.sh}

@@ -40,6 +40,15 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
     [[ "$output" == pulsar\ * ]]
 }
 
+@test "runs with no HOME at all, the way a system service starts it" {
+    # set -u and a path built from $HOME at the top level once killed every
+    # command here before it printed anything
+    run env -i PATH="$PATH" PULSAR_MANIFEST="$PULSAR_MANIFEST" "$PULSAR" manifest --json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"variant"'* ]]
+    [[ "$output" != *"unbound variable"* ]]
+}
+
 @test "bare --help prints the top-level usage" {
     run "$PULSAR" --help
     [ "$status" -eq 0 ]
