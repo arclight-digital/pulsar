@@ -704,6 +704,18 @@ class PulsarLiveBlur extends Clutter.Effect {
         }
         s.hw = hw;
         s.hh = hh;
+        // What the blur may read: the surface's own shape, on screen, in the
+        // copy's half-size texels. Past its edge are its neighbors (another
+        // window's bright header, or one stacked above whose pixels are last
+        // frame's), which smeared in as a strip along the edge; like CSS's
+        // backdrop-filter, the edge is repeated there instead.
+        const sp = this._shape, fw = fb.get_width(), fh = fb.get_height();
+        const kx = r.w / w / 2, ky = r.h / h / 2;
+        const bx = s.box ??= [0, 0, 0, 0];
+        bx[0] = Math.max((sp[0] - x0) * kx, (Math.max(r.x, 0) - r.x) / 2);
+        bx[1] = Math.max((sp[1] - y0) * ky, (Math.max(r.y, 0) - r.y) / 2);
+        bx[2] = Math.min((sp[0] + sp[2] - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2);
+        bx[3] = Math.min((sp[1] + sp[3] - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2);
         this._blur(s, r.scale);
         if (onView)
             this._last = s;
@@ -829,10 +841,17 @@ class PulsarLiveBlur extends Clutter.Effect {
             hp[0] = 0.5 * BLUR_OFFSET / src.W;
             hp[1] = 0.5 * BLUR_OFFSET / src.H;
             D.set_uniform_float(this._downLoc.halfPixel, 2, 1, hp);
-            b[0] = 0.5 / src.W;
-            b[1] = 0.5 / src.H;
-            b[2] = (sw - 0.5) / src.W;
-            b[3] = (sh - 0.5) / src.H;
+            if (i === 1 && s.box[2] - s.box[0] >= 1 && s.box[3] - s.box[1] >= 1) {
+                b[0] = (s.box[0] + 0.5) / src.W;
+                b[1] = (s.box[1] + 0.5) / src.H;
+                b[2] = (s.box[2] - 0.5) / src.W;
+                b[3] = (s.box[3] - 0.5) / src.H;
+            } else {
+                b[0] = 0.5 / src.W;
+                b[1] = 0.5 / src.H;
+                b[2] = (sw - 0.5) / src.W;
+                b[3] = (sh - 0.5) / src.H;
+            }
             D.set_uniform_float(this._downLoc.box, 4, 1, b);
             pass(dst, D, 0, 0, L[i][0], L[i][1], 0, 0, sw / src.W, sh / src.H);
             src = dst;
