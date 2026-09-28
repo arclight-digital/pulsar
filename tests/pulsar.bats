@@ -2804,3 +2804,17 @@ model_env() {
     [[ "$output" == *"not a model reference"* ]]
     [ ! -e "$UNIT" ]
 }
+
+@test "a sandbox reaches the local model's port, and only while there is one" {
+    sandbox_env
+    export PULSAR_QUADLET_DIR="${BATS_TEST_TMPDIR}/quadlets"
+    cd "$PROJ"
+    "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    ! grep -q -- '^--network$' "$PODMAN_LOG"
+    mkdir -p "$PULSAR_QUADLET_DIR" "${HOME}/.config/pulsar"
+    : > "${PULSAR_QUADLET_DIR}/pulsar-model.container"
+    printf 'k' > "${HOME}/.config/pulsar/model-key"
+    "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    grep -A1 -x -- '--network' "$PODMAN_LOG" | grep -qx 'pasta:-T,8080'
+    grep -qx "${HOME}/.config/pulsar/model-key:${HOME}/.config/pulsar/model-key:ro" "$PODMAN_LOG"
+}

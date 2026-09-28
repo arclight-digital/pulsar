@@ -302,8 +302,10 @@ have used it. The key is random, in `~/.config/pulsar/model-key` (0600), and
 CORS names only the server itself. It does not start at login unless you
 pass `--at-login`, because a loaded model holds gigabytes of VRAM on the
 machine the games run on. `off` stops and removes it and the provider;
-`--purge` deletes the models. A sandboxed agent cannot reach it yet: the
-sandbox's network does not include the host's loopback.
+`--purge` deletes the models. A sandboxed agent reaches it too: while the
+model is set up, the sandbox's network (pasta) forwards exactly that port
+from its own loopback to the host's, and the key comes in read-only. No
+other host port is reachable from the sandbox.
 
 ## Crashes, and what an agent is sent
 

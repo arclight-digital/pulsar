@@ -60,7 +60,9 @@ credentials: branches only, never force-push, delete or tags, and maybe not
 the default branch. If a push is refused, the message says why; tell the
 user rather than work around it. `gh pr create` works too (--title, --body,
 --body-file, --base, --head, --draft, --fill), for a branch you have
-already pushed; it is the only `gh` command in here.
+already pushed; it is the only `gh` command in here. If the user runs a
+local model (`pulsar agent model`), it is at `http://127.0.0.1:8080/v1` in
+here too, and no other port on the host is.
 
 ## Skills
 

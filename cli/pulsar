@@ -2559,6 +2559,13 @@ sandbox_run() {
         esac
     done < <(sandbox_allows "$root")
     sandbox_hook_hints "$name" "$root"
+    # The local model (pulsar agent model), if there is one: pasta forwards
+    # exactly that port from the sandbox's loopback to the host's, and no
+    # other host port is reachable. The key comes along, read-only.
+    if [ -f "${MODEL_UNIT_DIR}/${MODEL_UNIT}.container" ]; then
+        args+=(--network "pasta:-T,${MODEL_PORT}")
+        [ ! -s "$MODEL_KEY" ] || args+=(-v "${MODEL_KEY}:${MODEL_KEY}:ro")
+    fi
     [ ! -r "$AGENTS_MD" ] || args+=(-v "${AGENTS_MD}:/usr/share/pulsar/AGENTS.md:ro")
     [ ! -d "$SKILLS_DIR" ] || args+=(-v "${SKILLS_DIR}:/usr/share/pulsar/skills:ro")
     # The agent's own API key, if the user exported one; nothing else of the env.
