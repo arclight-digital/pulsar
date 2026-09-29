@@ -734,3 +734,22 @@ print("" if d is None else d)' "$1" "$2"; }
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.95)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
 }
+
+# Stock-grey leaks: a state stock styles with its own grey (`.button:active:hover`)
+# on a control the Shell sheet names beats the sheet's shorter rule and shows
+# as a grey slab. tests/theme-gate/stock_states.py reads this machine's stock
+# sheet; a build host without GNOME Shell has nothing to compare against.
+@test "no stock state keeps stock's grey on a control the Shell sheet names" {
+    run python3 "${REPO}/tests/theme-gate/stock_states.py" check
+    [ "$status" -ne 77 ] || skip "no gnome-shell-theme.gresource here"
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "the generated stock-states block is what the script writes today" {
+    run python3 "${REPO}/tests/theme-gate/stock_states.py" emit
+    [ "$status" -ne 77 ] || skip "no gnome-shell-theme.gresource here"
+    [ "$status" -eq 0 ]
+    tpl="${REPO}/system_files/usr/share/pulsar/theme/templates/gnome-shell.css"
+    got=$(sed -n '/^\/\* BEGIN stock states/,/^\/\* END stock states \*\//p' "$tpl")
+    [ "$got" = "$output" ] || { diff <(echo "$output") <(echo "$got"); false; }
+}
