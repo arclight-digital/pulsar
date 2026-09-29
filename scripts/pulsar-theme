@@ -966,6 +966,13 @@ def window_glass_written():
     return text[i + len(GLASS_MARK):].startswith("on")
 
 
+def ext_turned_off():
+    """Whether the user switched the extension off (the Extensions app or
+    gnome-extensions disable). GNOME records that in disabled-extensions,
+    which wins over enabled-extensions: a uuid in both stays off."""
+    return EXT_UUID in parse_gv_list(gsettings_get("org.gnome.shell", "disabled-extensions"))
+
+
 def window_glass():
     """Whether GTK windows go translucent: only while the Shell extension is
     enabled and would draw its blur behind them -- Glass and Glass windows
@@ -977,6 +984,9 @@ def window_glass():
     if gsettings_get("org.gnome.desktop.a11y.interface", "high-contrast") == "true":
         return False
     if gsettings_get("org.gnome.shell", "disable-user-extensions") == "true":
+        return False
+    # switched off: nothing draws the blur, whatever enabled-extensions says
+    if ext_turned_off():
         return False
     return f"'{EXT_UUID}'" in (gsettings_get("org.gnome.shell", "enabled-extensions") or "")
 
@@ -1126,8 +1136,11 @@ class Shell(Target):
             theme.variants[mode].glass_alpha = glass_tint()
             css = render_tpl(template("gnome-shell.css"), theme.variants[mode].ctx(), "gnome-shell.css")
             tx.write(STATE / "shell" / f"gnome-shell-{scheme}.css", f"/* {css_comment(theme.name)} ({mode}) */\n" + css)
+        # Enable it, unless the user switched it off: that choice is theirs,
+        # and re-adding it to enabled-extensions would not turn it back on
+        # anyway (disabled-extensions wins) -- only confuse window_glass().
         eff = gsettings_get("org.gnome.shell", "enabled-extensions")
-        if EXT_UUID not in parse_gv_list(eff):
+        if EXT_UUID not in parse_gv_list(eff) and not ext_turned_off():
             tx.set("/org/gnome/shell/enabled-extensions",
                    "[" + ", ".join(gv_str(x) for x in parse_gv_list(eff) + [EXT_UUID]) + "]")
 
@@ -1844,9 +1857,14 @@ def cmd_window_glass(if_stale=False):
     this in the background). With if_stale, only when gtk4 was written for
     the other state: the extension asks this each time it is enabled, since
     a theme set while it was off wrote opaque windows."""
-    if if_stale and window_glass_written() == window_glass():
-        return
     st = current_state()
+    if if_stale:
+        # Only gtk4's half can be stale. With no gtk4 among the targets there
+        # is nothing to go stale, and redoing the rest on every login and
+        # unlock (the extension asks each time it is enabled) only restyles
+        # the Shell for nothing.
+        if "gtk4" not in st.get("targets", []) or window_glass_written() == window_glass():
+            return
     redo = [t for t in ("gtk4", "ptyxis", "shell") if t in st.get("targets", [])]
     if not st.get("theme") or not redo:
         return
