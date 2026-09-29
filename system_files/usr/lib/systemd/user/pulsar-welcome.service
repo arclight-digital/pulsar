@@ -16,11 +16,19 @@
 Description=Pulsar: first-login welcome
 ConditionPathExists=%S/pulsar-theme/welcome.pending
 ConditionPathExists=!%S/pulsar-welcome/shown.json
+# Never for the login screen's accounts: this catches the static gdm user;
+# the engine itself turns away GDM's dynamic greeter users (login_account()).
+ConditionUser=!@system
 After=gnome-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=exec
+# The welcome's agents page installs and opens coding agents: never at the
+# login screen. GDM's dynamic greeter users are not @system, so the engine
+# decides (exit 1 skips the unit; see login_account()). A greeter account
+# that met the old init may still hold a welcome.pending.
+ExecCondition=/usr/libexec/pulsar/pulsar-theme login-account
 ExecStart=/usr/libexec/pulsar/pulsar-welcome --first-login
 
 [Install]

@@ -34,8 +34,10 @@ import json
 import math
 import os
 import pathlib
+import pwd
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -498,9 +500,17 @@ class Transaction:
         self.base_manifest = self.base_dir / "manifest.json"
 
     def write(self, path, content):
+        """Stage a file. False when it is a symlink out of the home folder,
+        which is left exactly as it is (see link_outside_home)."""
+        real = link_outside_home(path)
+        if real is not None:
+            print(f"  skip {path}: it links outside your home folder ({real}); not writing through it",
+                  file=sys.stderr)
+            return False
         if isinstance(content, str):
             content = uenc(content)
         self.files[pathlib.Path(path)] = content
+        return True
 
     def remove(self, path):
         self.files[pathlib.Path(path)] = None
@@ -509,8 +519,8 @@ class Transaction:
         """A file the user owns too (gtk.css, btop.conf, a keyfile). Revert
         takes back only what `undo` names -- the managed block, or these
         keys -- and leaves every other line, including edits made since."""
-        self.write(path, content)
-        self.shared[pathlib.Path(path)] = undo
+        if self.write(path, content):
+            self.shared[pathlib.Path(path)] = undo
 
     def set(self, key, value):
         self.keys[key] = value
@@ -556,9 +566,11 @@ class Transaction:
             if p in self.shared:
                 continue
             if sp not in base["files"]:
-                if p.exists() or p.is_symlink():
+                if p.exists():
                     blob = self.base_dir / "files" / hashlib.sha256(sp.encode()).hexdigest()[:16]
-                    shutil.copy2(p, blob, follow_symlinks=False)
+                    # the content, not the link: revert writes it back
+                    # through the link, which stays (atomic_write)
+                    shutil.copy2(p, blob)
                     base["files"][sp] = {"existed": True, "backup": blob.name}
                 else:
                     base["files"][sp] = {"existed": False}
@@ -618,11 +630,41 @@ class Transaction:
                 print(f"  note: {desc} failed: {e}", file=sys.stderr)
 
 
+def in_home(p):
+    """Whether a path, links resolved, is inside the home folder."""
+    try:
+        return pathlib.Path(p).resolve().is_relative_to(HOME.resolve())
+    except (OSError, RuntimeError):   # a link loop
+        return False
+
+
+def link_outside_home(p):
+    """A dotfile that is a symlink out of the home folder (a Nix store, a
+    shared /etc file): the engine neither writes through it nor replaces the
+    link. None when the path is not such a link."""
+    p = pathlib.Path(p)
+    return p.resolve() if p.is_symlink() and not in_home(p) else None
+
+
 def atomic_write(path, data):
     path = pathlib.Path(path)
+    # A dotfile symlinked into a dotfile repo (stow, chezmoi) is written
+    # THROUGH: the repo gets the edit and the link stays a link. Replacing
+    # the link with a file would cut the repo off without a word. Links out
+    # of the home folder never get here (Transaction.write skips them).
+    if path.is_symlink() and in_home(path):
+        path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # the file keeps its permissions; a new one gets the usual umask's
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        mask = os.umask(0)
+        os.umask(mask)
+        mode = 0o666 & ~mask
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
+        os.fchmod(fd, mode)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
             f.flush()
@@ -787,12 +829,21 @@ def revert(to="stock"):
                 print(f"  reset    {k}  (could not write upstream {up})")
         else:
             print(f"  reset    {k}")
-    # the extension: keep whatever else is enabled, drop ours
-    ext_before = base["keys"].get("/org/gnome/shell/enabled-extensions")
-    if ext_before is not None:
-        dconf_write("/org/gnome/shell/enabled-extensions", ext_before)
-    else:
-        dconf_write("/org/gnome/shell/enabled-extensions", None)
+    # The extension: keep whatever else is enabled, drop ours. Only if the
+    # engine ever wrote the list: one it never touched is left as it is.
+    ek = "/org/gnome/shell/enabled-extensions"
+    if ek in base["keys"]:
+        before, now = base["keys"][ek], dconf_read(ek)
+        if now is not None and ek in wrote and not gv_equal(now, wrote[ek]):
+            # extensions enabled (or disabled) since theming are the user's:
+            # take out only ours, and only if it was not on before
+            had = parse_gv_list(before) if before is not None else None
+            drop = had is not None and EXT_UUID not in had
+            keep = [x for x in parse_gv_list(now) if not (drop and x == EXT_UUID)]
+            dconf_write(ek, "[" + ", ".join(gv_str(x) for x in keep) + "]" if keep else "@as []")
+            print(f"  kept     {ek} (changed since the theme set it)" + (f", without {EXT_UUID}" if drop else ""))
+        else:
+            dconf_write(ek, before)
     eff = parse_gv_list(gsettings_get("org.gnome.shell", "enabled-extensions"))
     if to == "stock" and EXT_UUID in eff:
         dconf_write("/org/gnome/shell/enabled-extensions", "[" + ", ".join(gv_str(x) for x in eff if x != EXT_UUID) + "]")
@@ -884,6 +935,16 @@ def json_get(text, key):
     return obj
 
 
+def json_text(obj):
+    """JSON as the agents write it (UTF-8, not \\u-escaped), except any lone
+    UTF-16 surrogate, which goes back as the \\u escape it came in as. A
+    JavaScript app (Claude Code) writes one when it cuts an emoji in half; it
+    parses, but a lone surrogate cannot be encoded as UTF-8, and writing it
+    raw crashed every theme switch."""
+    return re.sub("[\ud800-\udfff]", lambda m: f"\\u{ord(m.group()):04x}",
+                  json.dumps(obj, indent=2, ensure_ascii=False)) + "\n"
+
+
 def json_set(text, key, value):
     """Set (value not None) or remove a dotted key, keeping every other key
     and their order. Raises on text that is not a JSON object, so a file the
@@ -895,7 +956,7 @@ def json_set(text, key, value):
     chain = [obj]
     for part in parts[:-1]:
         if value is None and not isinstance(chain[-1].get(part), dict):
-            return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
+            return json_text(obj)
         chain.append(chain[-1].setdefault(part, {}))
     if value is None:
         chain[-1].pop(parts[-1], None)
@@ -905,7 +966,7 @@ def json_set(text, key, value):
                 parent.pop(part)
     else:
         chain[-1][parts[-1]] = value
-    return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
+    return json_text(obj)
 
 
 # -------------------------------------------------------------- targets ----
@@ -1664,6 +1725,7 @@ def customised():
                      ("/org/gnome/desktop/interface/gtk-theme", "set a GTK theme"),
                      ("/org/gnome/desktop/background/picture-uri", "chose a wallpaper"),
                      ("/org/gnome/desktop/background/picture-uri-dark", "chose a wallpaper"),
+                     ("/org/gnome/TextEditor/style-scheme", "chose an editor color scheme"),
                      ("/org/gnome/shell/extensions/user-theme/name", "uses a Shell theme")]:
         if dconf_read(k) is not None and k not in ours and label not in why:
             why.append(label)
@@ -1688,7 +1750,7 @@ def notify(summary, body):
 
 def cmd_notice():
     f = STATE / "notice.json"
-    if not f.exists():
+    if not f.exists() or not login_account():
         return
     n = json.loads(f.read_text())
     out = _gdbus("pulsar-theme", "0", "digital.arclight.Pulsar.ThemePicker-symbolic", n["summary"], n["body"],
@@ -1760,6 +1822,27 @@ SESSION_MARKERS = (DATA / "gnome-shell", CONFIG / "user-dirs.dirs")
 WELCOME_PENDING = "welcome.pending"
 
 
+# The login screen's own accounts. GDM runs its greeter as dynamic users
+# (gdm-greeter, gdm-greeter-2, ...) from the UID range systemd reserves for
+# greeters, and the global user units reach its session as well: its session
+# target pulls in gnome-session.target. The journal once showed init theming
+# the greeter's account and binding a shortcut there. ConditionUser=!@system
+# in the units only catches the static gdm user (UID 42), so the engine asks
+# itself too.
+GREETER_UIDS = range(60578, 60706)
+
+
+def login_account():
+    """False for the login screen's own accounts: nothing here is for them."""
+    uid = os.getuid()
+    try:
+        name = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        name = os.environ.get("USER", "")
+    return not (name == "gdm" or name.startswith("gdm-") or uid in GREETER_UIDS
+                or os.environ.get("XDG_SESSION_CLASS") == "greeter")
+
+
 def fresh_account():
     """True only for an account whose first desktop login this is. The
     welcome (pulsar-welcome.service) runs on exactly this and nothing else,
@@ -1774,6 +1857,10 @@ def cmd_init(theme="pulsar", force=False):
     engine; an account that has made its look its own is left alone."""
     stamp = STATE / "init.json"
     pending = STATE / "init.pending"
+    if not login_account():
+        # no stamp either: a greeter account is never a person's
+        print("pulsar-theme: the login screen's account; nothing to do")
+        return
     if stamp.exists() and not force:
         print(f"pulsar-theme: init already done ({json.loads(stamp.read_text()).get('result')})")
         return
@@ -1805,7 +1892,7 @@ def cmd_init(theme="pulsar", force=False):
     else:
         # restart_policy none: no app is open yet, and the D-Bus scans for open
         # apps are the slowest thing init could do
-        cmd_set(load_theme(theme), restart_policy="none")
+        cmd_set(load_theme(theme), restart_policy="none", gentle="init")
         bound = False
         try:
             tx = Transaction()
@@ -1847,7 +1934,7 @@ def cmd_follow_scheme():
     except SystemExit:
         return
     if theme.both:
-        cmd_set(theme, "both", redo, restart_policy="none")
+        cmd_set(theme, "both", redo, restart_policy="none", gentle="follow")
 
 
 def cmd_window_glass(if_stale=False):
@@ -1875,11 +1962,53 @@ def cmd_window_glass(if_stale=False):
     cmd_set(theme, st.get("variant", "both"), redo, restart_policy="none")
 
 
+def shared_value(p, kind, k, group=None, text=None):
+    text = uread(p) if text is None else text
+    return (conf_value(text, k) if kind == "conf" else json_get(text, k) if kind == "json"
+            else _kf_get(text, group, k))
+
+
+def leave_users(tx, first_login=False):
+    """Unstage what the user has chosen for themselves, for the runs nobody
+    asked for. A full `set` is the user asking, and overwrites; these are not.
+
+    follow-scheme (a Dark Style flip, in the background): a key, or a setting
+    in a file the user shares with the engine (btop's color_theme, an agent's
+    theme), that no longer holds what the engine last wrote there was changed
+    since, by the user, and is left alone.
+
+    First login: an agent's theme, or the Flatpak Text Editor's scheme, that
+    is already set and was never written by the engine was chosen by the
+    user before Pulsar's themes arrived. (The desktop's own keys decide
+    between theming and leaving the account alone, in customised().)"""
+    man = STATE / "baseline" / "manifest.json"
+    base = resolve_inflight(json.loads(man.read_text())) if man.exists() else {}
+    wrote = base.get("wrote", {})
+    if not first_login:
+        for k in list(tx.keys):
+            if k in wrote and not gv_equal(dconf_read(k), wrote[k]):
+                print(f"  kept {k} (yours: changed since the theme set it)")
+                del tx.keys[k]
+    kinds = ("json", "keyfile") if first_login else ("conf", "json", "keyfile")
+    for p, undo in list(tx.shared.items()):
+        if undo["kind"] not in kinds or not p.exists():
+            continue
+        was = base.get("shared", {}).get(str(p), {}).get("wrote", {})
+        text = uread(p)
+        for k in undo["keys"]:
+            now = shared_value(p, undo["kind"], k, undo.get("group"), text)
+            if now is not None and (k not in was or now != was[k]):
+                print(f"  kept {p}: {k} (yours)")
+                del tx.files[p], tx.shared[p]
+                break
+
+
 def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask", extra=None,
-            without=None):
+            without=None, gentle=None):
     """`only` is a subset (bg-next is only=['wallpaper']): stale files and the
     recorded target list are left as they were. `extra` adds opt-in targets
-    (--with flatpak) to a full switch, which is still a full switch."""
+    (--with flatpak) to a full switch, which is still a full switch. `gentle`
+    marks a run nobody asked for, "follow" or "init": see leave_users()."""
     extra = list(extra or [])
     # a default target turned off with --without stays off across every
     # later full switch (the picker's included) until --with brings it back
@@ -1907,6 +2036,8 @@ def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, r
             continue
         t.apply(tx, theme, variant)
         applied.append(t.name)
+    if gentle:
+        leave_users(tx, first_login=gentle == "init")
     # Files the previous theme generated that this one does not (its palette,
     # scheme, btop theme) go, so switching never accumulates stale files.
     if only is None:
@@ -1940,13 +2071,19 @@ def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, r
 
 
 def cmd_render(theme, out):
-    """Render every target's files into `out` (HOME-shaped), touching nothing."""
-    global CONFIG, DATA, STATE
+    """Render every target's files into `out` (HOME-shaped), touching nothing.
+    HOME moves too: the agents' configs and the Flatpak Text Editor's live
+    under HOME itself, not under an XDG dir, and render once rewrote the real
+    ones. Anything that still resolves outside `out` is refused, not written."""
+    global HOME, CONFIG, DATA, STATE
     out = pathlib.Path(out).resolve()
-    CONFIG, DATA, STATE = out / ".config", out / ".local/share", out / ".local/state/pulsar-theme"
+    HOME, CONFIG, DATA, STATE = out, out / ".config", out / ".local/share", out / ".local/state/pulsar-theme"
     tx = Transaction(dry=True)
     for t in TARGETS:
         t.apply(tx, theme, "both")
+    stray = [p for p, c in tx.files.items() if c is not None and not p.resolve().is_relative_to(out)]
+    if stray:
+        sys.exit(f"pulsar-theme: render would write {stray[0]}, outside {out}; refusing")
     for p, c in tx.files.items():
         if c is not None:
             atomic_write(p, c)
@@ -2179,6 +2316,8 @@ def main(argv=None):
     sub.add_parser("next")
     sub.add_parser("prev")
     sub.add_parser("bg-next")
+    sub.add_parser("login-account", help="exit 0 for a person's account, 1 for the login screen's own "
+                   "(the first-login units' ExecCondition)")
     sub.add_parser("follow-scheme", help="re-apply the GTK3 half after a Dark Style flip (the Shell extension calls this)")
     wg = sub.add_parser("window-glass", help="re-apply the GTK4 half after the Glass windows switch (the Shell extension calls this)")
     wg.add_argument("--if-stale", action="store_true", help="only when it was written for the other glass state")
@@ -2252,6 +2391,8 @@ def main(argv=None):
         cmd_cycle(1 if a.cmd == "next" else -1)
     elif a.cmd == "bg-next":
         cmd_bg_next()
+    elif a.cmd == "login-account":
+        sys.exit(0 if login_account() else 1)
     elif a.cmd == "follow-scheme":
         cmd_follow_scheme()
     elif a.cmd == "window-glass":

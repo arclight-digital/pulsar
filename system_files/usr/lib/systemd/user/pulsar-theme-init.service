@@ -12,6 +12,9 @@
 [Unit]
 Description=Pulsar theme: first-login setup
 ConditionPathExists=!%S/pulsar-theme/init.json
+# Never for the login screen's accounts: this catches the static gdm user;
+# the engine itself turns away GDM's dynamic greeter users (login_account()).
+ConditionUser=!@system
 # Before gnome-session starts the Shell and the autostart apps, so they come
 # up already themed and nothing is holding the old palette.
 Before=gnome-session-pre.target

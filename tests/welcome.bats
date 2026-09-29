@@ -170,3 +170,30 @@ PY
     [ "${lines[1]}" = "Codex CLI|OpenAI" ]
     [ "${lines[2]}" = "[]" ]
 }
+
+@test "the login screen's accounts get no first-login setup, welcome or notice" {
+    XDG_SESSION_CLASS=greeter run python3 "$ENGINE" init
+    [ "$status" -eq 0 ]
+    [ ! -e "$TS/init.json" ] && [ ! -e "$TS/welcome.pending" ] && [ ! -e "$TS/notice.json" ]
+    XDG_SESSION_CLASS=greeter run python3 "$ENGINE" login-account
+    [ "$status" -eq 1 ]
+    run python3 "$ENGINE" login-account
+    [ "$status" -eq 0 ]
+    # GDM's dynamic greeter users, by name and by UID, and the static gdm user
+    run python3 -c '
+import pwd, sys, types
+sys.path.insert(0, sys.argv[1]); import pulsar_theme_engine as m; e = m.load()
+real = e.os.getuid
+for name, uid, want in [("gdm-greeter", 60578, False), ("gdm-greeter-3", 60580, False), ("gdm", 42, False),
+                        ("nick", 1000, True), ("someone", 60600, False)]:
+    e.pwd = types.SimpleNamespace(getpwuid=lambda _u, n=name: types.SimpleNamespace(pw_name=n))
+    e.os.getuid = lambda u=uid: u
+    assert e.login_account() is want, (name, uid)
+e.os.getuid = real
+print("ok")' "${REPO}/scripts"
+    [ "$status" -eq 0 ] && [ "$output" = ok ]
+    # the units: the static gdm user by condition, the welcome through the engine
+    U="${REPO}/system_files/usr/lib/systemd/user"
+    for u in pulsar-theme-init pulsar-theme-notice pulsar-welcome; do grep -qx 'ConditionUser=!@system' "$U/$u.service"; done
+    grep -qx 'ExecCondition=/usr/libexec/pulsar/pulsar-theme login-account' "$U/pulsar-welcome.service"
+}

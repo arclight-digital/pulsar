@@ -607,3 +607,111 @@ print("" if d is None else d)' "$1" "$2"; }
     [ "$status" -eq 0 ]
     [ "$(cat "$HOME/.claude.json")" = "not json {" ]
 }
+
+# --- the user's own choices, and runs nobody asked for -------------------
+
+@test "follow-scheme leaves a btop theme and an agent theme chosen since alone" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    agent_homes
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    conf="$XDG_CONFIG_HOME/btop/btop.conf"
+    sed -i 's|^color_theme = .*|color_theme = "gruvbox_dark"|' "$conf"
+    python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["theme"]="dark-daltonized"; json.dump(d, open(p, "w"))' "$HOME/.claude.json"
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme >/dev/null
+    grep -qx 'color_theme = "gruvbox_dark"' "$conf"
+    [ "$(jkey "$HOME/.claude.json" theme)" = dark-daltonized ]
+    # the one the user did not touch still follows the flip
+    [ "$(jkey "$HOME/.gemini/settings.json" ui.theme)" = "Default Light" ]
+    grep -q '(light)' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+    # and a full set is the user asking: it does overwrite
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(jkey "$HOME/.claude.json" theme)" = light ]
+}
+
+@test "first login keeps an agent theme the user chose before, and an editor scheme counts as their own look" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    printf '{"theme": "dark-daltonized"}\n' > "$HOME/.claude.json"
+    python3 "$ENGINE" init >/dev/null
+    grep -q '"applied"' "$XDG_STATE_HOME/pulsar-theme/init.json"
+    [ "$(jkey "$HOME/.claude.json" theme)" = dark-daltonized ]
+    rm -rf "$XDG_STATE_HOME/pulsar-theme"
+    fake_dconf
+    setkey /org/gnome/TextEditor/style-scheme "'classic'"
+    python3 "$ENGINE" init >/dev/null
+    grep -q '"skipped"' "$XDG_STATE_HOME/pulsar-theme/init.json"
+    grep -q 'editor color scheme' "$XDG_STATE_HOME/pulsar-theme/init.json"
+}
+
+@test "revert keeps extensions enabled since theming, and a list the engine never wrote" {
+    fake_dconf
+    setkey /org/gnome/shell/enabled-extensions "['mine@user']"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [[ "$(key /org/gnome/shell/enabled-extensions)" == *pulsar-theme@arclight.digital* ]]
+    setkey /org/gnome/shell/enabled-extensions "['mine@user', 'pulsar-theme@arclight.digital', 'new@user']"
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ "$(key /org/gnome/shell/enabled-extensions)" = "['mine@user', 'new@user']" ]
+    # already on before theming: the engine never wrote the list, revert never touches it
+    fake_dconf
+    rm -rf "$XDG_STATE_HOME/pulsar-theme"
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital', 'x@user']"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ "$(key /org/gnome/shell/enabled-extensions)" = "['pulsar-theme@arclight.digital', 'x@user']" ]
+}
+
+@test "render touches nothing under the real home, agent configs and the Flatpak editor included" {
+    printf '{"theme": "light-daltonized"}\n' > "$HOME/.claude.json"
+    mkdir -p "$HOME/.gemini" "$HOME/.var/app/org.gnome.TextEditor" "$XDG_CONFIG_HOME/opencode"
+    before=$(cd "$HOME" && find . -printf '%p %s\n' | sort | sha256sum)
+    run python3 "$ENGINE" render dracula "${BATS_TEST_TMPDIR}/out"
+    [ "$status" -eq 0 ]
+    [ "$(cd "$HOME" && find . -printf '%p %s\n' | sort | sha256sum)" = "$before" ]
+    [ "$(cat "$HOME/.claude.json")" = '{"theme": "light-daltonized"}' ]
+    [ -s "${BATS_TEST_TMPDIR}/out/.config/gtk-4.0/gtk.css" ]
+}
+
+@test "a lone surrogate in an agent's JSON survives set, still escaped, and the rest stays UTF-8" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    printf '{"history": [{"display": "x \\ud83d"}], "e": "\xc3\xa9"}\n' > "$HOME/.claude.json"
+    run python3 "$ENGINE" set pulsar --no-restart
+    [ "$status" -eq 0 ]
+    grep -qF '"display": "x \ud83d"' "$HOME/.claude.json"
+    grep -q '"e": "é"' "$HOME/.claude.json"
+    [ "$(jkey "$HOME/.claude.json" theme)" = dark-ansi ]
+}
+
+@test "a dotfile symlinked inside home is written through and stays a link, with its mode" {
+    fake_dconf
+    mkdir -p "$HOME/dots" "$XDG_CONFIG_HOME/gtk-4.0" "$XDG_CONFIG_HOME/btop"
+    echo '/* mine */' > "$HOME/dots/gtk.css"
+    chmod 644 "$HOME/dots/gtk.css"
+    ln -s ../../dots/gtk.css "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    printf 'update_ms = 1500\n' > "$XDG_CONFIG_HOME/btop/btop.conf"
+    chmod 640 "$XDG_CONFIG_HOME/btop/btop.conf"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ -L "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" ]
+    grep -q 'pulsar-theme (managed' "$HOME/dots/gtk.css"
+    [ "$(stat -c %a "$HOME/dots/gtk.css")" = 644 ]
+    [ "$(stat -c %a "$XDG_CONFIG_HOME/btop/btop.conf")" = 640 ]
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ -L "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" ]
+    [ "$(cat "$HOME/dots/gtk.css")" = '/* mine */' ]
+}
+
+@test "a dotfile symlinked out of home is neither written through nor replaced" {
+    fake_dconf
+    mkdir -p "${BATS_TEST_TMPDIR}/store" "$XDG_CONFIG_HOME/gtk-4.0"
+    echo '/* managed elsewhere */' > "${BATS_TEST_TMPDIR}/store/gtk.css"
+    ln -s "${BATS_TEST_TMPDIR}/store/gtk.css" "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    run python3 "$ENGINE" set pulsar --no-restart
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"links outside your home folder"* ]]
+    [ -L "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/store/gtk.css")" = '/* managed elsewhere */' ]
+    # the rest of the theme still lands
+    grep -q 'pulsar-theme (managed' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+}

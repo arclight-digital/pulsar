@@ -7,6 +7,9 @@
 [Unit]
 Description=Pulsar theme: first-login notice
 ConditionPathExists=%S/pulsar-theme/notice.json
+# Never for the login screen's accounts: this catches the static gdm user;
+# the engine itself turns away GDM's dynamic greeter users (login_account()).
+ConditionUser=!@system
 After=gnome-session.target
 PartOf=graphical-session.target
 

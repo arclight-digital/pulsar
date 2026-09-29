@@ -80,6 +80,18 @@ transaction:
 
 It never touches fonts or icons.
 
+`follow-scheme` runs in the background, so it never overwrites a choice: a
+btop theme, an agent's theme or a GTK theme the user changed after theming
+stays theirs and simply stops following the flip. A full `set` is the user
+asking, and does overwrite. First login likewise keeps an agent's theme the
+user had already picked.
+
+A dotfile that is a symlink into the home folder (a stow or chezmoi repo)
+is written through: the link stays a link and the repo gets the edit, and
+revert writes back through it too. A link out of the home folder (a Nix
+store, a shared file elsewhere) is left exactly as it is, with a note. Files
+keep their permissions.
+
 ## Revert
 
 The first time the engine touches a file or key, the original goes into
@@ -99,7 +111,8 @@ on who owns the thing:
 
 Keys that were showing the image default get GNOME's UPSTREAM defaults, read
 from the schema XML, not from Fedora's or Pulsar's overrides. The result is stock GNOME, and the
-extension is dropped from `enabled-extensions`. `revert --to image` resets to
+extension is dropped from `enabled-extensions`; any other extension enabled
+since theming stays enabled. `revert --to image` resets to
 the image defaults instead. `tests/theme-gate` checks the byte-and-dconf
 round trip.
 
@@ -117,8 +130,8 @@ gtk.css, Ptyxis or btop, and a unit alone would leave the first frame stock.
   before the Shell starts. A fresh account gets the full theme, plus the
   picker on Super+T if nothing in that account already uses it. An
   account that has made its look its own -- its own gtk.css, accent,
-  wallpaper, GTK or Shell theme, terminal palette or btop theme -- is left
-  entirely alone.
+  wallpaper, GTK or Shell theme, terminal palette, editor scheme or btop
+  theme -- is left entirely alone.
 - Either way `init` writes `~/.local/state/pulsar-theme/init.json`, and the
   unit is conditioned on it, so it never runs twice. If a run is killed
   part-way, `init.pending` tells the next login that what it finds was
@@ -130,7 +143,10 @@ gtk.css, Ptyxis or btop, and a unit alone would leave the first frame stock.
   queued notice, which it deletes once shown.
 
 An existing user meets all of this exactly once, on the first login after
-the update.
+the update. The login screen's own accounts never do: GDM runs its greeter
+as dynamic users that the global user units would otherwise reach too, so
+init, the notice and the welcome all ask `pulsar-theme login-account` (or
+check it themselves) and do nothing there.
 
 ## Open apps
 
