@@ -122,15 +122,24 @@ for ln in lines:
     elif not ln.startswith("\t"):
         cur = None
 
-clean, malformed = [], []
+funcs = {}
 for ln in lines:
     m = re.match(r"\[\d+\] FUNC '(scx_bpf_\w+)' type_id=(\d+)", ln)
-    if not m:
+    if m:
+        funcs[m.group(1)] = m.group(2)
+
+clean, malformed = [], []
+for name, tid in funcs.items():
+    # an _impl twin keeps aux by design, but only beside its public name;
+    # alone, a program has nothing clean to link against
+    if name.endswith("_impl") and name[:-5] in funcs:
         continue
-    name, tid = m.groups()
-    if name.endswith("_impl"):
-        continue
-    params = protos.get(tid, [])
+    if tid not in protos:
+        # a kfunc with no arguments still has a proto (vlen=0): a missing one
+        # is a dump this cannot read, and that is never "clean"
+        print(f"check-scx-btf: {name} has no FUNC_PROTO [{tid}] in the dump", file=sys.stderr)
+        sys.exit(2)
+    params = protos[tid]
     (malformed if params and params[-1] == "aux" else clean).append((name, params))
 
 if not clean and not malformed:

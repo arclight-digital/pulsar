@@ -119,6 +119,26 @@ EOF
     [[ "$output" == *"3 clean, 0 carrying"* ]]
 }
 
+@test "BTF gate: a public kfunc carrying aux fails even beside its _impl twin" {
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" \
+        --dump "${BATS_TEST_DIRNAME}/fixtures/btf-malformed-impl.txt"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"scx_bpf_cid_curr(cid, aux)"* ]]
+}
+
+@test "BTF gate: an _impl with no public twin is malformed, not skipped" {
+    grep -v "FUNC 'scx_bpf_cid_curr' " "${BATS_TEST_DIRNAME}/fixtures/btf-clean-impl.txt" > "${BATS_TEST_TMPDIR}/lone.txt"
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" --dump "${BATS_TEST_TMPDIR}/lone.txt"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"scx_bpf_cid_curr_impl(cid, aux)"* ]]
+}
+
+@test "BTF gate: a kfunc whose prototype is missing is 'cannot determine'" {
+    echo "[5] FUNC 'scx_bpf_x' type_id=99 linkage=static" > "${BATS_TEST_TMPDIR}/noproto.txt"
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" --dump "${BATS_TEST_TMPDIR}/noproto.txt"
+    [ "$status" -eq 2 ]
+}
+
 @test "BTF gate: kfuncs carrying the implicit aux argument fail" {
     run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" \
         --dump "${BATS_TEST_DIRNAME}/fixtures/btf-malformed.txt"

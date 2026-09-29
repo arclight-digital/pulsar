@@ -1,0 +1,17 @@
+[69792] FUNC_PROTO '(anon)' ret_type_id=40 vlen=1
+	'cid' type_id=138806
+[64388] FUNC_PROTO '(anon)' ret_type_id=40 vlen=2
+	'cid' type_id=138806
+	'aux' type_id=8041
+[69806] FUNC_PROTO '(anon)' ret_type_id=138806 vlen=2
+	'dsq_id' type_id=153090
+	'node' type_id=138806
+[69810] FUNC_PROTO '(anon)' ret_type_id=0 vlen=4
+	'p' type_id=40
+	'dsq_id' type_id=153090
+	'slice' type_id=153090
+	'enq_flags' type_id=153090
+[139824] FUNC 'scx_bpf_cid_curr' type_id=64388 linkage=static
+[139825] FUNC 'scx_bpf_cid_curr_impl' type_id=64388 linkage=static
+[139852] FUNC 'scx_bpf_create_dsq' type_id=69806 linkage=static
+[139860] FUNC 'scx_bpf_dsq_insert' type_id=69810 linkage=static
