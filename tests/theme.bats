@@ -715,3 +715,22 @@ print("" if d is None else d)' "$1" "$2"; }
     # the rest of the theme still lands
     grep -q 'pulsar-theme (managed' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
 }
+
+@test "glass windows follow the Glass tint slider, a step more opaque than the Shell's glass" {
+    fake_dconf
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass true
+    setkey /org/gnome/shell/extensions/pulsar-theme/window-glass true
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
+    # clear: the Shell's glass at 0.35, windows at 0.42
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint 0.0
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.42)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    # the default: 0.72, as windows had before they followed the slider
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint 0.5
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.72)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    # fully tinted: capped at 0.95, never opaque, or the blur would be pointless
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint 1.0
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.95)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+}

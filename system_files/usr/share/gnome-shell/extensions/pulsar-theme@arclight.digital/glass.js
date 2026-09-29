@@ -103,11 +103,23 @@ const SURFACE_GRADE = {dark: [1.7, 0.75, 0.8], light: [1.5, 0.75, 1.14]};
 const WINDOW_RADIUS = 16;
 const WINDOW_PAD = 48;
 const WINDOW_GRADE_EDGE = 4;
-// The popups' saturation and contrast, so a window and a menu over the same
-// wallpaper read as one material; brightness neutral because it serves both
-// modes (the popups' own is per mode: 0.8 dark, 1.14 light). It was
-// [1.9, 0.9, 1.35], which pushed what is beneath a window into loud blobs.
-const WINDOW_GRADE = [1.7, 0.75, 1.0];     // saturate, contrast, brightness
+// A window's grade is the menus' (SURFACE_GRADE), for the scheme the theme
+// is in, so a window and a menu over the same wallpaper read as one
+// material. A fixed [1.9, 0.9, 1.35] made what is beneath a window loud,
+// bright blobs beside a menu. The scheme is read off the top bar's glass,
+// which the same sheet colors for the same mode the GTK theme is in -- a
+// single-mode theme included, where Dark Style says nothing about it. The
+// bar goes transparent in the overview and on the lock screen; then it says
+// nothing either, and the last answer stands.
+let lastWindowGrade = SURFACE_GRADE.dark;
+function windowGrade() {
+    try {
+        const bg = Main.panel.get_theme_node().get_background_color();
+        if (bg.alpha > 0)
+            lastWindowGrade = luminance(bg) > 0.5 ? SURFACE_GRADE.light : SURFACE_GRADE.dark;
+    } catch {}
+    return lastWindowGrade;
+}
 const ENGINE = '/usr/libexec/pulsar/pulsar-theme';
 
 const MASK_DECL = `
@@ -1525,8 +1537,10 @@ class WindowGlass {
         this._blur.setShadow(false, 0);
         // vibrancy: what is beneath lifted, so its color reads through the
         // window's tint instead of muddying it
-        this._blur.setGrade(...WINDOW_GRADE);
+        this._blur.setGrade(...windowGrade());
         this._blur.setGradeEdge(WINDOW_GRADE_EDGE);
+        // a new sheet (a theme, a Dark Style flip) may be the other scheme
+        Main.panel.connectObject('style-changed', () => this._blur.setGrade(...windowGrade()), this);
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         actor.insert_child_at_index(this._backdrop, 0);
         this._backdrop.connect('destroy', () => (this._backdrop = null));
@@ -1589,6 +1603,7 @@ class WindowGlass {
     destroy() {
         this._win.disconnectObject(this);
         this._actor.disconnectObject(this);
+        Main.panel.disconnectObject(this);
         this._recull();
         this._backdrop?.destroy();
         this._backdrop = null;

@@ -322,7 +322,10 @@ class Variant:
         g = self.window_glass
         def glass(k, a):
             return f"alpha({self.p[k].hex}, {a})" if g else self.p[k].hex
-        c["window_bg"] = glass("window", 0.72)
+        # The window ground follows the Glass tint slider like the Shell's
+        # glass does, a step more opaque for text read on it: 0.72 at the
+        # slider's default (0.65), 0.95 at most.
+        c["window_bg"] = glass("window", round(min(0.95, self.glass_alpha + 0.07), 3))
         c["headerbar_bg"] = glass("headerbar", 0.35)
         c["sidebar_bg"] = glass("sidebar", 0.35)
         c["window_backdrop"] = glass("window", 0.35)
@@ -1057,8 +1060,10 @@ class Gtk4(Target):
 
     def apply(self, tx, theme, vm):
         glass = window_glass()
+        tint = glass_tint()
         for v in theme.variants.values():
             v.window_glass = glass
+            v.glass_alpha = tint
         def wrap(m, body):
             if m is None:
                 return body
