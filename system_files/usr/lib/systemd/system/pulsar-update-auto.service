@@ -1,0 +1,32 @@
+[Unit]
+# Fetches a newer Pulsar image and stages it for the next boot, so an update
+# is already waiting when the user restarts. Stages only: it never applies,
+# never reboots, and carries layered packages forward exactly as
+# `sudo pulsar update` does, because that is what it runs.
+#
+# `pulsar update --background` decides whether to go at all, and says why not
+# in the journal: on battery, on a metered connection, nothing newer
+# published, or the newest build already staged. A skip exits 0; "could not
+# tell" does too, since pulsar-update-check (a user unit) is the one that
+# reports an unreachable registry, and a laptop that is offline once a day
+# should not collect a failed unit for it.
+#
+# Turn it off with: sudo systemctl disable --now pulsar-update-auto.timer
+Description=Stage a newer Pulsar image in the background
+Documentation=file:///usr/share/pulsar/AGENTS.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pulsar update --background
+# The whole reason this was ever unattended-hostile: on 2026-08-14 GNOME
+# Software's background upgrade pulled 946MB and froze the desktop for ~90s
+# (see download-updates=false in zz0-pulsar.gschema.override). A download the
+# user did not ask for gets the CPU only when nothing else wants it. On a
+# layered system the work happens in rpm-ostreed's cgroup instead, which
+# 10-pulsar-containment.conf already holds at half the session's weight.
+CPUWeight=idle
+Nice=10
+# A slow mirror is not a hang, but a stuck pull must not hold the unit forever
+TimeoutStartSec=2h

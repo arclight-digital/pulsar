@@ -202,10 +202,13 @@ runtime. Don't write your own
 spec to `/etc/cdi` — it goes stale at the next driver update, and
 `pulsar doctor` will say so.
 
-**Updates** are stock Silverblue: GNOME Software notices, you restart when
-you choose. Kernels, security fixes and driver bumps arrive nightly that way;
-`sudo pulsar update` if you are impatient. It hands off to `rpm-ostree` when
-you have layered packages, which plain `bootc upgrade` would drop.
+**Updates** are built nightly. Pulsar downloads and stages each one in the
+background (on AC power and an unmetered connection), then tells you it is
+ready; it takes over when you restart, and never before. A notification's
+Update button stages one now, and `sudo pulsar update` does the same from a
+terminal. Either hands off to `rpm-ostree` when you have layered packages,
+which plain `bootc upgrade` would drop. `sudo systemctl disable --now
+pulsar-update-auto.timer` turns background staging off.
 
 ## Two variants, one key
 

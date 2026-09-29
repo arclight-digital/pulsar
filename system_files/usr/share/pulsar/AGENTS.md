@@ -106,9 +106,13 @@ always reaches this system's CLI, and its `cli` check says when another
   image and **stages** it. It takes effect on the next boot. **Never reboot
   the machine yourself**, and never pass `--apply`. Tell the user a reboot is
   pending.
-- Nothing reboots by itself. Pulsar's update timer only notifies, and GNOME
-  Software may download an update in the background, which still waits for a
-  reboot.
+- Nothing reboots by itself. `pulsar-update-auto.timer` downloads and stages
+  new images in the background (on AC power and an unmetered connection
+  only), and the update notification offers an Update button and, once one is
+  staged, a Restart button that opens GNOME's own restart dialog. A staged
+  update changes nothing until the next boot. The user turns background
+  staging off with `sudo systemctl disable --now pulsar-update-auto.timer`;
+  that is theirs to do, not yours.
 - `sudo pulsar rollback` makes the previous deployment the default for the
   next boot. greenboot also rolls back on its own if a boot fails its health
   checks.
@@ -153,10 +157,11 @@ first. The user can make the rpm-ostree and Flatpak ones prompt with
 - `systemctl --failed` and `systemctl --user --failed` list failed units.
 - Pulsar's own units: `pulsar-flatpaks.service` (first-boot Flatpaks),
   `pulsar-gamemode-group.service`, `scx.service` (scheduler),
-  `greenboot-healthcheck.service`, and on the nvidia image
+  `greenboot-healthcheck.service`, `pulsar-update-auto.timer` (background
+  staging) and `pulsar-update-stage.service` (the Update button), and on the nvidia image
   `pulsar-gl-nvidia.service` (Flatpak GL driver), `nvidia-cdi-refresh.service`
   and `pulsar-gpu-containers.service` (GPU containers). User units:
-  `pulsar-update-check.timer`, `pulsar-gl-check.path`, `pulsar-crash-watch.path`,
+  `pulsar-update-check.timer` (the update notification), `pulsar-gl-check.path`, `pulsar-crash-watch.path`,
   `gamescale-reconcile.service`, `podman-auto-update.timer`.
   Use `journalctl -u <unit>` for system units and
   `journalctl --user -u <unit>` for user units.

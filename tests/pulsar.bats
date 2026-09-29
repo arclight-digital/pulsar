@@ -261,16 +261,45 @@ EOF
 }
 
 # Records every notification rather than showing one, so a test can count them.
+#
+# The notification's buttons wait in a transient user unit, and on a Pulsar
+# machine systemd-run, systemctl and gnome-session-quit are all real -- left
+# unstubbed, this suite would post notifications on the desktop running it and
+# start the real stage unit. So all three are stubbed: systemd-run runs the
+# waiting script right here, notify-send answers with $NOTIFY_ACTION when the
+# notification has a button, and systemctl and gnome-session-quit only log.
+# Background staging reads as off unless a test enables it.
 stub_notify() {
     STUB="${BATS_TEST_TMPDIR}/stub"
     mkdir -p "$STUB"
     NOTIFY_LOG="${BATS_TEST_TMPDIR}/notify.log"
-    : > "$NOTIFY_LOG"
+    ACTION_LOG="${BATS_TEST_TMPDIR}/action.log"
+    : > "$NOTIFY_LOG"; : > "$ACTION_LOG"
     cat > "${STUB}/notify-send" <<EOF
 #!/bin/sh
 echo "\$*" >> "${NOTIFY_LOG}"
+case "\$*" in *--action=*) [ -z "\${NOTIFY_ACTION:-}" ] || echo "\$NOTIFY_ACTION" ;; esac
 EOF
-    chmod +x "${STUB}/notify-send"
+    cat > "${STUB}/systemd-run" <<'EOF'
+#!/bin/sh
+while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
+shift
+exec "$@"
+EOF
+    cat > "${STUB}/systemctl" <<EOF
+#!/bin/sh
+echo "systemctl \$*" >> "${ACTION_LOG}"
+case "\$1" in
+    is-enabled) if [ -e "${BATS_TEST_TMPDIR}/auto-enabled" ]; then echo enabled; else echo disabled; fi ;;
+    start) [ -z "\${STAGE_TO:-}" ] || cp "\$STAGE_TO" "${BATS_TEST_TMPDIR}/status.json"
+           [ -z "\${STAGE_FAILS:-}" ] || { echo "\$STAGE_FAILS" >&2; exit 1; } ;;
+esac
+EOF
+    cat > "${STUB}/gnome-session-quit" <<EOF
+#!/bin/sh
+echo "gnome-session-quit \$*" >> "${ACTION_LOG}"
+EOF
+    chmod +x "${STUB}/notify-send" "${STUB}/systemd-run" "${STUB}/systemctl" "${STUB}/gnome-session-quit"
     PATH="${STUB}:${PATH}"
     export PATH
     export PULSAR_UPDATE_STATE="${BATS_TEST_TMPDIR}/state"
@@ -393,6 +422,223 @@ CHECK_STAGED='{"deployments":[
     stub_skopeo "sha256:ccc" "44.3"
     run "$PULSAR" update --check --notify
     [ "$(wc -l < "$NOTIFY_LOG")" -eq 2 ]
+}
+
+@test "update --check --json says whether the update is staged" {
+    stub_ostree "$CHECK_STAGED"
+    stub_skopeo "sha256:bbb" "44.2"
+    run "$PULSAR" update --check --json
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r .status)" = staged ]
+    [ "$(echo "$output" | jq -r .staged)" = true ]
+    stub_ostree "$CHECK_STATUS"
+    run "$PULSAR" update --check --json
+    [ "$status" -eq 10 ]
+    [ "$(echo "$output" | jq -r .staged)" = false ]
+}
+
+@test "update --notify offers an Update button that stages, then says it is ready" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    printf '%s' "$CHECK_STAGED" > "${BATS_TEST_TMPDIR}/staged.json"
+    NOTIFY_ACTION=update STAGE_TO="${BATS_TEST_TMPDIR}/staged.json" run "$PULSAR" update --check --notify
+    [ "$status" -eq 10 ]
+    grep -q -- "--action=update=Update" "$NOTIFY_LOG"
+    grep -qx "systemctl start pulsar-update-stage.service" "$ACTION_LOG"
+    # the stage ran, so the check that follows it posts "ready", with Restart
+    grep -q "Pulsar 44.2 is ready" "$NOTIFY_LOG"
+    grep -q -- "--action=restart=Restart" "$NOTIFY_LOG"
+    # and staging is all it did: no reboot without the user's say
+    ! grep -q "gnome-session-quit" "$ACTION_LOG"
+}
+
+@test "update --notify: a cancelled password prompt is a no, not an error" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    NOTIFY_ACTION=update STAGE_FAILS="Failed to start pulsar-update-stage.service: Access denied" \
+        run "$PULSAR" update --check --notify
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
+    ! grep -q "could not be downloaded" "$NOTIFY_LOG"
+}
+
+@test "update --notify says so when staging fails, and where to look" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    NOTIFY_ACTION=update STAGE_FAILS="Job for pulsar-update-stage.service failed" \
+        run "$PULSAR" update --check --notify
+    grep -q "could not be downloaded" "$NOTIFY_LOG"
+    grep -q "journalctl -u pulsar-update-stage" "$NOTIFY_LOG"
+}
+
+@test "update --notify: a staged update is announced once, and Restart asks GNOME" {
+    stub_ostree "$CHECK_STAGED"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    NOTIFY_ACTION=restart run "$PULSAR" update --check --notify
+    [ "$status" -eq 0 ]
+    grep -q "Pulsar 44.2 is ready" "$NOTIFY_LOG"
+    # GNOME's own dialog, where the user confirms; never a reboot from here
+    grep -qx "gnome-session-quit --reboot" "$ACTION_LOG"
+    ! grep -q "systemctl reboot" "$ACTION_LOG"
+    run "$PULSAR" update --check --notify
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
+}
+
+@test "update --notify waits a day before offering an update background staging will fetch" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    touch "${BATS_TEST_TMPDIR}/auto-enabled"
+    run "$PULSAR" update --check --notify
+    [ "$status" -eq 10 ]
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 0 ]
+    # still not staged a day later -- on battery all day, say: now it asks
+    PULSAR_UPDATE_AUTO_GRACE=0 run "$PULSAR" update --check --notify
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
+    grep -q "Pulsar 44.2 is available" "$NOTIFY_LOG"
+}
+
+# `update --background` is pulsar-update-auto.service's job. Root, like
+# `update`; the power supplies and NetworkManager's metered verdict are the
+# test's to set.
+bg_env() {
+    stub_skopeo "$1" "$2"
+    POWER="${BATS_TEST_TMPDIR}/power"; mkdir -p "$POWER"
+    cat > "${STUB}/busctl" <<EOF
+#!/bin/sh
+echo "u \$(cat "${BATS_TEST_TMPDIR}/metered" 2>/dev/null || echo 4)"
+EOF
+    chmod +x "${STUB}/busctl"
+}
+supply() {  # $1 name $2 type $3 online
+    mkdir -p "${POWER}/$1"; echo "$2" > "${POWER}/$1/type"; echo "$3" > "${POWER}/$1/online"
+}
+bg_root() {
+    local ns=(unshare -r)
+    if [ "$(id -u)" -eq 0 ]; then ns=()
+    else unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"; fi
+    run "${ns[@]}" env "PATH=${PATH}" "PULSAR_MANIFEST=${PULSAR_MANIFEST}" \
+        "PULSAR_POWER_SUPPLY_DIR=${POWER}" "$PULSAR" update --background
+}
+
+@test "update --background stages a newer image on AC and an unmetered connection" {
+    stub_ostree "$CHECK_STATUS"
+    bg_env "sha256:bbb" "44.2"
+    supply AC Mains 1; supply BAT0 Battery 1
+    bg_root
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"staging 44.2"* ]]
+    [[ "$output" == *"bootc upgrade"* ]]
+    [[ "$output" != *"--apply"* ]]
+}
+
+@test "update --background carries layers forward the way update does" {
+    stub_ostree "$CHECK_LAYERED"
+    bg_env "sha256:bbb" "44.2"
+    bg_root
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rpm-ostree upgrade"* ]]
+    [[ "$output" != *"--reboot"* ]]
+}
+
+@test "update --background waits while on battery" {
+    stub_ostree "$CHECK_STATUS"
+    bg_env "sha256:bbb" "44.2"
+    supply AC Mains 0; supply BAT0 Battery 1
+    bg_root
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"on battery"* ]]
+    [[ "$output" != *"upgrade"* ]]
+}
+
+@test "update --background counts a machine with no AC connector as plugged in" {
+    stub_ostree "$CHECK_STATUS"
+    bg_env "sha256:bbb" "44.2"
+    bg_root
+    [[ "$output" == *"bootc upgrade"* ]]
+}
+
+@test "update --background waits on a metered connection, guessed or set" {
+    stub_ostree "$CHECK_STATUS"
+    bg_env "sha256:bbb" "44.2"
+    for m in 1 3; do
+        echo "$m" > "${BATS_TEST_TMPDIR}/metered"
+        bg_root
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"metered"* ]] || fail "Metered=$m did not hold it back: $output"
+        [[ "$output" != *"upgrade"* ]]
+    done
+}
+
+@test "update --background does nothing when there is nothing new, or it is already staged" {
+    stub_ostree "$CHECK_STATUS"
+    bg_env "sha256:aaa" "44.1"
+    bg_root
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"nothing to stage: current"* ]]
+    [[ "$output" != *"upgrade"* ]]
+    stub_ostree "$CHECK_STAGED"
+    bg_env "sha256:bbb" "44.2"
+    bg_root
+    [[ "$output" == *"nothing to stage: staged"* ]]
+    [[ "$output" != *"upgrade"* ]]
+}
+
+@test "update --background exits 0 when the registry cannot be reached" {
+    # The user unit reports "could not tell"; a laptop offline once a day
+    # must not collect a failed system unit for it too.
+    stub_ostree "$CHECK_STATUS"
+    bg_env "sha256:bbb" "44.2"
+    printf '#!/bin/sh\nexit 1\n' > "${STUB}/skopeo"
+    bg_root
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"could not tell"* ]]
+    [[ "$output" != *"upgrade"* ]]
+}
+
+@test "update --background needs root" {
+    [ "$(id -u)" -ne 0 ] || skip "running as root"
+    run "$PULSAR" update --background
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"needs root"* ]]
+}
+
+@test "the update units stage and never reboot" {
+    local d="${BATS_TEST_DIRNAME}/../system_files/usr/lib/systemd/system"
+    grep -qx "ExecStart=/usr/bin/pulsar update --background" "${d}/pulsar-update-auto.service"
+    grep -qx "ExecStart=/usr/bin/pulsar update" "${d}/pulsar-update-stage.service"
+    ! grep -hE '^Exec' "${d}/pulsar-update-auto.service" "${d}/pulsar-update-stage.service" | grep -qE -- "--apply|reboot"
+    # awake time, so it never fires in the first seconds after a resume
+    ! grep -qE "^(OnCalendar|Persistent)=" "${d}/pulsar-update-auto.timer"
+    grep -q "^OnBootSec=" "${d}/pulsar-update-auto.timer"
+    grep -qx "CPUWeight=idle" "${d}/pulsar-update-auto.service"
+}
+
+@test "the update timer is enabled in the image and listed in the system preset" {
+    local repo="${BATS_TEST_DIRNAME}/.." u
+    local preset="${repo}/system_files/usr/lib/systemd/system-preset/50-pulsar.preset"
+    grep -qx "enable pulsar-update-auto.timer" "$preset"
+    grep -q "systemctl enable pulsar-update-auto.timer" "${repo}/Containerfile"
+    # and every system unit the finalize step enables is in the preset
+    for u in $(grep -oE 'systemctl enable [a-z0-9@._-]+' "${repo}/Containerfile" | awk '{print $3}'); do
+        grep -qx "enable ${u}" "$preset" || fail "${u} is enabled in the Containerfile but not in the system preset"
+    done
+}
+
+@test "the update polkit rule lets an admin start exactly the stage unit" {
+    local rule="${BATS_TEST_DIRNAME}/../system_files/usr/share/polkit-1/rules.d/50-pulsar-update.rules"
+    grep -qF '"org.freedesktop.systemd1.manage-units"' "$rule"
+    grep -qF 'action.lookup("unit") == "pulsar-update-stage.service"' "$rule"
+    grep -qF 'action.lookup("verb") == "start"' "$rule"
+    grep -qF 'subject.isInGroup("wheel")' "$rule"
+    grep -qF 'subject.active' "$rule"
+    grep -qF 'subject.local' "$rule"
+    # one grant, and nothing wider than it
+    [ "$(grep -c 'polkit.Result.YES' "$rule")" -eq 1 ]
+    ! grep -qE 'indexOf|startsWith|match\(' "$rule"
 }
 
 @test "update --check refuses rather than guess when the deployment is not container-native" {

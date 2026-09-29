@@ -14,11 +14,16 @@
 # notification, and the session bus is here. It also needs no privilege --
 # `pulsar update --check` reads rpm-ostree status unprivileged and makes one
 # registry call, so nothing here wants root.
+#
+# The notification's buttons (Update, Restart) wait in transient units of
+# their own, so this oneshot still finishes in the time one registry call
+# takes. The timeout is for a registry that never answers.
 Description=Check whether a newer Pulsar image has been published
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/pulsar update --check --notify
+TimeoutStartSec=2min
 # 10 is "an update is available". That is the answer, not a failure, and
 # without this line every successful check would mark the unit failed.
 SuccessExitStatus=10

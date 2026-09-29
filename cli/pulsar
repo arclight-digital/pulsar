@@ -1306,7 +1306,7 @@ cmd_update_check() {
     # --json: one object whatever the answer; the exit code still carries it.
     check_json() {
         jq -n -c --arg s "$1" --arg b "$local_version" --arg l "$remote_version" --arg r "$ref" \
-            '{status: $s, booted: $b, latest: $l, image: $r}'
+            '{status: $s, booted: $b, latest: $l, image: $r, staged: ($s == "staged")}'
     }
 
     if [ "$remote_digest" = "$local_digest" ]; then
@@ -1320,6 +1320,9 @@ cmd_update_check() {
     local staged_digest
     staged_digest=$(printf '%s' "$js" | jq -r '[ .deployments[]? | select(.staged == true) ][0] | ."container-image-reference-digest" // ""')
     if [ "$staged_digest" = "$remote_digest" ]; then
+        # Staged by the background unit or the Update button: the one thing
+        # left is a restart, so that is what the notification offers.
+        [ "$notify" = 0 ] || update_notify_once staged "$remote_digest" "$remote_version" "$local_version"
         if [ "${JSON:-0}" = 1 ]; then check_json staged; return 0; fi
         printf 'staged: %s -- reboot to apply\n' "$remote_version"
         return 0
@@ -1331,25 +1334,155 @@ cmd_update_check() {
         printf 'update available: %s -> %s\n' "$local_version" "$remote_version"
     fi
 
-    if [ "$notify" = 1 ]; then
-        # Once per published digest, not once per check. The state file is the
-        # only thing that keeps a six-hourly timer from becoming six-hourly
-        # notifications about a build the user has already decided to skip.
-        local state_file="${UPDATE_STATE}/notified-digest" seen=""
-        if [ -r "$state_file" ]; then seen=$(cat "$state_file"); fi
-        if [ "$seen" != "$remote_digest" ]; then
-            if have notify-send; then
-                # Short enough to survive the shell's one-line body. The title
-                # already carries the new version, so the body only owes the
-                # user the old one and the command.
-                notify-send --app-name="Pulsar" --icon=software-update-available \
-                    "Pulsar ${remote_version} is available" \
-                    "You are on ${local_version} -- run 'sudo pulsar update'"
-            fi
-            mkdir -p "$UPDATE_STATE" && printf '%s\n' "$remote_digest" > "$state_file"
-        fi
-    fi
+    [ "$notify" = 0 ] || update_notify_once available "$remote_digest" "$remote_version" "$local_version"
     return 10
+}
+
+# ---------------------------------------------------------------------------
+# The update notifications, once per published build each.
+#
+# "available" offers an Update button, which starts pulsar-update-stage.service
+# (no password for a local admin: 50-pulsar-update.rules). "staged" offers a
+# Restart button, which opens GNOME's own restart dialog -- the user confirms
+# there, and nothing here ever reboots.
+#
+# With background staging on, "available" waits a day first. The background
+# unit will usually have staged the build by then, and the user hears about it
+# once, as "ready", instead of twice. A build that is still not staged after a
+# day -- a laptop that lives on battery, a metered connection -- gets the
+# Update button after all.
+# ---------------------------------------------------------------------------
+UPDATE_AUTO_GRACE=${PULSAR_UPDATE_AUTO_GRACE:-86400}
+
+update_auto_enabled() {
+    have systemctl || return 1
+    [ "$(systemctl is-enabled pulsar-update-auto.timer 2>/dev/null)" = enabled ]
+}
+
+# $1 kind (available|staged) $2 digest $3 new version $4 booted version
+update_notify_once() {
+    local kind=$1 digest=$2 version=$3 booted=$4 state_file seen=""
+    # "notified-digest" is the file every earlier release wrote for the
+    # available notice; keeping the name keeps an upgraded machine from
+    # announcing the same build again.
+    case "$kind" in
+        available) state_file="${UPDATE_STATE}/notified-digest" ;;
+        staged)    state_file="${UPDATE_STATE}/notified-staged-digest" ;;
+    esac
+    if [ -r "$state_file" ]; then seen=$(cat "$state_file"); fi
+    [ "$seen" != "$digest" ] || return 0
+    mkdir -p "$UPDATE_STATE"
+
+    if [ "$kind" = available ] && update_auto_enabled; then
+        local since="${UPDATE_STATE}/available-since" first="" now d=""
+        now=$(date +%s)
+        if [ -r "$since" ]; then read -r d first < "$since" || true; [ "${d:-}" = "$digest" ] || first=""; fi
+        if [ -z "$first" ]; then
+            printf '%s %s\n' "$digest" "$now" > "$since"
+            return 0
+        fi
+        [ $((now - first)) -ge "$UPDATE_AUTO_GRACE" ] || return 0
+    fi
+
+    update_notify_send "$kind" "$digest" "$version" "$booted"
+    printf '%s\n' "$digest" > "$state_file"
+}
+
+update_notify_send() {
+    local kind=$1 digest=$2 version=$3 booted=$4 title body
+    have notify-send || return 0
+    if [ "$kind" = available ]; then
+        title="Pulsar ${version} is available"
+        body="You are on ${booted}. Update downloads it now, and it takes over when you restart."
+    else
+        title="Pulsar ${version} is ready"
+        body="Restart to start using it. Nothing changes until you do."
+    fi
+    # The click has to outlive this oneshot unit, so the waiting notification
+    # runs as a transient unit of its own, as crash_notify_one's does. Without
+    # systemd-run it still says what to do, just without the button.
+    if ! have systemd-run || { [ "$kind" = staged ] && ! have gnome-session-quit; }; then
+        if [ "$kind" = available ]; then body="You are on ${booted} -- run 'sudo pulsar update'"
+        else body="Restart to start using it."; fi
+        notify-send --app-name="Pulsar" --icon=software-update-available "$title" "$body" || true
+        return 0
+    fi
+    local script unit="pulsar-update-${kind}-${digest#sha256:}"
+    unit=${unit:0:48}
+    if [ "$kind" = available ]; then
+        # A cancelled password prompt is the user saying no, not a failure.
+        # After a stage, the check runs again and posts "ready" itself, so
+        # there is one place that words it.
+        # shellcheck disable=SC2016  # expanded by the transient unit's sh
+        script='a=$(notify-send --app-name=Pulsar --icon=software-update-available --action=update=Update "$1" "$2") || exit 0
+[ "$a" = update ] || exit 0
+if err=$(systemctl start pulsar-update-stage.service 2>&1); then exec "$3" update --check --notify; fi
+case "$err" in *[Aa]uthenticat*|*"Access denied"*|*[Cc]ancel*) exit 0 ;; esac
+exec notify-send --app-name=Pulsar --icon=dialog-warning "Pulsar $4 could not be downloaded" "See why: journalctl -u pulsar-update-stage"'
+    else
+        # gnome-session-quit shows GNOME's restart dialog; the user confirms
+        # there. This never reboots on its own.
+        # shellcheck disable=SC2016
+        script='a=$(notify-send --app-name=Pulsar --icon=software-update-available --action=restart=Restart "$1" "$2") || exit 0
+[ "$a" = restart ] || exit 0
+exec gnome-session-quit --reboot'
+    fi
+    systemd-run --user --collect --quiet --unit="$unit" \
+        -- sh -c "$script" sh "$title" "$body" "$(realpath "$SELF")" "$version" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# update --background -- pulsar-update-auto.service's job: stage a newer image
+# if there is one and now is a good time, and otherwise say in one line why
+# not. Every "not now" exits 0; the next run asks again.
+# ---------------------------------------------------------------------------
+POWER_SUPPLY_DIR=${PULSAR_POWER_SUPPLY_DIR:-/sys/class/power_supply}
+
+# Prints why not to stage right now, or nothing (and fails) if it is fine.
+update_background_blocker() {
+    # On battery: systemd's ConditionACPower reading. A machine with no AC
+    # connector at all (most desktops report none) counts as plugged in; one
+    # with connectors counts as on battery only when none of them is online.
+    local d type connectors=0 online=0
+    for d in "$POWER_SUPPLY_DIR"/*; do
+        [ -r "$d/type" ] || continue
+        type=$(cat "$d/type" 2>/dev/null) || continue
+        case "$type" in Mains|USB*) ;; *) continue ;; esac
+        [ "$(cat "$d/scope" 2>/dev/null)" = Device ] && continue
+        connectors=$((connectors + 1))
+        [ "$(cat "$d/online" 2>/dev/null)" = 1 ] && online=1
+    done
+    if [ "$connectors" -gt 0 ] && [ "$online" = 0 ]; then
+        echo "on battery power"; return 0
+    fi
+    # Metered: NetworkManager's own verdict for the primary connection.
+    # 1 = yes, 3 = guessed yes (a phone hotspot); 0 unknown and 2/4 no.
+    local m
+    if have busctl && m=$(busctl get-property org.freedesktop.NetworkManager \
+            /org/freedesktop/NetworkManager org.freedesktop.NetworkManager Metered 2>/dev/null); then
+        case "${m##* }" in 1|3) echo "the network connection is metered"; return 0 ;; esac
+    fi
+    return 1
+}
+
+update_background() {
+    need_root "update --background"
+    local why out rc=0
+    if why=$(update_background_blocker); then
+        printf 'pulsar: not staging now: %s\n' "$why"
+        return 0
+    fi
+    out=$(JSON=1 cmd_update_check --check 2>&1) || rc=$?
+    case "$rc" in
+        0)  printf 'pulsar: nothing to stage: %s\n' "$(printf '%s' "$out" | jq -r '.status + " (" + .latest + ")"' 2>/dev/null || echo current)"
+            return 0 ;;
+        10) ;;
+        *)  printf 'pulsar: not staging now: could not tell whether a newer image exists: %s\n' \
+                "$(printf '%s' "$out" | sed $'s/\033\\[[0-9;]*m//g; s/^pulsar: //' | tail -1)"
+            return 0 ;;
+    esac
+    printf 'pulsar: staging %s for the next boot\n' "$(printf '%s' "$out" | jq -r .latest 2>/dev/null)"
+    cmd_update
 }
 
 update_help() {
@@ -1363,21 +1496,36 @@ usage: sudo pulsar update [--apply]   fetch and stage the newest image; it
          --notify                     with --check: a desktop notification,
                                       once per published build
          --json                       with --check: the answer as JSON
+       sudo pulsar update --background
+                                      stage a newer image if there is one,
+                                      unless on battery or a metered
+                                      connection. pulsar-update-auto.timer
+                                      runs this; turn it off with
+                                      sudo systemctl disable --now pulsar-update-auto.timer
 
 Through bootc, or through rpm-ostree when packages are layered (bootc would
-drop them). Other flags pass through to whichever of the two runs.
+drop them). Other flags pass through to whichever of the two runs. Staging
+changes nothing until the next boot, and nothing here reboots unless you
+pass --apply.
 EOF
 }
 
 cmd_update() {
-    local arg check=0 notify=0
+    local arg check=0 notify=0 background=0
     for arg in "$@"; do
         case "$arg" in
             -h|--help) update_help; return 0 ;;
             --check) check=1 ;;
             --notify) notify=1 ;;
+            --background) background=1 ;;
         esac
     done
+    if [ "$background" = 1 ]; then
+        [ "$#" -eq 1 ] || die "--background takes no other flags: sudo pulsar update --background"
+        no_json update
+        update_background
+        return $?
+    fi
     if [ "$check" = 1 ]; then
         cmd_update_check "$@" || return $?
         return 0

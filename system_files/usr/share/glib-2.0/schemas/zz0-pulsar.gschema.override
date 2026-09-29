@@ -98,11 +98,13 @@ two-finger-scrolling-enabled=true
 # the same trigger on the same filesystem and was closed as not planned, with a
 # worse ending than ours: btrfs corruption and a read-only remount.
 #
-# This is not "no update policy". pulsar-update-check.timer already does the
-# reading half honestly and ends in a notification, and `pulsar update` does
-# the applying half when the user asks. What this key removes is the third
-# actor that did the applying half unasked and could not do the reading half
-# at all.
+# This is not "no update policy". pulsar-update-check.timer does the reading
+# half honestly and ends in a notification, and pulsar-update-auto.timer does
+# the downloading half unattended -- at idle CPU weight, on AC and unmetered
+# networks only, and never straight after a resume, which are the three things
+# GNOME Software's download lacked on 2026-08-14. What this key removes is the
+# third actor that did the downloading half with none of those limits and
+# could not do the reading half at all.
 [org.gnome.software]
 first-run=false
 download-updates=false

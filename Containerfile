@@ -796,7 +796,8 @@ RUN set -eu; \
 # pulsar-update-check.timer is enabled --global, for the same reason
 # podman-auto-update.timer is: it ends in a desktop notification and the
 # session bus lives in the user session. It only READS -- one rpm-ostree
-# status, one registry call -- and never stages or applies anything.
+# status, one registry call -- and never stages or applies anything itself;
+# staging is pulsar-update-auto's, or the user's through its Update button.
 #
 # It is here because this image cannot rely on GNOME Software for the job, and
 # that is worth stating plainly since the comment this replaces claimed the
@@ -836,10 +837,24 @@ RUN set -eu; \
 # place of the notice, and the welcome stamps itself shown. An existing
 # account that gets this in an update is never greeted.
 #
+# pulsar-update-auto.timer is a SYSTEM unit, because staging needs root. It
+# runs `pulsar update --background`: the same staging `sudo pulsar update`
+# does, layers carried forward, but only on AC power and an unmetered
+# connection, at idle CPU weight, and never within a minute of a resume (the
+# timer counts awake time; see its header). It stages and stops. The update
+# check's notification then says the new build is ready and offers GNOME's
+# own restart dialog, and until someone restarts, nothing has changed.
+#
+# pulsar-update-stage.service is not enabled; it has no [Install]. It is what
+# the notification's "Update" button starts, for the user who does not want
+# to wait for the background run. 50-pulsar-update.rules lets a local, active
+# admin start exactly that unit without a password, which is no more than
+# Fedora's stock rpm-ostree rules already allow for an upgrade.
+#
 # Still deliberately NOT enabled: bootc's fetch-apply-updates.timer, which
 # runs `bootc upgrade --apply` and reboots on its own, and would additionally
-# drop the layers on any system that has them. Notifying is the policy;
-# applying stays the user's call. rpm-ostree-countme.timer stays at its stock
+# drop the layers on any system that has them. Staging in the background is
+# the policy; applying -- the reboot -- stays the user's call. rpm-ostree-countme.timer stays at its stock
 # enablement too: an anonymous population count that keeps the Fedora base
 # this image rides on counted, and a fork that objects turns off one timer.
 RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
@@ -863,6 +878,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl enable greenboot-healthcheck.service && \
     systemctl enable pulsar-flatpaks.service && \
     systemctl enable pulsar-gamemode-group.service && \
+    systemctl enable pulsar-update-auto.timer && \
     systemctl --global enable podman-auto-update.timer && \
     systemctl --global enable gamescale-reconcile.service && \
     systemctl --global enable pulsar-update-check.timer && \
@@ -873,7 +889,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-welcome.service && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service \
-             pulsar-gamemode-group.service; do \
+             pulsar-gamemode-group.service pulsar-update-auto.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \

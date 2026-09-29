@@ -1,0 +1,21 @@
+[Unit]
+# What the "Update" button on Pulsar's update notification starts: the same
+# staging as `sudo pulsar update`, now, with none of the background unit's
+# battery or metered-connection conditions -- the user asked. It stages only;
+# the notification that follows offers GNOME's own restart dialog.
+#
+# Started from the user session with `systemctl start`, which polkit allows
+# for a local, active administrator without a password: see
+# 50-pulsar-update.rules. Anyone else gets GNOME's password prompt.
+Description=Stage the newest Pulsar image now
+Documentation=file:///usr/share/pulsar/AGENTS.md
+Wants=network-online.target
+After=network-online.target
+# If the background unit is mid-download, wait for it rather than race it for
+# the deployment lock; it has usually just done this job already.
+After=pulsar-update-auto.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pulsar update
+TimeoutStartSec=2h

@@ -1,0 +1,17 @@
+// Lets a local, active administrator start pulsar-update-stage.service -- the
+// "Update" button on Pulsar's update notification -- without a password.
+//
+// This grants nothing new. Fedora's own rpm-ostree rules already let the same
+// user run an upgrade without a prompt, and `pulsar agent guard on` leaves
+// updates ungated on purpose (see 49-pulsar-guard.rules): staging an update
+// changes nothing until a reboot, and the previous deployment stays one boot
+// away. The match is exact -- this unit, the start verb -- so every other
+// systemd1.manage-units request still asks as it always has.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "pulsar-update-stage.service" &&
+        action.lookup("verb") == "start" &&
+        subject.local && subject.active && subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});

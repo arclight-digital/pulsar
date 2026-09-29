@@ -1,0 +1,18 @@
+[Unit]
+Description=Stage newer Pulsar images in the background
+
+[Timer]
+# Monotonic, not OnCalendar=daily + Persistent=true, on purpose. A calendar
+# timer that elapsed while the laptop slept fires the moment it resumes, and
+# a big pull 40 seconds after a resume is exactly the freeze that took GNOME
+# Software's background updates out of this image. The monotonic clock stops
+# while suspended, so this counts awake time: twenty minutes into a session,
+# then every twelve hours of use. The image is built nightly, so a machine in
+# daily use still stages each build within a day.
+OnBootSec=20min
+OnUnitActiveSec=12h
+# Every Pulsar machine asks the same registry for the same tag.
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target
