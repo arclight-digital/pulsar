@@ -770,7 +770,10 @@ cmd_doctor() {
     fi
     if [ ${#only[@]} -eq 0 ]; then
         read -ra run <<<"$DOCTOR_CHECKS"
-        [ "${JSON:-0}" = 1 ] || printf '%sPulsar health%s  %s\n\n' "$C_BOLD" "$C_RESET" "$(mf version)"
+        # the full release (1.0.0) here, beside the nightly build it is running
+        local rel; rel=$(mf release)
+        [ "${JSON:-0}" = 1 ] || printf '%sPulsar health%s  %s%s\n\n' "$C_BOLD" "$C_RESET" \
+            "${rel:+${rel} · build }" "$(mf version)"
     else
         run=("${only[@]}")
     fi

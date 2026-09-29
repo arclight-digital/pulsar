@@ -90,6 +90,11 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
     printf '%s\n' "$output" | grep -qE 'build.*44\.20260805\.0'
 }
 
+@test "doctor's header names the full release and the build" {
+    run "$PULSAR" doctor
+    [[ "${lines[0]}" == *"1.0.0 · build 44.20260805.0"* ]]
+}
+
 @test "manifest lists facts, not other commands to run" {
     # `sbom` and `attestation` were rows whose values were commands. The
     # attestation one was 82 characters wide to restate what --help says.
