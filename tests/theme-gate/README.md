@@ -43,6 +43,37 @@ in `.preview/theme-gate/`. It needs rootless podman and about ten minutes.
   an app holding unsaved text keeps its own "Save changes?" dialog up and is
   not relaunched. `fixtures/notes.py` is that app.
 - `picker`: screenshots the picker and its restart dialog.
+- `leaks`: stock showing through, found by what does not move. Every
+  visible Shell widget on nine surfaces (the desktop menu, the date menu,
+  quick settings and a submenu, the app grid and an icon's menu, the run
+  dialog, an OSD, a banner) is read in every state it can take -- hover,
+  focus, active, checked, selected, insensitive -- under Gruvbox light and
+  Nord dark: background, border, and the text color its labels and icons
+  actually inherit. A color identical under two unrelated themes did not
+  come from the theme. It also forces every quick toggle checked and fails
+  unless each resolves to the theme's accent, so a leak fix can never cost
+  an accent-filled state. `leaks-report.json` lands in `GATE_OUT`.
+
+## Stock-grey leaks without a Shell
+
+`stock_states.py` is the static half, and `tests/theme.bats` runs it on
+every build that has GNOME Shell's gresource (a toolbox reads the host's).
+Stock paints its controls in fixed greys chosen for its own grey menus;
+every stock selector that paints one and that the theme's Shell sheet does
+not restate shows as a grey slab on a themed surface -- a control the sheet
+never names, or a state of one it does, since `.button:active:hover` beats
+the sheet's `.button:active` whatever the load order.
+
+    stock_states.py check    # every such selector the sheet leaves to stock
+    stock_states.py emit     # the restatements, for the block in gnome-shell.css
+
+The block opens the sheet so every hand-written rule wins a tie with it.
+Families in the script map each selector onto the sheet's own washes; a
+selector no family claims is an error, and anything left stock on purpose
+(Looking Glass, the login and lock screens, the screenshot UI, the
+on-screen keyboard) is listed in `ALLOW` with its reason. It sees
+backgrounds only; text that stock fixes to one scheme is the `leaks`
+scan's job.
 
 `bin/systemd-run` exists because the container has no user manager and
 Ptyxis wraps every shell in `systemd-run --user --scope`.

@@ -16,7 +16,8 @@ finds them and writes them:
 
   stock_states.py check [stock.css...]   exit 1 and list every unnamed state
   stock_states.py emit  [stock.css...]   print the generated block for the
-                                         template (between the markers)
+                                         template (between the markers, which
+                                         open the sheet: see the block's comment)
 
 With no stock.css given it reads the dark and light sheets out of this
 machine's gnome-shell-theme.gresource (or the host's, from a toolbox, or
@@ -138,9 +139,11 @@ def family(sel):
 
 
 def template_selectors(text):
-    # the generated block counts as naming them, the rest of the sheet too
+    """The selectors the sheet gives a background of its own -- a rule that
+    names one only for its text color leaves stock's grey behind it. The
+    generated block counts, the rest of the sheet too."""
     tpl = re.sub(r"\{\{[^}]*\}\}", "#000", text)
-    return {s for sels, _ in rules(tpl) for s in sels}
+    return {s for sels, d in rules(tpl) if "background-color" in d or "background" in d for s in sels}
 
 
 def allowed(sel):
@@ -218,9 +221,11 @@ def main():
             return 1
         order = [(f, lv) for f, _, _ in FAMILIES for lv in ("rest", "hover", "press")]
         print(BEGIN)
-        print("/* Every state stock gives its own grey, for the controls this sheet names,\n"
-              "   restated at stock's specificity so this sheet wins on order. Generated:\n"
-              "   edit FAMILIES in the script, not these lines. */")
+        print("/* Every selector stock paints in its own grey, restated at stock's own\n"
+              "   specificity: this sheet loads after stock's, so each wins on order. First\n"
+              "   in the sheet on purpose -- every hand-written rule below wins a tie with\n"
+              "   these (a checked quick toggle is also a .button, and stays the accent).\n"
+              "   Generated: edit FAMILIES in the script, not these lines. */")
         for key in order:
             if key not in groups:
                 continue

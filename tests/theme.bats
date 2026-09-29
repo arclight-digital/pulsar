@@ -776,3 +776,15 @@ print("" if d is None else d)' "$1" "$2"; }
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     ! grep -q -- 'switch:checked, check:checked' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
 }
+
+# The generated block must open the sheet: at equal specificity the later
+# rule wins, and a generated `.button:checked` after `.quick-toggle:checked`
+# turned every checked quick toggle grey (1a704c7). Every hand-written rule
+# comes after it, so the theme's own rules win every tie.
+@test "the generated stock-states block opens the Shell sheet" {
+    tpl="${REPO}/system_files/usr/share/pulsar/theme/templates/gnome-shell.css"
+    begin=$(grep -n '^/\* BEGIN stock states' "$tpl" | cut -d: -f1)
+    first=$(grep -n '{' "$tpl" | head -1 | cut -d: -f1)
+    [ -n "$begin" ]
+    [ "$begin" -lt "$first" ]
+}

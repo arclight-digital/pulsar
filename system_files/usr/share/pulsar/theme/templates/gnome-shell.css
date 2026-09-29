@@ -1,203 +1,11 @@
 /* Colour-only overrides layered on the stock Shell theme. Selectors are
    Shell internals: re-check every GNOME release (see REPORT.md). */
-#panel { background-color: {{background_deep}}; }
-#panel .panel-button { color: {{foreground}}; }
-#panel:overview { background-color: transparent; }
-/* The top bar's hover and pressed states are a white overlay (inset
-   box-shadow), which reads as a grey pill on a coloured bar; tint them from
-   the foreground instead. Stock restates the text white in the overview at a
-   higher specificity, so that case is restated too. The workspace dots in
-   the Activities button are fixed white. Recording and sharing indicators
-   keep stock red and orange: those colours mean something. */
-#panel .panel-button:focus, #panel .panel-button:hover,
-#panel .panel-button.clock-display:focus .clock, #panel .panel-button.clock-display:hover .clock {
-  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.14); }
-#panel .panel-button:active, #panel .panel-button:checked,
-#panel .panel-button.clock-display:active .clock, #panel .panel-button.clock-display:checked .clock {
-  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.22); }
-#panel .panel-button:active:hover, #panel .panel-button:checked:hover,
-#panel .panel-button.clock-display:active .clock:hover, #panel .panel-button.clock-display:checked .clock:hover {
-  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.26); }
-#panel:overview .panel-button, #panel:overview .panel-button.clock-display { color: {{foreground}}; }
-#panel .panel-button#panelActivities .workspace-dot,
-#panel:overview .panel-button#panelActivities .workspace-dot { background-color: {{foreground}}; }
-.popup-menu-content, .candidate-popup-content, .quick-settings {
-  background-color: {{popover}}; color: {{foreground}};
-  border-color: rgba({{accent_rgb}}, 0.18); }
-.quick-toggle-menu, .message, .events-button, .world-clocks-button, .weather-button, .calendar {
-  background-color: {{background_raised}}; color: {{foreground}}; }
-.quick-toggle, .quick-toggle-has-menu .quick-toggle-menu-button, .icon-button {
-  background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
-.quick-toggle:checked, .quick-toggle-has-menu:checked .quick-toggle-menu-button,
-.keyboard-brightness-level .button:checked, .calendar .calendar-day.calendar-today, .button.default {
-  background-color: {{accent}}; color: {{accent_fg}}; }
-.quick-toggle:hover:checked, .button.default:hover { background-color: {{accent_hover}}; color: {{accent_fg}}; }
-.quick-toggle-has-menu:checked .quick-toggle { background-color: {{accent}}; color: {{accent_fg}}; }
-.slider { -barlevel-active-background-color: {{accent}}; -barlevel-background-color: rgba({{foreground_rgb}}, 0.12); color: {{foreground}}; }
-.toggle-switch:checked { background-color: {{accent}}; }
-.modal-dialog, .notification-banner, .osd-window, .switcher-list { background-color: {{popover}}; color: {{foreground}}; }
-#dash .dash-background { background-color: rgba({{popover_rgb}}, 0.92); }
-/* Stock paints each dash icon in the dash's own grey so the square vanishes
-   against it; with the dash recoloured that grey shows as a box per app.
-   Rest transparent, and tint hover/press from the theme instead. Focus keeps
-   stock's accent ring. */
-#dash .dash-item-container .show-apps .overview-icon,
-#dash .dash-item-container .overview-tile .overview-icon { background-color: transparent; color: {{foreground}}; }
-#dash .dash-item-container .show-apps:hover .overview-icon,
-#dash .dash-item-container .overview-tile:hover .overview-icon { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
-#dash .dash-item-container .show-apps:active .overview-icon,
-#dash .dash-item-container .overview-tile:active .overview-icon,
-#dash .dash-item-container .show-apps:checked .overview-icon { background-color: rgba({{foreground_rgb}}, 0.14); color: {{foreground}}; }
-/* running-app dots and the dash separator: stock white, now the theme's */
-.app-grid-running-dot { background-color: {{accent}}; }
-#dash .dash-separator { background-color: rgba({{foreground_rgb}}, 0.12); }
-.ws-switcher-indicator { background-color: rgba({{foreground_rgb}}, 0.5); }
-#overviewGroup { background-color: {{background_deep}}; }
-/* Workspace thumbnails draw windows only, over stock's fixed #46464e: an
-   empty workspace is that grey box. Give it the theme's raised surface. */
-.workspace-thumbnails .workspace-thumbnail { background-color: {{background_raised}}; }
-.search-entry { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; selection-background-color: rgba({{accent_rgb}}, 0.35); }
-.search-entry:focus { box-shadow: inset 0 0 0 2px {{accent}}; }
-.ws-switcher-indicator:active, .workspace-dot:active { background-color: {{accent}}; }
-StEntry { selection-background-color: rgba({{accent_rgb}}, 0.35); }
-/* Every Shell text field (folder rename, run dialog, prompts, network
-   passwords) is stock #48484c with white text: restate it from the theme.
-   The focus ring is the theme's accent, not GNOME's nearest accent. */
-StEntry { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
-StEntry:hover { background-color: rgba({{foreground_rgb}}, 0.11); color: {{foreground}}; }
-StEntry:focus { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}};
-  box-shadow: inset 0 0 0 2px rgba({{accent_rgb}}, 0.85) !important; }
-StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: rgba({{foreground_rgb}}, 0.5); }
-
-/* Stock hard-codes its own greys (#36363a popovers, #38383b dash and search,
-   #222226 overview, #2e2e33 switchers) into the controls that sit ON those
-   surfaces, matched so they vanish or read as a faint lift. Recolour the
-   surface and the grey shows as a box per control -- calendar days, dash
-   icons, folder tiles. So every such control is restated here relative to
-   the theme: flat ones transparent, raised ones a foreground tint, and hover
-   and press as tints too, which reads right on dark and light alike. */
-.calendar .calendar-day-heading, .calendar .calendar-day,
-.calendar .calendar-month-header .calendar-month-label, .calendar .calendar-month-header .pager-button,
-.button.flat, .icon-button.flat,
-.message .message-header .flat.message-expand-button,
-.message .message-header .flat.message-close-button,
-.message-notification-group .flat.message-collapse-button,
-.datemenu-today-button,
-.overview-tile, .grid-search-result, .list-search-result, .search-provider-icon,
-.app-folder-dialog .overview-tile, .app-folder-dialog .grid-search-result,
-.switcher-list .item-box,
-.audio-device-selection-dialog .audio-selection-box .audio-selection-device {
-  background-color: transparent; }
-.calendar .calendar-day:hover, .calendar .calendar-day-heading:hover,
-.calendar .calendar-month-header .calendar-month-label:hover,
-.button.flat:hover, .icon-button.flat:hover, .datemenu-today-button:hover,
-.overview-tile:hover, .overview-tile:highlighted, .grid-search-result:hover, .grid-search-result:highlighted,
-.list-search-result:hover, .list-search-result:highlighted,
-.search-provider-icon:hover, .search-provider-icon:highlighted,
-.app-folder-dialog .overview-tile:hover, .app-folder-dialog .overview-tile:highlighted,
-.switcher-list .item-box:hover,
-.audio-device-selection-dialog .audio-selection-box .audio-selection-device:hover,
-.popup-menu-item:hover, .popup-menu-item:focus, .popup-menu-item.selected {
-  background-color: rgba({{foreground_rgb}}, 0.08); }
-.calendar .calendar-day:selected, .calendar .calendar-day:active,
-.button.flat:active, .icon-button.flat:active, .datemenu-today-button:active,
-.overview-tile:active, .grid-search-result:active, .list-search-result:active, .search-provider-icon:active,
-.app-folder-dialog .overview-tile:active,
-.switcher-list .item-box:selected, .switcher-list .item-box:highlighted,
-.audio-device-selection-dialog .audio-selection-box .audio-selection-device:active,
-.popup-menu-item:active {
-  background-color: rgba({{foreground_rgb}}, 0.14); }
-
-.button,
-.notification-button, .modal-dialog .modal-dialog-button-box .modal-dialog-button,
-.message .message-header .message-expand-button, .message .message-header .message-close-button,
-.message-notification-group .message-collapse-button,
-.quick-settings-system-item .power-item, .page-navigation-arrow, .app-folder {
-  background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
-.button:hover, .calendar .calendar-month-header .pager-button:hover,
-.notification-button:hover, .modal-dialog .modal-dialog-button-box .modal-dialog-button:hover,
-.message .message-header .message-expand-button:hover, .message .message-header .message-close-button:hover,
-.message-notification-group .message-collapse-button:hover,
-.quick-settings-system-item .power-item:hover, .page-navigation-arrow:hover,
-.app-folder:hover, .app-folder:highlighted, .icon-button:hover {
-  background-color: rgba({{foreground_rgb}}, 0.13); }
-.button:active, .calendar .calendar-month-header .pager-button:active,
-.notification-button:active, .modal-dialog .modal-dialog-button-box .modal-dialog-button:active,
-.quick-settings-system-item .power-item:active, .page-navigation-arrow:active,
-.app-folder:active, .icon-button:active {
-  background-color: rgba({{foreground_rgb}}, 0.18); }
-
-.calendar:hover, .calendar:active, .events-button:hover, .world-clocks-button:hover,
-.weather-button:hover, .message:hover { background-color: st-mix({{foreground}}, {{background_raised}}, 6%); }
-.search-section-content, .app-folder-dialog, .workspace-switcher, .resize-popup {
-  background-color: {{popover}}; color: {{foreground}}; }
-
-/* The month arrows are flat now (above); their icons are stock white, which
-   vanishes on a light popover. */
-.calendar .calendar-month-header .pager-button { color: {{foreground}}; }
-
-/* Calendar text is stock white in every state; the date header above it
-   too. Theme foreground here, before the dimming rules below, which then
-   take weekends and other-month days down from it. */
-.calendar .calendar-day, .calendar .calendar-day:hover, .calendar .calendar-day:active,
-.calendar .calendar-day:selected, .calendar .calendar-day:focus,
-.datemenu-today-button, .datemenu-today-button .date-label { color: {{foreground}}; }
-.calendar .calendar-month-header .calendar-month-label { color: {{foreground}} !important; }
-.calendar .calendar-day-heading, .datemenu-today-button .day-label { color: rgba({{foreground_rgb}}, 0.68); }
-
-/* Stock also hard-codes its secondary text as fixed greys (#b2b2b4,
-   #9b9b9d, #afafb1, white at 50%) rather than dimming the foreground, so
-   under a coloured theme the notification header, event times, weekends
-   and search descriptions stay grey beside themed text. Restate them as
-   the theme's foreground at two strengths. Before the accent block below:
-   today can be a weekend, and its accent text must still win. */
-.message .message-header, .message .message-header .message-header-content .event-time,
-.events-button .events-box .events-title,
-.events-button .events-box .events-list .event-box .event-time,
-.events-button .events-box .events-list .event-placeholder,
-.world-clocks-button .world-clocks-header,
-.world-clocks-button .world-clocks-grid .world-clocks-timezone,
-.weather-button .weather-box .weather-header-box .weather-header,
-.list-search-result .list-search-result-description,
-.dialog-list .dialog-list-box .dialog-list-item .dialog-list-item-description,
-.run-dialog .run-dialog-description, .search-statustext {
-  color: rgba({{foreground_rgb}}, 0.68); }
-.calendar .calendar-day.calendar-weekend, .calendar .calendar-week-number,
-.popup-inactive-menu-item:insensitive, .candidate-index {
-  color: rgba({{foreground_rgb}}, 0.6); }
-.calendar .calendar-day.calendar-other-month,
-.calendar .calendar-day.calendar-other-month.calendar-weekend,
-.device-subtitle, StEntry StLabel.hint-text, .message-media-control:insensitive,
-.message-list .message-list-placeholder {
-  color: rgba({{foreground_rgb}}, 0.45); }
-.end-session-dialog .end-session-dialog-battery-warning, .end-session-dialog .dialog-list-title,
-.prompt-dialog .prompt-dialog-error-label, .caps-lock-warning-label,
-.conflicting-session-dialog-content .conflicting-session-dialog-desc-warning {
-  color: {{yellow}}; }
-/* and the notification stack's own greys: the cards behind the top one,
-   the tile behind a themed icon, media buttons */
-.message:second-in-stack { background-color: st-mix({{background_deep}}, {{background_raised}}, 25%); }
-.message:lower-in-stack { background-color: st-mix({{background_deep}}, {{background_raised}}, 45%); }
-.message .message-box .message-icon.message-themed-icon { background-color: rgba({{foreground_rgb}}, 0.07); }
-.message-media-control:hover { background-color: rgba({{foreground_rgb}}, 0.13); }
-.message-media-control:active { background-color: rgba({{foreground_rgb}}, 0.18); }
-
-/* The dash's items are .overview-tile too, but there the tile is the whole
-   column and only its .overview-icon should light up (the rules near the
-   top). Without this the app-grid hover above paints a full-height strip. */
-#dash .dash-item-container .overview-tile,
-#dash .dash-item-container .overview-tile:hover,
-#dash .dash-item-container .overview-tile:active,
-#dash .dash-item-container .overview-tile:highlighted,
-#dash .dash-item-container .show-apps,
-#dash .dash-item-container .show-apps:hover,
-#dash .dash-item-container .show-apps:active,
-#dash .dash-item-container .show-apps:checked { background-color: transparent; }
-
 /* BEGIN stock states (tests/theme-gate/stock_states.py emit) */
-/* Every state stock gives its own grey, for the controls this sheet names,
-   restated at stock's specificity so this sheet wins on order. Generated:
-   edit FAMILIES in the script, not these lines. */
+/* Every selector stock paints in its own grey, restated at stock's own
+   specificity: this sheet loads after stock's, so each wins on order. First
+   in the sheet on purpose -- every hand-written rule below wins a tie with
+   these (a checked quick toggle is also a .button, and stays the accent).
+   Generated: edit FAMILIES in the script, not these lines. */
 .quick-toggle-has-menu .quick-toggle-menu-button:checked,
 .quick-toggle-has-menu .quick-toggle-menu-button:checked:focus {
   background-color: {{accent}}; }
@@ -394,6 +202,7 @@ StScrollBar > .vhandle:active {
 .app-folder-dialog .folder-name-container .folder-name-entry,
 .app-folder-dialog .folder-name-container .folder-name-entry:focus,
 .app-folder-dialog .folder-name-container .folder-name-entry:insensitive,
+.search-entry:focus,
 .search-entry:insensitive {
   background-color: rgba({{foreground_rgb}}, 0.08); }
 .app-folder-dialog .folder-name-container .folder-name-entry:hover,
@@ -651,6 +460,223 @@ StScrollBar > .vhandle:active {
 .switcher-list .item-box:selected:hover {
   background-color: rgba({{foreground_rgb}}, 0.14); }
 /* END stock states */
+
+#panel { background-color: {{background_deep}}; }
+#panel .panel-button { color: {{foreground}}; }
+#panel:overview { background-color: transparent; }
+/* The top bar's hover and pressed states are a white overlay (inset
+   box-shadow), which reads as a grey pill on a coloured bar; tint them from
+   the foreground instead. Stock restates the text white in the overview at a
+   higher specificity, so that case is restated too. The workspace dots in
+   the Activities button are fixed white. Recording and sharing indicators
+   keep stock red and orange: those colours mean something. */
+#panel .panel-button:focus, #panel .panel-button:hover,
+#panel .panel-button.clock-display:focus .clock, #panel .panel-button.clock-display:hover .clock {
+  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.14); }
+#panel .panel-button:active, #panel .panel-button:checked,
+#panel .panel-button.clock-display:active .clock, #panel .panel-button.clock-display:checked .clock {
+  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.22); }
+#panel .panel-button:active:hover, #panel .panel-button:checked:hover,
+#panel .panel-button.clock-display:active .clock:hover, #panel .panel-button.clock-display:checked .clock:hover {
+  box-shadow: inset 0 0 0 100px rgba({{foreground_rgb}}, 0.26); }
+#panel:overview .panel-button, #panel:overview .panel-button.clock-display { color: {{foreground}}; }
+#panel .panel-button#panelActivities .workspace-dot,
+#panel:overview .panel-button#panelActivities .workspace-dot { background-color: {{foreground}}; }
+.popup-menu-content, .candidate-popup-content, .quick-settings {
+  background-color: {{popover}}; color: {{foreground}};
+  border-color: rgba({{accent_rgb}}, 0.18); }
+.quick-toggle-menu, .message, .events-button, .world-clocks-button, .weather-button, .calendar {
+  background-color: {{background_raised}}; color: {{foreground}}; }
+.quick-toggle, .quick-toggle-has-menu .quick-toggle-menu-button, .icon-button {
+  background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+.quick-toggle:checked, .quick-toggle-has-menu:checked .quick-toggle-menu-button,
+.keyboard-brightness-level .button:checked, .calendar .calendar-day.calendar-today, .button.default {
+  background-color: {{accent}}; color: {{accent_fg}}; }
+.quick-toggle:hover:checked, .button.default:hover { background-color: {{accent_hover}}; color: {{accent_fg}}; }
+.quick-toggle-has-menu:checked .quick-toggle { background-color: {{accent}}; color: {{accent_fg}}; }
+.slider { -barlevel-active-background-color: {{accent}}; -barlevel-background-color: rgba({{foreground_rgb}}, 0.12); color: {{foreground}}; }
+.toggle-switch:checked { background-color: {{accent}}; }
+.modal-dialog, .notification-banner, .osd-window, .switcher-list { background-color: {{popover}}; color: {{foreground}}; }
+#dash .dash-background { background-color: rgba({{popover_rgb}}, 0.92); }
+/* Stock paints each dash icon in the dash's own grey so the square vanishes
+   against it; with the dash recoloured that grey shows as a box per app.
+   Rest transparent, and tint hover/press from the theme instead. Focus keeps
+   stock's accent ring. */
+#dash .dash-item-container .show-apps .overview-icon,
+#dash .dash-item-container .overview-tile .overview-icon { background-color: transparent; color: {{foreground}}; }
+#dash .dash-item-container .show-apps:hover .overview-icon,
+#dash .dash-item-container .overview-tile:hover .overview-icon { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+#dash .dash-item-container .show-apps:active .overview-icon,
+#dash .dash-item-container .overview-tile:active .overview-icon,
+#dash .dash-item-container .show-apps:checked .overview-icon { background-color: rgba({{foreground_rgb}}, 0.14); color: {{foreground}}; }
+/* running-app dots and the dash separator: stock white, now the theme's */
+.app-grid-running-dot { background-color: {{accent}}; }
+#dash .dash-separator { background-color: rgba({{foreground_rgb}}, 0.12); }
+.ws-switcher-indicator { background-color: rgba({{foreground_rgb}}, 0.5); }
+#overviewGroup { background-color: {{background_deep}}; }
+/* Workspace thumbnails draw windows only, over stock's fixed #46464e: an
+   empty workspace is that grey box. Give it the theme's raised surface. */
+.workspace-thumbnails .workspace-thumbnail { background-color: {{background_raised}}; }
+.search-entry { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; selection-background-color: rgba({{accent_rgb}}, 0.35); }
+.search-entry:focus { box-shadow: inset 0 0 0 2px {{accent}}; }
+.ws-switcher-indicator:active, .workspace-dot:active { background-color: {{accent}}; }
+StEntry { selection-background-color: rgba({{accent_rgb}}, 0.35); }
+/* Every Shell text field (folder rename, run dialog, prompts, network
+   passwords) is stock #48484c with white text: restate it from the theme.
+   The focus ring is the theme's accent, not GNOME's nearest accent. */
+StEntry { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+StEntry:hover { background-color: rgba({{foreground_rgb}}, 0.11); color: {{foreground}}; }
+StEntry:focus { background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}};
+  box-shadow: inset 0 0 0 2px rgba({{accent_rgb}}, 0.85) !important; }
+StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: rgba({{foreground_rgb}}, 0.5); }
+
+/* Stock hard-codes its own greys (#36363a popovers, #38383b dash and search,
+   #222226 overview, #2e2e33 switchers) into the controls that sit ON those
+   surfaces, matched so they vanish or read as a faint lift. Recolour the
+   surface and the grey shows as a box per control -- calendar days, dash
+   icons, folder tiles. So every such control is restated here relative to
+   the theme: flat ones transparent, raised ones a foreground tint, and hover
+   and press as tints too, which reads right on dark and light alike. */
+.calendar .calendar-day-heading, .calendar .calendar-day,
+.calendar .calendar-month-header .calendar-month-label, .calendar .calendar-month-header .pager-button,
+.button.flat, .icon-button.flat,
+.message .message-header .flat.message-expand-button,
+.message .message-header .flat.message-close-button,
+.message-notification-group .flat.message-collapse-button,
+.datemenu-today-button,
+.overview-tile, .grid-search-result, .list-search-result, .search-provider-icon,
+.app-folder-dialog .overview-tile, .app-folder-dialog .grid-search-result,
+.switcher-list .item-box,
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device {
+  background-color: transparent; }
+.calendar .calendar-day:hover, .calendar .calendar-day-heading:hover,
+.calendar .calendar-month-header .calendar-month-label:hover,
+.button.flat:hover, .icon-button.flat:hover, .datemenu-today-button:hover,
+.overview-tile:hover, .overview-tile:highlighted, .grid-search-result:hover, .grid-search-result:highlighted,
+.list-search-result:hover, .list-search-result:highlighted,
+.search-provider-icon:hover, .search-provider-icon:highlighted,
+.app-folder-dialog .overview-tile:hover, .app-folder-dialog .overview-tile:highlighted,
+.switcher-list .item-box:hover,
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device:hover,
+.popup-menu-item:hover, .popup-menu-item:focus {
+  background-color: rgba({{foreground_rgb}}, 0.08); }
+.calendar .calendar-day:selected, .calendar .calendar-day:active,
+.button.flat:active, .icon-button.flat:active, .datemenu-today-button:active,
+.overview-tile:active, .grid-search-result:active, .list-search-result:active, .search-provider-icon:active,
+.app-folder-dialog .overview-tile:active,
+.switcher-list .item-box:selected, .switcher-list .item-box:highlighted,
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device:active,
+.popup-menu-item:active {
+  background-color: rgba({{foreground_rgb}}, 0.14); }
+
+.button,
+.notification-button, .modal-dialog .modal-dialog-button-box .modal-dialog-button,
+.message .message-header .message-expand-button, .message .message-header .message-close-button,
+.message-notification-group .message-collapse-button,
+.quick-settings-system-item .power-item, .page-navigation-arrow, .app-folder {
+  background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+.button:hover, .calendar .calendar-month-header .pager-button:hover,
+.notification-button:hover, .modal-dialog .modal-dialog-button-box .modal-dialog-button:hover,
+.message .message-header .message-expand-button:hover, .message .message-header .message-close-button:hover,
+.message-notification-group .message-collapse-button:hover,
+.quick-settings-system-item .power-item:hover, .page-navigation-arrow:hover,
+.app-folder:hover, .app-folder:highlighted, .icon-button:hover {
+  background-color: rgba({{foreground_rgb}}, 0.13); }
+.button:active, .calendar .calendar-month-header .pager-button:active,
+.notification-button:active, .modal-dialog .modal-dialog-button-box .modal-dialog-button:active,
+.quick-settings-system-item .power-item:active, .page-navigation-arrow:active,
+.app-folder:active, .icon-button:active {
+  background-color: rgba({{foreground_rgb}}, 0.18); }
+
+.calendar:hover, .calendar:active, .events-button:hover, .world-clocks-button:hover,
+.weather-button:hover, .message:hover { background-color: st-mix({{foreground}}, {{background_raised}}, 6%); }
+.search-section-content, .app-folder-dialog, .workspace-switcher, .resize-popup {
+  background-color: {{popover}}; color: {{foreground}}; }
+
+/* The month arrows are flat now (above); their icons are stock white, which
+   vanishes on a light popover. */
+.calendar .calendar-month-header .pager-button { color: {{foreground}}; }
+
+/* Calendar text is stock white in every state; the date header above it
+   too. Theme foreground here, before the dimming rules below, which then
+   take weekends and other-month days down from it. */
+.calendar .calendar-day, .calendar .calendar-day:hover, .calendar .calendar-day:active,
+.calendar .calendar-day:selected, .calendar .calendar-day:focus,
+.datemenu-today-button, .datemenu-today-button .date-label { color: {{foreground}}; }
+.calendar .calendar-month-header .calendar-month-label { color: {{foreground}} !important; }
+.calendar .calendar-day-heading, .datemenu-today-button .day-label { color: rgba({{foreground_rgb}}, 0.68); }
+
+/* Stock also hard-codes its secondary text as fixed greys (#b2b2b4,
+   #9b9b9d, #afafb1, white at 50%) rather than dimming the foreground, so
+   under a coloured theme the notification header, event times, weekends
+   and search descriptions stay grey beside themed text. Restate them as
+   the theme's foreground at two strengths. Before the accent block below:
+   today can be a weekend, and its accent text must still win. */
+.message .message-header, .message .message-header .message-header-content .event-time,
+.events-button .events-box .events-title,
+.events-button .events-box .events-list .event-box .event-time,
+.events-button .events-box .events-list .event-placeholder,
+.world-clocks-button .world-clocks-header,
+.world-clocks-button .world-clocks-grid .world-clocks-timezone,
+.weather-button .weather-box .weather-header-box .weather-header,
+.list-search-result .list-search-result-description,
+.dialog-list .dialog-list-box .dialog-list-item .dialog-list-item-description,
+.run-dialog .run-dialog-description, .search-statustext {
+  color: rgba({{foreground_rgb}}, 0.68); }
+.calendar .calendar-day.calendar-weekend, .calendar .calendar-week-number,
+.popup-inactive-menu-item:insensitive, .candidate-index {
+  color: rgba({{foreground_rgb}}, 0.6); }
+.calendar .calendar-day.calendar-other-month,
+.calendar .calendar-day.calendar-other-month.calendar-weekend,
+.device-subtitle, StEntry StLabel.hint-text, .message-media-control:insensitive,
+.message-list .message-list-placeholder {
+  color: rgba({{foreground_rgb}}, 0.45); }
+.end-session-dialog .end-session-dialog-battery-warning, .end-session-dialog .dialog-list-title,
+.prompt-dialog .prompt-dialog-error-label, .caps-lock-warning-label,
+.conflicting-session-dialog-content .conflicting-session-dialog-desc-warning {
+  color: {{yellow}}; }
+/* and the notification stack's own greys: the cards behind the top one,
+   the tile behind a themed icon, media buttons */
+.message:second-in-stack { background-color: st-mix({{background_deep}}, {{background_raised}}, 25%); }
+.message:lower-in-stack { background-color: st-mix({{background_deep}}, {{background_raised}}, 45%); }
+.message .message-box .message-icon.message-themed-icon { background-color: rgba({{foreground_rgb}}, 0.07); }
+.message-media-control:hover { background-color: rgba({{foreground_rgb}}, 0.13); }
+.message-media-control:active { background-color: rgba({{foreground_rgb}}, 0.18); }
+
+/* The dash's items are .overview-tile too, but there the tile is the whole
+   column and only its .overview-icon should light up (the rules near the
+   top). Without this the app-grid hover above paints a full-height strip. */
+#dash .dash-item-container .overview-tile,
+#dash .dash-item-container .overview-tile:hover,
+#dash .dash-item-container .overview-tile:active,
+#dash .dash-item-container .overview-tile:highlighted,
+#dash .dash-item-container .show-apps,
+#dash .dash-item-container .show-apps:hover,
+#dash .dash-item-container .show-apps:active,
+#dash .dash-item-container .show-apps:checked { background-color: transparent; }
+/* Text and hairlines stock fixes to one scheme, found by the gate's `leaks`
+   scan (they do not move between two unrelated themes). The overview is
+   always dark in stock, so its tiles, folders and search results are fixed
+   near-white text; ours is the theme's deep ground, light in a light theme.
+   And a menu item's hover and pressed text is stock's white or #222226 by the
+   stock sheet's scheme, which a single-mode theme (Alucard, Dracula) does not
+   follow. */
+#overviewGroup, .search-section-content, .list-search-result, .search-provider-icon,
+.overview-tile, .overview-tile:hover, .overview-tile:focus, .overview-tile:active,
+.overview-tile:highlighted, .overview-tile:selected, .overview-tile:checked,
+.grid-search-result, .grid-search-result:hover, .grid-search-result:focus, .grid-search-result:active,
+.grid-search-result:highlighted, .grid-search-result:selected, .grid-search-result:checked,
+.app-folder, .app-folder:hover, .app-folder:focus, .app-folder:active,
+.app-folder:highlighted, .app-folder:selected, .app-folder:checked,
+.popup-menu-item:hover, .popup-menu-item:active, .popup-menu-item:selected, .popup-menu-item:checked {
+  color: {{foreground}}; }
+.overview-tile:insensitive, .grid-search-result:insensitive, .app-folder:insensitive,
+.popup-menu-item:insensitive { color: rgba({{foreground_rgb}}, 0.5); }
+.popup-separator-menu-item .popup-separator-menu-item-separator,
+.popup-sub-menu .popup-separator-menu-item .popup-separator-menu-item-separator {
+  background-color: rgba({{foreground_rgb}}, 0.1); }
+.message-list { border-color: rgba({{foreground_rgb}}, 0.1); }
+.quick-toggle-menu .header .icon { background-color: rgba({{foreground_rgb}}, 0.2); }
 
 /* Restated last: the tints above match these selectors' specificity and
    would otherwise win on order. */

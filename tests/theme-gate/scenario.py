@@ -529,12 +529,182 @@ def desktops(only):
     stop_shell()
 
 
+# ----------------------------------------------------------------- leaks --
+
+# Every visible Shell widget under ROOT, in every state it can take, as the
+# Shell itself resolves it: background, text and border color off its theme
+# node. Keys are a path of style classes and child indices, so the same
+# widget has the same key under any theme.
+WALK = r"""(() => { const St = imports.gi.St; const out = {};
+  const nm = a => { const id = a.get_name?.() || ''; const c = (a.get_style_class_name?.() || '').trim();
+    return (id ? '#' + id : '') + (c ? '.' + c.split(' ').filter(Boolean).join('.') : '') || a.constructor.$gtype?.name || 'actor'; };
+  const col = c => (c && c.alpha) ? [c.red, c.green, c.blue, c.alpha].join(',') : null;
+  // only labels, icons and entries draw in their text color; a container's
+  // is only what its children inherit
+  const leaf = a => a instanceof St.Label || a instanceof St.Icon || a instanceof St.Entry;
+  const leaves = (a, path, fn) => a.get_children().forEach((c, i) => {
+    if (!c.visible) return;
+    const p = path + ' > ' + nm(c) + '[' + i + ']';
+    if (c instanceof St.Widget && leaf(c)) fn(c, p);
+    leaves(c, p, fn);
+  });
+  const walk = (a, path, d) => {
+    if (!a.visible || d > 60) return;
+    if (a instanceof St.Widget && a.is_mapped()) {
+      a.ensure_style();
+      const n = a.get_theme_node();
+      out[path + '|'] = [col(n.get_background_color()), leaf(a) ? col(n.get_foreground_color()) : null,
+                         col(n.get_border_color(St.Side.TOP))];
+      if (a.reactive || a.can_focus || a.track_hover) {
+        for (const st of ['hover', 'focus', 'active', 'checked', 'selected', 'insensitive']) {
+          if (a.has_style_pseudo_class(st)) continue;
+          a.add_style_pseudo_class(st);
+          a.ensure_style();
+          const m = a.get_theme_node();
+          out[path + '|' + st] = [col(m.get_background_color()), leaf(a) ? col(m.get_foreground_color()) : null,
+                                  col(m.get_border_color(St.Side.TOP))];
+          // what the widget's own text inherits in that state
+          leaves(a, path, (c, p) => { c.ensure_style(); out[p + '|' + st + ' (on ' + nm(a) + ')'] =
+            [null, col(c.get_theme_node().get_foreground_color()), null]; });
+          a.remove_style_pseudo_class(st);
+          a.ensure_style();
+          leaves(a, path, c => c.ensure_style());
+        }
+      }
+    }
+    a.get_children().forEach((c, i) => walk(c, path + ' > ' + nm(c) + '[' + i + ']', d + 1));
+  };
+  walk(ROOT, nm(ROOT), 0); return JSON.stringify(out); })()"""
+
+# Each surface: how to open it, the actor to walk, how to close it. What a
+# given Shell cannot open is skipped with a note, not a failure.
+SURFACES = [
+    ("desktop-menu", "Main.layoutManager._bgManagers[0].backgroundActor._backgroundMenu.open(false)",
+     "Main.layoutManager._bgManagers[0].backgroundActor._backgroundMenu.actor",
+     "Main.layoutManager._bgManagers[0].backgroundActor._backgroundMenu.close(false)"),
+    ("date-menu", "Main.panel.statusArea.dateMenu.menu.open(false)",
+     "Main.panel.statusArea.dateMenu.menu.actor", "Main.panel.statusArea.dateMenu.menu.close(false)"),
+    ("quick-settings", "Main.panel.statusArea.quickSettings.menu.open(false)",
+     "Main.panel.statusArea.quickSettings.menu.actor", "Main.panel.statusArea.quickSettings.menu.close(false)"),
+    ("quick-settings-submenu",
+     "Main.panel.statusArea.quickSettings.menu.open(false); "
+     "Main.panel.statusArea.quickSettings.menu._grid.get_children().find(c => c.menu && c.menuEnabled !== false)?.menu.open(false)",
+     "Main.panel.statusArea.quickSettings.menu.actor", "Main.panel.statusArea.quickSettings.menu.close(false)"),
+    ("app-grid", "Main.overview.showApps()", "Main.layoutManager.overviewGroup", "Main.overview.hide()"),
+    ("app-icon-menu",
+     "Main.overview.showApps(); const ad = Main.overview._overview.controls._appDisplay; "
+     "(ad._orderedItems ?? []).find(i => i.popupMenu)?.popupMenu()",
+     "Main.layoutManager.uiGroup", "Main.overview.hide()"),
+    ("run-dialog", "Main.openRunDialog()", "Main.layoutManager.modalDialogGroup",
+     "Main.layoutManager.modalDialogGroup.get_children().forEach(c => c.close?.() ?? c._dialog?.close?.())"),
+    ("osd", "Main.osdWindowManager.show(-1, new imports.gi.Gio.ThemedIcon({name: 'audio-volume-medium-symbolic'}), 'Volume', 0.5)",
+     "Main.layoutManager.uiGroup", "Main.osdWindowManager.hideAll()"),
+    ("banner", "Main.notify('Pulsar leaks', 'a banner, to read its colors')", "Main.messageTray",
+     "Main.messageTray.getSources().forEach(s => s.destroy())"),
+]
+
+
+def scan(tag):
+    got, notes = {}, []
+    for name, opener, root, closer in SURFACES:
+        eval_js(f"try {{ {opener}; }} catch (e) {{}} 1")
+        time.sleep(1.2)
+        ok, raw = eval_js(WALK.replace("ROOT", root))
+        eval_js(f"try {{ {closer}; }} catch (e) {{}} 1")
+        time.sleep(0.6)
+        try:
+            data = json.loads(raw.encode().decode("unicode_escape").replace('\\"', '"').strip('"')) if ok else None
+        except Exception:
+            data = None
+        if not data:
+            notes.append(f"{tag}: {name} could not be read ({raw[:120]})")
+            continue
+        for k, v in data.items():
+            got[f"{name}: {k}"] = v
+    return got, notes
+
+
+# Every quick toggle, forced checked: what its ground resolves to. A leak fix
+# must never cost an accent-filled state (1a704c7 briefly made every checked
+# toggle an 18% grey wash: a generated `.button:checked` came after
+# `.quick-toggle:checked` at the same specificity).
+CHECKED = r"""(() => { const out = []; const walk = a => {
+  if (a.has_style_class_name?.('quick-toggle') && a.is_mapped()) {
+    const had = a.has_style_pseudo_class('checked');
+    if (!had) a.add_style_pseudo_class('checked');
+    a.ensure_style();
+    const c = a.get_theme_node().get_background_color();
+    out.push('#' + [c.red, c.green, c.blue].map(v => v.toString(16).padStart(2, '0')).join(''));
+    if (!had) { a.remove_style_pseudo_class('checked'); a.ensure_style(); }
+  }
+  a.get_children().forEach(walk); };
+  walk(Main.panel.statusArea.quickSettings.menu.actor); return JSON.stringify(out); })()"""
+
+
+def checked_toggles(slug, mode):
+    """Quick toggles that do not resolve to the theme's accent when checked."""
+    eval_js("Main.panel.statusArea.quickSettings.menu.open(false)")
+    time.sleep(1.2)
+    ok, raw = eval_js(CHECKED)
+    eval_js("Main.panel.statusArea.quickSettings.menu.close(false)")
+    got = json.loads(raw.encode().decode("unicode_escape").replace('\\"', '"').strip('"')) if ok else []
+    want = palette(slug, mode)["accent"].lower()
+    if not got:
+        return [f"{slug}/{mode}: no quick toggles found to check"]
+    return [f"{slug}/{mode}: checked quick toggle is {g}, want the accent {want}"
+            for g in got if not close(g, want, 3)]
+
+
+def leaks():
+    """Colors that stay the same under two unrelated themes did not come from
+    the theme: stock showing through. Walk each surface in every state under
+    Gruvbox light and Nord dark and report what does not move."""
+    for k in ("glass", "window-glass", "lighting"):
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    dconf("/org/gnome/desktop/interface/enable-animations", "false")
+    start_shell()
+    runs, notes, accent = [], [], []
+    for slug, mode in (("gruvbox", "light"), ("nord", "dark")):
+        pt("set", slug, "--no-restart")
+        dconf("/org/gnome/desktop/interface/color-scheme", "'prefer-dark'" if mode == "dark" else "'default'")
+        time.sleep(2)
+        got, n = scan(f"{slug}-{mode}")
+        runs.append(got)
+        notes += n
+        accent += checked_toggles(slug, mode)
+    a, b = runs
+    # One theme is light and one dark, so even white or black text that
+    # does not move is a leak; only an opaque white or black ground is left
+    # alone (a knob, a scrim), and a transparent one is not a color at all.
+    neutral = {"background": {None, "255,255,255,255", "0,0,0,255"}, "color": {None}, "border": {None}}
+    found = []
+    for k in sorted(set(a) & set(b)):
+        for i, prop in enumerate(("background", "color", "border")):
+            if a[k][i] == b[k][i] and a[k][i] not in neutral[prop]:
+                surface, rest = k.split(": ", 1)
+                path, state = rest.rsplit("|", 1)
+                found.append({"surface": surface, "path": path, "state": state or "rest",
+                              "property": prop, "color": a[k][i]})
+    report = {"compared": len(set(a) & set(b)), "leaks": found, "accent": accent, "notes": notes}
+    SHOTS.mkdir(exist_ok=True)
+    (SHOTS / "leaks-report.json").write_text(json.dumps(report, indent=1))
+    print(f"compared {report['compared']} widget states; {len(found)} colors did not move", flush=True)
+    for n in notes:
+        print("  note:", n)
+    print(f"checked quick toggles off the accent: {len(accent)}", flush=True)
+    for x in accent:
+        print("  ", x)
+    stop_shell()
+    return 1 if found or accent else 0
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "gate"
     rc = 0
     try:
         rc = {"gate": lambda: gate(sys.argv[2:]), "firstlogin": firstlogin, "restart": restart,
-              "picker": picker, "desktops": lambda: desktops(sys.argv[2:])}[mode]() or 0
+              "picker": picker, "desktops": lambda: desktops(sys.argv[2:]),
+              "leaks": leaks}[mode]() or 0
     finally:
         kill_apps()
         for p in procs:
