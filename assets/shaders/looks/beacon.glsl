@@ -24,7 +24,14 @@ vec3 beacon(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 d
     float width = 0.07 + 0.16 * rr;                         // beams widen with distance
     float fall = exp(-rr * 0.85);
     // afterglow on the trailing side (the sweep turns counter-clockwise)
-    float trail = exp(-max(-a, 0.0) / (width * 5.0)) * step(a, 0.0);
+    // Soft at both ends: a hard step here drew a line down the beam's own
+    // axis, and where the angle wraps -- straight across the core,
+    // perpendicular to the beam -- the afterglow was still ~20% and cut off
+    // there as a second line. It now rises smoothly through the beam and is
+    // gone well before the wrap.
+    float trail = exp(-max(-a, 0.0) / (width * 5.0))
+                * smoothstep(width * 0.6, -width * 0.6, a)
+                * smoothstep(-1.45, -0.9, a);
     float ab = 0.012;
     vec3 beam = vec3(gauss((a + ab) / width), gauss(a / width), gauss((a - ab) / width));
     vec3 light = beam * fall * (0.10 + 1.6 * dust) + vec3(trail * fall * dust * 0.30);

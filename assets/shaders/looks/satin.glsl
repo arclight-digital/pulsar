@@ -12,7 +12,8 @@
 float satinAxis = 1.0;   // how well defined the thread axis is at this pixel
 
 float satinSheet(vec2 p, float t) {
-    vec2 q = p * 2.4 + u_seed * 0.1;
+    // broad creases: fewer, bigger folds, the finest layer only a whisper
+    vec2 q = p * 1.8 + u_seed * 0.1;
     float w = fbm3n(q * 0.5 + t) * 2.0;
     float na = 2.0 * vnoise(q * 1.3 + w) - 1.0;
     float nb = 2.0 * vnoise(q * 2.3 + w * 1.3 + 5.0) - 1.0;
@@ -20,7 +21,7 @@ float satinSheet(vec2 p, float t) {
     float a = 1.0 - sqrt(na * na + 0.0025);
     float b = 1.0 - sqrt(nb * nb + 0.0025);
     float c = 1.0 - sqrt(nc * nc + 0.0025);
-    return a * 0.55 + b * 0.30 + c * 0.13 + fbm3n(q * 0.4) * 0.6;
+    return a * 0.58 + b * 0.27 + c * 0.05 + fbm3n(q * 0.4) * 0.6;
 }
 
 vec3 satin(vec2 uv, vec3 dawnBase, out vec3 emitN, out vec3 dawnN, out float lit) {
@@ -67,11 +68,23 @@ vec3 satin(vec2 uv, vec3 dawnBase, out vec3 emitN, out vec3 dawnN, out float lit
     float sAmt = 0.30 * occl * fall;
     vec3 shine = mixo(u_c2, u_c3, 0.7) * sheen * sAmt;
     vec3 col = cloth * 0.9 + shine;
+    // a second wash of colour across the cloth from the far side, in the
+    // theme's contrast colour, catching the folds as the main light does
+    vec2 w2 = -Ld * 0.55 + vec2(0.10, -0.05);
+    float wash2 = gauss(length(uv - w2) / 0.85);
+    vec3 c2nd = mixo(u_c4, u_c3, 0.25);
+    col += c2nd * wash2 * (0.05 + 0.34 * occl * (0.3 + 0.7 * lamb * diff));
+    // the weave's own grain, fixed to the pixel: satin reads as cloth, not
+    // plastic, when the light has a little texture in it
+    float weave2 = hashS(floor(gl_FragCoord.xy) + 17.3) - 0.5;
+    col *= 1.0 + weave2 * 0.28;
     emitN = u_c3 * pow(sqrt(max(1.0 - th * th, 0.0)), 48.0 * 0.35) * sAmt * 0.10;
     lit = clamp(base * 1.4 + sheen * sAmt, 0.0, 1.0);
     vec3 paleCloth = mixo(dawnBase, mixo(u_c2, vec3(1.0), 0.6 + 0.3 * u_wash), 0.35 * fall);
     // folds in soft shade of the theme's own colour, the sheen as white
     dawnN = mixo(paleCloth, mixo(u_c1, u_c2, 0.5), (1.0 - occl * (0.35 + 0.65 * lamb * diff)) * 0.30 * fall);
     dawnN = mixo(dawnN, vec3(1.0), sheen * sAmt * 1.6);
+    dawnN = mixo(dawnN, mixo(c2nd, vec3(1.0), 0.45), wash2 * 0.22);
+    dawnN *= 1.0 + weave2 * 0.06;
     return grey(col, u_desat) * u_gain;
 }
