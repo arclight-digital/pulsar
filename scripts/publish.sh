@@ -451,7 +451,9 @@ publish_site() {
   # site build, so only the sync-first half of that lesson still applies here.
   publish() {
     if [ ! -d "${SITE}/.git" ]; then
-      git -c "credential.helper=${CRED:+store --file=${CRED}}" clone -q --depth=1 \
+      # the token's helper only when there is a token file: an empty
+      # credential.helper= would switch off every helper the host has
+      git ${CRED:+-c "credential.helper=store --file=${CRED}"} clone -q --depth=1 \
         --branch "${BRANCH}" "${SITE_REPO}" "${SITE}" || return 1
     fi
     git "${cfg[@]}" fetch -q --depth=1 origin "${BRANCH}" || return 1
@@ -465,9 +467,22 @@ publish_site() {
     [ -s "${SITE}/upstream.list" ] || { echo "the site repo has no upstream.list" >&2; return 1; }
     rm -rf "${SITE}/upstream"
     local pat f n=0
+    local -a files
     while IFS= read -r pat; do
       case "${pat}" in ''|'#'*) continue ;; esac
-      for f in $(cd "${REPO}" && compgen -G "${pat}" || true); do
+      # paths inside this repo only
+      case "${pat}" in /*|*..*) echo "upstream.list: '${pat}' is not a path inside the OS repo" >&2; return 1 ;; esac
+      mapfile -t files < <(cd "${REPO}" && compgen -G "${pat}" || true)
+      # A plain path (no glob) must exist: one renamed or removed here would
+      # otherwise drop out of upstream/ silently, and the site's own build
+      # then fails or renders without it while Cloudflare keeps serving the
+      # old deploy -- a stall with nothing in this log.
+      case "${pat}" in
+        *[*?[]*) ;;
+        *) [ "${#files[@]}" -eq 1 ] || { echo "upstream.list: '${pat}' is not in the OS repo" >&2; return 1; } ;;
+      esac
+      for f in "${files[@]}"; do
+        [ -f "${REPO}/${f}" ] || continue
         mkdir -p "${SITE}/upstream/$(dirname "${f}")"
         cp "${REPO}/${f}" "${SITE}/upstream/${f}" || return 1
         n=$((n + 1))

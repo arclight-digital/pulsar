@@ -441,6 +441,12 @@ anything_moved() {
 # every other user on the box could read out of ps.
 # ---------------------------------------------------------------------------
 PULSAR_GITHUB_REPO="${PULSAR_GITHUB_REPO:-arclight-digital/pulsar}"
+# The site commit goes to the site's own repo (publish.sh --site-repo), so that
+# is the repo the site token must be able to push to. One value, used by both
+# the check below and publish.sh, so the two cannot drift apart.
+PULSAR_SITE_REPO="${PULSAR_SITE_REPO:-https://github.com/arclight-digital/pulsar-site.git}"
+SITE_REPO_SLUG="${PULSAR_SITE_REPO#https://github.com/}"
+SITE_REPO_SLUG="${SITE_REPO_SLUG%.git}"
 PREFLIGHT_WARNINGS=""
 EXPIRY_WARN_DAYS=14
 
@@ -471,7 +477,7 @@ check_github_token() {
   case "$4" in
     push)
       jq -e '.permissions.push == true' "${body}" >/dev/null 2>&1 \
-        || { echo "FATAL: the ${what} cannot push to ${PULSAR_GITHUB_REPO}" >&2; return 1; } ;;
+        || { echo "FATAL: the ${what} cannot push to ${3#repos/}" >&2; return 1; } ;;
     packages)
       # Classic tokens list their scopes; fine-grained ones do not, and are
       # given the benefit of the doubt rather than refused on a missing header.
@@ -532,7 +538,7 @@ preflight() {
   # The site commit's token.
   if [ -r "${PULSAR_GIT_TOKEN_FILE:-}" ]; then
     check_github_token "site commit token" "$(cat "${PULSAR_GIT_TOKEN_FILE}")" \
-      "repos/${PULSAR_GITHUB_REPO}" push || bad=1
+      "repos/${SITE_REPO_SLUG}" push || bad=1
   else
     echo "site commit token: not configured here; not checked"
   fi
@@ -570,6 +576,7 @@ finish_night() {
       [ "${CHANNEL}" = manual ] && publish_args+=(--no-promote)
       [ -n "${PULSAR_GIT_TOKEN_FILE:-}" ] \
         && publish_args+=(--git-token-file "${PULSAR_GIT_TOKEN_FILE}")
+      publish_args+=(--site-repo "${PULSAR_SITE_REPO}")
       "${REPO}/scripts/publish.sh" "${publish_args[@]}"
       ;;
   esac

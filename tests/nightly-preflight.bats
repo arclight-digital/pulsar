@@ -121,7 +121,8 @@ preflight() {
   git_token
   GH_PUSH=false preflight
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"cannot push to arclight-digital/pulsar"* ]]
+  # the site's own repo, where the commit goes -- not the OS repo
+  [[ "$stderr" == *"cannot push to arclight-digital/pulsar-site"* ]]
 }
 
 @test "a registry token without write:packages is refused" {
