@@ -192,7 +192,7 @@ class Welcome(Adw.ApplicationWindow):
             pick()
         rise = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-rise"])
         rise.append(label("Welcome to Pulsar", ["wl-display"]))
-        rise.append(label("Stylish, atomic, agentic.", ["wl-tagline"]))
+        rise.append(label("Stylish, atomic, modern.", ["wl-tagline"]))
         rise.append(spacer(4))
         rise.append(label("A desktop that looks after itself, so you can get on with the work and the play.",
                           ["wl-lede"]))

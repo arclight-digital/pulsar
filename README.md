@@ -13,7 +13,7 @@
   <a href="https://getpulsar.dev">getpulsar.dev</a>
 </p>
 
-A stylish, atomic, agentic Linux desktop: a bootc image built on Fedora
+A stylish, atomic, modern Linux desktop: a bootc image built on Fedora
 Silverblue, rebuilt every night by an ephemeral build host, with a signed
 NVIDIA driver and signed installer ISOs. The machine that runs it never
 compiles anything; the last good version is always one reboot away.
