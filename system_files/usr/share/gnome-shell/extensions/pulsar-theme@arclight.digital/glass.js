@@ -1754,12 +1754,12 @@ class FocusBrackets {
 // slider's own surface (the handle makes it taller than the bar), so the
 // glow fades out rather than being cut off at its edge.
 // The reach follows the bar's thickness by the engine's rule (glow_for() in
-// pulsar-theme: 1.5 + 0.18 x thickness, 2 to 9 logical px -- a 4px bar gets
-// about 2), never more than 90% of the room around the bar; the strength is
-// the engine's too, in the color it sets.
+// pulsar-theme: 0.5 + 0.2 x thickness, 1.5 to 11 logical px -- a 4px bar
+// gets 1.5), never more than 90% of the room around the bar; the strength
+// is the engine's too, in the color it sets.
 const GLOW_STEPS = 8;
 const GLOW_LAYER = 0.22;    // of the glow color's alpha, per layer
-const glowReach = t => Math.min(Math.max(1.5 + 0.18 * t, 2), 9);
+const glowReach = t => Math.min(Math.max(0.5 + 0.2 * t, 1.5), 11);
 function fillGlow(bar) {
     if (!(bar._value > 0) || !(bar._maxValue > 0))
         return;

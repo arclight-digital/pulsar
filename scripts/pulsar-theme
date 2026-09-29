@@ -1114,14 +1114,16 @@ GLOW_THICKNESS = {
 
 
 def glow_for(t, dark):
-    """(blur px, alpha) for an element t logical pixels thick. The reach
-    grows with size, from 2px on a thin bar to 9px on a quick toggle; the
-    strength falls gently as it does (by the 0.3 power of size, against a
-    20px check box), so a wide faint halo and a short strong one carry the
-    same light. Light themes a notch smaller and weaker: a colored halo on a
-    light ground reads as a smudge. glass.js repeats the reach for sliders."""
-    blur = min(max(1.5 + 0.18 * t, 2.0), 9.0) * (1.0 if dark else 0.85)
-    alpha = (0.45 if dark else 0.3) * min(max((20 / t) ** 0.3, 0.7), 1.35)
+    """(blur px, alpha) for an element t logical pixels thick. Both grow
+    with size: a big pill (a quick toggle, 52px) gets the widest, strongest
+    halo, a thin bar a short faint one (Nick, 2026-09-28: "the big pill
+    buttons should have a stronger wider glow and the bars should be shorter
+    and weaker"). Reach 0.5 + 0.2 x t, 1.5 to 11px; strength by the 0.35
+    power of size against a 20px check box, 0.55x to 1.35x. Light themes a
+    notch smaller and weaker: a colored halo on a light ground reads as a
+    smudge. glass.js repeats the reach for sliders."""
+    blur = min(max(0.5 + 0.2 * t, 1.5), 11.0) * (1.0 if dark else 0.85)
+    alpha = (0.45 if dark else 0.3) * min(max((t / 20) ** 0.35, 0.55), 1.35)
     return round(blur, 1), round(alpha, 2)
 
 
