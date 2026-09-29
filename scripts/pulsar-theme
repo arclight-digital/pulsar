@@ -351,22 +351,33 @@ class Variant:
         # written only while the switch is on.
         dark = self.mode == "dark"
         c["glow_alpha"] = 0.34 if dark else 0.22
-        c["glow_blur"] = "10px" if dark else "8px"
+        c["glow_blur"] = "6px" if dark else "5px"
+        # a bar is long and thin: the same blur reads as a wide smear along it
+        c["glow_bar_blur"] = "4px" if dark else "3px"
         if self.glow:
             a = c["glow_alpha"]
             acc = self.p["accent"].rgb
+            # the filled states, each only while the control can be used
+            lit = [f"{n}:{st}:not(:disabled)" for n in ("check", "radio")
+                   for st in ("checked", "indeterminate")] + ["switch:checked:not(:disabled)"]
+            # a list's cells clip what they draw, so a glow there is cut square
+            # at the cell's edge: none. Each exclusion carries the same states,
+            # or the plainer selector would lose to the glow on specificity.
+            def unlit(views):
+                return ", ".join(f"{v} {x}" for v in views for x in lit if not x.startswith("switch"))
+            shadow = f"  box-shadow: 0 0 {c['glow_blur']} rgba({acc}, {a});\n}}\n"
             c["glow"] = (
                 "/* Glow: what is filled with the accent glows softly in it. */\n"
-                "button.suggested-action:not(:disabled), switch:checked, check:checked, radio:checked,\n"
-                "scale > trough > highlight, progressbar > trough > progress {\n"
-                f"  box-shadow: 0 0 {c['glow_blur']} rgba({acc}, {a});\n}}\n")
-            # GTK3's nodes nest differently (scale > contents > trough >
-            # highlight), so its twin matches by descendant
+                "button.suggested-action:not(:disabled),\n" + ",\n".join(lit) + " {\n" + shadow +
+                "scale:not(:disabled) > trough > highlight, progressbar:not(:disabled) > trough > progress {\n"
+                f"  box-shadow: 0 0 {c['glow_bar_blur']} rgba({acc}, {a});\n}}\n" +
+                unlit(("columnview", "listview")) + " { box-shadow: none; }\n")
+            # GTK3: no bars. It clips a fill to its trough, which cuts the
+            # glow to a sliver along the ends -- worse than none.
             c["glow3"] = (
                 "/* Glow: what is filled with the accent glows softly in it. */\n"
-                "button.suggested-action:not(:disabled), switch:checked, check:checked, radio:checked,\n"
-                "scale highlight, progressbar progress {\n"
-                f"  box-shadow: 0 0 {c['glow_blur']} rgba({acc}, {a});\n}}\n")
+                "button.suggested-action:not(:disabled),\n" + ",\n".join(lit) + " {\n" + shadow +
+                unlit(("treeview",)) + " { box-shadow: none; }\n")
         else:
             c["glow"] = ""
             c["glow3"] = ""

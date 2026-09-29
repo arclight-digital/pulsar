@@ -1754,7 +1754,7 @@ class FocusBrackets {
 // slider's own surface (the handle makes it taller than the bar), so the
 // glow fades out rather than being cut off at its edge.
 const GLOW_STEPS = 8;
-const GLOW_REACH = 0.75;    // of the room above and below the bar
+const GLOW_REACH = 0.4;     // of the room above and below the bar: a bar's glow hugs it
 const GLOW_LAYER = 0.22;    // of the glow color's alpha, per layer
 function fillGlow(bar) {
     if (!(bar._value > 0) || !(bar._maxValue > 0))

@@ -762,21 +762,21 @@ print("" if d is None else d)' "$1" "$2"; }
     setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
     setkey /org/gnome/shell/extensions/pulsar-theme/glow true
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    grep -q -- 'switch:checked, check:checked' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
-    grep -q -- 'scale highlight, progressbar progress' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+    grep -q -- 'check:indeterminate:not(:disabled)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    grep -q -- 'treeview check:checked:not(:disabled)' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
     grep -q '^\.pulsar-glow \.slider { -pulsar-glow: rgba(' "$XDG_STATE_HOME/pulsar-theme/shell/gnome-shell-dark.css"
     # off: GTK loses its block; the Shell keeps its rules, which the extension
     # switches with the class
     setkey /org/gnome/shell/extensions/pulsar-theme/glow false
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    ! grep -q -- 'switch:checked, check:checked' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
-    ! grep -q -- 'scale highlight, progressbar progress' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+    ! grep -q -- 'check:indeterminate:not(:disabled)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    ! grep -q -- 'treeview check:checked:not(:disabled)' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
     grep -q '\.pulsar-glow \.quick-toggle:checked' "$XDG_STATE_HOME/pulsar-theme/shell/gnome-shell-dark.css"
     # high contrast wins over the switch
     setkey /org/gnome/shell/extensions/pulsar-theme/glow true
     setkey /org/gnome/desktop/a11y/interface/high-contrast true
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    ! grep -q -- 'switch:checked, check:checked' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    ! grep -q -- 'check:indeterminate:not(:disabled)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
 }
 
 # The generated block must open the sheet: at equal specificity the later
