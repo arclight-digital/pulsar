@@ -5,7 +5,7 @@ Every [[wallpaper.render]] table in themes/<slug>/theme.toml is one PNG:
 
   [[wallpaper.render]]
   variant = "dark"            # which palette drives it
-  look = "silk"               # silk | leak | satin | holo  (Pulsar's four looks)
+  look = "silk"               # silk leak satin holo relief tide orbit beacon (looks/looks.json)
   c1 = "magenta"              # lights: palette key, "#hex", or "a~b@t" (OKLab mix)
   c2 = "blue"
   c3 = "cyan"
@@ -24,6 +24,7 @@ scripts/build.sh runs both before the image build.
 """
 import argparse
 import hashlib
+import json
 import os
 import pathlib
 import sys
@@ -36,10 +37,22 @@ sys.path.insert(0, str(REPO / "scripts"))
 import pulsar_theme_engine  # noqa: E402
 
 pt = pulsar_theme_engine.load()
-SHADER = (REPO / "assets" / "shaders" / "theme.frag").read_text()
+SHADERS = REPO / "assets" / "shaders"
+
+
+def shader_source():
+    """theme.frag, then every look file in looks/looks.json's order -- the
+    shader as it compiles (render-wallpapers.py and the site assemble theirs
+    the same way)."""
+    order = json.loads((SHADERS / "looks" / "looks.json").read_text())["files"]
+    return "\n".join([(SHADERS / "theme.frag").read_text()]
+                     + [(SHADERS / "looks" / f"{n}.glsl").read_text() for n in order])
+
+
+SHADER = shader_source()
 THEMES = REPO / "system_files" / "usr" / "share" / "pulsar" / "themes"
 PREVIEW = REPO / ".preview"
-LOOKS = {"silk": 0.0, "leak": 1.0, "satin": 2.0, "holo": 3.0}
+LOOKS = {n: float(i) for i, n in enumerate(json.loads((SHADERS / "looks" / "looks.json").read_text())["looks"])}
 PREAMBLE = "#version 330 core\nout vec4 _o;\n#define gl_FragColor _o\n"
 VERTEX = "#version 330 core\nin vec2 in_pos;\nvoid main(){gl_Position=vec4(in_pos,0.0,1.0);}\n"
 
@@ -61,6 +74,30 @@ def color(v, spec):
     if spec in ("white", "black"):
         return pt.WHITE if spec == "white" else pt.BLACK
     return v[spec]
+
+
+# A look with no table of its own in a theme (every look the site's hero can
+# show, not just the ones the theme ships as wallpapers) is that theme's look
+# all the same: the looks drawn since the first four take their colours and
+# light direction from the variant's primary table -- the theme's own choice
+# of lights -- and their other knobs from the defaults. (Silk, Leak and Holo
+# without a table keep the renderer's defaults, as the site has always shown
+# them.)
+INHERITED = ("c1", "c2", "c3", "c4", "star", "ground_far", "ground_near", "dawn_bottom", "dawn_top",
+             "desat", "dir", "wash")
+FIRST_FOUR = ("silk", "leak", "holo")
+
+
+def spec_for(theme, variant, look):
+    """The render table for a look, as the pipeline would render it."""
+    specs = [sp for sp in theme.raw.get("wallpaper", {}).get("render", []) if sp["variant"] == variant]
+    own = next((sp for sp in specs if sp["look"] == look), None)
+    if own is not None or look in FIRST_FOUR:
+        return own or {"variant": variant, "look": look}
+    names = theme.raw.get("wallpaper", {}).get(variant) or []
+    first = pathlib.Path(names[0]).stem.split("-")[0] if names else None
+    primary = next((sp for sp in specs if sp["look"] == first), specs[0] if specs else {})
+    return {"variant": variant, "look": look, **{k: primary[k] for k in INHERITED if k in primary}}
 
 
 def uniforms(theme, spec):
@@ -162,10 +199,9 @@ def write_uniforms(out):
     """The uniforms this renderer hands theme.frag, for the site's live hero.
 
     The hero runs this same shader, recolored by the site's theme exactly as
-    the wallpapers are: for every theme, variant and all four looks, the
+    the wallpapers are: for every theme, variant and look (looks.json), the
     uniforms render() would be given -- the theme's own [[wallpaper.render]]
-    table for that look where it has one, this renderer's defaults (palette
-    keys, derived seed) where it does not. So any look the visitor picks is
+    table for that look where it has one, spec_for()'s where it does not. So any look the visitor picks is
     the look this pipeline would render for that theme. "primary" is the
     variant's first wallpaper, the one the theme sets on the desktop.
 
@@ -188,9 +224,8 @@ def write_uniforms(out):
                 table = {sp["look"]: sp for sp in specs if sp["variant"] == variant}
                 looks = {}
                 for look in LOOKS:
-                    sp = table.get(look, {"variant": variant, "look": look})
                     looks[look] = {k: (list(v) if isinstance(v, tuple) else v)
-                                   for k, v in uniforms(theme, sp).items()}
+                                   for k, v in uniforms(theme, spec_for(theme, variant, look)).items()}
                 primary = first.split("-")[0]
                 if primary not in table:
                     sys.exit(f"{theme.slug}: {variant} wallpaper {names[0]} has no render table")

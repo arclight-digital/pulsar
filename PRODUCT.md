@@ -114,7 +114,8 @@ beside the ISOs and committed as `keys/cosign.pub`.
   scoped `<style>` block in the component it belongs to.
 - The hero background is `assets/shaders/pulsar.frag` (the actual OS
   wallpaper shader) in WebGL1; uniforms: u_resolution, u_time, u_theme
-  (0 dark / 1 dawn), u_look (0 silk / 1 leak / 2 satin / 3 holo). The
+  (0 dark / 1 dawn), u_look (0 silk 1 leak 2 satin 3 holo 4 relief 5 tide
+  6 orbit 7 beacon; assets/shaders/looks/looks.json), u_live. The
   CI-rendered silk still is the CSS ground: the no-WebGL fallback and the
   first paint. Reduced motion renders a still frame.
 - The share card (`og.jpg`) is an Astro endpoint rendered at build time with

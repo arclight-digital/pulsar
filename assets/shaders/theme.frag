@@ -15,11 +15,17 @@
 //  * the dawn (light) cut takes its ground and its lights from the theme's
 //    LIGHT palette, with a per-theme wash, instead of fixed pastels.
 // The looks themselves -- silk / leak / satin / holo -- are Pulsar's, math
+//
+// The looks live in looks/, one file each, appended after this file in the
+// order looks/looks.json gives (the renderers and the site's sky.ts assemble
+// it the same way). This file is the contract -- the uniforms and helpers --
+// and the dispatch in main(). Silk, Leak and Holo keep a theme half and a
+// brand half in their files (BRAND is defined only by pulsar.frag).
 // untouched; that is what keeps a Catppuccin desktop recognisably Pulsar.
 uniform vec2  u_resolution;
 uniform float u_time;
 uniform float u_theme;   // 0 = night, 1 = dawn
-uniform float u_look;    // 0 silk, 1 leak, 2 satin, 3 holo
+uniform float u_look;    // 0 silk 1 leak 2 satin 3 holo 4 relief 5 tide 6 orbit 7 beacon
 
 uniform vec3  u_ga, u_gb;         // night ground: far (upper right), near (light side)
 uniform vec3  u_da, u_db;         // dawn ground: bottom, top
@@ -41,6 +47,7 @@ uniform float u_glow;             // luminescence: emissive cores, filaments, ha
 uniform float u_signal;           // signal treatment: lit lattice, edge aberration (0 = none)
 uniform float u_grain;            // grain multiplier (it is also the 8-bit dither: never 0)
 uniform float u_web;              // filament + lattice density/brightness (silk 1; leak/holo 0.55, satin 0.45)
+uniform float u_live;             // 1 on the site's live hero: the newer looks move (0 = the still)
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // Grain and dither only: a sine-free hash (Dave Hoskins' hash12). The sine
@@ -155,245 +162,115 @@ vec3 knee(vec3 x) {
     return min(x, vec3(k)) + (1.0 - k) * (1.0 - exp(-over / (1.0 - k)));
 }
 
-vec3 holoRamp(float hx) {
-    vec3 flank = u_c1 * 0.32;
-    vec3 c = flank;
-    c = mixo(c, u_c4, smoothstep(-0.38, -0.16, hx));
-    c = mixo(c, u_c2, smoothstep(-0.04,  0.12, hx));
-    c = mixo(c, u_c3, smoothstep( 0.16,  0.30, hx));
-    c = mixo(c, flank, smoothstep( 0.34,  0.52, hx));
-    return c;
-}
-vec3 beamRGB(float y, float c, float w, float o) {
-    return vec3(gauss((y - c + o) / w), gauss((y - c) / w), gauss((y - c - o) / w));
-}
+// ---- per-pixel state the looks read and write ----------------------------
+// Set by main() before any look runs; the looks' own functions (looks/*.glsl)
+// read them, and the luminescence pass accumulates into emit/dawnFx/dawnInk.
+vec2 uv;
+float r, theme, starsNight, starsDawn;
+vec3 dawnBase, l1, l2, l3, l4;
+float inten, carry, g2, fil, halo, tr, dawnInk;
+vec3 emit, soft, dawnFx;
+
+// the looks, defined in looks/*.glsl
+vec3 silkNight();
+vec3 silkDawn();
+void silkGlow(float wSilk);
+vec3 silkPearl(vec3 dawn, float amount);
+vec3 leakNight();
+vec3 leakDawn();
+void leakGlow(float wLeak);
+vec3 holoNight();
+vec3 holoDawn();
+void holoGlow(float wHolo);
+vec3 freshLook(float look, out vec3 dawnN, out vec3 emitN);
+vec3 freshNight(vec3 lightc);
+vec3 freshGlow(vec3 night, vec3 emitN, float calm);
+void quietCorner(inout vec3 night, inout vec3 dawn);
 
 void main() {
-    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
-    float r = length(uv);
-    float theme = clamp(u_theme, 0.0, 1.0);
-    vec2 dir = normalize(-u_dir);   // mask falls off TOWARD this
-
-    // ---- silk ----
-    vec2 p = uv * u_fold + u_seed;
-    vec2 q = vec2(fbm(p), fbm(p + vec2(5.2, 1.3)));
-    vec2 w = vec2(fbm(p + 3.0 * q + vec2(1.7, 9.2)), fbm(p + 3.0 * q + vec2(8.3, 2.8)));
-    float f = fbm(p + 3.0 * w);
-    float mask = smoothstep(1.05, -0.55, dot(uv, dir));
-    float lum = pow(smoothstep(0.28, 0.92, f), 1.6) * mask;
-    vec3 silk = mixo(u_c1 * 0.75, u_c2, smoothstep(0.35, 0.75, f));
-    silk = mixo(silk, u_c3, smoothstep(0.70, 0.95, f) * 0.8);
-    silk = grey(silk, u_desat);
+    uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+    r = length(uv);
+    theme = clamp(u_theme, 0.0, 1.0);
 
     // two fields at fixed places, faded between by theme (see pulsar.frag)
     vec2 seedD = uv + u_seed, seedL = uv + vec2(31.7, 17.3) + u_seed;
-    float starsNight = mix(starLayer(seedD, 110.0, 0.030, 600.0, 0.0) + starLayer(seedD, 28.0, 0.050, 260.0, 0.0),
-                           starLayer(seedL, 110.0, 0.030, 600.0, 0.0) + starLayer(seedL, 28.0, 0.050, 260.0, 0.0), step(0.5, theme));
-    float starsDawn  = mix(starLayer(seedD,  60.0, 0.018, 380.0, 0.0) + starLayer(seedD, 18.0, 0.040, 180.0, 0.0),
-                           starLayer(seedL,  60.0, 0.018, 380.0, 0.0) + starLayer(seedL, 18.0, 0.040, 180.0, 0.0), step(0.5, theme));
+    starsNight = mix(starLayer(seedD, 110.0, 0.030, 600.0, 0.0) + starLayer(seedD, 28.0, 0.050, 260.0, 0.0),
+                     starLayer(seedL, 110.0, 0.030, 600.0, 0.0) + starLayer(seedL, 28.0, 0.050, 260.0, 0.0), step(0.5, theme));
+    starsDawn  = mix(starLayer(seedD,  60.0, 0.018, 380.0, 0.0) + starLayer(seedD, 18.0, 0.040, 180.0, 0.0),
+                     starLayer(seedL,  60.0, 0.018, 380.0, 0.0) + starLayer(seedL, 18.0, 0.040, 180.0, 0.0), step(0.5, theme));
 
-    vec3 night = mix(u_ga, u_gb, mask);
-    night += silk * lum * 0.75 * u_gain;
-    night += u_star * starsNight * clamp(1.0 - lum * 3.0, 0.0, 1.0) * 0.55 * u_stars;
-    night *= 1.0 - 0.40 * smoothstep(0.55, 1.10, r);
-    night += u_c2 * u_down * pow(smoothstep(-0.25, 0.62, uv.y), 1.6) * (0.70 + 0.30 * exp(-uv.x * uv.x * 1.2));
+    // ---- dawn ground and lights ----
+    dawnBase = mix(u_da, u_db, smoothstep(-0.5, 0.5, uv.y));
+    l1 = mixo(u_c1, vec3(1.0), u_wash); l2 = mixo(u_c2, vec3(1.0), u_wash);
+    l3 = mixo(u_c3, vec3(1.0), u_wash * 0.9); l4 = mixo(u_c4, vec3(1.0), u_wash);
 
-    // ---- leak ----
-    float lA = u_beam;
-    vec2 lq = vec2(cos(lA) * uv.x + sin(lA) * uv.y, -sin(lA) * uv.x + cos(lA) * uv.y);
-    float lfade = smoothstep(0.85, -0.35, lq.x);
-    vec3 leak = mix(u_ga, u_gb, lfade);
-    leak += u_c1 * beamRGB(lq.y, 0.36, 0.20, 0.050) * lfade * 0.30 * u_gain;  // brand 0.55: violet is dim, theme c1 is not
-    leak += u_c2 * beamRGB(lq.y, 0.05, 0.26, 0.055) * lfade * 0.45 * u_gain;
-    leak += u_c3 * beamRGB(lq.y, -0.28, 0.14, 0.040) * smoothstep(0.50, -0.45, lq.x) * 0.50 * u_gain;
-    leak += u_c3 * gauss((lq.y + 0.28) / 0.42) * smoothstep(0.50, -0.45, lq.x) * 0.10 * u_gain;
-    leak = grey(leak, u_desat * 0.8);
-    leak += u_star * starsNight * (1.0 - lfade * 0.7) * 0.45 * u_stars;
-    leak *= 1.0 - 0.35 * smoothstep(0.60, 1.10, r);
+    vec3 night, dawn;
+    float lookAll = clamp(u_look, 0.0, 7.0);
+    // Silk, Leak and Holo keep their original data flow below, mix chain
+    // included, so their pixels are exactly what they were. Satin and the
+    // looks since draw in the fresh path.
+    if (lookAll < 3.5 && abs(lookAll - 2.0) > 0.5) {
+        float look = clamp(u_look, 0.0, 3.0);
+        night = silkNight();
+        vec3 leak = leakNight();
+        // Satin's slot in the chain stays, as zero: it keeps the chain's
+        // arithmetic what it was when Satin sat here
+        vec3 satinSlot = vec3(0.0);
+        vec3 holo = holoNight();
+        night = mix(night, leak,  clamp(look, 0.0, 1.0));
+        night = mix(night, satinSlot, clamp(look - 1.0, 0.0, 1.0));
+        night = mix(night, holo,  clamp(look - 2.0, 0.0, 1.0));
 
-    // ---- satin ----
-    float sdiag = dot(uv, normalize(vec2(-0.35, 1.0)));
-    vec3 satin = mix(u_ga, mixo(u_gb, u_c1, 0.25), smoothstep(-0.60, 0.70, sdiag));
-    vec2 sp = uv - u_bloom;
-    float sd = dot(sp, sp);
-    satin += u_c3 * exp(-sd * 7.0) * 0.26 * u_gain;
-    satin += u_c2 * exp(-sd * 2.5) * 0.09 * u_gain;
-    float su = dot(uv, normalize(vec2(1.0, 0.35)));
-    float fiber = vnoise(vec2(sdiag * 340.0, su * 36.0)) - 0.5;
-    float weft  = vnoise(vec2(su * 300.0, sdiag * 30.0)) - 0.5;
-    satin += satin * (fiber + 0.6 * weft) * 0.38;
-    satin = grey(satin, u_desat * 0.55);
-    satin *= 1.0 - 0.40 * smoothstep(0.55, 1.10, r);
+        dawn = silkDawn();
+        vec3 dawnL = leakDawn();
+        vec3 dawnS = vec3(0.0);
+        vec3 dawnH = holoDawn();
+        dawn = mix(dawn, dawnL, clamp(look, 0.0, 1.0));
+        dawn = mix(dawn, dawnS, clamp(look - 1.0, 0.0, 1.0));
+        dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
 
-    // ---- holo ----
-    float nx = gl_FragCoord.x / u_resolution.x - 0.5;
-    float film = vnoise(uv * 2.4 + 3.0 + u_seed) + 0.5 * vnoise(uv * 4.8 + 7.0);
-    float fring = 0.5 + 0.5 * sin(film * 22.0);
-    float sheen = 0.5 + 0.5 * sin(nx * 9.0 + sin(uv.y * 1.8) * 0.7);
-    float hx = nx * 1.25 + 0.06 * sin(uv.y * 2.2 + 1.0) + (fring - 0.5) * 0.035 + uv.y * 0.08;
-    float ab = 0.030;
-    vec3 holo = vec3(holoRamp(hx + ab).r, holoRamp(hx).g, holoRamp(hx - ab).b);
-    float env = smoothstep(0.62, 0.10, abs(uv.y)) * 0.62 + 0.10;
-    holo *= env * (0.72 + 0.28 * sheen) * (0.92 + 0.11 * fring) * u_gain;
-    holo = max(holo, u_ga);
-    holo += u_star * starsNight * 0.20 * smoothstep(0.40, 0.62, abs(uv.y)) * u_stars;
-    holo *= 1.0 - 0.30 * smoothstep(0.65, 1.15, r);
+        // ---- each look's own luminescence (both variants) ------------------
+        // One signature effect per look (see each look's Glow), all quiet
+        // enough to be noticed on a second look rather than the first: soft
+        // peaks, wide falloffs, more of the calm ground showing. Nothing
+        // outshines the look's own emissive core, and no effect runs brighter
+        // than the theme's highlight colour. u_web scales them all (the
+        // phosphor themes ask for more); u_signal the hacker-ish parts.
+        float wSilk = 1.0 - clamp(look, 0.0, 1.0);
+        float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
+        float wHolo = clamp(look - 2.0, 0.0, 1.0);
+        inten = clamp(dot(night - mix(u_ga, u_gb, 0.5), vec3(0.3333)) * 2.6, 0.0, 1.0);
+        carry = 0.05 + 0.95 * smoothstep(0.05, 0.7, inten);   // effects live in the lit mass
+        emit = u_c3 * pow(inten, 3.0) * 0.16;                  // the core itself, gently
+        soft = mixo(u_c2, u_c3, 0.5);
+        g2 = 0.0; fil = 0.0; halo = 0.0; tr = 0.0;
+        dawnFx = vec3(0.0);        // light-variant additions, as a tint amount per channel
+        dawnInk = 0.0;
+        if (wSilk > 0.0) silkGlow(wSilk);
+        if (wLeak > 0.0) leakGlow(wLeak);
+        if (wHolo > 0.0) holoGlow(wHolo);
+        // never brighter than the highlight colour, however they stack
+        emit = min(emit, u_c3 * 0.85 + 0.03);
+        night = knee(night + emit * u_glow);
 
-    float look = clamp(u_look, 0.0, 3.0);
-    night = mix(night, leak,  clamp(look, 0.0, 1.0));
-    night = mix(night, satin, clamp(look - 1.0, 0.0, 1.0));
-    night = mix(night, holo,  clamp(look - 2.0, 0.0, 1.0));
-
-    // ---- dawn ----
-    vec3 dawnBase = mix(u_da, u_db, smoothstep(-0.5, 0.5, uv.y));
-    vec3 l1 = mixo(u_c1, vec3(1.0), u_wash), l2 = mixo(u_c2, vec3(1.0), u_wash),
-         l3 = mixo(u_c3, vec3(1.0), u_wash * 0.9), l4 = mixo(u_c4, vec3(1.0), u_wash);
-
-    vec3 dawn = dawnBase;
-    vec3 silkDawn = mixo(mixo(l1, l2, smoothstep(0.35, 0.75, f)), l3, smoothstep(0.6, 0.9, f));
-    dawn = mixo(dawn, silkDawn, lum * 0.95 * u_gain);
-    dawn = mixo(dawn, mixo(u_c1, vec3(1.0), 0.45), starsDawn * 0.35 * u_stars);
-
-    vec3 dawnL = dawnBase;
-    float dV = gauss((lq.y - 0.36) / 0.20) * lfade;
-    float dP = gauss((lq.y - 0.05) / 0.26) * lfade;
-    float dC = gauss((lq.y + 0.28) / 0.14) * smoothstep(0.50, -0.45, lq.x);
-    dawnL = mixo(dawnL, l1, dV * 0.45 * u_gain);
-    dawnL = mixo(dawnL, l2, dP * 0.68 * u_gain);
-    dawnL = mixo(dawnL, l3, dC * 0.75 * u_gain);
-
-    vec3 dawnS = mix(u_db, u_da, smoothstep(-0.60, 0.70, sdiag));
-    dawnS = mixo(dawnS, l3, exp(-sd * 7.0) * 0.55 * u_gain);
-    dawnS = mixo(dawnS, l2, exp(-sd * 2.5) * 0.25 * u_gain);
-    dawnS *= 1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.10;
-
-    vec3 hr = vec3(holoRamp(hx + ab).r, holoRamp(hx).g, holoRamp(hx - ab).b);
-    vec3 dawnH = mixo(dawnBase, mixo(hr, vec3(1.0), u_wash * 0.8),
-                      (smoothstep(0.62, 0.10, abs(uv.y)) * 0.78 + 0.16) * u_gain);
-    dawnH *= 0.94 + 0.06 * fring;
-
-    dawn = mix(dawn, dawnL, clamp(look, 0.0, 1.0));
-    dawn = mix(dawn, dawnS, clamp(look - 1.0, 0.0, 1.0));
-    dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
-
-    // ---- each look's own luminescence (both variants) ----------------------
-    // One signature effect per look, all quiet enough to be noticed on a
-    // second look rather than the first: soft peaks, wide falloffs, more of
-    // the calm ground showing. Nothing outshines the look's own emissive
-    // core, and no effect runs brighter than the theme's highlight colour.
-    //   silk  -- ion trails: filaments on isolines of the field, with a halo
-    //   leak  -- volumetric light: god-rays through the leak, drifting motes,
-    //            an anamorphic streak with a little dispersion at the beam edge
-    //   satin -- fibre optics: a few warp threads carry travelling pulses of
-    //            light, with a glint where a lit weft crosses them
-    //   holo  -- interference: thin-film fringes and a diffraction sheen,
-    //            coloured by wavelength, and one faint hologram scan band
-    // u_web scales them all (the phosphor themes ask for more); u_signal the
-    // hacker-ish parts (lattice on silk, dispersion, the scan band).
-    float wSilk = 1.0 - clamp(look, 0.0, 1.0);
-    float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
-    float wSatin = clamp(look - 1.0, 0.0, 1.0) - clamp(look - 2.0, 0.0, 1.0);
-    float wHolo = clamp(look - 2.0, 0.0, 1.0);
-    float inten = clamp(dot(night - mix(u_ga, u_gb, 0.5), vec3(0.3333)) * 2.6, 0.0, 1.0);
-    float carry = 0.05 + 0.95 * smoothstep(0.05, 0.7, inten);   // effects live in the lit mass
-    vec3 emit = u_c3 * pow(inten, 3.0) * 0.16;                  // the core itself, gently
-    vec3 soft = mixo(u_c2, u_c3, 0.5);
-    float g2 = 0.0, fil = 0.0, halo = 0.0, tr = 0.0;
-    vec3 dawnFx = vec3(0.0);        // light-variant additions, as a tint amount per channel
-    float dawnInk = 0.0;
-
-    if (wSilk > 0.0) {
-        g2 = fbm(uv * 2.7 + w * 1.8 + u_seed * 0.73 + 4.1);
-        float ca = 0.0020 * u_signal;
-        vec3 f3 = vec3(line(g2 - 0.52 - ca, 0.0060), line(g2 - 0.52, 0.0060), line(g2 - 0.52 + ca, 0.0060))
-                + 0.5 * vec3(line(f - 0.63 - ca, 0.0050), line(f - 0.63, 0.0050), line(f - 0.63 + ca, 0.0050));
-        halo = (line(g2 - 0.52, 0.050) + 0.5 * line(f - 0.63, 0.040)) * u_web;
-        fil = f3.g * u_web;
-        tr = lattice(uv, 26.0) * step(1.0 - u_web, hash(floor(uv * 26.0) + 41.0)) * u_web * u_signal;
-        emit += wSilk * (u_c3 * f3 * u_web * 0.55 * carry + soft * halo * 0.12 * carry
-                         + mixo(u_c2, u_c3, 0.4) * tr * (0.010 + 0.18 * inten));
-        dawnFx += wSilk * vec3(fil * 0.28 * (0.1 + 0.9 * carry));
-        dawnInk += wSilk * tr * 0.025;
+        // light: the same effects in pearl, low-contrast against the paper
+        float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
+        if (wSilk > 0.0) dawn = silkPearl(dawn, wSilk * intenD * 0.14 * u_glow);
+        dawn = mix(dawn, vec3(1.0), clamp(dawnFx * (0.15 + 0.85 * intenD) * u_glow, 0.0, 0.6));
+        dawn *= 1.0 - clamp(dawnInk, -0.2, 0.2) * u_signal;
+    } else {
+        vec3 emitN;
+        night = freshNight(freshLook(lookAll, dawn, emitN));
+        night = freshGlow(night, emitN, 1.0);
     }
-    if (wLeak > 0.0) {
-        // rays fan out from a source beyond the left edge, along the beams
-        vec2 rel = lq - vec2(-1.25, -0.05);
-        float ang = atan(rel.y, rel.x);
-        float rays = vnoise(vec2(ang * 34.0, 1.7)) * 0.65 + vnoise(vec2(ang * 91.0, 4.2)) * 0.35;
-        rays = smoothstep(0.35, 0.95, rays) * smoothstep(2.3, 0.4, length(rel));
-        float motes = starLayer(uv + u_seed, 46.0, 0.035, 140.0, 0.0) + starLayer(uv - u_seed, 19.0, 0.03, 60.0, 0.0);
-        float edge = -0.28 + 0.14;              // the upper edge of the brightest beam
-        float disp = 0.0035 * u_signal;
-        vec3 streak = vec3(line(lq.y - edge - disp, 0.010), line(lq.y - edge, 0.010), line(lq.y - edge + disp, 0.010))
-                    * smoothstep(0.55, -0.6, lq.x);
-        emit += wLeak * u_web * (soft * rays * inten * 0.09 + u_c3 * motes * inten * 0.28
-                                 + u_c3 * streak * 0.10);
-        dawnFx += wLeak * u_web * vec3(rays * 0.05 + streak.g * 0.08);
-        dawnInk -= wLeak * u_web * motes * 0.06;      // motes on paper: pale specks catching light
-    }
-    if (wSatin > 0.0) {
-        // warp threads run along the weave; a sparse few are lit fibres
-        float n = 48.0;
-        float tid = floor(sdiag * n);
-        float across = fract(sdiag * n) - 0.5;
-        float lit = step(0.80, hash(vec2(tid, 7.0)));
-        float thread = line(across, 0.09) * lit;
-        float pulse = pow(0.5 + 0.5 * sin(su * 9.0 - u_time * 0.6 + hash(vec2(tid, 3.0)) * 6.2831), 10.0);
-        // a lit weft thread crossing a lit warp thread: a small glint
-        float wid = floor(su * 30.0);
-        float weftLit = step(0.90, hash(vec2(wid, 11.0)));
-        float glint = thread * weftLit * line(fract(su * 30.0) - 0.5, 0.10);
-        float satinLit = exp(-sd * 2.2);           // the bloom is where the light runs
-        emit += wSatin * u_web * (u_c3 * thread * (0.10 + 0.35 * pulse) * satinLit
-                                  + mixo(u_c3, vec3(1.0), 0.2) * glint * 0.30 * satinLit);
-        dawnFx += wSatin * u_web * vec3(thread * (0.04 + 0.12 * pulse) * satinLit + glint * 0.12 * satinLit);
-    }
-    if (wHolo > 0.0) {
-        g2 = fbm(uv * 1.9 + u_seed * 0.51 + 2.3);
-        // thin film: hue follows optical thickness, fringes drift across it
-        float thick = g2 * 2.4 + uv.x * 0.35 + 0.15 * sin(uv.y * 3.1);
-        vec3 film = 0.5 + 0.5 * cos(6.2831 * (thick + vec3(0.0, 0.33, 0.67)));
-        // grating: a broad diagonal band whose colour runs with angle
-        float gd = dot(uv, normalize(vec2(0.8, 0.45)));
-        vec3 grating = (0.5 + 0.5 * cos(6.2831 * (gd * 3.0 + vec3(0.0, 0.33, 0.67))))
-                     * gauss((gd - 0.05) / 0.22);
-        float scanBand = line(uv.y - 0.14, 0.035) * u_signal;
-        emit += wHolo * u_web * (mixo(film, u_c3, 0.45) * inten * 0.12 + grating * inten * 0.08
-                                 + soft * scanBand * (0.02 + 0.08 * inten));
-        dawnFx += wHolo * u_web * (film * 0.06 + grating * 0.05 + vec3(scanBand * 0.04));
-    }
-    // never brighter than the highlight colour, however they stack
-    emit = min(emit, u_c3 * 0.85 + 0.03);
-    night = knee(night + emit * u_glow);
-
-    // light: the same effects in pearl, low-contrast against the paper.
-    // "lit" is measured against each look's OWN ground: satin's cloth is its
-    // own gradient and weave, and measured against dawnBase all of it read as
-    // lit and took the effects over plain cloth.
-    vec3 groundS = mix(u_db, u_da, smoothstep(-0.60, 0.70, sdiag)) * (1.0 - clamp(fiber + 0.6 * weft, -1.0, 1.0) * 0.10);
-    float intenD = clamp(dot(abs(dawn - mix(dawnBase, groundS, wSatin)), vec3(0.3333)) * 7.0, 0.0, 1.0);
-    if (wSilk > 0.0) {
-        vec3 pearl = mixo(0.5 + 0.5 * cos(6.2831 * (g2 * 2.2 + f * 0.8 + vec3(0.0, 0.33, 0.67))), l2, 0.8);
-        dawn = mixo(dawn, pearl, wSilk * intenD * 0.14 * u_glow);
-    }
-    dawn = mix(dawn, vec3(1.0), clamp(dawnFx * (0.15 + 0.85 * intenD) * u_glow, 0.0, 0.6));
-    dawn *= 1.0 - clamp(dawnInk, -0.2, 0.2) * u_signal;
 
     // No baked raster. A 3-pixel scanline looked right at 1:1 and beat into
     // moire the moment GNOME scaled the wallpaper to the monitor (3840->1920,
     // 2560->1366); the lattice and the grain carry the texture instead.
 
-    // ---- the quiet corner ----
-    // Quick settings, notifications and the calendar all open from the top
-    // edge, mostly top-right, and sit over the wallpaper as translucent-feeling
-    // cards. A bright fold or beam there fights them, so every look is calmed
-    // toward its own ground in that corner and, more gently, along the bar.
-    float aspect = u_resolution.x / u_resolution.y;
-    vec2 qc = (uv - vec2(0.5 * aspect, 0.5)) * vec2(0.8, 1.2);
-    float quiet = exp(-dot(qc, qc) * 2.2) * u_quiet;
-    float bar = smoothstep(0.30, 0.50, uv.y) * 0.35 * u_quiet;
-    night = mix(night, u_ga, clamp(quiet * 0.85 + bar, 0.0, 1.0));
-    dawn = mixo(dawn, mix(u_da, u_db, 0.5), clamp(quiet * 0.75 + bar * 0.7, 0.0, 1.0));
+    // the quiet corner (looks/shared.glsl): calmed toward the ground where
+    // quick settings, notifications and the calendar open
+    quietCorner(night, dawn);
 
     vec3 col = mix(night, dawn, theme);
 

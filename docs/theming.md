@@ -131,18 +131,30 @@ and only apps that exited are relaunched. Don't ask again sets
 
 ## Wallpapers
 
-Every classic theme gets Pulsar's shader looks (silk, leak, satin, holo)
-rendered in its palette from `assets/shaders/theme.frag`, dark and light,
-two looks each for `bg-next`. Each look has a subtle signature:
+Pulsar has eight shader looks, one file each in `assets/shaders/looks/`
+(`looks.json` gives their order, which is `u_look`). Every classic theme
+ships two of them rendered in its palette from `assets/shaders/theme.frag`,
+dark and light, for `bg-next`; the site's hero can show any of the eight in
+any theme. Each look has its own light:
 
-- silk: ion-trail filaments on the field's isolines, a faint lit circuit
-  lattice;
-- leak: god-rays, drifting motes, an anamorphic streak with slight
-  dispersion;
-- satin: fibre-optic warp threads carrying pulses of light;
-- holo: thin-film fringes, a diffraction sheen, one faint scan band.
+- silk: a domain-warped field; ion-trail filaments on its isolines, a faint
+  lit circuit lattice;
+- leak: soft beams with prismatic edges; god-rays, drifting motes, an
+  anamorphic streak;
+- satin: a satin sheet piled up, lit with an anisotropic sheen along the
+  threads;
+- holo: iridescent foil; thin-film fringes, a diffraction sheen, one faint
+  scan band;
+- relief: a topographic map lit by one travelling light, the index lines
+  glowing faintly;
+- tide: caustic light on a pool floor, each filament splitting a little into
+  colour;
+- orbit: a ringed planet's limb catching a low sun, ring particles glinting;
+- beacon: a pulsar's two beams sweeping through dust.
 
-Light variants carry them in pearl, low-contrast. Highlights roll off
+A look a theme has no render table for takes its colours and light
+direction from the theme's primary table. Light variants carry the looks in
+pearl or in the theme's ink, low-contrast. Highlights roll off
 through a soft knee below the theme's highlight color; no scanline raster
 (it moirés when GNOME scales). `glow`, `signal`, `web` and `grain` tune each
 render; the phosphor themes run stronger. The brand wallpapers and the

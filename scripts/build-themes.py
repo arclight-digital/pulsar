@@ -98,9 +98,8 @@ THEMES = [
          renders=[
              # warm cloth: an ember bloom low on the left, no stars (gruvbox is
              # earth, not sky)
-             R("dark", "satin", c1="red", c2="orange", c3="yellow", bloom=[-0.35, -0.18], stars=0, desat=0.1,
-               gain=1.7),
-             R("light", "satin", c1="orange", c2="yellow", c3="yellow", bloom=[-0.35, -0.18], wash=0.35, gain=1.5,
+             R("dark", "satin", c1="red", c2="orange", c3="yellow", bloom=[-0.35, -0.18], stars=0, desat=0.1),
+             R("light", "satin", c1="orange", c2="yellow", c3="yellow", bloom=[-0.35, -0.18], wash=0.35,
                dawn_bottom="#fbf1c7", dawn_top="#ebdbb2"),
              R("dark", "leak", c1="red", c2="orange", c3="yellow", beam=-0.22, stars=0, desat=0.2),
              R("light", "leak", c1="red", c2="orange", c3="#fabd2f", beam=-0.22, wash=0.45,
@@ -146,8 +145,8 @@ THEMES = [
                fold=1.9, stars=1.0, down=0.10, desat=0.0, gain=1.5),
              R("light", "silk", c1="#5e81ac", c2="#88c0d0", c3="#a3be8c", seed=[-2.5, 1.4], dir=[-1.0, -0.25],
                fold=1.9, wash=0.0, gain=1.7, stars=0.25, dawn_bottom="#eceff4", dawn_top="#d8dee9"),
-             R("dark", "satin", c1="#5e81ac", c2="blue", c3="cyan", bloom=[-0.30, -0.22], stars=0, gain=1.9, desat=0.0),
-             R("light", "satin", c1="#5e81ac", c2="#81a1c1", c3="#88c0d0", bloom=[-0.30, -0.22], wash=0.15, gain=1.6,
+             R("dark", "satin", c1="#5e81ac", c2="blue", c3="cyan", bloom=[-0.30, -0.22], stars=0, desat=0.0),
+             R("light", "satin", c1="#5e81ac", c2="#81a1c1", c3="#88c0d0", bloom=[-0.30, -0.22], wash=0.15,
                dawn_bottom="#eceff4", dawn_top="#d8dee9"),
          ]),
 
@@ -187,8 +186,8 @@ THEMES = [
                stars=0, desat=0.0, gain=1.8, down=0.08),
              R("light", "silk", c1="#35a77c", c2="#8da101", c3="#dfa000", seed=[6.0, 1.0], dir=[0.1, -1.0], fold=2.0,
                wash=0.2, gain=1.3, stars=0, dawn_bottom="#fdf6e3", dawn_top="#efebd4"),
-             R("dark", "satin", c1="green", c2="cyan", c3="green", bloom=[-0.25, -0.30], stars=0, desat=0.05, gain=1.9),
-             R("light", "satin", c1="#8da101", c2="#35a77c", c3="#8da101", bloom=[-0.25, -0.30], wash=0.3, gain=1.6,
+             R("dark", "satin", c1="green", c2="cyan", c3="green", bloom=[-0.25, -0.30], stars=0, desat=0.05),
+             R("light", "satin", c1="#8da101", c2="#35a77c", c3="#8da101", bloom=[-0.25, -0.30], wash=0.3,
                dawn_bottom="#fdf6e3", dawn_top="#efebd4"),
          ]),
 
@@ -226,8 +225,8 @@ THEMES = [
                  background_deep="#eee8d5", background_sunken="#f5efdc", window="#fdf6e3", view="#fffbef",
                  headerbar="#eee8d5", sidebar="#f5efdc", card="#fffbef", popover="#fffbef"),
          renders=[
-             R("dark", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.10, -0.25], stars=0, gain=1.9, desat=0.0),
-             R("light", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.10, -0.25], wash=0.3, gain=1.6,
+             R("dark", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.10, -0.25], stars=0, desat=0.0),
+             R("light", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.10, -0.25], wash=0.3,
                dawn_bottom="#fdf6e3", dawn_top="#eee8d5"),
              R("dark", "leak", c1="magenta", c2="blue", c3="cyan", beam=-0.35, stars=0.3),
              R("light", "leak", c1="magenta", c2="blue", c3="cyan", beam=-0.35, wash=0.55,
@@ -315,8 +314,8 @@ THEMES = [
                  headerbar="#f2f0e5", sidebar="#f2f0e5", card="#ffffff", popover="#ffffff"),
          renders=[
              # ink on paper: cloth weave, blue/cyan ink with an orange fleck
-             R("dark", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.30, -0.20], stars=0, desat=0.0, gain=1.9),
-             R("light", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.30, -0.20], wash=0.35, gain=1.6,
+             R("dark", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.30, -0.20], stars=0, desat=0.0),
+             R("light", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.30, -0.20], wash=0.35,
                dawn_bottom="#fffcf0", dawn_top="#e6e4d9"),
              R("dark", "silk", c1="magenta", c2="orange", c3="yellow", seed=[-5.0, 3.0], stars=0, desat=0.05, gain=1.3),
              R("light", "silk", c1="magenta", c2="orange", c3="yellow", seed=[-5.0, 3.0], wash=0.25, gain=1.2, stars=0),

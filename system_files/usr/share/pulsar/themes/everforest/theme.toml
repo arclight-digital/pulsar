@@ -110,7 +110,6 @@ c3 = "green"
 bloom = [-0.25, -0.3]
 stars = 0
 desat = 0.05
-gain = 1.9
 
 [[wallpaper.render]]
 variant = "light"
@@ -120,6 +119,5 @@ c2 = "#35a77c"
 c3 = "#8da101"
 bloom = [-0.25, -0.3]
 wash = 0.3
-gain = 1.6
 dawn_bottom = "#fdf6e3"
 dawn_top = "#efebd4"

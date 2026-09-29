@@ -482,15 +482,40 @@ PY
 }
 
 @test "no baked scanline raster in either wallpaper shader" {
-    ! grep -n 'gl_FragCoord.y \* 2.0944' "${REPO}/assets/shaders/theme.frag" "${REPO}/assets/shaders/pulsar.frag"
+    ! grep -n 'gl_FragCoord.y \* 2.0944' "${REPO}/assets/shaders/theme.frag" "${REPO}/assets/shaders/pulsar.frag" \
+        "${REPO}"/assets/shaders/looks/*.glsl
 }
 
-@test "each wallpaper look has its own effect in both shaders" {
-    for f in "${REPO}/assets/shaders/theme.frag" "${REPO}/assets/shaders/pulsar.frag"; do
-        for w in wSilk wLeak wSatin wHolo; do
-            grep -q "if (${w} > 0.0)" "$f"
-        done
-        grep -q 'rays' "$f"; grep -q 'thread' "$f"; grep -q 'film' "$f"
+@test "every look is its own file, in looks.json, with its own effect" {
+    d="${REPO}/assets/shaders/looks"
+    # looks.json: eight looks in u_look order; every file it lists exists
+    [ "$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["looks"]))' "$d/looks.json")" \
+      = "silk leak satin holo relief tide orbit beacon" ]
+    for n in $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["files"]))' "$d/looks.json"); do
+        [ -s "$d/$n.glsl" ]
+    done
+    # the first three keep a brand half (pulsar.frag defines BRAND) and a theme half
+    grep -q '^#define BRAND' "${REPO}/assets/shaders/pulsar.frag"
+    ! grep -q '^#define BRAND' "${REPO}/assets/shaders/theme.frag"
+    for n in silk leak holo; do grep -q '^#ifdef BRAND' "$d/$n.glsl"; grep -q '^#else' "$d/$n.glsl"; done
+    # each look's signature effect lives in its own file
+    grep -q 'lattice' "$d/silk.glsl"; grep -q 'rays' "$d/leak.glsl"; grep -q 'sheen' "$d/satin.glsl"
+    grep -q 'film' "$d/holo.glsl"; grep -q 'isIndex' "$d/relief.glsl"; grep -q 'cellEdge' "$d/tide.glsl"
+    grep -q 'ring' "$d/orbit.glsl"; grep -q 'sweep' "$d/beacon.glsl"
+    # and the entries keep no look's code: only its dispatch
+    ! grep -q 'beamRGB\|holoRamp\|fbm(p + 3.0' "${REPO}/assets/shaders/pulsar.frag" "${REPO}/assets/shaders/theme.frag"
+}
+
+@test "both renderers read the looks and assemble the shader from looks.json" {
+    for r in render-wallpapers.py render-theme-wallpapers.py; do
+        grep -q 'looks.json' "${REPO}/scripts/$r"
+        grep -q 'def shader_source' "${REPO}/scripts/$r"
+    done
+    ! grep -q 'LOOKS = {"silk"' "${REPO}"/scripts/render-wallpapers.py "${REPO}"/scripts/render-theme-wallpapers.py
+    # every brand pair the renderer writes is registered with GNOME and the Pulsar theme
+    for n in silk leak satin holo relief tide orbit beacon; do
+        grep -q "pulsar-${n}-dark.png" "${REPO}/system_files/usr/share/gnome-background-properties/pulsar.xml"
+        grep -q "pulsar-${n}-light.png" "${REPO}/system_files/usr/share/pulsar/themes/pulsar/theme.toml"
     done
 }
 

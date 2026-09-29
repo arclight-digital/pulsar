@@ -80,7 +80,6 @@ c2 = "cyan"
 c3 = "cyan"
 bloom = [-0.1, -0.25]
 stars = 0
-gain = 1.9
 desat = 0.0
 
 [[wallpaper.render]]
@@ -91,7 +90,6 @@ c2 = "cyan"
 c3 = "cyan"
 bloom = [-0.1, -0.25]
 wash = 0.3
-gain = 1.6
 dawn_bottom = "#fdf6e3"
 dawn_top = "#eee8d5"
 

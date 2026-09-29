@@ -21,6 +21,16 @@ os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 SHADER = REPO / "assets" / "shaders" / "pulsar.frag"
+LOOKS_DIR = REPO / "assets" / "shaders" / "looks"
+
+
+def shader_source():
+    """pulsar.frag, then every look file in looks/looks.json's order -- the
+    shader as it compiles. theme.frag, the renderer of the theme wallpapers
+    and the site's live sky assemble theirs the same way."""
+    import json
+    order = json.loads((LOOKS_DIR / "looks.json").read_text())["files"]
+    return "\n".join([SHADER.read_text()] + [(LOOKS_DIR / f"{n}.glsl").read_text() for n in order])
 
 # The shader is written glslViewer-style (gl_FragColor, no #version). Alias it
 # forward rather than rewriting the shader, so the same file stays usable with
@@ -35,12 +45,12 @@ in vec2 in_pos;
 void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }
 """
 
-# All eight shipped wallpapers: four looks x two themes. u_theme switches the
-# palette and mood (0 = night, 1 = dawn); u_look picks the composition
-# (0 silk / 1 leak / 2 satin / 3 holo). Silk is the default pair -- the
-# gschema override and the lock screen point at it by name -- and all four
-# pairs are listed in gnome-background-properties/pulsar.xml, so KEEP THE
-# FILENAMES IN SYNC with both of those if anything here changes.
+# Every shipped brand wallpaper: each look (looks/looks.json) x two themes.
+# u_theme switches the palette and mood (0 = night, 1 = dawn); u_look picks
+# the look. Silk is the default pair -- the gschema override and the lock
+# screen point at it by name -- and every pair is listed in
+# gnome-background-properties/pulsar.xml and themes/pulsar/theme.toml, so KEEP
+# THE FILENAMES IN SYNC with those if anything here changes.
 #
 # The mark is pasted after the render -- it is alpha art with a gaussian glow,
 # and reimplementing that in GLSL to avoid one PIL call would be absurd. Dark
@@ -58,7 +68,13 @@ void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }
 # 256-unit drawing grid, where the core is always at (128, 128), so the paste
 # scales and places by the drawing instead of by the box.
 BRAND = REPO / "assets" / "brand"
-LOOKS = {"silk": 0.0, "leak": 1.0, "satin": 2.0, "holo": 3.0}
+def _looks():
+    import json
+    names = json.loads((REPO / "assets" / "shaders" / "looks" / "looks.json").read_text())["looks"]
+    return {n: float(i) for i, n in enumerate(names)}
+
+
+LOOKS = _looks()     # u_look for each look, in looks/looks.json's order
 MARKS = {"dark": ("png/pulsar-mark-1024.png", "svg/pulsar-mark.svg"),
          "light": ("png/pulsar-mark-light-1024.png", "svg/pulsar-mark-light.svg")}
 VARIANTS = [
@@ -82,7 +98,7 @@ def render(width, height, uniforms):
     ctx = moderngl.create_standalone_context(backend="egl")
     prog = ctx.program(
         vertex_shader=VERTEX,
-        fragment_shader=PREAMBLE + SHADER.read_text(),
+        fragment_shader=PREAMBLE + shader_source(),
     )
     # Fullscreen triangle beats a quad: one primitive, no diagonal seam.
     verts = np.array([-1, -1, 3, -1, -1, 3], dtype="f4")
