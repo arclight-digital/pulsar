@@ -1484,6 +1484,47 @@ EOF
     [[ "$msg" == *"token=<redacted>"* ]]
 }
 
+# The secret-shaped and address-shaped lines a journal can carry, one message
+# each, from tests/fixtures/report-secrets.txt; and the lines that look close
+# to them but must survive (systemd instance units, digests, versions, a
+# user@host with no domain), from report-keep.txt.
+report_messages() {
+    report_env
+    export R_LINES="$1"
+    cat > "${STUB}/journalctl" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$JOURNAL_LOG"
+case " $* " in *" --user "*) exit 0 ;; esac
+while IFS= read -r m; do
+    jq -n -c --arg m "$m" '{__REALTIME_TIMESTAMP: "1790000000000000", UNIT: "broken.service", PRIORITY: "3", MESSAGE: $m}'
+done < "$R_LINES"
+EOF
+    chmod +x "${STUB}/journalctl"
+}
+
+@test "report redacts tokens by prefix, bearer credentials, JWTs and email addresses" {
+    report_messages "${BATS_TEST_DIRNAME}/fixtures/report-secrets.txt"
+    run "$PULSAR" report
+    [ "$status" -eq 0 ] || fail "$output"
+    for s in abcDEF1234567890xyz dXNlcjpodW50ZXIyaHVudGVy ghp_AbCdEf github_pat_11ABC glpat-AbCd \
+             sk-ant-api03 xoxb-1234567890 AKIAIOSFODNN7EXAMPLE eyJhbGciOiJIUzI1NiJ9 jane.doe example.co.uk; do
+        [[ "$output" != *"$s"* ]] || fail "leaked: $s"
+    done
+    msgs=$(echo "$output" | jq -r '.journal.system.lines[].message')
+    [[ "$msgs" == *"Bearer <redacted>"* ]] || fail "bearer scheme lost: $msgs"
+    [[ "$msgs" == *"mail for <email> bounced"* ]] || fail "$msgs"
+}
+
+@test "report keeps what only looks like a secret or an address" {
+    report_messages "${BATS_TEST_DIRNAME}/fixtures/report-keep.txt"
+    run "$PULSAR" report
+    [ "$status" -eq 0 ] || fail "$output"
+    msgs=$(echo "$output" | jq -r '.journal.system.lines[].message')
+    while IFS= read -r line; do
+        [[ "$msgs" == *"$line"* ]] || fail "mangled: $line"$'\n'"$msgs"
+    done < "${BATS_TEST_DIRNAME}/fixtures/report-keep.txt"
+}
+
 @test "report carries nothing from the environment" {
     report_env
     SOME_API_TOKEN=do-not-print-me-7f3a run "$PULSAR" report

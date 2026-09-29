@@ -3611,8 +3611,10 @@ Not included
 
 Redacted, best effort
   the hostname, your username and home path (as ~), MAC and IPv4 addresses,
-  and values after words like token=, password:, api_key=, Authorization.
-  Journal messages are free text: read the report before posting it.
+  email addresses, values after words like token=, password:, api_key=,
+  Authorization and Bearer, and tokens recognizable by their prefix (GitHub
+  ghp_/github_pat_, GitLab glpat-, sk- API keys, Slack xox*-, AWS AKIA,
+  JWTs). Journal messages are free text: read the report before posting it.
 EOF
 }
 
@@ -3732,8 +3734,23 @@ flatpak_json() {
 JQ_REDACT='
   def lit(a; b): if (a | length) == 0 then . else split(a) | join(b) end;
   def scrub:
+      # Secrets by shape, first, before the username pass can split an
+      # address or a token around "<user>". An HTTP credential keeps its
+      # scheme: "Authorization: Bearer abc" used to lose only the word
+      # "Bearer" to the key rule below, and the token after it survived.
+      gsub("(?<k>\\b(bearer|basic)\\s+)[A-Za-z0-9._~+/=-]{8,}"; "\(.k)<redacted>"; "i")
+    # Tokens whose prefix says what they are, wherever they sit: GitHub,
+    # GitLab, OpenAI/Anthropic-style sk- keys, Slack, AWS access key ids.
+    | gsub("\\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})"; "<redacted>")
+    # A JWT: three base64url parts, the first always "eyJ" ({"...).
+    | gsub("\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}"; "<redacted>")
+    # An email address needs a dotted domain ending in letters. A systemd
+    # instance unit has the same shape (user@1000.service, getty@tty1.service),
+    # so a unit-type suffix is never a top-level domain here; and user@host
+    # with no dot, as a shell prompt prints it, is left alone.
+    | gsub("[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\\.)+(?!(?:service|socket|timer|target|mount|automount|slice|scope|path|device|swap)\\b)[A-Za-z]{2,}\\b"; "<email>")
       # a HOME of "/" would otherwise turn every slash into a tilde
-      lit(if ($home | length) > 1 then $home else "" end; "~")
+    | lit(if ($home | length) > 1 then $home else "" end; "~")
     | reduce ($users[] | select(length > 0)) as $u (.;
         lit("/var/home/" + $u; "~") | lit("/home/" + $u; "~")
         | if ($u | length) >= 3 and ($u | test("^[a-z_][a-z0-9_-]*$"))
@@ -3747,7 +3764,9 @@ JQ_REDACT='
       then .
       else gsub("(?<![A-Za-z0-9_-])" + ($host | gsub("(?<c>[.*+?^${}()|\\[\\]\\\\])"; "\\\(.c)")) + "(?![A-Za-z0-9_-])"; "<hostname>")
       end
-    | gsub("(?<k>(token|secret|passw(or)?d|api[_-]?key|authorization|bearer)[\"'"'"'=: ]+)[^\\s\"'"'"',;]+"; "\(.k)<redacted>"; "i")
+    # The value after a key, unless it is a credential scheme the first rule
+    # already handled ("Authorization: Bearer <redacted>" stays readable).
+    | gsub("(?<k>(token|secret|passw(or)?d|api[_-]?key|authorization|bearer)[\"'"'"'=: ]+)(?!<redacted>)(?!(?:bearer|basic)\\s)[^\\s\"'"'"',;]+"; "\(.k)<redacted>"; "i")
     | gsub("\\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\\b"; "<mac>")
     | gsub("\\b(?!127\\.)([0-9]{1,3}\\.){3}[0-9]{1,3}\\b"; "<ipv4>");
   walk(if type == "string" then scrub else . end)'
@@ -3810,7 +3829,7 @@ cmd_report() {
         --argjson gfx "$gfx" --argjson fp "$fp" --argjson cr "$cr" '
         { report: { schema: 1, tool: ("pulsar " + $version),
                     generated: (now | floor | todate), journal_lines: $lines,
-                    note: "hostname, username, home path, MAC/IPv4 and secret-shaped values are redacted; best effort" },
+                    note: "hostname, username, home path, MAC/IPv4, email addresses and secret-shaped values are redacted; best effort" },
           doctor: $doctor, status: $status, manifest: $manifest,
           units: { failed_system: $fsys, failed_user: $fusr },
           journal: { system: $jsys, user: $jusr },
