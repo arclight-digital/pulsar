@@ -64,13 +64,37 @@ float fbm(vec2 p) {
     for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; }
     return s;
 }
-float starLayer(vec2 uv, float scale, float density, float size) {
+float starLayer(vec2 uv, float scale, float density, float size, float tw) {
     vec2 g = uv * scale;
     vec2 id = floor(g);
+    // most cells hold no star (density is a few percent): leave before any
+    // of the star's own math, which is most of this layer's cost
+    if (hash(id) < 1.0 - density) return 0.0;
     vec2 pos = vec2(hash(id + vec2(3.1, 1.7)), hash(id + vec2(7.7, 9.2)));
-    float d = length(fract(g) - pos);
-    float lit = step(1.0 - density, hash(id));
-    return lit * exp(-d * d * size) * (0.4 + 0.6 * hash(id + vec2(5.5, 2.2)));
+    // Drawn in screen pixels, not cell units: a star is a point of light
+    // whatever the resolution. In cell units the fine layer fell below a
+    // pixel (flickering single pixels) and the coarse one grew into a soft
+    // 3-pixel smudge.
+    float ppc = u_resolution.y / scale;                           // pixels per cell
+    vec2 v = (fract(g) - pos) * ppc;                              // offset in pixels
+    float b = hash(id + vec2(5.5, 2.2));                          // brightness
+    // size keeps its old meaning (bigger size = smaller star), now as a
+    // core radius in pixels, never under half a pixel so it stays resolved
+    float r = clamp(ppc / sqrt(2.0 * size) * 0.55, 0.45, 1.1) * (0.8 + 0.4 * b);
+    float dp2 = dot(v, v);
+    float star = 1.3 * exp(-dp2 / (r * r)) + 0.32 * exp(-sqrt(dp2) / (r * 3.5));
+    // the brightest few get a thin four-point diffraction cross
+    float L = r * (7.0 + 9.0 * b);
+    float cross = exp(-abs(v.x) / L * 2.5) * exp(-v.y * v.y / (r * r * 0.3))
+                + exp(-abs(v.y) / L * 2.5) * exp(-v.x * v.x / (r * r * 0.3));
+    // each cell draws only its own star, so a spike reaching the cell's
+    // edge would be cut off there: fade it out before the edge
+    vec2 fc = fract(g);
+    float edge = min(min(fc.x, 1.0 - fc.x), min(fc.y, 1.0 - fc.y)) * ppc;
+    star += cross * 0.55 * smoothstep(0.86, 1.0, b) * smoothstep(0.0, L, edge);
+    // twinkle, live only (stills pass 0): slow, each star on its own phase
+    float twk = 1.0 - tw * 0.35 * (0.5 + 0.5 * sin(u_time * (0.8 + b * 1.6) + hash(id + 1.3) * 6.2831));
+    return star * (0.4 + 0.6 * b) * twk;
 }
 
 // ---- OKLab mixing -------------------------------------------------------
@@ -158,9 +182,12 @@ void main() {
     silk = mixo(silk, u_c3, smoothstep(0.70, 0.95, f) * 0.8);
     silk = grey(silk, u_desat);
 
-    vec2 seed = uv + theme * vec2(31.7, 17.3) + u_seed;
-    float starsNight = starLayer(seed, 110.0, 0.030, 600.0) + starLayer(seed, 28.0, 0.050, 260.0);
-    float starsDawn  = starLayer(seed,  60.0, 0.018, 380.0) + starLayer(seed, 18.0, 0.040, 180.0);
+    // two fields at fixed places, faded between by theme (see pulsar.frag)
+    vec2 seedD = uv + u_seed, seedL = uv + vec2(31.7, 17.3) + u_seed;
+    float starsNight = mix(starLayer(seedD, 110.0, 0.030, 600.0, 0.0) + starLayer(seedD, 28.0, 0.050, 260.0, 0.0),
+                           starLayer(seedL, 110.0, 0.030, 600.0, 0.0) + starLayer(seedL, 28.0, 0.050, 260.0, 0.0), step(0.5, theme));
+    float starsDawn  = mix(starLayer(seedD,  60.0, 0.018, 380.0, 0.0) + starLayer(seedD, 18.0, 0.040, 180.0, 0.0),
+                           starLayer(seedL,  60.0, 0.018, 380.0, 0.0) + starLayer(seedL, 18.0, 0.040, 180.0, 0.0), step(0.5, theme));
 
     vec3 night = mix(u_ga, u_gb, mask);
     night += silk * lum * 0.75 * u_gain;
@@ -291,7 +318,7 @@ void main() {
         float ang = atan(rel.y, rel.x);
         float rays = vnoise(vec2(ang * 34.0, 1.7)) * 0.65 + vnoise(vec2(ang * 91.0, 4.2)) * 0.35;
         rays = smoothstep(0.35, 0.95, rays) * smoothstep(2.3, 0.4, length(rel));
-        float motes = starLayer(uv + u_seed, 46.0, 0.035, 140.0) + starLayer(uv - u_seed, 19.0, 0.03, 60.0);
+        float motes = starLayer(uv + u_seed, 46.0, 0.035, 140.0, 0.0) + starLayer(uv - u_seed, 19.0, 0.03, 60.0, 0.0);
         float edge = -0.28 + 0.14;              // the upper edge of the brightest beam
         float disp = 0.0035 * u_signal;
         vec3 streak = vec3(line(lq.y - edge - disp, 0.010), line(lq.y - edge, 0.010), line(lq.y - edge + disp, 0.010))
