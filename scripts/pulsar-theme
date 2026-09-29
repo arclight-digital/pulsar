@@ -349,36 +349,45 @@ class Variant:
         # The Shell's rules sit under .pulsar-glow (the extension's switch),
         # so they are always written; GTK has no such class, so its block is
         # written only while the switch is on.
+        #
+        # Each element's glow follows its size (GLOW_THICKNESS, below): a
+        # small thing gets a short, slightly stronger halo, a big one a wider
+        # and fainter one, so every lit control reads as equally lit.
         dark = self.mode == "dark"
-        # stronger as it got tighter: a narrow glow at the old strength read
-        # as fainter, not as tighter
-        c["glow_alpha"] = 0.45 if dark else 0.3
-        c["glow_blur"] = "6px" if dark else "5px"
-        # a bar is long and thin: the same blur reads as a wide smear along it
-        c["glow_bar_blur"] = "4px" if dark else "3px"
+        acc = self.p["accent"].rgb
+        for key, t in GLOW_THICKNESS.items():
+            blur, alpha = glow_for(t, dark)
+            c[f"glow_{key}"] = f"0 0 {blur}px 0 rgba({acc}, {alpha})"
+        # the slider's fill is drawn by glass.js, which sizes its own reach
+        # by the same rule and takes only the color from here
+        c["glow_slider_color"] = f"rgba({acc}, {glow_for(GLOW_THICKNESS['slider'], dark)[1]})"
         if self.glow:
-            a = c["glow_alpha"]
-            acc = self.p["accent"].rgb
+            def rule(sel, key):
+                blur, alpha = glow_for(GLOW_THICKNESS[key], dark)
+                return f"{sel} {{\n  box-shadow: 0 0 {blur}px rgba({acc}, {alpha});\n}}\n"
             # the filled states, each only while the control can be used
-            lit = [f"{n}:{st}:not(:disabled)" for n in ("check", "radio")
-                   for st in ("checked", "indeterminate")] + ["switch:checked:not(:disabled)"]
+            def lit(node):
+                return [f"{node}:{st}:not(:disabled)" for st in ("checked", "indeterminate")]
+            checks = lit("check") + lit("radio")
             # a list's cells clip what they draw, so a glow there is cut square
             # at the cell's edge: none. Each exclusion carries the same states,
             # or the plainer selector would lose to the glow on specificity.
             def unlit(views):
-                return ", ".join(f"{v} {x}" for v in views for x in lit if not x.startswith("switch"))
-            shadow = f"  box-shadow: 0 0 {c['glow_blur']} rgba({acc}, {a});\n}}\n"
+                return ", ".join(f"{v} {x}" for v in views for x in checks)
+            common = (rule(",\n".join(checks), "gtk_check") +
+                      rule("switch:checked:not(:disabled)", "gtk_switch") +
+                      rule("button.suggested-action:not(:disabled)", "gtk_button"))
             c["glow"] = (
-                "/* Glow: what is filled with the accent glows softly in it. */\n"
-                "button.suggested-action:not(:disabled),\n" + ",\n".join(lit) + " {\n" + shadow +
-                "scale:not(:disabled) > trough > highlight, progressbar:not(:disabled) > trough > progress {\n"
-                f"  box-shadow: 0 0 {c['glow_bar_blur']} rgba({acc}, {a});\n}}\n" +
+                "/* Glow: what is filled with the accent glows softly in it, each in\n"
+                "   proportion to its size. */\n" + common +
+                rule("scale:not(:disabled) > trough > highlight", "gtk_scale") +
+                rule("progressbar:not(:disabled) > trough > progress", "gtk_progress") +
                 unlit(("columnview", "listview")) + " { box-shadow: none; }\n")
             # GTK3: no bars. It clips a fill to its trough, which cuts the
             # glow to a sliver along the ends -- worse than none.
             c["glow3"] = (
-                "/* Glow: what is filled with the accent glows softly in it. */\n"
-                "button.suggested-action:not(:disabled),\n" + ",\n".join(lit) + " {\n" + shadow +
+                "/* Glow: what is filled with the accent glows softly in it, each in\n"
+                "   proportion to its size. */\n" + common +
                 unlit(("treeview",)) + " { box-shadow: none; }\n")
         else:
             c["glow"] = ""
@@ -1075,6 +1084,45 @@ def ext_turned_off():
     gnome-extensions disable). GNOME records that in disabled-extensions,
     which wins over enabled-extensions: a uuid in both stays off."""
     return EXT_UUID in parse_gv_list(gsettings_get("org.gnome.shell", "disabled-extensions"))
+
+
+# Glow in proportion to size. t is an element's thickness -- its short
+# side, in logical pixels -- measured where it renders: the Shell's in the
+# theme gate's headless Shell (GNOME 50, the stock sheet under ours), GTK's
+# from libadwaita / adw-gtk3's own sizes and checked against the gate's
+# screenshots. A new element gets its thickness measured and a row here.
+GLOW_THICKNESS = {
+    # Shell
+    "toggle": 52,           # a checked quick toggle, plain or split (152-192 x 52)
+    "today": 39,            # today in the calendar (39 x 39)
+    "button": 30,           # .button.default in a dialog's button row
+    "icon_button": 43,      # .icon-button.default (a round 43)
+    "switch": 26,           # a popup menu's toggle switch (46 x 26)
+    "check": 20,            # a checked check box's box (20 x 20)
+    "candidate": 34,        # the input method's selected candidate
+    "osd_label": 89,        # the monitor-number label (96 x 89)
+    "dot": 9,               # the top bar's active workspace dot (29 x 9)
+    "ws_indicator": 6,      # the workspace switcher's active bar (94 x 6)
+    "slider": 4,            # a slider's fill (the bar is 4; glass.js draws it)
+    # GTK (4 and 3)
+    "gtk_check": 20,        # check and radio: 14 + 2 x 3 padding
+    "gtk_switch": 26,
+    "gtk_button": 34,       # a suggested button: 24 + 2 x 5 padding
+    "gtk_scale": 6,         # a scale's fill
+    "gtk_progress": 8,      # a progress bar's
+}
+
+
+def glow_for(t, dark):
+    """(blur px, alpha) for an element t logical pixels thick. The reach
+    grows with size, from 2px on a thin bar to 9px on a quick toggle; the
+    strength falls gently as it does (by the 0.3 power of size, against a
+    20px check box), so a wide faint halo and a short strong one carry the
+    same light. Light themes a notch smaller and weaker: a colored halo on a
+    light ground reads as a smudge. glass.js repeats the reach for sliders."""
+    blur = min(max(1.5 + 0.18 * t, 2.0), 9.0) * (1.0 if dark else 0.85)
+    alpha = (0.45 if dark else 0.3) * min(max((20 / t) ** 0.3, 0.7), 1.35)
+    return round(blur, 1), round(alpha, 2)
 
 
 def glow_on():

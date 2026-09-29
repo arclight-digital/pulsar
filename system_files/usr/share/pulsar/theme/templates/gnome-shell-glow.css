@@ -1,25 +1,29 @@
-/* Glow: what is filled with the accent glows softly in it. One rule for all
-   of them -- a switched-on quick toggle, today in the calendar, the default
-   button, a switch, a checked box, the workspace you are on -- and nothing
-   neutral gets one. The engine appends this to the scheme's sheet; the
-   extension adds .pulsar-glow to the Shell's uiGroup while the Glow effect is
-   on (and allowed: not high contrast, not the lock screen), so switching it
-   is live and needs no reload. St draws one box-shadow per widget, so a
-   focused control's stock inset ring (!important) still wins over this. */
+/* Glow: what is filled with the accent glows softly in it -- a switched-on
+   quick toggle, today in the calendar, the default button, a switch, a
+   checked box, the workspace you are on -- and nothing neutral gets one.
+   Each in proportion to its size: the engine's GLOW_THICKNESS holds every
+   element's measured thickness and glow_for() turns it into a reach and a
+   strength, so a small dot and a big pill read as equally lit. The engine
+   appends this to the scheme's sheet; the extension adds .pulsar-glow to
+   the Shell's uiGroup while the Glow effect is on (and allowed: not high
+   contrast, not the lock screen), so switching it is live and needs no
+   reload. St draws one box-shadow per widget, so a focused control's stock
+   inset ring (!important) still wins over this. */
 .pulsar-glow .quick-toggle:checked,
-.pulsar-glow .quick-toggle-has-menu:checked,
-.pulsar-glow .keyboard-brightness-level .button:checked,
-.pulsar-glow .calendar .calendar-day.calendar-today,
-.pulsar-glow .button.default, .pulsar-glow .icon-button.default,
-.pulsar-glow .toggle-switch:checked,
-.pulsar-glow .check-box:checked StIcon,
-.pulsar-glow .candidate-box:selected,
-.pulsar-glow .osd-monitor-label,
-.pulsar-glow .ws-switcher-indicator:active, .pulsar-glow .workspace-dot:active {
-  box-shadow: 0 0 {{glow_blur}} 0 rgba({{accent_rgb}}, {{glow_alpha}}); }
+.pulsar-glow .quick-toggle-has-menu:checked { box-shadow: {{glow_toggle}}; }
+.pulsar-glow .calendar .calendar-day.calendar-today { box-shadow: {{glow_today}}; }
+.pulsar-glow .button.default,
+.pulsar-glow .keyboard-brightness-level .button:checked { box-shadow: {{glow_button}}; }
+.pulsar-glow .icon-button.default { box-shadow: {{glow_icon_button}}; }
+.pulsar-glow .toggle-switch:checked { box-shadow: {{glow_switch}}; }
+.pulsar-glow .check-box:checked StIcon { box-shadow: {{glow_check}}; }
+.pulsar-glow .candidate-box:selected { box-shadow: {{glow_candidate}}; }
+.pulsar-glow .osd-monitor-label { box-shadow: {{glow_osd_label}}; }
+.pulsar-glow .workspace-dot:active { box-shadow: {{glow_dot}}; }
+.pulsar-glow .ws-switcher-indicator:active { box-shadow: {{glow_ws_indicator}}; }
 /* A split toggle (Wi-Fi, Bluetooth) glows as one pill: its two halves are
    both filled, and a shadow each would pool in the seam between them. */
 .pulsar-glow .quick-toggle-has-menu .quick-toggle:checked { box-shadow: none; }
 /* A slider's fill is drawn by the Shell's own code, not CSS; glass.js paints
    the glow under it in this color, and only while this rule applies. */
-.pulsar-glow .slider { -pulsar-glow: rgba({{accent_rgb}}, {{glow_alpha}}); }
+.pulsar-glow .slider { -pulsar-glow: {{glow_slider_color}}; }

@@ -1753,9 +1753,13 @@ class FocusBrackets {
 // little larger and fainter, make the falloff, and they stop short of the
 // slider's own surface (the handle makes it taller than the bar), so the
 // glow fades out rather than being cut off at its edge.
+// The reach follows the bar's thickness by the engine's rule (glow_for() in
+// pulsar-theme: 1.5 + 0.18 x thickness, 2 to 9 logical px -- a 4px bar gets
+// about 2), never more than 90% of the room around the bar; the strength is
+// the engine's too, in the color it sets.
 const GLOW_STEPS = 8;
-const GLOW_REACH = 0.4;     // of the room above and below the bar: a bar's glow hugs it
 const GLOW_LAYER = 0.22;    // of the glow color's alpha, per layer
+const glowReach = t => Math.min(Math.max(1.5 + 0.18 * t, 2), 9);
 function fillGlow(bar) {
     if (!(bar._value > 0) || !(bar._maxValue > 0))
         return;
@@ -1768,7 +1772,8 @@ function fillGlow(bar) {
     const rtl = bar.get_text_direction() === Clutter.TextDirection.RTL;
     const progress = Math.min(bar._value, bar._maxValue) / bar._maxValue;
     const end = r0 + (width - 2 * r0) * progress;
-    const reach = Math.max(0, (height - bh) / 2) * GLOW_REACH;
+    const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+    const reach = Math.min(Math.max(0, (height - bh) / 2) * 0.9, glowReach(bh / scale) * scale);
     const cr = bar.get_context();
     cr.setSourceRGBA(color.red / 255, color.green / 255, color.blue / 255,
         color.alpha / 255 * GLOW_LAYER);
