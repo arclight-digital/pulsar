@@ -40,8 +40,9 @@ vec3 orbit(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 da
     float behindPlanet = smoothstep(-0.02, 0.02, rd.y) * inside;
     // the planet's shadow falls across the rings, away from the sun
     vec2 toSun = -sun;
-    // soft-edged: a hard edge here cut the near ring off in a straight line
-    float inShadow = step(dot(d, sun), 0.0) * smoothstep(R * 1.25, R * 0.80, abs(dot(d, vec2(-sun.y, sun.x)))) * 0.75;
+    // soft-edged on both axes: a hard edge on either cut the ring off in a
+    // straight line (the step at dot(d, sun) = 0 drew a seam across it)
+    float inShadow = smoothstep(0.08, -0.08, dot(d, sun)) * smoothstep(R * 1.25, R * 0.80, abs(dot(d, vec2(-sun.y, sun.x)))) * 0.75;
     float ringLight = band * struc * (1.0 - behindPlanet) * (1.0 - inShadow * 0.85);
     // glints: sparse points of sunlight caught by ring particles
     float glint = starLayer(uv + u_seed, 70.0, 0.08, 500.0, u_live) * band * (1.0 - inShadow) * (1.0 - behindPlanet);
