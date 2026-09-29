@@ -1,18 +1,14 @@
 # Releases
 
-Pulsar has two kinds of change, and two changelogs for them.
+- **Releases** (`MAJOR.MINOR.PATCH`, written up here) are changes to what
+  Pulsar adds on top of Silverblue. The About page and boot menu show the
+  first two numbers ("Pulsar 1.0"); `pulsar manifest` and `pulsar doctor`
+  show all three.
+- **Nightly builds** (`44.20260929.0`) carry each day's Fedora and Silverblue
+  updates, listed in the [nightly changelog](/docs/changelog), generated from
+  the images.
 
-**Releases** are Pulsar's own: new features and fixes to what Pulsar adds on
-top of Silverblue. They are numbered `MAJOR.MINOR.PATCH` and written up here.
-Settings' About page and the boot menu call a release by its first two
-numbers ("Pulsar 1.0"); `pulsar manifest` and `pulsar doctor` show all three.
-
-**Nightly builds** carry everything else: each night's image picks up the
-Fedora and Silverblue updates published that day, and gets a build number like
-`44.20260929.0`. Those are listed package by package in the
-[nightly changelog](/docs/changelog), generated from the images themselves.
-You get both the same way, from the same update: releases ship inside a
-nightly.
+Releases ship inside a nightly; both arrive through the same update.
 
 ## 1.0.0
 
