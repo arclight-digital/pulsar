@@ -202,11 +202,16 @@ const Views = {
     _map: new Map(),
     gen: 0,
     watch() {
-        this._id ??= global.stage.connect('before-paint', (_stage, view) => {
+        // not ??=: unwatch() leaves 0, which ??= would keep, and every lock
+        // disables and re-enables the extension -- the first unlock would
+        // leave no view known for the rest of the session
+        if (this._id)
+            return;
+        this._id = global.stage.connect('before-paint', (_stage, view) => {
             const fb = view.get_framebuffer();
             if (!this._map.has(fb)) {
                 const l = view.layout;
-                this._map.set(fb, {x: l.x, y: l.y, scale: view.get_scale()});
+                this._map.set(fb, {x: l.x, y: l.y, w: l.width, h: l.height, scale: view.get_scale()});
             }
         });
     },
@@ -248,6 +253,12 @@ function deviceRect(fb, actor, x, y, w, h, out) {
         out.sx1 = out.sx0 + w * sx;
         out.sy1 = out.sy0 + h * sy;
         out.scale = v.scale;
+        // this view's own part of the stage: the redraw clip is per view, so
+        // nothing past its edge (another monitor) can ever count as redrawn
+        out.vx0 = v.x;
+        out.vy0 = v.y;
+        out.vx1 = v.x + v.w;
+        out.vy1 = v.y + v.h;
         return true;
     }
     out.sx0 = NaN;
@@ -429,12 +440,11 @@ function levels(hw, hh, n, out) {
 // last frame -- the glass's own window, the bar over it. Blurring that
 // pixel feeds the glass its own image back, and it flickers. A region the
 // clip holds with a pixel to spare was repainted to its last device pixel.
-function probe(clip, q, x0, y0, x1, y1) {
-    const sw = global.stage.width, sh = global.stage.height;
-    q.x = Math.max(0, x0 - 1);
-    q.y = Math.max(0, y0 - 1);
-    q.width = Math.min(sw, x1 + 1) - q.x;
-    q.height = Math.min(sh, y1 + 1) - q.y;
+function probe(clip, q, x0, y0, x1, y1, r) {
+    q.x = Math.max(r.vx0, x0 - 1);
+    q.y = Math.max(r.vy0, y0 - 1);
+    q.width = Math.min(r.vx1, x1 + 1) - q.x;
+    q.height = Math.min(r.vy1, y1 + 1) - q.y;
     return clip.contains_rectangle(q);
 }
 
@@ -575,9 +585,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         // not painting onto a view: nothing to go on but a whole redraw
         if (!clip || Number.isNaN(r.sx0))
             return true;
-        const sw = global.stage.width, sh = global.stage.height;
-        const x0 = Math.max(0, Math.floor(r.sx0)), y0 = Math.max(0, Math.floor(r.sy0));
-        const x1 = Math.min(sw, Math.ceil(r.sx1)), y1 = Math.min(sh, Math.ceil(r.sy1));
+        const x0 = Math.max(r.vx0, Math.floor(r.sx0)), y0 = Math.max(r.vy0, Math.floor(r.sy0));
+        const x1 = Math.min(r.vx1, Math.ceil(r.sx1)), y1 = Math.min(r.vy1, Math.ceil(r.sy1));
         if (x1 <= x0 || y1 <= y0)
             return true;
         const q = this._clipRect ??= new Mtk.Rectangle();
@@ -588,7 +597,7 @@ class PulsarLiveBlur extends Clutter.Effect {
             q.height = y1 - y0;
             return clip.contains_rectangle(q) === Mtk.RegionOverlap.IN;
         }
-        return probe(clip, q, x0, y0, x1, y1) === Mtk.RegionOverlap.IN;
+        return probe(clip, q, x0, y0, x1, y1, r) === Mtk.RegionOverlap.IN;
     }
 
     // Moved, and this redraw shows only part of what is beneath at the new
@@ -742,9 +751,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         // below repeat it, is one patch.
         const v = Views.get(fb);
         const q = this._tile ??= new Mtk.Rectangle();
-        const sw = global.stage.width, sh = global.stage.height;
-        const x0 = Math.max(0, Math.floor(r.sx0)), y0 = Math.max(0, Math.floor(r.sy0));
-        const x1 = Math.min(sw, Math.ceil(r.sx1)), y1 = Math.min(sh, Math.ceil(r.sy1));
+        const x0 = Math.max(r.vx0, Math.floor(r.sx0)), y0 = Math.max(r.vy0, Math.floor(r.sy0));
+        const x1 = Math.min(r.vx1, Math.ceil(r.sx1)), y1 = Math.min(r.vy1, Math.ceil(r.sy1));
         const open = this._runs ??= [];
         open.length = 0;
         const flush = (run) => {
@@ -758,13 +766,13 @@ class PulsarLiveBlur extends Clutter.Effect {
         for (let ty = y0; ty < y1; ty += TILE) {
             const ty1 = Math.min(ty + TILE, y1);
             // a row wholly in or wholly out is one probe, not one per tile
-            const row = probe(clip, q, x0, ty, x1, ty1);
+            const row = probe(clip, q, x0, ty, x1, ty1, r);
             let start = -1;
             // one step past the end, which closes the last run
             for (let tx = x0; tx < x1 + TILE; tx += TILE) {
                 let inside = row === Mtk.RegionOverlap.IN && tx < x1;
                 if (row === Mtk.RegionOverlap.PART && tx < x1) {
-                    inside = probe(clip, q, tx, ty, Math.min(tx + TILE, x1), ty1) === Mtk.RegionOverlap.IN;
+                    inside = probe(clip, q, tx, ty, Math.min(tx + TILE, x1), ty1, r) === Mtk.RegionOverlap.IN;
                 }
                 if (inside && start < 0) {
                     start = tx;
@@ -875,6 +883,9 @@ class PulsarLiveBlur extends Clutter.Effect {
 
     // The kept blur, drawn back up through the mask.
     _draw(fb, actor, x0, y0, w, h, s) {
+        // a first capture that failed leaves no size: uv / 0 is NaN glass
+        if (!s.result || !s.hw || !s.hh)
+            return;
         const out = s.result;
         const rw = s.hw, rh = s.hh;
         const sh = this._shape;
@@ -1328,7 +1339,8 @@ float dy = f.y - size.y * 0.5;
 float core = exp(-(dy * dy) / 0.3);
 float halo = exp(-abs(dy) / 1.1);
 float xn = f.x / size.x;
-float hot = 0.4 + 0.6 * exp(-pow((xn - 0.42) / 0.38, 2.0));
+float tx = (xn - 0.42) / 0.38;
+float hot = 0.4 + 0.6 * exp(-tx * tx);
 float I = (core * 0.34 + halo * 0.1) * hot;
 if (lit < 0.5) {
   float a = step(abs(dy), 0.5) * 0.1;
@@ -1487,6 +1499,11 @@ function recull(surfaces) {
 // they open over glass windows.
 const POPUP_TYPES = [Meta.WindowType.DROPDOWN_MENU, Meta.WindowType.POPUP_MENU, Meta.WindowType.COMBO,
     Meta.WindowType.TOOLTIP, Meta.WindowType.MENU];
+
+// Windows that opened while window glass was on (see Glass._glassy). Kept
+// at module level: every lock disables the extension and makes a new Glass,
+// and the set must outlive that, or a lock would strip their blur.
+const GLASSY = new WeakSet();
 
 const GLASS_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY];
 
@@ -1722,7 +1739,7 @@ export class Glass {
         // stylesheet at launch, so they stay translucent for life: switched
         // off, they keep their blur until they close (without it they would
         // be see-through), and only windows opened after follow the switch.
-        this._glassy = new WeakSet();
+        this._glassy = GLASSY;
         this._battery = null;           // 'warn' / 'alert' / null, from UPower
         this._a11y = new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.interface'});
         const self = this;
@@ -1731,13 +1748,22 @@ export class Glass {
         injections.overrideMethod(PopupMenu.PopupMenu.prototype, 'open',
             open => function (...args) {
                 open.call(this, ...args);
-                self._trackMenu(this);
+                // never throw into the Shell's own menu code
+                try {
+                    self._trackMenu(this);
+                } catch (e) {
+                    console.warn(`pulsar-theme: glass: menu: ${e.message}`);
+                }
             });
         // Notification banners: a new banner in the same bin.
         injections.overrideMethod(MessageTray.MessageTray.prototype, '_showNotification',
             show => function (...args) {
                 show.call(this, ...args);
-                self._trackBanner();
+                try {
+                    self._trackBanner();
+                } catch (e) {
+                    console.warn(`pulsar-theme: glass: banner: ${e.message}`);
+                }
             });
         settings.connectObject(
             'changed', () => this._sync(),
@@ -1753,6 +1779,8 @@ export class Glass {
         global.display.connectObject('window-created', (_d, win) => {
             // the actor exists once the window is shown
             laterAdd(() => {
+                if (this._destroyed)
+                    return;
                 this._trackWindow(win.get_compositor_private());
                 this._trackPopup(win);
             });
@@ -1769,7 +1797,7 @@ export class Glass {
         Main.layoutManager.panelBox.connectObject('notify::visible', () => this._sync(), this);
         Main.layoutManager.connectObject('monitors-changed', () => {
             Views.clear();
-            laterAdd(() => this._trackOsds());
+            laterAdd(() => this._destroyed || this._trackOsds());
         }, this);
         this._watchBattery();
         this._sync();
