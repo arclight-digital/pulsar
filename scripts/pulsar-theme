@@ -350,7 +350,9 @@ class Variant:
         # so they are always written; GTK has no such class, so its block is
         # written only while the switch is on.
         dark = self.mode == "dark"
-        c["glow_alpha"] = 0.34 if dark else 0.22
+        # stronger as it got tighter: a narrow glow at the old strength read
+        # as fainter, not as tighter
+        c["glow_alpha"] = 0.45 if dark else 0.3
         c["glow_blur"] = "6px" if dark else "5px"
         # a bar is long and thin: the same blur reads as a wide smear along it
         c["glow_bar_blur"] = "4px" if dark else "3px"

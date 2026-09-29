@@ -520,6 +520,53 @@ def set_scale(scale):
     print(f"  scale {scale}", flush=True)
 
 
+# A full Quick Settings panel for the site's pictures, as a laptop has it.
+# The gate's Shell has no NetworkManager, Bluetooth, UPower, audio or
+# backlight, so the stock items for them stay hidden; these are the Shell's
+# own QuickToggle / QuickMenuToggle / QuickSlider classes, in the stock
+# order, beside the stock Dark Style and Do Not Disturb toggles. Idempotent.
+QS_FULL = r"""(() => {
+  if (global._pulsarQS) return 'already';
+  global._pulsarQS = true;
+  const qs = Main.panel.statusArea.quickSettings, menu = qs.menu;
+  const {Gio, GObject, St} = imports.gi;
+  // the top bar as a laptop's: network and volume beside the battery, and
+  // not the gate's own unsafe-mode lock (it drives the Shell over Eval)
+  qs._unsafeMode.hide();
+  for (const n of ['audio-volume-medium-symbolic', 'network-wireless-signal-excellent-symbolic'])
+    qs._indicators.insert_child_at_index(new St.Icon({icon_name: n, style_class: 'system-status-icon'}), 0);
+  import('resource:///org/gnome/shell/ui/quickSettings.js').then(m => {
+    // the battery, and the lock button the gate's session hides
+    const sys = qs._system.quickSettingsItems[0];
+    sys._powerToggle.set({title: '79%', gicon: new Gio.ThemedIcon({name: 'battery-level-80-symbolic'})});
+    sys._powerToggle.visible = true;
+    for (const c of sys.child.get_children())
+      if (GObject.type_name(c.constructor.$gtype).includes('LockItem')) c.visible = true;
+    const dark = qs._darkMode.quickSettingsItems[0];
+    const dnd = qs._doNotDisturb.quickSettingsItems[0];
+    const slider = (icon, v) => { const s = new m.QuickSlider({iconName: icon}); s.slider.value = v; return s; };
+    menu.insertItemBefore(slider('audio-volume-medium-symbolic', 0.6), dark, 2);
+    menu.insertItemBefore(slider('display-brightness-symbolic', 0.5), dark, 2);
+    for (const t of [
+      new m.QuickMenuToggle({title: 'Wi-Fi', subtitle: 'Home', iconName: 'network-wireless-signal-excellent-symbolic', toggleMode: true, checked: true, menuEnabled: true}),
+      new m.QuickMenuToggle({title: 'Bluetooth', iconName: 'bluetooth-disabled-symbolic', toggleMode: true, menuEnabled: true}),
+      new m.QuickMenuToggle({title: 'Power Mode', subtitle: 'Balanced', iconName: 'power-profile-balanced-symbolic', menuEnabled: true}),
+      new m.QuickToggle({title: 'Night Light', iconName: 'night-light-symbolic', toggleMode: true}),
+    ])
+      menu.insertItemBefore(t, dark);
+    const air = new m.QuickToggle({title: 'Airplane Mode', iconName: 'airplane-mode-symbolic', toggleMode: true});
+    const next = dnd.get_next_sibling();
+    if (next) menu.insertItemBefore(air, next); else menu.addItem(air);
+  }).catch(e => logError(e, 'pulsar QS_FULL'));
+  return 'ok';
+})()"""
+
+
+def full_quick_settings():
+    print("  quick settings:", eval_js(QS_FULL)[1], flush=True)
+    time.sleep(1)
+
+
 def desktops(only):
     """The site's desktop pictures: every theme x variant with the effects on,
     as a new account has them (the gate's own account has them off). Apps
@@ -535,6 +582,7 @@ def desktops(only):
     start_shell()
     if os.environ.get("SCALE"):
         set_scale(float(os.environ["SCALE"]))
+    full_quick_settings()
     for slug, modes in theme_list().items():
         if only and slug not in only:
             continue
@@ -552,7 +600,12 @@ def desktops(only):
             time.sleep(1.5)
             launch_apps()
             time.sleep(2)
+            # Quick Settings open over the apps: glass, light and Glow in
+            # one frame (its checked toggles and slider are accent-filled)
+            eval_js("Main.panel.statusArea.quickSettings.menu.open(); 1")
+            time.sleep(1.5)
             screenshot(f"{slug}-{mode}-desktop")
+            eval_js("Main.panel.statusArea.quickSettings.menu.close(); 1")
             print(f"  {slug:12} {mode:5} shot", flush=True)
     kill_apps()
     stop_shell()
