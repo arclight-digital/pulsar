@@ -15,4 +15,5 @@ glass=false
 window-glass=false
 lighting=false
 power-on=false
+glow=false
 focus-brackets=false

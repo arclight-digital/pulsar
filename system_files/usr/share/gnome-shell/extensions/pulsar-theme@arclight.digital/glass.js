@@ -55,6 +55,7 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 
 // The blur: a dual-filter (Kawase) pyramid, the kind KWin blurs with.
 // What is beneath is halved, then halved BLUR_LEVELS more times (one more
@@ -1746,6 +1747,48 @@ class FocusBrackets {
     }
 }
 
+// The glow under a slider's fill, in the -pulsar-glow color the theme sets
+// only under .pulsar-glow: no rule, no glow, so the switch and the lock
+// screen need nothing here. Cairo has no blur; stacked rounded bars, each a
+// little larger and fainter, make the falloff, and they stop short of the
+// slider's own surface (the handle makes it taller than the bar), so the
+// glow fades out rather than being cut off at its edge.
+const GLOW_STEPS = 8;
+const GLOW_REACH = 0.75;    // of the room above and below the bar
+const GLOW_LAYER = 0.22;    // of the glow color's alpha, per layer
+function fillGlow(bar) {
+    if (!(bar._value > 0) || !(bar._maxValue > 0))
+        return;
+    const [ok, color] = bar.get_theme_node().lookup_color('-pulsar-glow', false);
+    if (!ok || color.alpha === 0)
+        return;
+    const [width, height] = bar.get_surface_size();
+    const bh = bar._barLevelHeight;
+    const r0 = Math.min(width, bh) / 2;
+    const rtl = bar.get_text_direction() === Clutter.TextDirection.RTL;
+    const progress = Math.min(bar._value, bar._maxValue) / bar._maxValue;
+    const end = r0 + (width - 2 * r0) * progress;
+    const reach = Math.max(0, (height - bh) / 2) * GLOW_REACH;
+    const cr = bar.get_context();
+    cr.setSourceRGBA(color.red / 255, color.green / 255, color.blue / 255,
+        color.alpha / 255 * GLOW_LAYER);
+    for (let i = 1; i <= GLOW_STEPS; i++) {
+        const g = reach * i / GLOW_STEPS;
+        const r = r0 + g;
+        // a rounded bar from the fill's start to just past its end (never
+        // shorter than its own two caps)
+        let x0 = 0, x1 = Math.max(end + g, 2 * r);
+        if (rtl)
+            [x0, x1] = [width - x1, width];
+        cr.newSubPath();
+        cr.arc(x1 - r, height / 2, r, -Math.PI / 2, Math.PI / 2);
+        cr.arc(x0 + r, height / 2, r, Math.PI / 2, 3 * Math.PI / 2);
+        cr.closePath();
+        cr.fill();
+    }
+    cr.$dispose();
+}
+
 export class Glass {
     constructor(settings, injections) {
         this._settings = settings;
@@ -1774,6 +1817,20 @@ export class Glass {
                     console.warn(`pulsar-theme: glass: menu: ${e.message}`);
                 }
             });
+        // A slider's fill is drawn with cairo in its repaint, which CSS cannot
+        // reach: the glow goes under it here, before the bar and the handle.
+        // On Slider, not BarLevel: a vfunc override rehooks the class's own
+        // vtable slot, and Slider has one of its own (its super call reaches
+        // BarLevel's JS method directly, never an override there).
+        injections.overrideMethod(Slider.Slider.prototype, 'vfunc_repaint',
+            repaint => function (...args) {
+                try {
+                    fillGlow(this);
+                } catch (e) {
+                    console.warn(`pulsar-theme: glow: ${e.message}`);
+                }
+                repaint.call(this, ...args);
+            });
         // Notification banners: a new banner in the same bin.
         injections.overrideMethod(MessageTray.MessageTray.prototype, '_showNotification',
             show => function (...args) {
@@ -1789,6 +1846,8 @@ export class Glass {
             // the other half of Glass windows is the engine's gtk.css
             'changed::window-glass', () => this._engine('window-glass'),
             'changed::glass', () => this._engine('window-glass'),
+            // and so is Glow's: the Shell's half is the class _sync sets
+            'changed::glow', () => this._engine('window-glass'),
             // the tint is the theme sheet's; the engine re-renders it
             'changed::glass-tint', () => this._tintSoon(),
             this);
@@ -1834,6 +1893,10 @@ export class Glass {
 
     get lighting() {
         return this._allowed && this._settings.get_boolean('lighting');
+    }
+
+    get glowing() {
+        return this._allowed && this._settings.get_boolean('glow');
     }
 
     get powerOn() {
@@ -2005,6 +2068,7 @@ export class Glass {
         // glow off these two classes.
         (glass ? ui.add_style_class_name : ui.remove_style_class_name).call(ui, 'pulsar-glass');
         (lit ? ui.add_style_class_name : ui.remove_style_class_name).call(ui, 'pulsar-lit');
+        (this.glowing ? ui.add_style_class_name : ui.remove_style_class_name).call(ui, 'pulsar-glow');
         if (glass && !this._panel)
             this._panel = new PanelGlass();
         else if (!glass && this._panel) {
@@ -2067,5 +2131,6 @@ export class Glass {
         const ui = Main.layoutManager.uiGroup;
         ui.remove_style_class_name('pulsar-glass');
         ui.remove_style_class_name('pulsar-lit');
+        ui.remove_style_class_name('pulsar-glow');
     }
 }

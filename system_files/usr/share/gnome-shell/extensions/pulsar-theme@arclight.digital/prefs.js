@@ -11,6 +11,7 @@ const EFFECTS = [
     ['window-glass', 'Glass windows', 'App windows are a little translucent too; apps opened afterwards pick it up', 'glass'],
     ['lighting', 'Lighting', 'Menus catch light from the button that opened them; the edge warms when the battery is low'],
     ['power-on', 'Power-on', 'The edge traces out from the light as a menu opens', 'lighting'],
+    ['glow', 'Glow', 'What is filled with the accent glows softly; apps opened afterwards pick it up'],
     ['focus-brackets', 'Focus brackets', 'Corner brackets lock onto the control the keyboard is on'],
 ];
 

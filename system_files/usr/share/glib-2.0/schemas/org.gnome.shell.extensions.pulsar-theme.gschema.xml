@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- The pulsar-theme Shell extension's own settings: the glass and light it
-     adds to menus and the top bar. Shown in the Extensions app (prefs.js)
-     and in the theme picker. High contrast turns both off regardless. -->
+<!-- The pulsar-theme Shell extension's own settings: the glass, light and glow
+     it adds to menus, the top bar and the accent. Shown in the Extensions app
+     (prefs.js) and in the theme picker. High contrast turns them all off
+     regardless. -->
 <schemalist>
   <schema id="org.gnome.shell.extensions.pulsar-theme" path="/org/gnome/shell/extensions/pulsar-theme/">
     <key name="glass" type="b">
@@ -29,6 +30,11 @@
       <default>true</default>
       <summary>Power-on</summary>
       <description>A surface's rim traces out from the light when it appears. Needs Lighting.</description>
+    </key>
+    <key name="glow" type="b">
+      <default>true</default>
+      <summary>Glow</summary>
+      <description>What is filled with the accent -- a switched-on toggle, today in the calendar, the default button, a slider's fill -- glows softly in it, in the Shell and in apps opened afterwards.</description>
     </key>
     <key name="focus-brackets" type="b">
       <default>true</default>

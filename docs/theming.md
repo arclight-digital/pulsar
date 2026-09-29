@@ -199,6 +199,7 @@ light, and every outline stays the theme's own.
 | `window-glass` | GTK apps' chrome goes a little translucent over the same live blur: the engine writes libadwaita's window ground, header bars and sidebars with alpha in `gtk.css`, and the extension draws the blur inside each GTK window, so it follows the window into the overview. The terminal's background goes to 85% (Ptyxis's own per-profile `opacity`, left alone if you set your own). Content (views, cards, dialogs, popovers) stays solid; cards go a step lighter with a hairline edge, so they do not sink into the blurred ground. Apps opened after a change pick up the GTK half; the terminal changes live. Switched off, windows already open keep their blur until they close (GTK read the translucent sheet at launch, and without the blur they would be see-through). Needs `glass`. |
 | `lighting` | The button that opened a menu glows, and a shader lights the rim facing it, a little spill, a glint inside the edge, faint scatter and grain, and the date menu's divider. OSDs are lit from the bottom edge, banners from the top. While the battery is low the edge warms all the way round (the theme's orange), and it goes the theme's red when the battery is critical or on a critical banner. Phosphor and Amber (`shell_glow` in their theme.toml) also give the clock and headings a phosphor glow. |
 | `power-on` | As a surface appears its rim traces out from the light, in the Shell's own animation time (so it is instant with animations off). Needs `lighting`. |
+| `glow` | What is filled with the accent glows softly in it: a switched-on quick toggle (a split one, like Wi-Fi, as one pill), today in the calendar, the default button, a switch, a checked box, the workspace you are on, and a slider's fill. Nothing neutral glows. Weaker on light schemes. In apps (GTK4, opened after a change): suggested-action buttons, switches, checks, radios, a scale's fill and a progress bar. |
 | `focus-brackets` | Four corner brackets lock onto the control the keyboard is on and glide between controls, beside the stock focus ring. Not on a control under the pointer (hovering a menu item moves key focus too). |
 
 All of it is off on the lock screen (a copy of the windows must never show
@@ -206,8 +207,10 @@ through it) and in high contrast. `window-glass` has an engine half, so it
 is on only while the extension is enabled with `glass` and `window-glass`
 on and high contrast off (`window_glass()` in the engine); flipping any of
 those makes the extension run `pulsar-theme window-glass`, which rewrites
-just the GTK4 and terminal halves. The Shell sheet's `.pulsar-glass` and `.pulsar-lit`
-blocks key off classes the extension puts on the UI group, so a theme's
+just the GTK4 and terminal halves. `glow` has an engine half too (`glow_on()`, its `gtk.css`
+block), rewritten the same way. The Shell sheet's `.pulsar-glass`,
+`.pulsar-lit` and `.pulsar-glow` (from the `gnome-shell-glow.css` template,
+appended to each scheme's sheet) blocks key off classes the extension puts on the UI group, so a theme's
 stylesheet decides the material and the extension draws the rest
 (`glass.js` says why the blur lives beside each menu rather than in it:
 GNOME paints menus through an offscreen buffer). The blur is real,

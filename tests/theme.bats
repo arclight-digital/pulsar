@@ -139,7 +139,7 @@ setup() {
     xml="${REPO}/system_files/usr/share/glib-2.0/schemas/org.gnome.shell.extensions.pulsar-theme.gschema.xml"
     [ "$(jq -r '."settings-schema"' "${ext}/metadata.json")" = org.gnome.shell.extensions.pulsar-theme ]
     grep -q 'id="org.gnome.shell.extensions.pulsar-theme"' "$xml"
-    for k in glass window-glass lighting power-on focus-brackets; do
+    for k in glass window-glass lighting power-on glow focus-brackets; do
         python3 - "$xml" "$k" <<'PY'
 import sys, xml.etree.ElementTree as ET
 key = ET.parse(sys.argv[1]).find(f".//key[@name='{sys.argv[2]}']")
@@ -158,6 +158,9 @@ PY
         grep -q "'${c}'" "${ext}/glass.js"
         grep -q "\.${c} " "${PULSAR_THEME_TEMPLATES}/gnome-shell.css"
     done
+    # Glow's rules live in their own template, which the engine appends
+    grep -q "'pulsar-glow'" "${ext}/glass.js"
+    grep -q "\.pulsar-glow " "${PULSAR_THEME_TEMPLATES}/gnome-shell-glow.css"
 }
 
 @test "every theme's wallpapers are named .jxl or are brand files" {
@@ -752,4 +755,24 @@ print("" if d is None else d)' "$1" "$2"; }
     tpl="${REPO}/system_files/usr/share/pulsar/theme/templates/gnome-shell.css"
     got=$(sed -n '/^\/\* BEGIN stock states/,/^\/\* END stock states \*\//p' "$tpl")
     [ "$got" = "$output" ] || { diff <(echo "$output") <(echo "$got"); false; }
+}
+
+@test "glow: the Shell's rules are always written under .pulsar-glow, GTK's only while the switch is on" {
+    fake_dconf
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
+    setkey /org/gnome/shell/extensions/pulsar-theme/glow true
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q -- 'switch:checked, check:checked' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    grep -q '^\.pulsar-glow \.slider { -pulsar-glow: rgba(' "$XDG_STATE_HOME/pulsar-theme/shell/gnome-shell-dark.css"
+    # off: GTK loses its block; the Shell keeps its rules, which the extension
+    # switches with the class
+    setkey /org/gnome/shell/extensions/pulsar-theme/glow false
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    ! grep -q -- 'switch:checked, check:checked' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    grep -q '\.pulsar-glow \.quick-toggle:checked' "$XDG_STATE_HOME/pulsar-theme/shell/gnome-shell-dark.css"
+    # high contrast wins over the switch
+    setkey /org/gnome/shell/extensions/pulsar-theme/glow true
+    setkey /org/gnome/desktop/a11y/interface/high-contrast true
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    ! grep -q -- 'switch:checked, check:checked' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
 }

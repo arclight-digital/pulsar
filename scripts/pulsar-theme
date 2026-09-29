@@ -221,6 +221,7 @@ class Variant:
         self.mode = mode
         self.shell_glow = False     # set by Theme from its top-level key
         self.window_glass = False   # set by the gtk4 target from the Shell extension's switch
+        self.glow = False           # set by the gtk4 target from the Shell extension's Glow switch
         self.glass_alpha = 0.65     # set by the shell target from the Glass tint slider
         p = {}
         for k, v in raw.items():
@@ -343,6 +344,24 @@ class Variant:
         else:
             c["glass_cards"] = ""
         c["card_bg"] = card.hex
+        # Glow: whatever is filled with the accent glows softly in it. Weaker
+        # on light, where a colored halo reads as a smudge rather than light.
+        # The Shell's rules sit under .pulsar-glow (the extension's switch),
+        # so they are always written; GTK has no such class, so its block is
+        # written only while the switch is on.
+        dark = self.mode == "dark"
+        c["glow_alpha"] = 0.34 if dark else 0.22
+        c["glow_blur"] = "10px" if dark else "8px"
+        if self.glow:
+            a = c["glow_alpha"]
+            acc = self.p["accent"].rgb
+            c["glow"] = (
+                "/* Glow: what is filled with the accent glows softly in it. */\n"
+                "button.suggested-action:not(:disabled), switch:checked, check:checked, radio:checked,\n"
+                "scale > trough > highlight, progressbar > trough > progress {\n"
+                f"  box-shadow: 0 0 {c['glow_blur']} rgba({acc}, {a});\n}}\n")
+        else:
+            c["glow"] = ""
         c["text_glow"] = (f"text-shadow: 0 0 6px rgba({self.p['accent'].rgb}, 0.55);"
                           if self.shell_glow else "")
         c["gnome_accent"] = self.gnome_accent
@@ -1037,6 +1056,22 @@ def ext_turned_off():
     return EXT_UUID in parse_gv_list(gsettings_get("org.gnome.shell", "disabled-extensions"))
 
 
+def glow_on():
+    """Whether the Glow effect is on, as window_glass() reads the rest: the
+    Shell extension's switch, not high contrast, and the extension actually
+    running. The Shell half follows the extension live; this is GTK's half."""
+    sid = "org.gnome.shell.extensions.pulsar-theme"
+    if gsettings_get(sid, "glow") != "true":
+        return False
+    if gsettings_get("org.gnome.desktop.a11y.interface", "high-contrast") == "true":
+        return False
+    if gsettings_get("org.gnome.shell", "disable-user-extensions") == "true":
+        return False
+    if ext_turned_off():
+        return False
+    return f"'{EXT_UUID}'" in (gsettings_get("org.gnome.shell", "enabled-extensions") or "")
+
+
 def window_glass():
     """Whether GTK windows go translucent: only while the Shell extension is
     enabled and would draw its blur behind them -- Glass and Glass windows
@@ -1061,9 +1096,11 @@ class Gtk4(Target):
     def apply(self, tx, theme, vm):
         glass = window_glass()
         tint = glass_tint()
+        glow = glow_on()
         for v in theme.variants.values():
             v.window_glass = glass
             v.glass_alpha = tint
+            v.glow = glow
         def wrap(m, body):
             if m is None:
                 return body
@@ -1200,7 +1237,10 @@ class Shell(Target):
         for scheme in ("dark", "light"):
             mode = scheme if (vm == "both" and scheme in theme.variants) else (theme.prefer if vm == "both" else vm)
             theme.variants[mode].glass_alpha = glass_tint()
-            css = render_tpl(template("gnome-shell.css"), theme.variants[mode].ctx(), "gnome-shell.css")
+            ctx = theme.variants[mode].ctx()
+            css = render_tpl(template("gnome-shell.css"), ctx, "gnome-shell.css")
+            # the Glow effect's rules, keyed off the class the extension sets
+            css += "\n" + render_tpl(template("gnome-shell-glow.css"), ctx, "gnome-shell-glow.css")
             tx.write(STATE / "shell" / f"gnome-shell-{scheme}.css", f"/* {css_comment(theme.name)} ({mode}) */\n" + css)
         # Enable it, unless the user switched it off: that choice is theirs,
         # and re-adding it to enabled-extensions would not turn it back on
