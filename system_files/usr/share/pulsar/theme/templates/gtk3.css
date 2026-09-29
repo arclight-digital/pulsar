@@ -28,3 +28,4 @@
 @define-color theme_text_color {{foreground}};
 @define-color theme_selected_bg_color {{accent}};
 @define-color theme_selected_fg_color {{accent_fg}};
+{{glow3}}

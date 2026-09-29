@@ -360,8 +360,16 @@ class Variant:
                 "button.suggested-action:not(:disabled), switch:checked, check:checked, radio:checked,\n"
                 "scale > trough > highlight, progressbar > trough > progress {\n"
                 f"  box-shadow: 0 0 {c['glow_blur']} rgba({acc}, {a});\n}}\n")
+            # GTK3's nodes nest differently (scale > contents > trough >
+            # highlight), so its twin matches by descendant
+            c["glow3"] = (
+                "/* Glow: what is filled with the accent glows softly in it. */\n"
+                "button.suggested-action:not(:disabled), switch:checked, check:checked, radio:checked,\n"
+                "scale highlight, progressbar progress {\n"
+                f"  box-shadow: 0 0 {c['glow_blur']} rgba({acc}, {a});\n}}\n")
         else:
             c["glow"] = ""
+            c["glow3"] = ""
         c["text_glow"] = (f"text-shadow: 0 0 6px rgba({self.p['accent'].rgb}, 0.55);"
                           if self.shell_glow else "")
         c["gnome_accent"] = self.gnome_accent
@@ -1122,6 +1130,7 @@ class Gtk3(Target):
         mode = (current_scheme() if theme.both else theme.prefer) if vm == "both" else vm
         mode = mode if mode in theme.variants else theme.prefer
         v = theme.variants[mode]
+        v.glow = glow_on()
         block = render_tpl(template("gtk3.css"), v.ctx(), "gtk3.css")
         p = CONFIG / "gtk-3.0" / "gtk.css"
         tx.edit(p, managed(p, f"/* {css_comment(theme.name)} ({mode}) */\n" + block), {"kind": "block"})
@@ -1997,7 +2006,8 @@ def cmd_window_glass(if_stale=False):
         # the Shell for nothing.
         if "gtk4" not in st.get("targets", []) or window_glass_written() == window_glass():
             return
-    redo = [t for t in ("gtk4", "ptyxis", "shell") if t in st.get("targets", [])]
+    # gtk3 for Glow, whose GTK3 block this redoes too
+    redo = [t for t in ("gtk4", "gtk3", "ptyxis", "shell") if t in st.get("targets", [])]
     if not st.get("theme") or not redo:
         return
     try:
