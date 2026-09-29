@@ -2464,7 +2464,14 @@ sandbox_creds_out() {
     local name=$1 home=$2 before=$3 rel host in tmp
     rel=$(agent_cred_path "$name") || return 0
     host="$HOME/$rel"; in="$home/$rel"
-    [ -f "$in" ] || return 0
+    # A real file inside the sandbox's home, never a symlink: the agent could
+    # point it at any JSON the user can read on the host (registry auth, a
+    # cloud token) and have it copied into the host's login, then back into
+    # the sandbox next session. Nor may the sandbox create a host login that
+    # was not there before it started.
+    [ -f "$in" ] && [ ! -L "$in" ] || return 0
+    case "$(realpath -e -- "$in" 2>/dev/null)" in "$(realpath -e -- "$home")"/*) ;; *) return 0 ;; esac
+    [ -n "$before" ] || return 0
     jq -e . "$in" >/dev/null 2>&1 || return 0
     [ "$(sha256sum < "$host" 2>/dev/null | cut -c1-64)" = "$before" ] || return 0
     cmp -s "$in" "$host" 2>/dev/null && return 0
@@ -3909,10 +3916,14 @@ home_manifest() {
         | as_owner "$1" "$2" bash -c "$HOME_MANIFEST" _ "$1"
 }
 
-# A scratch directory the home's owner can read: the lists handed to its tar.
+# A scratch directory the home's owner can READ: the lists handed to its tar.
+# Owned by root, never by the user: root writes and chmods files in it, and in
+# a directory the user owned, something running as the user (an agent, say)
+# could plant list -> /etc/shadow between mktemp and the write, and root
+# would truncate and chmod the target. The user's tar only reads the list.
 owner_tmp() {
     local t; t=$(mktemp -d)
-    [ "$(stat -c %u "$1")" = "$(id -u)" ] || chown "$2" "$t"
+    chmod 0755 "$t"
     printf '%s\n' "$t"
 }
 

@@ -73,12 +73,33 @@ init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 }
 
 @test "run by hand in a terminal it says what it is, and Ctrl-C leaves no traceback" {
-    run python3 - "$MCP" <<'PY'
-import os, pty, signal, subprocess, sys, time
+    # waits for the banner (bounded) before Ctrl-C, and never blocks on a read:
+    # a fixed sleep raced a slow start on a loaded builder and hung the run
+    run timeout 30 python3 - "$MCP" <<'PY'
+import os, pty, select, signal, subprocess, sys, time
 m, s = pty.openpty()
 p = subprocess.Popen(["python3", sys.argv[1]], stdin=s, stdout=s, stderr=s)
-time.sleep(0.5); p.send_signal(signal.SIGINT); p.wait(); time.sleep(0.1)
-print(os.read(m, 4096).decode(), "exit", p.returncode)
+os.close(s)
+out, end = b"", time.time() + 20
+def drain(until):
+    global out
+    while time.time() < until:
+        r, _, _ = select.select([m], [], [], 0.2)
+        if r:
+            try:
+                chunk = os.read(m, 4096)
+            except OSError:
+                return
+            if not chunk:
+                return
+            out += chunk
+        if until is end and b"waiting for JSON-RPC" in out:
+            return
+drain(end)
+p.send_signal(signal.SIGINT)
+p.wait(timeout=10)
+drain(time.time() + 0.5)
+print(out.decode(errors="replace"), "exit", p.returncode)
 PY
     [[ "$output" == *"waiting for JSON-RPC"* ]]
     [[ "$output" != *Traceback* ]]

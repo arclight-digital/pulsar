@@ -148,6 +148,8 @@ def tool_list():
 
 def handle(msg):
     method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
+    if not isinstance(params, dict):
+        raise LookupError("params must be an object")
     if mid is None:
         return None     # a notification (initialized, cancelled): nothing to say
     if method == "initialize":
@@ -162,8 +164,10 @@ def handle(msg):
     if method == "tools/list":
         return {"tools": tool_list()}
     if method == "tools/call":
-        name = params.get("name", "")
-        text, err = call(name, params.get("arguments") or {})
+        name, args = params.get("name", ""), params.get("arguments") or {}
+        if not isinstance(name, str) or not isinstance(args, dict):
+            raise LookupError("tools/call takes a name and an arguments object")
+        text, err = call(name, args)
         return {"content": [{"type": "text", "text": text}], "isError": err}
     if method == "resources/list":
         return {"resources": [{"uri": "pulsar://guide", "name": "AGENTS.md",
@@ -194,6 +198,13 @@ def main():
         except ValueError:
             reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
         else:
+            if not isinstance(msg, dict):
+                # a batch or a bare value: answered, never a crash that takes
+                # every tool away for the rest of the session
+                sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": None,
+                                             "error": {"code": -32600, "message": "invalid request: one JSON object per line"}}) + "\n")
+                sys.stdout.flush()
+                continue
             try:
                 result = handle(msg)
                 if result is None:
@@ -203,6 +214,8 @@ def main():
                 reply = {"jsonrpc": "2.0", "id": msg.get("id"), "error": {"code": -32601, "message": f"method not found: {e}"}}
             except LookupError as e:
                 reply = {"jsonrpc": "2.0", "id": msg.get("id"), "error": {"code": -32602, "message": str(e)}}
+            except Exception as e:  # a bad argument must not end the server
+                reply = {"jsonrpc": "2.0", "id": msg.get("id"), "error": {"code": -32603, "message": f"internal error: {e}"}}
         sys.stdout.write(json.dumps(reply) + "\n")
         sys.stdout.flush()
     return 0
