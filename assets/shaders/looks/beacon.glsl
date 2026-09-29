@@ -10,7 +10,9 @@
 vec3 beacon(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 dawnN, out float lit) {
     float t = u_time * u_live;
     vec2 L = normalize(u_dir);
-    vec2 core = L * 0.38 + vec2(0.10, 0.04) + u_seed * 0.01;
+    // one composition for every theme: the core low on the left, the beams
+    // across the frame (it moved with each theme's light direction)
+    vec2 core = vec2(-0.20, -0.18);
     vec2 d = uv - core;
     float rr = length(d);
     float ang = atan(d.y, d.x);

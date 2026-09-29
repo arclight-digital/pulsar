@@ -23,7 +23,6 @@ scripts/build.sh runs both before the image build.
   python3 scripts/render-theme-wallpapers.py [--only slug] [--preview] [--sheet]
 """
 import argparse
-import hashlib
 import json
 import os
 import pathlib
@@ -100,20 +99,21 @@ def spec_for(theme, variant, look):
     return {"variant": variant, "look": look, **{k: primary[k] for k in INHERITED if k in primary}}
 
 
+# A theme recolors a look; it never recomposes it. Every theme, every look,
+# draws the same picture as Pulsar's own -- same folds, beams, stars, planet --
+# and only the colours (and their strength) change. Whatever a render table
+# says about these is overridden with the brand's composition.
+COMPOSITION = dict(seed=[0.0, 0.0], dir=[-0.8, -0.6], bloom=[0.42, -0.06], beam=-0.35, fold=2.2, time=0.0)
+
+
 def uniforms(theme, spec):
     v = theme.variants[spec["variant"]]
-    s = {**DEFAULTS, **spec}
+    s = {**DEFAULTS, **spec, **COMPOSITION}
     if s["web"] is None:
         # Silk carries its filament web well; on the smooth looks (leak, satin,
         # holo) a full-strength web read as electrical crackle. A render can
         # still ask for more -- the phosphor themes do.
         s["web"] = {"silk": 1.0, "satin": 0.45}.get(spec["look"], 0.55)
-    if "seed" not in spec:
-        # Looks other than silk take the seed only for their filament field and
-        # sky; without one, every theme on the same look drew the same trails.
-        # Derived from slug + look + variant: distinct, and deterministic.
-        h = hashlib.sha256(f"{theme.slug}/{spec['look']}/{spec['variant']}".encode()).digest()
-        s["seed"] = [h[0] / 25.5 - 5.0, h[1] / 25.5 - 5.0]
     dark = spec["variant"] == "dark"
     rgb = lambda c: (c.r, c.g, c.b)
     u = {

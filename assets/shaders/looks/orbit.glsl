@@ -10,8 +10,12 @@
 vec3 orbit(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 dawnN, out float lit) {
     float t = u_time * u_live;
     vec2 L = normalize(u_dir);
-    vec2 pc = L * 0.95 + vec2(0.0, -0.10) + u_seed * 0.01;   // the planet, big, mostly off-frame
-    float R = 0.78;
+    // One composition for every theme: the planet low on the left, well
+    // inside the frame (it sat mostly off the bottom), the rings sweeping up
+    // to the right. It does not follow the theme's light direction or seed:
+    // a planet that moved with each theme read as a different scene.
+    vec2 pc = vec2(-0.52, -0.30);
+    float R = 0.50;
     vec2 d = uv - pc;
     float dp = length(d);
     vec2 sun = normalize(vec2(0.55, 0.85));                  // light from the upper right, behind
@@ -27,15 +31,17 @@ vec3 orbit(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 da
     float ra = 0.42;
     vec2 rd = vec2(cos(ra) * d.x + sin(ra) * d.y, -sin(ra) * d.x + cos(ra) * d.y);
     vec2 re = rd / vec2(1.0, 0.26);
-    float rr = length(re);
+    float rr = length(re) * (0.78 / R);   // ring radii in planet radii (drawn at R = 0.78)
     float band = smoothstep(1.08, 1.11, rr) * smoothstep(1.95, 1.86, rr);
     // ringlets and one clear gap, as the real ones have
     float struc = 0.50 + 0.50 * vnoise(vec2(rr * 55.0, 0.5)) - 0.85 * smoothstep(1.52, 1.54, rr) * smoothstep(1.62, 1.60, rr);
     // the far half of the rings goes behind the planet; the near half in front
-    float behindPlanet = step(0.0, rd.y) * inside;
+    // softened: a hard switch from behind to in front drew a straight seam
+    float behindPlanet = smoothstep(-0.02, 0.02, rd.y) * inside;
     // the planet's shadow falls across the rings, away from the sun
     vec2 toSun = -sun;
-    float inShadow = step(dot(d, sun), 0.0) * smoothstep(R * 1.02, R * 0.98, abs(dot(d, vec2(-sun.y, sun.x))));
+    // soft-edged: a hard edge here cut the near ring off in a straight line
+    float inShadow = step(dot(d, sun), 0.0) * smoothstep(R * 1.25, R * 0.80, abs(dot(d, vec2(-sun.y, sun.x)))) * 0.75;
     float ringLight = band * struc * (1.0 - behindPlanet) * (1.0 - inShadow * 0.85);
     // glints: sparse points of sunlight caught by ring particles
     float glint = starLayer(uv + u_seed, 70.0, 0.08, 500.0, u_live) * band * (1.0 - inShadow) * (1.0 - behindPlanet);
