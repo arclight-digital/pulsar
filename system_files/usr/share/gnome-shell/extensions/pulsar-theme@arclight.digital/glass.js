@@ -2090,8 +2090,15 @@ export class Glass {
             this._brackets.destroy();
             this._brackets = null;
         }
-        if (glass || lit)
+        if (glass || lit) {
             this._trackOsds();
+            // A banner already up: at unlock the tray shows what queued
+            // during the lock in the same sessionMode update that turns this
+            // extension back on, before the _showNotification hook exists,
+            // and .pulsar-glass would leave it with no background at all.
+            if (Main.messageTray?._banner)
+                this._trackBanner();
+        }
         if (this.windows)
             global.get_window_actors().forEach(a => this._trackWindow(a));
         else if (!this._allowed)
