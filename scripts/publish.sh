@@ -490,6 +490,17 @@ publish_site() {
     done < "${SITE}/upstream.list"
     [ "${n}" -gt 0 ] || { echo "upstream.list matched nothing in ${REPO}" >&2; return 1; }
 
+    # The site's live sky recolors theme.frag per theme exactly as the
+    # wallpapers are: these are the uniforms scripts/render-theme-wallpapers.py
+    # renders with, for every theme, variant and look. Generated, not listed:
+    # they come from the theme sources and the renderer, not from one file.
+    # A failure keeps the last published copy -- a stale recolor for a night
+    # beats a site build that cannot import the file.
+    if ! python3 "${REPO}/scripts/render-theme-wallpapers.py" --uniforms "${SITE}/upstream/theme-uniforms.json" >/dev/null; then
+      echo "could not export the theme uniforms; keeping the site's last copy" >&2
+      git -C "${SITE}" show "HEAD:upstream/theme-uniforms.json" > "${SITE}/upstream/theme-uniforms.json" 2>/dev/null || true
+    fi
+
     # Compare CONTENT, not the file. Every build stamps fresh timestamps and
     # digests, so a byte comparison always differs and would commit every
     # single night even when nothing in the image moved -- daily bot noise in

@@ -42,12 +42,20 @@ uniform float u_signal;           // signal treatment: lit lattice, edge aberrat
 uniform float u_grain;            // grain multiplier (it is also the 8-bit dither: never 0)
 uniform float u_web;              // filament + lattice density/brightness (silk 1; leak/holo 0.55, satin 0.45)
 
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-// Grain and dither only: a sine-free hash (Dave Hoskins' hash12). The sine
-// hash above leaves faint diagonal line structure at screen-space inputs,
-// and sliding its input every frame made those lines march across the sky
-// as moving bands, on every look. Stars and threads keep the sine hash so
-// the art itself does not move.
+// The art's hash: Dave Hoskins' hash12, sine-free. The classic
+// fract(sin(dot(p, k)) * 43758.5453) took arguments near 1e5, where every
+// implementation's sin and rounding differ and the 43758x gain turns a last
+// bit into a different number: llvmpipe (the wallpaper renders), SwiftShader
+// and an NVIDIA GPU drew three different silk fields from one shader
+// (mean dE 5-14). This one is multiplies and fract on small values, and the
+// renders agree to dE ~0.2 -- so the site's live sky IS the wallpaper.
+float hash(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+// Grain and dither: the same hash12, kept apart so the art's hash can change
+// without moving the grain.
 float hashS(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);

@@ -158,6 +158,54 @@ def contact_sheet(entries, out):
     print(f"contact sheet: {out}")
 
 
+def write_uniforms(out):
+    """The uniforms this renderer hands theme.frag, for the site's live hero.
+
+    The hero runs this same shader, recolored by the site's theme exactly as
+    the wallpapers are: for every theme, variant and all four looks, the
+    uniforms render() would be given -- the theme's own [[wallpaper.render]]
+    table for that look where it has one, this renderer's defaults (palette
+    keys, derived seed) where it does not. So any look the visitor picks is
+    the look this pipeline would render for that theme. "primary" is the
+    variant's first wallpaper, the one the theme sets on the desktop.
+
+    A theme with no render tables (Pulsar, Pulsar Holo) wears assets/shaders/
+    pulsar.frag's own brand looks instead; its first wallpaper names the look.
+    """
+    import json
+    data = {}
+    for tt in sorted(THEMES.glob("*/theme.toml")):
+        theme = pt.Theme(tt)
+        walls = theme.raw.get("wallpaper", {})
+        specs = walls.get("render", [])
+        entry = {"shader": "theme" if specs else "pulsar", "variants": {}}
+        for variant in ("dark", "light"):
+            names = walls.get(variant) or []
+            if not names or variant not in theme.variants:
+                continue
+            first = pathlib.Path(names[0]).stem
+            if specs:
+                table = {sp["look"]: sp for sp in specs if sp["variant"] == variant}
+                looks = {}
+                for look in LOOKS:
+                    sp = table.get(look, {"variant": variant, "look": look})
+                    looks[look] = {k: (list(v) if isinstance(v, tuple) else v)
+                                   for k, v in uniforms(theme, sp).items()}
+                primary = first.split("-")[0]
+                if primary not in table:
+                    sys.exit(f"{theme.slug}: {variant} wallpaper {names[0]} has no render table")
+                entry["variants"][variant] = {"primary": primary, "looks": looks}
+            else:
+                # /usr/share/backgrounds/pulsar/pulsar-<look>-<variant>.png
+                look = first.split("-")[-2]
+                if look not in LOOKS:
+                    sys.exit(f"{theme.slug}: cannot read a look from {names[0]}")
+                entry["variants"][variant] = {"primary": look}
+        data[theme.slug] = entry
+    out.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n")
+    print(f"uniforms for {len(data)} themes: {out}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", action="append")
@@ -166,7 +214,11 @@ def main():
     ap.add_argument("--preview", action="store_true", help="640x400 into .preview/themes/, for tuning")
     ap.add_argument("--sheet", action="store_true", help="also write .preview/theme-wallpapers.png")
     ap.add_argument("--sheet-only", action="store_true")
+    ap.add_argument("--uniforms", metavar="FILE",
+                    help="write every theme's render uniforms as JSON (no GL needed) and exit")
     a = ap.parse_args()
+    if a.uniforms:
+        return write_uniforms(pathlib.Path(a.uniforms))
     import moderngl
     import numpy as np
     w, h = (640, 400) if a.preview else (a.width, a.height)
