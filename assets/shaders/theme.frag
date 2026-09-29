@@ -167,6 +167,7 @@ vec3 knee(vec3 x) {
 // read them, and the luminescence pass accumulates into emit/dawnFx/dawnInk.
 vec2 uv;
 float r, theme, starsNight, starsDawn;
+bool wantDawn;          // light shows (theme > 0): the light cut is drawn at all
 vec3 dawnBase, l1, l2, l3, l4;
 float inten, carry, g2, fil, halo, tr, dawnInk;
 vec3 emit, soft, dawnFx;
@@ -194,44 +195,76 @@ void main() {
 
     // two fields at fixed places, faded between by theme (see pulsar.frag)
     // and each look its own sky: the field shifts with the look, so swapping
-    // looks swaps the stars too (Silk, look 0, keeps its field exactly)
+    // looks swaps the stars too (Silk, look 0, keeps its field exactly).
+    // Only Silk, Leak and Holo read these (the looks since place their own),
+    // and dawn's field only when light shows: all uniform branches.
     float lookN = floor(clamp(u_look, 0.0, 7.0) + 0.5);
     vec2 skySeed = vec2(lookN * 37.1, lookN * 11.9);
     vec2 seedD = uv + u_seed + skySeed, seedL = uv + vec2(31.7, 17.3) + u_seed + skySeed;
-    starsNight = mix(starLayer(seedD, 110.0, 0.030, 600.0, 0.0) + starLayer(seedD, 28.0, 0.050, 260.0, 0.0),
-                     starLayer(seedL, 110.0, 0.030, 600.0, 0.0) + starLayer(seedL, 28.0, 0.050, 260.0, 0.0), step(0.5, theme));
-    starsDawn  = mix(starLayer(seedD,  60.0, 0.018, 380.0, 0.0) + starLayer(seedD, 18.0, 0.040, 180.0, 0.0),
-                     starLayer(seedL,  60.0, 0.018, 380.0, 0.0) + starLayer(seedL, 18.0, 0.040, 180.0, 0.0), step(0.5, theme));
+    float lookAll = clamp(u_look, 0.0, 7.0);
+    bool firstLooks = lookAll < 3.5 && abs(lookAll - 2.0) > 0.5;
+    // mix(a, b, 0) is a exactly, so dark needs only the dark field; light
+    // keeps the full mix, whose result is not bit-exactly b
+    starsNight = 0.0; starsDawn = 0.0;
+    if (firstLooks) {
+        if (theme < 0.5) {
+            starsNight = starLayer(seedD, 110.0, 0.030, 600.0, 0.0) + starLayer(seedD, 28.0, 0.050, 260.0, 0.0);
+            if (theme > 0.0)
+                starsDawn = starLayer(seedD,  60.0, 0.018, 380.0, 0.0) + starLayer(seedD, 18.0, 0.040, 180.0, 0.0);
+        } else {
+            starsNight = mix(starLayer(seedD, 110.0, 0.030, 600.0, 0.0) + starLayer(seedD, 28.0, 0.050, 260.0, 0.0),
+                             starLayer(seedL, 110.0, 0.030, 600.0, 0.0) + starLayer(seedL, 28.0, 0.050, 260.0, 0.0), step(0.5, theme));
+            starsDawn  = mix(starLayer(seedD,  60.0, 0.018, 380.0, 0.0) + starLayer(seedD, 18.0, 0.040, 180.0, 0.0),
+                             starLayer(seedL,  60.0, 0.018, 380.0, 0.0) + starLayer(seedL, 18.0, 0.040, 180.0, 0.0), step(0.5, theme));
+        }
+    }
 
     // ---- dawn ground and lights ----
     dawnBase = mix(u_da, u_db, smoothstep(-0.5, 0.5, uv.y));
-    l1 = mixo(u_c1, vec3(1.0), u_wash); l2 = mixo(u_c2, vec3(1.0), u_wash);
-    l3 = mixo(u_c3, vec3(1.0), u_wash * 0.9); l4 = mixo(u_c4, vec3(1.0), u_wash);
+    // the washed lights only Silk, Leak and Holo's light cuts use
+    wantDawn = theme > 0.0;
+    if (firstLooks && wantDawn) {
+        l1 = mixo(u_c1, vec3(1.0), u_wash); l2 = mixo(u_c2, vec3(1.0), u_wash);
+        l3 = mixo(u_c3, vec3(1.0), u_wash * 0.9); l4 = mixo(u_c4, vec3(1.0), u_wash);
+    }
 
-    vec3 night, dawn;
-    float lookAll = clamp(u_look, 0.0, 7.0);
+    vec3 night, dawn = vec3(0.0);
     // Silk, Leak and Holo keep their original data flow below, mix chain
     // included, so their pixels are exactly what they were. Satin and the
     // looks since draw in the fresh path.
-    if (lookAll < 3.5 && abs(lookAll - 2.0) > 0.5) {
+    if (firstLooks) {
+        // only the showing look is drawn (uniform branches); a skipped one
+        // entered the chain below at weight zero, and mix(x, y, 0) is x
         float look = clamp(u_look, 0.0, 3.0);
-        night = silkNight();
-        vec3 leak = leakNight();
+        float wSilk = 1.0 - clamp(look, 0.0, 1.0);
+        float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
+        float wHolo = clamp(look - 2.0, 0.0, 1.0);
+        night = vec3(0.0);
+        if (wSilk > 0.0) night = silkNight();
+        vec3 leak = vec3(0.0);
+        if (wLeak > 0.0) leak = leakNight();
         // Satin's slot in the chain stays, as zero: it keeps the chain's
         // arithmetic what it was when Satin sat here
         vec3 satinSlot = vec3(0.0);
-        vec3 holo = holoNight();
+        vec3 holo = vec3(0.0);
+        if (wHolo > 0.0) holo = holoNight();
         night = mix(night, leak,  clamp(look, 0.0, 1.0));
         night = mix(night, satinSlot, clamp(look - 1.0, 0.0, 1.0));
         night = mix(night, holo,  clamp(look - 2.0, 0.0, 1.0));
 
-        dawn = silkDawn();
-        vec3 dawnL = leakDawn();
-        vec3 dawnS = vec3(0.0);
-        vec3 dawnH = holoDawn();
-        dawn = mix(dawn, dawnL, clamp(look, 0.0, 1.0));
-        dawn = mix(dawn, dawnS, clamp(look - 1.0, 0.0, 1.0));
-        dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
+        // dawn only when light shows (or mid-fade): dark is mix(night, dawn, 0)
+        if (wantDawn) {
+            dawn = vec3(0.0);
+            if (wSilk > 0.0) dawn = silkDawn();
+            vec3 dawnL = vec3(0.0);
+            if (wLeak > 0.0) dawnL = leakDawn();
+            vec3 dawnS = vec3(0.0);
+            vec3 dawnH = vec3(0.0);
+            if (wHolo > 0.0) dawnH = holoDawn();
+            dawn = mix(dawn, dawnL, clamp(look, 0.0, 1.0));
+            dawn = mix(dawn, dawnS, clamp(look - 1.0, 0.0, 1.0));
+            dawn = mix(dawn, dawnH, clamp(look - 2.0, 0.0, 1.0));
+        }
 
         // ---- each look's own luminescence (both variants) ------------------
         // One signature effect per look (see each look's Glow), all quiet
@@ -240,9 +273,6 @@ void main() {
         // outshines the look's own emissive core, and no effect runs brighter
         // than the theme's highlight colour. u_web scales them all (the
         // phosphor themes ask for more); u_signal the hacker-ish parts.
-        float wSilk = 1.0 - clamp(look, 0.0, 1.0);
-        float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
-        float wHolo = clamp(look - 2.0, 0.0, 1.0);
         inten = clamp(dot(night - mix(u_ga, u_gb, 0.5), vec3(0.3333)) * 2.6, 0.0, 1.0);
         carry = 0.05 + 0.95 * smoothstep(0.05, 0.7, inten);   // effects live in the lit mass
         emit = u_c3 * pow(inten, 3.0) * 0.16;                  // the core itself, gently
@@ -258,10 +288,12 @@ void main() {
         night = knee(night + emit * u_glow);
 
         // light: the same effects in pearl, low-contrast against the paper
-        float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
-        if (wSilk > 0.0) dawn = silkPearl(dawn, wSilk * intenD * 0.14 * u_glow);
-        dawn = mix(dawn, vec3(1.0), clamp(dawnFx * (0.15 + 0.85 * intenD) * u_glow, 0.0, 0.6));
-        dawn *= 1.0 - clamp(dawnInk, -0.2, 0.2) * u_signal;
+        if (wantDawn) {
+            float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
+            if (wSilk > 0.0) dawn = silkPearl(dawn, wSilk * intenD * 0.14 * u_glow);
+            dawn = mix(dawn, vec3(1.0), clamp(dawnFx * (0.15 + 0.85 * intenD) * u_glow, 0.0, 0.6));
+            dawn *= 1.0 - clamp(dawnInk, -0.2, 0.2) * u_signal;
+        }
     } else {
         vec3 emitN;
         night = freshNight(freshLook(lookAll, dawn, emitN));

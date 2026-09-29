@@ -80,11 +80,15 @@ vec3 satin(vec2 uv, vec3 dawnBase, out vec3 emitN, out vec3 dawnN, out float lit
     col *= 1.0 + weave2 * 0.28;
     emitN = u_c3 * pow(sqrt(max(1.0 - th * th, 0.0)), 48.0 * 0.35) * sAmt * 0.10;
     lit = clamp(base * 1.4 + sheen * sAmt, 0.0, 1.0);
-    vec3 paleCloth = mixo(dawnBase, mixo(u_c2, vec3(1.0), 0.6 + 0.3 * u_wash), 0.35 * fall);
-    // folds in soft shade of the theme's own colour, the sheen as white
-    dawnN = mixo(paleCloth, mixo(u_c1, u_c2, 0.5), (1.0 - occl * (0.35 + 0.65 * lamb * diff)) * 0.30 * fall);
-    dawnN = mixo(dawnN, vec3(1.0), sheen * sAmt * 1.6);
-    dawnN = mixo(dawnN, mixo(c2nd, vec3(1.0), 0.45), wash2 * 0.22);
-    dawnN *= 1.0 + weave2 * 0.06;
+    // the light cut, only when light shows (dark never reads it)
+    dawnN = vec3(0.0);
+    if (wantDawn) {
+        vec3 paleCloth = mixo(dawnBase, mixo(u_c2, vec3(1.0), 0.6 + 0.3 * u_wash), 0.35 * fall);
+        // folds in soft shade of the theme's own colour, the sheen as white
+        dawnN = mixo(paleCloth, mixo(u_c1, u_c2, 0.5), (1.0 - occl * (0.35 + 0.65 * lamb * diff)) * 0.30 * fall);
+        dawnN = mixo(dawnN, vec3(1.0), sheen * sAmt * 1.6);
+        dawnN = mixo(dawnN, mixo(c2nd, vec3(1.0), 0.45), wash2 * 0.22);
+        dawnN *= 1.0 + weave2 * 0.06;
+    }
     return grey(col, u_desat) * u_gain;
 }

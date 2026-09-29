@@ -47,9 +47,13 @@ vec3 tide(vec2 uv, vec3 dawnBase, out vec3 emitN, out vec3 dawnN, out float lit)
     float cl = dot(c, vec3(0.333));
     emitN = u_c3 * smoothstep(0.9, 1.6, cl) * pool * side * 0.10;
     lit = clamp(cl * pool * side * 0.8, 0.0, 1.0);
-    vec3 pale = mixo(u_c2, vec3(1.0), 0.55 + 0.35 * u_wash);
-    // light: the net drawn in the theme's colour on pale water
-    dawnN = mixo(dawnBase, pale, pool * 0.30);
-    dawnN = mixo(dawnN, mixo(u_c2, u_c3, 0.5), clamp(cl * (0.15 + 0.55 * pool) * side, 0.0, 0.6));
+    // the light cut, only when light shows (dark never reads it)
+    dawnN = vec3(0.0);
+    if (wantDawn) {
+        vec3 pale = mixo(u_c2, vec3(1.0), 0.55 + 0.35 * u_wash);
+        // light: the net drawn in the theme's colour on pale water
+        dawnN = mixo(dawnBase, pale, pool * 0.30);
+        dawnN = mixo(dawnN, mixo(u_c2, u_c3, 0.5), clamp(cl * (0.15 + 0.55 * pool) * side, 0.0, 0.6));
+    }
     return grey(col, u_desat) * u_gain;
 }

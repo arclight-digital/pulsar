@@ -54,10 +54,14 @@ vec3 orbit(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 da
     col += u_star * starsNight * 0.45 * (1.0 - inside) * u_stars;
     emitN = mixo(u_c3, u_star, 0.4) * atm * 0.16 + u_c3 * glint * 0.20;
     lit = clamp(atm + ringLight * 0.4, 0.0, 1.0);
-    vec3 pale = mixo(u_c2, vec3(1.0), 0.50 + 0.40 * u_wash);
-    dawnN = mixo(dawnBase, pale, clamp(atm * 0.8 + scatter * 0.5 + ringLight * 0.45, 0.0, 0.85));
-    dawnN = mixo(dawnN, mixo(u_c1, u_c2, 0.5) * 0.9, inside * (1.0 - day) * 0.12);
-    // the limb and the rings in the theme's colour
-    dawnN = mixo(dawnN, mixo(u_c2, u_c3, 0.5), clamp(atm * 0.65 + ringLight * 0.40, 0.0, 0.75));
+    // the light cut, only when light shows (dark never reads it)
+    dawnN = vec3(0.0);
+    if (wantDawn) {
+        vec3 pale = mixo(u_c2, vec3(1.0), 0.50 + 0.40 * u_wash);
+        dawnN = mixo(dawnBase, pale, clamp(atm * 0.8 + scatter * 0.5 + ringLight * 0.45, 0.0, 0.85));
+        dawnN = mixo(dawnN, mixo(u_c1, u_c2, 0.5) * 0.9, inside * (1.0 - day) * 0.12);
+        // the limb and the rings in the theme's colour
+        dawnN = mixo(dawnN, mixo(u_c2, u_c3, 0.5), clamp(atm * 0.65 + ringLight * 0.40, 0.0, 0.75));
+    }
     return grey(col, u_desat) * u_gain;
 }

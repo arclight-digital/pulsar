@@ -55,8 +55,12 @@ vec3 warp(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 daw
     col += u_star * starsNight * 0.25 * u_stars * (1.0 - glow);
     emitN = mixo(u_c3, u_star, 0.4) * dot(s1 + s2, vec3(0.333)) * (head1 + head2) * 0.10 + u_c3 * glow * 0.06;
     lit = clamp(dot(streaks, vec3(0.333)) * 2.0 + glow * 0.5, 0.0, 1.0);
-    vec3 pale = mixo(u_c2, vec3(1.0), 0.50 + 0.40 * u_wash);
-    dawnN = mixo(dawnBase, pale, clamp(glow * 0.45 + haze * 0.15, 0.0, 0.8));
-    dawnN = mixo(dawnN, mixo(u_c1, u_c2, 0.5) * 0.85, clamp(dot(streaks, vec3(0.333)) * 1.4, 0.0, 0.5));
+    // the light cut, only when light shows (dark never reads it)
+    dawnN = vec3(0.0);
+    if (wantDawn) {
+        vec3 pale = mixo(u_c2, vec3(1.0), 0.50 + 0.40 * u_wash);
+        dawnN = mixo(dawnBase, pale, clamp(glow * 0.45 + haze * 0.15, 0.0, 0.8));
+        dawnN = mixo(dawnN, mixo(u_c1, u_c2, 0.5) * 0.85, clamp(dot(streaks, vec3(0.333)) * 1.4, 0.0, 0.5));
+    }
     return grey(col, u_desat) * u_gain;
 }

@@ -78,5 +78,5 @@ void quietCorner(inout vec3 night, inout vec3 dawn) {
     float quiet = exp(-dot(qc, qc) * 2.2) * u_quiet;
     float bar = smoothstep(0.30, 0.50, uv.y) * 0.35 * u_quiet;
     night = mix(night, u_ga, clamp(quiet * 0.85 + bar, 0.0, 1.0));
-    dawn = mixo(dawn, mix(u_da, u_db, 0.5), clamp(quiet * 0.75 + bar * 0.7, 0.0, 1.0));
+    if (wantDawn) dawn = mixo(dawn, mix(u_da, u_db, 0.5), clamp(quiet * 0.75 + bar * 0.7, 0.0, 1.0));
 }

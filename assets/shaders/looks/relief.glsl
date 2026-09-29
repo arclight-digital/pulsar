@@ -37,9 +37,13 @@ vec3 relief(vec2 uv, vec3 dawnBase, out vec3 emitN, out vec3 dawnN, out float li
     emitN = mixo(u_c2, u_c3, 0.5) * near * bloom * bloom * 0.10 * alt
           + u_c3 * isIndex * near * bloom * 0.14 * alt;
     lit = clamp(line * bloom + glow * 0.3, 0.0, 1.0);
-    // light: a printed map in the theme's ink, a whisper of the light as wash
-    vec3 wash = mixo(dawnBase, mixo(u_c2, vec3(1.0), 0.55 + 0.4 * u_wash), glow * 0.28);
-    dawnN = mixo(wash, mixo(u_c1, u_c2, 0.4) * 0.82,
-                 line * (0.14 + 0.36 * bloom) * mix(0.6, 1.0, alt) * (isIndex > 0.5 ? 1.25 : 1.0));
+    // the light cut, only when light shows (dark never reads it)
+    dawnN = vec3(0.0);
+    if (wantDawn) {
+        // light: a printed map in the theme's ink, a whisper of the light as wash
+        vec3 wash = mixo(dawnBase, mixo(u_c2, vec3(1.0), 0.55 + 0.4 * u_wash), glow * 0.28);
+        dawnN = mixo(wash, mixo(u_c1, u_c2, 0.4) * 0.82,
+                     line * (0.14 + 0.36 * bloom) * mix(0.6, 1.0, alt) * (isIndex > 0.5 ? 1.25 : 1.0));
+    }
     return grey(col, u_desat) * u_gain;
 }

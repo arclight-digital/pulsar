@@ -210,6 +210,7 @@ void brandContract() {
 // read them, and the luminescence pass accumulates into emit/dawnFx/dawnInk.
 vec2 uv;
 float r, theme, starsNight, starsDawn;
+bool wantDawn;          // light shows (theme > 0): the light cut is drawn at all
 vec3 dawnBase;
 float inten, carry, g2, dawnInk;
 vec3 emit, dawnFx;
@@ -239,6 +240,7 @@ void main() {
     uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
     r = length(uv);
     theme = clamp(u_theme, 0.0, 1.0);
+    wantDawn = theme > 0.0;
     brandContract();
 
     // each variant gets its own sky: a seed shift moves every star, and the
