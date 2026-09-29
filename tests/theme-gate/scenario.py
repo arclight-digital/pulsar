@@ -166,7 +166,11 @@ def launch_apps():
 def kill_apps():
     for name in ("gnome-text-editor", "adwaita-1-demo", "ptyxis", "ptyxis-agent", "gtk3-widget-factory", "btop",
                  "pulsar-theme-picker"):
-        subprocess.run(["pkill", "-x", name], capture_output=True)
+        # -x matches the kernel's process name, cut to 15 characters:
+        # gnome-text-editor and gtk3-widget-factory never matched in full,
+        # and every theme stacked a new copy of each over the last, their
+        # shadows piling into near-black gutters in the desktop shots
+        subprocess.run(["pkill", "-x", name[:15]], capture_output=True)
     time.sleep(0.8)
 
 
