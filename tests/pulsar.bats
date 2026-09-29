@@ -18,6 +18,7 @@ setup() {
 {
   "image": "pulsar",
   "variant": "vanilla",
+  "release": "1.0.0",
   "version": "44.20260805.0",
   "base": "fedora-silverblue:44",
   "built": "2026-08-05T19:44:00Z",
@@ -80,6 +81,13 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
     [ "$status" -eq 0 ]
     [[ "$output" == *"44.20260805.0"* ]]
     [[ "$output" == *"scx_bpfland"* ]]
+}
+
+@test "manifest shows the Pulsar release beside the nightly build" {
+    run "$PULSAR" manifest
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | grep -qE 'release.*1\.0\.0'
+    printf '%s\n' "$output" | grep -qE 'build.*44\.20260805\.0'
 }
 
 @test "manifest lists facts, not other commands to run" {

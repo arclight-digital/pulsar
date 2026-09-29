@@ -1073,7 +1073,8 @@ cmd_manifest() {
     local head rest tsv
     head=$(jq -r '
       [ ["image",   (.image // "?") + (if .variant then " (" + .variant + ")" else "" end)],
-        ["version", (.version // "?")],
+        (if .release then ["release", .release] else empty end),
+        ["build",   (.version // "?")],
         ["base",    (.base // "?")],
         ["built",   (.built // "?")],
         ["kernel",  (.kernel // "?")]

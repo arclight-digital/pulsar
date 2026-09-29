@@ -543,11 +543,25 @@ RUN [ -f /usr/share/plymouth/themes/spinner/throbber-0001.png ] || \
 # PRETTY_NAME. VERSION_ID is the field third-party scripts compare
 # numerically, for the same reason ID stays "fedora" in os-release itself.
 # ---------------------------------------------------------------------------
+#
+# Two numbers, two jobs. PULSAR_VERSION is the BUILD (44.YYYYMMDD.N): what
+# bootc, the update check and the gate track, and it moves every night with
+# whatever Silverblue ships. /usr/share/pulsar/release is the RELEASE, semver,
+# which moves only when Pulsar's own features do (1.0.0: the themes and
+# glass). The release goes in PRETTY_NAME -- the boot menu and Settings'
+# About -- with the build beside it, and in PULSAR_RELEASE for scripts.
+# ---------------------------------------------------------------------------
 ARG PULSAR_VERSION=""
-RUN if [ -n "${PULSAR_VERSION}" ]; then \
+RUN rel=$(cat /usr/share/pulsar/release) && \
+    printf '%s' "${rel}" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+' || \
+      { echo "FATAL: /usr/share/pulsar/release is '${rel}', not a semver MAJOR.MINOR.PATCH"; exit 1; }; \
+    sed -i -e '/^PULSAR_RELEASE=/d' /usr/lib/os-release && \
+    echo "PULSAR_RELEASE=\"${rel}\"" >> /usr/lib/os-release && \
+    sed -i -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${rel}\"|" /usr/lib/os-release; \
+    if [ -n "${PULSAR_VERSION}" ]; then \
       sed -i \
         -e "s|^VERSION=.*|VERSION=\"${PULSAR_VERSION}\"|" \
-        -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${PULSAR_VERSION}\"|" \
+        -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${rel} (${PULSAR_VERSION})\"|" \
         /usr/lib/os-release; \
       grep -E '^(VERSION|VERSION_ID|PRETTY_NAME)=' /usr/lib/os-release; \
       vid=$(. /usr/lib/os-release; echo "${VERSION_ID}"); \
@@ -619,6 +633,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       --arg image     "pulsar" \
       --arg variant   "vanilla" \
       --arg version   "${PULSAR_VERSION:-${FEDORA_VERSION}}" \
+      --arg release   "$(cat /usr/share/pulsar/release)" \
       --arg base      "fedora-silverblue:${FEDORA_VERSION}" \
       --arg built     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg kernel    "$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)" \
@@ -631,7 +646,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       --arg mesava    "$(rpm -qa --qf '%{VERSION}' mesa-va-drivers-freeworld)" \
       --arg gamescale "${GAMESCALE_VERSION}" \
       --arg changelog "${PULSAR_CHANGELOG_URL}" \
-      '{image:$image, variant:$variant, version:$version, base:$base, built:$built, \
+      '{image:$image, variant:$variant, release:$release, version:$version, base:$base, built:$built, \
         kernel:$kernel, \
         components:{scheduler:$scheduler, sched_ext:$scx, \
                     gamescope:$gamescope, gamemode:$gamemode, mangohud:$mangohud, \
@@ -640,7 +655,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
                     gamescale:$gamescale}, \
         changelog_url:$changelog}' \
       > /usr/share/pulsar/manifest.json && \
-    jq -e '.version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \
+    jq -e '.release and .version and .kernel and .components.scheduler' /usr/share/pulsar/manifest.json >/dev/null && \
     pulsar --version && \
     { pulsar agent guide | grep -q 'pulsar doctor --json' || \
       { echo "FATAL: /usr/share/pulsar/AGENTS.md is missing or gutted; an agent told to read it would learn nothing about this machine"; exit 1; }; } && \
