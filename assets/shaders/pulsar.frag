@@ -350,8 +350,10 @@ void main() {
     } else {
         vec3 emitN;
         night = freshNight(freshLook(lookAll, dawn, emitN));
-        // live, the glow is calmed as the brand's own looks are
-        night = freshGlow(night, emitN, mix(1.0, 0.22, clamp(u_live, 0.0, 1.0)));
+        // live, the glow is calmed, but less than the first three's: their
+        // filaments cross the hero text, while a newer look's light is its
+        // subject (Beacon's star and halo all but vanished at 0.22)
+        night = freshGlow(night, emitN, mix(1.0, 0.5, clamp(u_live, 0.0, 1.0)));
         quietCorner(night, dawn);
     }
 
