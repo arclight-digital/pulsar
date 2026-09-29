@@ -96,14 +96,16 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .search-provider-icon:hover, .search-provider-icon:highlighted,
 .app-folder-dialog .overview-tile:hover, .app-folder-dialog .overview-tile:highlighted,
 .switcher-list .item-box:hover,
-.audio-device-selection-dialog .audio-selection-box .audio-selection-device:hover {
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device:hover,
+.popup-menu-item:hover, .popup-menu-item:focus, .popup-menu-item.selected {
   background-color: rgba({{foreground_rgb}}, 0.08); }
 .calendar .calendar-day:selected, .calendar .calendar-day:active,
 .button.flat:active, .icon-button.flat:active, .datemenu-today-button:active,
 .overview-tile:active, .grid-search-result:active, .list-search-result:active, .search-provider-icon:active,
 .app-folder-dialog .overview-tile:active,
 .switcher-list .item-box:selected, .switcher-list .item-box:highlighted,
-.audio-device-selection-dialog .audio-selection-box .audio-selection-device:active {
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device:active,
+.popup-menu-item:active {
   background-color: rgba({{foreground_rgb}}, 0.14); }
 
 .button,
