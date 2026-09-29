@@ -2710,7 +2710,7 @@ sandbox_git_mounts() {
         src=${line%%$'\t'*}; src=${src#file:}
         line=${line#*$'\t'}
         key=${line%% *}; val=${line#* }
-        case "$val" in "~/"*) val="${HOME}/${val#\~/}" ;; esac
+        case "$val" in \~/*) val="${HOME}/${val#\~/}" ;; esac
         case "$key" in
             core.hookspath) case "$val" in /*) ;; *) val="${root}/${val}" ;; esac
                             val=$(realpath -m "$val")
