@@ -69,12 +69,12 @@ card = "#fffaf3"
 popover = "#fffaf3"
 
 [wallpaper]
-dark = ["backgrounds/silk-dark.jxl", "backgrounds/leak-dark.jxl"]
-light = ["backgrounds/silk-light.jxl", "backgrounds/leak-light.jxl"]
+dark = ["backgrounds/nebula-dark.jxl", "backgrounds/leak-dark.jxl"]
+light = ["backgrounds/nebula-light.jxl", "backgrounds/leak-light.jxl"]
 
 [[wallpaper.render]]
 variant = "dark"
-look = "silk"
+look = "nebula"
 c1 = "magenta"
 c2 = "red"
 c3 = "yellow"
@@ -95,7 +95,7 @@ stars = 0.2
 
 [[wallpaper.render]]
 variant = "light"
-look = "silk"
+look = "nebula"
 c1 = "#907aa9"
 c2 = "#d7827e"
 c3 = "#ea9d34"

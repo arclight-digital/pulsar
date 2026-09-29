@@ -51,5 +51,5 @@ card = "#f8f8fe"
 popover = "#ffffff"
 
 [wallpaper]
-dark = ["/usr/share/backgrounds/pulsar/pulsar-holo-dark.png", "/usr/share/backgrounds/pulsar/pulsar-satin-dark.png"]
-light = ["/usr/share/backgrounds/pulsar/pulsar-holo-light.png", "/usr/share/backgrounds/pulsar/pulsar-satin-light.png"]
+dark = ["/usr/share/backgrounds/pulsar/pulsar-holo-dark.jxl", "/usr/share/backgrounds/pulsar/pulsar-satin-dark.jxl"]
+light = ["/usr/share/backgrounds/pulsar/pulsar-holo-light.jxl", "/usr/share/backgrounds/pulsar/pulsar-satin-light.jxl"]

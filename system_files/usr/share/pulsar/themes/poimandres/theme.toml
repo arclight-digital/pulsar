@@ -37,7 +37,7 @@ card = "#252b37"
 popover = "#252b37"
 
 [wallpaper]
-dark = ["backgrounds/relief-dark.jxl", "backgrounds/silk-dark.jxl"]
+dark = ["backgrounds/relief-dark.jxl", "backgrounds/nebula-dark.jxl"]
 
 [[wallpaper.render]]
 variant = "dark"
@@ -49,7 +49,7 @@ desat = 0.0
 
 [[wallpaper.render]]
 variant = "dark"
-look = "silk"
+look = "nebula"
 c1 = "green"
 c2 = "blue"
 c3 = "magenta"

@@ -137,8 +137,10 @@ ships two of them rendered in its palette from `assets/shaders/theme.frag`,
 dark and light, for `bg-next`; the site's hero can show any of the eight in
 any theme. Each look has its own light:
 
-- silk: a domain-warped field; ion-trail filaments on its isolines, a faint
-  lit circuit lattice;
+- nebula: a domain-warped field; ion-trail filaments on its isolines, a faint
+  lit circuit lattice. It was called silk until 2026-09-29: a render table
+  that still says `look = "silk"` renders it, and the old wallpaper paths
+  (`pulsar-silk-*.png`, `backgrounds/silk-*.jxl`) stay as links;
 - leak: soft beams with prismatic edges; god-rays, drifting motes, an
   anamorphic streak;
 - satin: a satin sheet piled up, lit with an anisotropic sheen along the

@@ -37,7 +37,7 @@ card = "#fffdf5"
 popover = "#ffffff"
 
 [wallpaper]
-light = ["backgrounds/leak-light.jxl", "backgrounds/silk-light.jxl"]
+light = ["backgrounds/leak-light.jxl", "backgrounds/nebula-light.jxl"]
 
 [[wallpaper.render]]
 variant = "light"
@@ -52,7 +52,7 @@ dawn_top = "#ece7d5"
 
 [[wallpaper.render]]
 variant = "light"
-look = "silk"
+look = "nebula"
 c1 = "#644ac9"
 c2 = "#a3144d"
 c3 = "#036a96"

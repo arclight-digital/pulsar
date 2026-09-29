@@ -47,7 +47,7 @@ void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }
 
 # Every shipped brand wallpaper: each look (looks/looks.json) x two themes.
 # u_theme switches the palette and mood (0 = night, 1 = dawn); u_look picks
-# the look. Silk is the default pair -- the gschema override and the lock
+# the look. Nebula is the default pair -- the gschema override and the lock
 # screen point at it by name -- and every pair is listed in
 # gnome-background-properties/pulsar.xml and themes/pulsar/theme.toml, so KEEP
 # THE FILENAMES IN SYNC with those if anything here changes.
@@ -163,7 +163,7 @@ def main():
         print(f"  {out / name} ({args.width}x{args.height})")
 
     # default.png predates the four-pair layout; the gschema override now
-    # names pulsar-silk-*.png directly. Clean up a stale symlink if present.
+    # names pulsar-nebula-*.png directly. Clean up a stale symlink if present.
     default = out / "default.png"
     if default.exists() or default.is_symlink():
         default.unlink()

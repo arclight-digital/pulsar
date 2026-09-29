@@ -74,8 +74,8 @@ THEMES = [
                gain=1.25, stars=0.8, desat=0.0),
              R("light", "holo", c1="magenta", c4="bright_magenta", c2="blue", c3="cyan", wash=0.42, gain=0.9,
                dawn_bottom="#eff1f5", dawn_top="#dce0e8"),
-             R("dark", "silk", c1="magenta", c2="blue", c3="bright_magenta", seed=[2.4, -1.1], stars=0.6, desat=0.0, gain=1.35),
-             R("light", "silk", c1="magenta", c2="blue", c3="bright_magenta", seed=[2.4, -1.1], wash=0.3, stars=0.4),
+             R("dark", "nebula", c1="magenta", c2="blue", c3="bright_magenta", seed=[2.4, -1.1], stars=0.6, desat=0.0, gain=1.35),
+             R("light", "nebula", c1="magenta", c2="blue", c3="bright_magenta", seed=[2.4, -1.1], wash=0.3, stars=0.4),
          ]),
 
     dict(slug="gruvbox", name="Gruvbox", author="Pavel Pertsev (morhetz), MIT", prefer="dark",
@@ -125,8 +125,8 @@ THEMES = [
              R("dark", "leak", c1="magenta", c2="blue", c3="cyan", beam=-0.42, stars=0.35),
              R("light", "leak", c1="magenta", c2="blue", c3="cyan", beam=-0.42, wash=0.45,
                dawn_bottom="#e1e2e7", dawn_top="#d0d5e3"),
-             R("dark", "silk", c1="magenta", c2="blue", c3="cyan", seed=[4.0, 2.0], stars=0.5, desat=0.0, gain=1.4),
-             R("light", "silk", c1="magenta", c2="blue", c3="cyan", seed=[4.0, 2.0], wash=0.35, stars=0.3),
+             R("dark", "nebula", c1="magenta", c2="blue", c3="cyan", seed=[4.0, 2.0], stars=0.5, desat=0.0, gain=1.4),
+             R("light", "nebula", c1="magenta", c2="blue", c3="cyan", seed=[4.0, 2.0], wash=0.35, stars=0.3),
          ]),
 
     dict(slug="nord", name="Nord", author="Arctic Ice Studio, MIT", prefer="dark",
@@ -141,9 +141,9 @@ THEMES = [
                  headerbar="#e5e9f0", sidebar="#e5e9f0", card="#f4f6f9", popover="#f7f9fb"),
          renders=[
              # aurora: frost blue -> frost cyan -> aurora green, under stars
-             R("dark", "silk", c1="#5e81ac", c2="cyan", c3="green", seed=[-2.5, 1.4], dir=[-1.0, -0.25],
+             R("dark", "nebula", c1="#5e81ac", c2="cyan", c3="green", seed=[-2.5, 1.4], dir=[-1.0, -0.25],
                fold=1.9, stars=1.0, down=0.10, desat=0.0, gain=1.5),
-             R("light", "silk", c1="#5e81ac", c2="#88c0d0", c3="#a3be8c", seed=[-2.5, 1.4], dir=[-1.0, -0.25],
+             R("light", "nebula", c1="#5e81ac", c2="#88c0d0", c3="#a3be8c", seed=[-2.5, 1.4], dir=[-1.0, -0.25],
                fold=1.9, wash=0.0, gain=1.7, stars=0.25, dawn_bottom="#eceff4", dawn_top="#d8dee9"),
              R("dark", "satin", c1="#5e81ac", c2="blue", c3="cyan", bloom=[-0.30, -0.22], stars=0, desat=0.0),
              R("light", "satin", c1="#5e81ac", c2="#81a1c1", c3="#88c0d0", bloom=[-0.30, -0.22], wash=0.15,
@@ -164,9 +164,9 @@ THEMES = [
                  background_deep="#f2e9e1", background_sunken="#f4ede8", window="#faf4ed", view="#fffaf3",
                  headerbar="#f2e9e1", sidebar="#f4ede8", card="#fffaf3", popover="#fffaf3"),
          renders=[
-             R("dark", "silk", c1="magenta", c2="red", c3="yellow", seed=[1.7, -3.0], dir=[-0.5, -0.9],
+             R("dark", "nebula", c1="magenta", c2="red", c3="yellow", seed=[1.7, -3.0], dir=[-0.5, -0.9],
                stars=0.3, desat=0.0, gain=1.6),
-             R("light", "silk", c1="#907aa9", c2="#d7827e", c3="#ea9d34", seed=[1.7, -3.0], dir=[-0.5, -0.9],
+             R("light", "nebula", c1="#907aa9", c2="#d7827e", c3="#ea9d34", seed=[1.7, -3.0], dir=[-0.5, -0.9],
                wash=0.35, stars=0.2, dawn_bottom="#faf4ed", dawn_top="#f2e9e1"),
              R("dark", "leak", c1="magenta", c2="#eb6f92", c3="yellow", beam=-0.30, stars=0.2),
              R("light", "leak", c1="#907aa9", c2="#b4637a", c3="#ea9d34", beam=-0.30, wash=0.45,
@@ -182,9 +182,9 @@ THEMES = [
                  headerbar="#f4f0d9", sidebar="#f4f0d9", card="#fffbef", popover="#fffbef"),
          renders=[
              # mist over a forest floor: light rising from the bottom, no stars
-             R("dark", "silk", c1="cyan", c2="green", c3="green~yellow@0.4", seed=[6.0, 1.0], dir=[0.1, -1.0], fold=2.0,
+             R("dark", "nebula", c1="cyan", c2="green", c3="green~yellow@0.4", seed=[6.0, 1.0], dir=[0.1, -1.0], fold=2.0,
                stars=0, desat=0.0, gain=1.8, down=0.08),
-             R("light", "silk", c1="#35a77c", c2="#8da101", c3="#dfa000", seed=[6.0, 1.0], dir=[0.1, -1.0], fold=2.0,
+             R("light", "nebula", c1="#35a77c", c2="#8da101", c3="#dfa000", seed=[6.0, 1.0], dir=[0.1, -1.0], fold=2.0,
                wash=0.2, gain=1.3, stars=0, dawn_bottom="#fdf6e3", dawn_top="#efebd4"),
              R("dark", "satin", c1="green", c2="cyan", c3="green", bloom=[-0.25, -0.30], stars=0, desat=0.05),
              R("light", "satin", c1="#8da101", c2="#35a77c", c3="#8da101", bloom=[-0.25, -0.30], wash=0.3,
@@ -206,9 +206,9 @@ THEMES = [
                  background_raised="#e5ddb0"),
          renders=[
              # the wave: big slow folds in wave blue and violet, a carp-gold crest
-             R("dark", "silk", c1="magenta", c2="blue", c3="yellow", seed=[9.0, -4.0], fold=1.7, dir=[-0.9, -0.4],
+             R("dark", "nebula", c1="magenta", c2="blue", c3="yellow", seed=[9.0, -4.0], fold=1.7, dir=[-0.9, -0.4],
                stars=0.25, desat=0.0, gain=2.4),
-             R("light", "silk", c1="#624c83", c2="#4d699b", c3="#cc6d00", seed=[9.0, -4.0], fold=1.7,
+             R("light", "nebula", c1="#624c83", c2="#4d699b", c3="#cc6d00", seed=[9.0, -4.0], fold=1.7,
                dir=[-0.9, -0.4], wash=0.15, gain=1.5, stars=0.15, dawn_bottom="#f2ecbc", dawn_top="#e4d794"),
              R("dark", "leak", c1="red", c2="orange", c3="yellow", beam=-0.28, stars=0.2),
              R("light", "leak", c1="#c84053", c2="#cc6d00", c3="#e6c384", beam=-0.28, wash=0.35,
@@ -251,7 +251,7 @@ THEMES = [
                 background_raised="#0b1a10"),
          renders=[
              # plasma in a phosphor tube: the strongest treatment of any theme
-             R("dark", "silk", c1="#06351a", c2="#1f9e48", c3="bright_green", seed=[7.3, -1.9], fold=2.0,
+             R("dark", "nebula", c1="#06351a", c2="#1f9e48", c3="bright_green", seed=[7.3, -1.9], fold=2.0,
                dir=[-0.9, -0.5], stars=0.0, desat=0.15, gain=0.95, glow=1.15, signal=1.4, down=0.04),
              R("dark", "leak", c1="#0f5a2a", c2="green", c3="yellow", beam=-0.25, stars=0.0, desat=0.0,
                glow=1.15, signal=1.4, seed=[2.2, 5.4], web=0.8),
@@ -271,7 +271,7 @@ THEMES = [
          renders=[
              R("dark", "leak", c1="#7a3a00", c2="orange", c3="#ffc84a", beam=-0.20, stars=0.0, desat=0.0,
                glow=1.15, signal=1.4, seed=[-4.1, 3.3], web=0.8),
-             R("dark", "silk", c1="#6a3000", c2="orange", c3="yellow", seed=[-6.2, 2.7], fold=1.9,
+             R("dark", "nebula", c1="#6a3000", c2="orange", c3="yellow", seed=[-6.2, 2.7], fold=1.9,
                dir=[-0.7, -0.8], stars=0.0, desat=0.0, gain=1.6, glow=1.15, signal=1.4, down=0.06),
          ]),
 
@@ -288,7 +288,7 @@ THEMES = [
          renders=[
              R("light", "leak", c1="#644ac9", c2="#a3144d", c3="#036a96", beam=-0.40, wash=0.4,
                dawn_bottom="#fffbeb", dawn_top="#ece7d5"),
-             R("light", "silk", c1="#644ac9", c2="#a3144d", c3="#036a96", seed=[1.1, -2.6], fold=1.8,
+             R("light", "nebula", c1="#644ac9", c2="#a3144d", c3="#036a96", seed=[1.1, -2.6], fold=1.8,
                dir=[-1.0, -0.1], wash=0.3, gain=1.4, stars=0.2, dawn_bottom="#fffbeb", dawn_top="#ece7d5"),
          ]),
 
@@ -302,7 +302,7 @@ THEMES = [
                 headerbar="#21222c", sidebar="#21222c", card="#343746", popover="#343746"),
          renders=[
              R("dark", "leak", c1="blue", c2="magenta", c3="cyan", beam=-0.40, stars=0.5, desat=0.0),
-             R("dark", "silk", c1="blue", c2="magenta", c3="cyan", seed=[1.1, -2.6], fold=1.8, dir=[-1.0, -0.1], stars=0.7, desat=0.0, gain=2.3),
+             R("dark", "nebula", c1="blue", c2="magenta", c3="cyan", seed=[1.1, -2.6], fold=1.8, dir=[-1.0, -0.1], stars=0.7, desat=0.0, gain=2.3),
          ]),
 
     dict(slug="flexoki", name="Flexoki", author="Steph Ango (stephango.com/flexoki), MIT", prefer="dark",
@@ -317,8 +317,8 @@ THEMES = [
              R("dark", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.30, -0.20], stars=0, desat=0.0),
              R("light", "satin", c1="blue", c2="cyan", c3="cyan", bloom=[-0.30, -0.20], wash=0.35,
                dawn_bottom="#fffcf0", dawn_top="#e6e4d9"),
-             R("dark", "silk", c1="magenta", c2="orange", c3="yellow", seed=[-5.0, 3.0], stars=0, desat=0.05, gain=1.3),
-             R("light", "silk", c1="magenta", c2="orange", c3="yellow", seed=[-5.0, 3.0], wash=0.25, gain=1.2, stars=0),
+             R("dark", "nebula", c1="magenta", c2="orange", c3="yellow", seed=[-5.0, 3.0], stars=0, desat=0.05, gain=1.3),
+             R("light", "nebula", c1="magenta", c2="orange", c3="yellow", seed=[-5.0, 3.0], wash=0.25, gain=1.2, stars=0),
          ]),
 
     dict(slug="ayu", name="Ayu", author="Ike Ku (ayu-theme), MIT", prefer="dark",
@@ -333,8 +333,8 @@ THEMES = [
              R("dark", "leak", c1="red", c2="orange", c3="yellow", beam=-0.18, stars=0.3),
              R("light", "leak", c1="#f07171", c2="#fa8d3e", c3="#ffb454", beam=-0.18, wash=0.3,
                dawn_bottom="#f8f9fa", dawn_top="#e7eaed"),
-             R("dark", "silk", c1="red", c2="orange", c3="yellow", seed=[3.3, 5.1], stars=0.3, desat=0.0, gain=1.3),
-             R("light", "silk", c1="#f07171", c2="#fa8d3e", c3="#ffb454", seed=[3.3, 5.1], wash=0.2, stars=0.2),
+             R("dark", "nebula", c1="red", c2="orange", c3="yellow", seed=[3.3, 5.1], stars=0.3, desat=0.0, gain=1.3),
+             R("light", "nebula", c1="#f07171", c2="#fa8d3e", c3="#ffb454", seed=[3.3, 5.1], wash=0.2, stars=0.2),
          ]),
     dict(slug="one", name="One", author="Atom (atom/one-dark-syntax, one-light-syntax), MIT", prefer="dark",
          # upstream's own syntax palettes; no faithful base16 port keeps the
@@ -352,8 +352,8 @@ THEMES = [
                  accent="#4078f2", background_deep="#eaeaeb", background_sunken="#f0f0f0", window="#fafafa",
                  view="#ffffff", headerbar="#eaeaeb", sidebar="#f0f0f0", card="#ffffff", popover="#ffffff"),
          renders=[
-             R("dark", "silk", c1="blue", c2="magenta", c3="cyan", stars=0.6, desat=0.0, gain=1.3),
-             R("light", "silk", c1="blue", c2="magenta", c3="cyan", wash=0.3, stars=0.3),
+             R("dark", "nebula", c1="blue", c2="magenta", c3="cyan", stars=0.6, desat=0.0, gain=1.3),
+             R("light", "nebula", c1="blue", c2="magenta", c3="cyan", wash=0.3, stars=0.3),
          ]),
 
     dict(slug="oxocarbon", name="Oxocarbon", author="nyoom-engineering (oxocarbon.nvim), MIT; IBM Carbon palette",
@@ -374,8 +374,8 @@ THEMES = [
                  accent="#ee5396", background_deep="#dde1e6", background_sunken="#f2f4f8", window="#ffffff",
                  view="#ffffff", headerbar="#f2f4f8", sidebar="#f2f4f8", card="#ffffff", popover="#ffffff"),
          renders=[
-             R("dark", "silk", c1="brown", c2="cyan", c3="magenta", stars=0.6, desat=0.0, gain=1.3),
-             R("light", "silk", c1="red", c2="cyan", c3="blue", wash=0.3, stars=0.3),
+             R("dark", "nebula", c1="brown", c2="cyan", c3="magenta", stars=0.6, desat=0.0, gain=1.3),
+             R("light", "nebula", c1="red", c2="cyan", c3="blue", wash=0.3, stars=0.3),
          ]),
 
     dict(slug="poimandres", name="Poimandres", author="drcmda (poimandres-theme), MIT", prefer="dark",
@@ -388,7 +388,7 @@ THEMES = [
                 accent="#5de4c7", background_deep="#15171f", background_sunken="#171922", window="#1b1e28",
                 view="#171922", headerbar="#252b37", sidebar="#1b1e28", card="#252b37", popover="#252b37"),
          renders=[
-             R("dark", "silk", c1="green", c2="blue", c3="magenta", stars=0.6, desat=0.0, gain=1.3),
+             R("dark", "nebula", c1="green", c2="blue", c3="magenta", stars=0.6, desat=0.0, gain=1.3),
          ]),
 
     dict(slug="synthwave-84", name="Synthwave '84", author="Robb Owen (synthwave-vscode), MIT", prefer="dark",
@@ -402,13 +402,13 @@ THEMES = [
                 accent="#ff7edb", background_deep="#171520", background_sunken="#1e1a2b", window="#262335",
                 view="#241b2f", headerbar="#241b2f", sidebar="#241b2f", card="#2a2139", popover="#2a2139"),
          renders=[
-             R("dark", "silk", c1="magenta", c2="cyan", c3="yellow", stars=0.8, desat=0.0, gain=1.3),
+             R("dark", "nebula", c1="magenta", c2="cyan", c3="yellow", stars=0.8, desat=0.0, gain=1.3),
          ]),
 ]
 
 # --------------------------------------------------------------------------
 # The look pass (2026-09-29): every theme's own wallpaper look, chosen anew
-# from the eight on merit and spread across them (Pulsar keeps Silk and
+# from the eight on merit and spread across them (Pulsar keeps Nebula and
 # Pulsar Holo keeps Holo; they are written by hand). Each pick is that
 # variant's first wallpaper -- the one the theme sets and the site's hero
 # opens on -- with its own table; the theme's previous first wallpaper stays
@@ -418,8 +418,8 @@ PICKS = {
     "catppuccin": ("holo", None),          # pastel foil: keeps its own tables
     "gruvbox": ("satin", None),            # warm crushed cloth
     "flexoki": ("satin", None),            # ink-blue cloth on paper
-    "rose-pine": ("silk", None),           # rose smoke
-    "amber": ("silk", None),               # embers
+    "rose-pine": ("nebula", None),           # rose smoke
+    "amber": ("nebula", None),               # embers
     "dracula": ("leak", None),             # violet light leak
     "alucard": ("leak", None),
     "one": ("leak", L(c1="blue", c2="cyan", c3="magenta", stars=0.4, desat=0.0)),

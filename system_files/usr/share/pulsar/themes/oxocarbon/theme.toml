@@ -69,8 +69,8 @@ card = "#ffffff"
 popover = "#ffffff"
 
 [wallpaper]
-dark = ["backgrounds/holo-dark.jxl", "backgrounds/silk-dark.jxl"]
-light = ["backgrounds/holo-light.jxl", "backgrounds/silk-light.jxl"]
+dark = ["backgrounds/holo-dark.jxl", "backgrounds/nebula-dark.jxl"]
+light = ["backgrounds/holo-light.jxl", "backgrounds/nebula-light.jxl"]
 
 [[wallpaper.render]]
 variant = "dark"
@@ -85,7 +85,7 @@ desat = 0.0
 
 [[wallpaper.render]]
 variant = "dark"
-look = "silk"
+look = "nebula"
 c1 = "brown"
 c2 = "cyan"
 c3 = "magenta"
@@ -109,7 +109,7 @@ dawn_top = "background~muted@0.16"
 
 [[wallpaper.render]]
 variant = "light"
-look = "silk"
+look = "nebula"
 c1 = "red"
 c2 = "cyan"
 c3 = "blue"

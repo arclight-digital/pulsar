@@ -5,7 +5,7 @@ Every [[wallpaper.render]] table in themes/<slug>/theme.toml is one PNG:
 
   [[wallpaper.render]]
   variant = "dark"            # which palette drives it
-  look = "silk"               # silk leak satin holo relief tide orbit beacon (looks/looks.json)
+  look = "nebula"             # nebula leak satin holo relief tide orbit beacon (looks/looks.json)
   c1 = "magenta"              # lights: palette key, "#hex", or "a~b@t" (OKLab mix)
   c2 = "blue"
   c3 = "cyan"
@@ -79,17 +79,27 @@ def color(v, spec):
 # show, not just the ones the theme ships as wallpapers) is that theme's look
 # all the same: the looks drawn since the first four take their colours and
 # light direction from the variant's primary table -- the theme's own choice
-# of lights -- and their other knobs from the defaults. (Silk, Leak and Holo
+# of lights -- and their other knobs from the defaults. (Nebula, Leak and Holo
 # without a table keep the renderer's defaults, as the site has always shown
 # them.)
 INHERITED = ("c1", "c2", "c3", "c4", "star", "ground_far", "ground_near", "dawn_bottom", "dawn_top",
              "desat", "dir", "wash")
-FIRST_FOUR = ("silk", "leak", "holo")
+FIRST_FOUR = ("nebula", "leak", "holo")
+
+
+# Looks that were renamed: a render table may still say the old name.
+ALIASES = {"silk": "nebula"}
+
+
+def renders(theme):
+    """The theme's [[wallpaper.render]] tables, with old look names read as the new."""
+    return [{**sp, "look": ALIASES.get(sp["look"], sp["look"])}
+            for sp in theme.raw.get("wallpaper", {}).get("render", [])]
 
 
 def spec_for(theme, variant, look):
     """The render table for a look, as the pipeline would render it."""
-    specs = [sp for sp in theme.raw.get("wallpaper", {}).get("render", []) if sp["variant"] == variant]
+    specs = [sp for sp in renders(theme) if sp["variant"] == variant]
     own = next((sp for sp in specs if sp["look"] == look), None)
     if own is not None or look in FIRST_FOUR:
         return own or {"variant": variant, "look": look}
@@ -110,10 +120,10 @@ def uniforms(theme, spec):
     v = theme.variants[spec["variant"]]
     s = {**DEFAULTS, **spec, **COMPOSITION}
     if s["web"] is None:
-        # Silk carries its filament web well; on the smooth looks (leak, satin,
+        # Nebula carries its filament web well; on the smooth looks (leak, satin,
         # holo) a full-strength web read as electrical crackle. A render can
         # still ask for more -- the phosphor themes do.
-        s["web"] = {"silk": 1.0, "satin": 0.45}.get(spec["look"], 0.55)
+        s["web"] = {"nebula": 1.0, "satin": 0.45}.get(spec["look"], 0.55)
     dark = spec["variant"] == "dark"
     rgb = lambda c: (c.r, c.g, c.b)
     u = {
@@ -213,7 +223,7 @@ def write_uniforms(out):
     for tt in sorted(THEMES.glob("*/theme.toml")):
         theme = pt.Theme(tt)
         walls = theme.raw.get("wallpaper", {})
-        specs = walls.get("render", [])
+        specs = renders(theme)
         entry = {"shader": "theme" if specs else "pulsar", "variants": {}}
         for variant in ("dark", "light"):
             names = walls.get(variant) or []
@@ -226,13 +236,13 @@ def write_uniforms(out):
                 for look in LOOKS:
                     looks[look] = {k: (list(v) if isinstance(v, tuple) else v)
                                    for k, v in uniforms(theme, spec_for(theme, variant, look)).items()}
-                primary = first.split("-")[0]
+                primary = ALIASES.get(first.split("-")[0], first.split("-")[0])
                 if primary not in table:
                     sys.exit(f"{theme.slug}: {variant} wallpaper {names[0]} has no render table")
                 entry["variants"][variant] = {"primary": primary, "looks": looks}
             else:
-                # /usr/share/backgrounds/pulsar/pulsar-<look>-<variant>.png
-                look = first.split("-")[-2]
+                # /usr/share/backgrounds/pulsar/pulsar-<look>-<variant>.jxl
+                look = ALIASES.get(first.split("-")[-2], first.split("-")[-2])
                 if look not in LOOKS:
                     sys.exit(f"{theme.slug}: cannot read a look from {names[0]}")
                 entry["variants"][variant] = {"primary": look}
@@ -263,7 +273,7 @@ def main():
     entries = []
     for tt in sorted(THEMES.glob("*/theme.toml")):
         theme = pt.Theme(tt)
-        specs = theme.raw.get("wallpaper", {}).get("render", [])
+        specs = renders(theme)
         if not specs or (a.only and theme.slug not in a.only):
             continue
         for spec in specs:

@@ -69,8 +69,8 @@ card = "#f4f6f9"
 popover = "#f7f9fb"
 
 [wallpaper]
-dark = ["backgrounds/tide-dark.jxl", "backgrounds/silk-dark.jxl"]
-light = ["backgrounds/tide-light.jxl", "backgrounds/silk-light.jxl"]
+dark = ["backgrounds/tide-dark.jxl", "backgrounds/nebula-dark.jxl"]
+light = ["backgrounds/tide-light.jxl", "backgrounds/nebula-light.jxl"]
 
 [[wallpaper.render]]
 variant = "dark"
@@ -83,7 +83,7 @@ gain = 1.2
 
 [[wallpaper.render]]
 variant = "dark"
-look = "silk"
+look = "nebula"
 c1 = "#5e81ac"
 c2 = "cyan"
 c3 = "green"
@@ -109,7 +109,7 @@ dawn_top = "background~muted@0.16"
 
 [[wallpaper.render]]
 variant = "light"
-look = "silk"
+look = "nebula"
 c1 = "#5e81ac"
 c2 = "#88c0d0"
 c3 = "#a3be8c"

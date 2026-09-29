@@ -493,16 +493,16 @@ PY
     d="${REPO}/assets/shaders/looks"
     # looks.json: eight looks in u_look order; every file it lists exists
     [ "$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["looks"]))' "$d/looks.json")" \
-      = "silk leak satin holo relief tide orbit beacon" ]
+      = "nebula leak satin holo relief tide orbit beacon" ]
     for n in $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["files"]))' "$d/looks.json"); do
         [ -s "$d/$n.glsl" ]
     done
     # the first three keep a brand half (pulsar.frag defines BRAND) and a theme half
     grep -q '^#define BRAND' "${REPO}/assets/shaders/pulsar.frag"
     ! grep -q '^#define BRAND' "${REPO}/assets/shaders/theme.frag"
-    for n in silk leak holo; do grep -q '^#ifdef BRAND' "$d/$n.glsl"; grep -q '^#else' "$d/$n.glsl"; done
+    for n in nebula leak holo; do grep -q '^#ifdef BRAND' "$d/$n.glsl"; grep -q '^#else' "$d/$n.glsl"; done
     # each look's signature effect lives in its own file
-    grep -q 'lattice' "$d/silk.glsl"; grep -q 'rays' "$d/leak.glsl"; grep -q 'sheen' "$d/satin.glsl"
+    grep -q 'lattice' "$d/nebula.glsl"; grep -q 'rays' "$d/leak.glsl"; grep -q 'sheen' "$d/satin.glsl"
     grep -q 'film' "$d/holo.glsl"; grep -q 'isIndex' "$d/relief.glsl"; grep -q 'cellEdge' "$d/tide.glsl"
     grep -q 'ring' "$d/orbit.glsl"; grep -q 'sweep' "$d/beacon.glsl"
     # and the entries keep no look's code: only its dispatch
@@ -514,12 +514,24 @@ PY
         grep -q 'looks.json' "${REPO}/scripts/$r"
         grep -q 'def shader_source' "${REPO}/scripts/$r"
     done
-    ! grep -q 'LOOKS = {"silk"' "${REPO}"/scripts/render-wallpapers.py "${REPO}"/scripts/render-theme-wallpapers.py
+    ! grep -q 'LOOKS = {"nebula"' "${REPO}"/scripts/render-wallpapers.py "${REPO}"/scripts/render-theme-wallpapers.py
     # every brand pair the renderer writes is registered with GNOME and the Pulsar theme
-    for n in silk leak satin holo relief tide orbit beacon; do
-        grep -q "pulsar-${n}-dark.png" "${REPO}/system_files/usr/share/gnome-background-properties/pulsar.xml"
-        grep -q "pulsar-${n}-light.png" "${REPO}/system_files/usr/share/pulsar/themes/pulsar/theme.toml"
+    for n in nebula leak satin holo relief tide orbit beacon; do
+        grep -q "pulsar-${n}-dark.jxl" "${REPO}/system_files/usr/share/gnome-background-properties/pulsar.xml"
+        grep -q "pulsar-${n}-light.jxl" "${REPO}/system_files/usr/share/pulsar/themes/pulsar/theme.toml"
     done
+}
+
+@test "Silk's old names still reach Nebula" {
+    # a render table written before the rename renders the same look
+    grep -q 'ALIASES = {"silk": "nebula"}' "${REPO}/scripts/render-theme-wallpapers.py"
+    # and every path an account may have saved stays a link in the image:
+    # the brand .png names, Silk's pair, and silk-* in each theme's backgrounds/
+    grep -q 'ln -s "$(basename "${png%.png}.jxl")" "${png}"' "${REPO}/Containerfile"
+    grep -q 'pulsar-silk-${v}.png' "${REPO}/Containerfile"
+    grep -q '"${d}/silk-${v}.jxl"' "${REPO}/Containerfile"
+    # nothing ships pointing at the old names
+    ! grep -rq 'silk' "${REPO}/system_files/usr/share/glib-2.0/schemas" "${REPO}/system_files/usr/share/gnome-background-properties" "${REPO}/system_files/usr/share/pulsar/themes"
 }
 
 @test "follow-scheme rewrites only the GTK3 half after a Dark Style flip" {

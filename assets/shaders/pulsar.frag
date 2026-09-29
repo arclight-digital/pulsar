@@ -11,7 +11,7 @@
 // shader you can iterate on interactively:
 //   glslViewer pulsar.frag -w 1920 -h 1080
 //
-// The look: silk. A domain-warped noise field lit in the brand palette only
+// The look: nebula. A domain-warped noise field lit in the brand palette only
 // (violet -> periwinkle -> cyan), folded like defocused light through fabric,
 // over a near-black indigo ground with film grain everywhere and stars in the
 // dark. Saturation is deliberately pulled toward luminance -- the reference
@@ -19,9 +19,9 @@
 //
 //   u_theme 0.0 = night   1.0 = dawn (same field, high-key, ink-mark-friendly)
 //
-// LOCKED: the silk field is approved as-is -- do not retune its constants or
+// LOCKED: the nebula field is approved as-is -- do not retune its constants or
 // math. Post-approval additions sit on top of it and leave it untouched: the
-// downlight, and the per-look luminescence pass at the end of main() (silk's
+// downlight, and the per-look luminescence pass at the end of main() (nebula's
 // ion trails, leak's volumetric light, satin's fibre optics, holo's
 // interference; approved 2026-09-26, kept subtle).
 //
@@ -29,7 +29,7 @@
 // (looks/looks.json gives the order; the renderers and the site's sky.ts
 // assemble it the same way). This file is the brand contract -- the palette,
 // the helpers -- and the dispatch in main(). #define BRAND selects each
-// shared look file's brand half (Silk, Leak and Holo keep their locked brand
+// shared look file's brand half (Nebula, Leak and Holo keep their locked brand
 // math apart from theme.frag's); the looks added since (Satin, Relief, Tide,
 // Orbit, Beacon) are written once against theme.frag's contract, which the
 // shim below maps onto the brand palette.
@@ -37,7 +37,7 @@
 uniform vec2  u_resolution;
 uniform float u_time;   // fixed per render for stills, live for WebGL
 uniform float u_theme;  // 0 = dark variant, 1 = light variant
-uniform float u_look;   // 0 silk (shipped) 1 leak 2 satin 3 holo 4 relief 5 tide 6 orbit 7 beacon
+uniform float u_look;   // 0 nebula (shipped) 1 leak 2 satin 3 holo 4 relief 5 tide 6 orbit 7 beacon
 uniform float u_live;   // 1 on the site's live hero sky: the luminescence drops to a hint,
                         // so text over it stays readable; 0 (unset) for wallpapers
 
@@ -216,11 +216,11 @@ float inten, carry, g2, dawnInk;
 vec3 emit, dawnFx;
 
 // the looks, defined in looks/*.glsl
-void silkField(float wSilk);
-vec3 silkNight();
-vec3 silkDawn(vec3 dawn);
-void silkGlow(float wSilk);
-vec3 silkPearl(vec3 dawn, float amount);
+void nebulaField(float wNebula);
+vec3 nebulaNight();
+vec3 nebulaDawn(vec3 dawn);
+void nebulaGlow(float wNebula);
+vec3 nebulaPearl(vec3 dawn, float amount);
 vec3 leakNight();
 vec3 leakDawn();
 void leakGlow(float wLeak);
@@ -250,7 +250,7 @@ void main() {
     // across the sky. Dark and light stills are unchanged; the second field
     // is computed only mid-fade (uniform branch).
     // and each look its own sky: the field shifts with the look, so swapping
-    // looks swaps the stars too (Silk, look 0, keeps the field it shipped with)
+    // looks swaps the stars too (Nebula, look 0, keeps the field it shipped with)
     float lookN = floor(clamp(u_look, 0.0, 7.0) + 0.5);
     vec2 skySeed = vec2(lookN * 37.1, lookN * 11.9);
     vec2 seedD = uv + skySeed, seedL = uv + vec2(31.7, 17.3) + skySeed;
@@ -278,7 +278,7 @@ void main() {
     vec3 night;
     vec3 dawn = vec3(0.0);
     float lookAll = clamp(u_look, 0.0, 7.0);
-    // Silk, Leak and Holo keep their original data flow below, weights and
+    // Nebula, Leak and Holo keep their original data flow below, weights and
     // mix chain included, so their pixels are exactly what they were. Satin
     // and the looks since draw in the fresh path.
     if (lookAll < 3.5 && abs(lookAll - 2.0) > 0.5) {
@@ -287,12 +287,12 @@ void main() {
         // pixel takes the same path), so a hidden look costs nothing, and a
         // still is pixel-identical -- a skipped look was multiplied by zero.
         float look = clamp(u_look, 0.0, 3.0);
-        float wSilk = 1.0 - clamp(look, 0.0, 1.0);
+        float wNebula = 1.0 - clamp(look, 0.0, 1.0);
         float wLeak = clamp(look, 0.0, 1.0) - clamp(look - 1.0, 0.0, 1.0);
         float wHolo = clamp(look - 2.0, 0.0, 1.0);
 
-        silkField(wSilk);
-        night = silkNight();
+        nebulaField(wNebula);
+        night = nebulaNight();
         vec3 leak = vec3(0.0);
         if (wLeak > 0.0) leak = leakNight();
         // Satin's slot in the chain stays, as zero: it keeps the chain's
@@ -307,7 +307,7 @@ void main() {
         // dawn only when light mode shows (or mid-fade): theme is a uniform too
         if (theme > 0.0) {
             dawn = dawnBase;
-            if (wSilk > 0.0) dawn = silkDawn(dawn);
+            if (wNebula > 0.0) dawn = nebulaDawn(dawn);
             vec3 dawnL = vec3(0.0);
             if (wLeak > 0.0) dawnL = leakDawn();
             vec3 dawnS = vec3(0.0);
@@ -329,7 +329,7 @@ void main() {
         g2 = 0.0;
         dawnFx = vec3(0.0);
         dawnInk = 0.0;
-        if (wSilk > 0.0) silkGlow(wSilk);
+        if (wNebula > 0.0) nebulaGlow(wNebula);
         if (wLeak > 0.0) leakGlow(wLeak);
         if (wHolo > 0.0) holoGlow(wHolo);
         emit = min(emit, CYAN * 0.85 + 0.03);
@@ -344,7 +344,7 @@ void main() {
         night = knee(night + emit * quiet);
         // dawn: the same effects in pearl, low-contrast against the paper
         float intenD = clamp(dot(abs(dawn - dawnBase), vec3(0.3333)) * 7.0, 0.0, 1.0);
-        if (wSilk > 0.0) dawn = silkPearl(dawn, wSilk * intenD * 0.14 * quiet);
+        if (wNebula > 0.0) dawn = nebulaPearl(dawn, wNebula * intenD * 0.14 * quiet);
         dawn = mix(dawn, vec3(1.0), clamp(dawnFx * (0.15 + 0.85 * intenD) * quiet, 0.0, 0.6));
         dawn *= 1.0 - clamp(dawnInk, -0.2, 0.2);
     } else {
@@ -362,7 +362,7 @@ void main() {
     vec3 col = mix(night, dawn, theme);
 
     // ---- film grain, screen-space ------------------------------------------
-    // Follows luminance the way real grain does: strongest in the lit silk,
+    // Follows luminance the way real grain does: strongest in the lit nebula,
     // never absent even in the blacks. This also kills gradient banding.
     vec2 nseed = gl_FragCoord.xy + floor(fract(u_time) * 60.0) * vec2(113.0, 71.0);
     float g = hashS(nseed) - 0.5;

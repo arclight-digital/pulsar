@@ -1,5 +1,5 @@
 {
   "comment": "The wallpaper looks, in u_look order, and the files every shader is assembled from: the entry (pulsar.frag or theme.frag) and then these, in this order. The renderers (scripts/render-wallpapers.py, scripts/render-theme-wallpapers.py) and the site's sky.ts all read this list. warp.glsl is not shipped: the alternative for slot 7.",
-  "looks": ["silk", "leak", "satin", "holo", "relief", "tide", "orbit", "beacon"],
-  "files": ["shared", "silk", "leak", "satin", "holo", "relief", "tide", "orbit", "beacon"]
+  "looks": ["nebula", "leak", "satin", "holo", "relief", "tide", "orbit", "beacon"],
+  "files": ["shared", "nebula", "leak", "satin", "holo", "relief", "tide", "orbit", "beacon"]
 }

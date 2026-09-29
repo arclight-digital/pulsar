@@ -38,7 +38,7 @@ card = "#0b1a10"
 popover = "#0f2416"
 
 [wallpaper]
-dark = ["backgrounds/beacon-dark.jxl", "backgrounds/silk-dark.jxl"]
+dark = ["backgrounds/beacon-dark.jxl", "backgrounds/nebula-dark.jxl"]
 
 [[wallpaper.render]]
 variant = "dark"
@@ -51,7 +51,7 @@ desat = 0.0
 
 [[wallpaper.render]]
 variant = "dark"
-look = "silk"
+look = "nebula"
 c1 = "#06351a"
 c2 = "#1f9e48"
 c3 = "bright_green"

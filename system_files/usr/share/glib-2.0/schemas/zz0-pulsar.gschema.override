@@ -122,16 +122,16 @@ download-updates=false
 [org.gnome.login-screen]
 logo='/usr/share/pulsar/pulsar-gdm-logo.png'
 
-# silk is the default pair; GNOME flips between them with the style toggle.
+# nebula is the default pair; GNOME flips between them with the style toggle.
 # The other three pairs ship alongside and are registered for the Appearance
 # panel via /usr/share/gnome-background-properties/pulsar.xml.
 [org.gnome.desktop.background]
-picture-uri='file:///usr/share/backgrounds/pulsar/pulsar-silk-light.png'
-picture-uri-dark='file:///usr/share/backgrounds/pulsar/pulsar-silk-dark.png'
+picture-uri='file:///usr/share/backgrounds/pulsar/pulsar-nebula-light.jxl'
+picture-uri-dark='file:///usr/share/backgrounds/pulsar/pulsar-nebula-dark.jxl'
 
-# lock screen has no dark-variant key; silk-dark is the brand default
+# lock screen has no dark-variant key; nebula-dark is the brand default
 [org.gnome.desktop.screensaver]
-picture-uri='file:///usr/share/backgrounds/pulsar/pulsar-silk-dark.png'
+picture-uri='file:///usr/share/backgrounds/pulsar/pulsar-nebula-dark.jxl'
 
 # GNOME Shell's own first-login "Welcome to GNOME" / "Take the Tour" dialog.
 # Pulsar's welcome (pulsar-welcome.service) greets a new account instead, and

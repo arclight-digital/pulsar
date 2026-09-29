@@ -694,10 +694,16 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 #
 # Wallpapers: scripts/build.sh renders them as PNG on the builder (there is no
 # GL stack in here), cjxl converts them at quality 99 and the PNGs go. q99 is
-# about 1.2 MB against a 3.7 MB PNG. Measured on Phosphor's silk: q97 (0.65 MB)
+# about 1.2 MB against a 3.7 MB PNG. Measured on Phosphor's Nebula: q97 (0.65 MB)
 # kept only ~60% of the grain in the dark gradients, and that grain is also
 # the dither, so they banded again on screen; q99 keeps ~90%, and the shaders
 # add a +-1-step triangular dither on top. q90 strips it and blocks.
+# The brand renders (/usr/share/backgrounds/pulsar) go the same way, 16 of them
+# at 3840x2160 (~4 MB each as PNG). Accounts keep whatever path they saved --
+# a theme set before this, a pick in Settings -- so every old name stays as a
+# link: pulsar-<look>-<variant>.png to its .jxl (glycin reads the content, not
+# the extension), and Silk's names to Nebula's, the look's name since
+# 2026-09-29, in the brand set and in each theme's backgrounds/.
 # GNOME 50 reads .jxl natively (glycin-jxl), and ships its own wallpapers as
 # .jxl. A --no-wallpapers build has no renders: that is fine, the engine falls
 # back to the brand wallpapers, so it is announced rather than fatal.
@@ -720,11 +726,33 @@ RUN set -eu; \
       rm -f "${png}"; \
       n=$((n + 1)); \
     done; \
+    b=0; \
+    for png in /usr/share/backgrounds/pulsar/pulsar-*.png; do \
+      [ -f "${png}" ] && [ ! -L "${png}" ] || continue; \
+      cjxl -q 99 --quiet "${png}" "${png%.png}.jxl"; \
+      [ -s "${png%.png}.jxl" ] || { echo "FATAL: cjxl wrote nothing for ${png}"; exit 1; }; \
+      rm -f "${png}"; \
+      ln -s "$(basename "${png%.png}.jxl")" "${png}"; \
+      b=$((b + 1)); \
+    done; \
     dnf5 remove -y libjxl-utils; \
+    for v in dark light; do \
+      ln -sfn "pulsar-nebula-${v}.jxl" "/usr/share/backgrounds/pulsar/pulsar-silk-${v}.png"; \
+      for d in /usr/share/pulsar/themes/*/backgrounds; do \
+        if [ -e "${d}/nebula-${v}.jxl" ]; then ln -sfn "nebula-${v}.jxl" "${d}/silk-${v}.jxl"; fi; \
+      done; \
+    done; \
+    echo "brand wallpapers: ${b} converted to JPEG XL q99, the old .png names kept as links"; \
+    if find /usr/share/backgrounds/pulsar -type f -name '*.png' | grep -q .; then \
+      echo "FATAL: PNG renders left under /usr/share/backgrounds/pulsar; only .jxl is meant to ship"; exit 1; \
+    fi; \
+    if [ "${b}" -gt 0 ] && [ ! -s /usr/share/backgrounds/pulsar/pulsar-silk-dark.png ]; then \
+      echo "FATAL: pulsar-silk-dark.png does not resolve; every account that saved it would lose its wallpaper"; exit 1; \
+    fi; \
     if [ "${n}" -eq 0 ]; then \
       echo "theme wallpapers: none rendered (--no-wallpapers build); themes fall back to the brand pair"; \
     else \
-      echo "theme wallpapers: ${n} converted to JPEG XL q97 ($(du -sh /usr/share/pulsar/themes | cut -f1) of themes)"; \
+      echo "theme wallpapers: ${n} converted to JPEG XL q99 ($(du -sh /usr/share/pulsar/themes | cut -f1) of themes)"; \
     fi; \
     if find /usr/share/pulsar/themes -name '*.png' | grep -q .; then \
       echo "FATAL: PNG renders left under /usr/share/pulsar/themes; only .jxl is meant to ship"; exit 1; \

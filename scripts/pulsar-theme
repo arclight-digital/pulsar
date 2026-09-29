@@ -74,8 +74,8 @@ TEMPLATE_PATH = [pathlib.Path(p) for p in os.environ.get("PULSAR_THEME_TEMPLATES
 ]
 # What a theme falls back to when its own renders are absent (a
 # --no-wallpapers build): the brand pair, which zz0 already points at.
-BRAND_WALLPAPER = {"dark": pathlib.Path("/usr/share/backgrounds/pulsar/pulsar-silk-dark.png"),
-                   "light": pathlib.Path("/usr/share/backgrounds/pulsar/pulsar-silk-light.png")}
+BRAND_WALLPAPER = {"dark": pathlib.Path("/usr/share/backgrounds/pulsar/pulsar-nebula-dark.jxl"),
+                   "light": pathlib.Path("/usr/share/backgrounds/pulsar/pulsar-nebula-light.jxl")}
 
 # ---------------------------------------------------------------- colour ----
 

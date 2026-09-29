@@ -57,11 +57,11 @@ popover = "#ffffff"
 
 # The shipped shader looks, light/dark pairs; `bg-next` walks them.
 [wallpaper]
-dark = ["/usr/share/backgrounds/pulsar/pulsar-silk-dark.png", "/usr/share/backgrounds/pulsar/pulsar-leak-dark.png",
-        "/usr/share/backgrounds/pulsar/pulsar-satin-dark.png", "/usr/share/backgrounds/pulsar/pulsar-holo-dark.png",
-        "/usr/share/backgrounds/pulsar/pulsar-relief-dark.png", "/usr/share/backgrounds/pulsar/pulsar-tide-dark.png",
-        "/usr/share/backgrounds/pulsar/pulsar-orbit-dark.png", "/usr/share/backgrounds/pulsar/pulsar-beacon-dark.png"]
-light = ["/usr/share/backgrounds/pulsar/pulsar-silk-light.png", "/usr/share/backgrounds/pulsar/pulsar-leak-light.png",
-         "/usr/share/backgrounds/pulsar/pulsar-satin-light.png", "/usr/share/backgrounds/pulsar/pulsar-holo-light.png",
-         "/usr/share/backgrounds/pulsar/pulsar-relief-light.png", "/usr/share/backgrounds/pulsar/pulsar-tide-light.png",
-         "/usr/share/backgrounds/pulsar/pulsar-orbit-light.png", "/usr/share/backgrounds/pulsar/pulsar-beacon-light.png"]
+dark = ["/usr/share/backgrounds/pulsar/pulsar-nebula-dark.jxl", "/usr/share/backgrounds/pulsar/pulsar-leak-dark.jxl",
+        "/usr/share/backgrounds/pulsar/pulsar-satin-dark.jxl", "/usr/share/backgrounds/pulsar/pulsar-holo-dark.jxl",
+        "/usr/share/backgrounds/pulsar/pulsar-relief-dark.jxl", "/usr/share/backgrounds/pulsar/pulsar-tide-dark.jxl",
+        "/usr/share/backgrounds/pulsar/pulsar-orbit-dark.jxl", "/usr/share/backgrounds/pulsar/pulsar-beacon-dark.jxl"]
+light = ["/usr/share/backgrounds/pulsar/pulsar-nebula-light.jxl", "/usr/share/backgrounds/pulsar/pulsar-leak-light.jxl",
+         "/usr/share/backgrounds/pulsar/pulsar-satin-light.jxl", "/usr/share/backgrounds/pulsar/pulsar-holo-light.jxl",
+         "/usr/share/backgrounds/pulsar/pulsar-relief-light.jxl", "/usr/share/backgrounds/pulsar/pulsar-tide-light.jxl",
+         "/usr/share/backgrounds/pulsar/pulsar-orbit-light.jxl", "/usr/share/backgrounds/pulsar/pulsar-beacon-light.jxl"]

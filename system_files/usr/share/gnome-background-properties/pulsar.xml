@@ -12,9 +12,9 @@
      correctly installed the entire time. -->
 <wallpapers>
   <wallpaper deleted="false">
-    <name>Pulsar Silk</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-silk-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-silk-dark.png</filename-dark>
+    <name>Pulsar Nebula</name>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-nebula-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-nebula-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
@@ -22,8 +22,8 @@
   </wallpaper>
   <wallpaper deleted="false">
     <name>Pulsar Leak</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-leak-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-leak-dark.png</filename-dark>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-leak-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-leak-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
@@ -31,8 +31,8 @@
   </wallpaper>
   <wallpaper deleted="false">
     <name>Pulsar Satin</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-satin-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-satin-dark.png</filename-dark>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-satin-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-satin-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
@@ -40,8 +40,8 @@
   </wallpaper>
   <wallpaper deleted="false">
     <name>Pulsar Holo</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-holo-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-holo-dark.png</filename-dark>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-holo-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-holo-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
@@ -49,8 +49,8 @@
   </wallpaper>
   <wallpaper deleted="false">
     <name>Pulsar Relief</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-relief-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-relief-dark.png</filename-dark>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-relief-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-relief-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
@@ -58,8 +58,8 @@
   </wallpaper>
   <wallpaper deleted="false">
     <name>Pulsar Tide</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-tide-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-tide-dark.png</filename-dark>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-tide-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-tide-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
@@ -67,8 +67,8 @@
   </wallpaper>
   <wallpaper deleted="false">
     <name>Pulsar Orbit</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-orbit-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-orbit-dark.png</filename-dark>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-orbit-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-orbit-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
@@ -76,8 +76,8 @@
   </wallpaper>
   <wallpaper deleted="false">
     <name>Pulsar Beacon</name>
-    <filename>/usr/share/backgrounds/pulsar/pulsar-beacon-light.png</filename>
-    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-beacon-dark.png</filename-dark>
+    <filename>/usr/share/backgrounds/pulsar/pulsar-beacon-light.jxl</filename>
+    <filename-dark>/usr/share/backgrounds/pulsar/pulsar-beacon-dark.jxl</filename-dark>
     <options>zoom</options>
     <shade_type>solid</shade_type>
     <pcolor>#0B0E1A</pcolor>
