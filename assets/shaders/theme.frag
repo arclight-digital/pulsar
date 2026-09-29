@@ -76,6 +76,9 @@ float starLayer(vec2 uv, float scale, float density, float size) {
 // ---- OKLab mixing -------------------------------------------------------
 vec3 toLin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
 vec3 toSrgb(vec3 c) { c = max(c, 0.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+// exp(-x^2) without pow(): GLSL leaves pow() undefined for a negative base,
+// and some mobile GPUs return NaN there, which blacked out the whole frame
+float gauss(float x) { return exp(-x * x); }
 vec3 toLab(vec3 c) {
     c = toLin(c);
     vec3 lms = vec3(0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b,
@@ -135,7 +138,7 @@ vec3 holoRamp(float hx) {
     return c;
 }
 vec3 beamRGB(float y, float c, float w, float o) {
-    return vec3(exp(-pow((y - c + o) / w, 2.0)), exp(-pow((y - c) / w, 2.0)), exp(-pow((y - c - o) / w, 2.0)));
+    return vec3(gauss((y - c + o) / w), gauss((y - c) / w), gauss((y - c - o) / w));
 }
 
 void main() {
@@ -173,7 +176,7 @@ void main() {
     leak += u_c1 * beamRGB(lq.y, 0.36, 0.20, 0.050) * lfade * 0.30 * u_gain;  // brand 0.55: violet is dim, theme c1 is not
     leak += u_c2 * beamRGB(lq.y, 0.05, 0.26, 0.055) * lfade * 0.45 * u_gain;
     leak += u_c3 * beamRGB(lq.y, -0.28, 0.14, 0.040) * smoothstep(0.50, -0.45, lq.x) * 0.50 * u_gain;
-    leak += u_c3 * exp(-pow((lq.y + 0.28) / 0.42, 2.0)) * smoothstep(0.50, -0.45, lq.x) * 0.10 * u_gain;
+    leak += u_c3 * gauss((lq.y + 0.28) / 0.42) * smoothstep(0.50, -0.45, lq.x) * 0.10 * u_gain;
     leak = grey(leak, u_desat * 0.8);
     leak += u_star * starsNight * (1.0 - lfade * 0.7) * 0.45 * u_stars;
     leak *= 1.0 - 0.35 * smoothstep(0.60, 1.10, r);
@@ -222,9 +225,9 @@ void main() {
     dawn = mixo(dawn, mixo(u_c1, vec3(1.0), 0.45), starsDawn * 0.35 * u_stars);
 
     vec3 dawnL = dawnBase;
-    float dV = exp(-pow((lq.y - 0.36) / 0.20, 2.0)) * lfade;
-    float dP = exp(-pow((lq.y - 0.05) / 0.26, 2.0)) * lfade;
-    float dC = exp(-pow((lq.y + 0.28) / 0.14, 2.0)) * smoothstep(0.50, -0.45, lq.x);
+    float dV = gauss((lq.y - 0.36) / 0.20) * lfade;
+    float dP = gauss((lq.y - 0.05) / 0.26) * lfade;
+    float dC = gauss((lq.y + 0.28) / 0.14) * smoothstep(0.50, -0.45, lq.x);
     dawnL = mixo(dawnL, l1, dV * 0.45 * u_gain);
     dawnL = mixo(dawnL, l2, dP * 0.68 * u_gain);
     dawnL = mixo(dawnL, l3, dC * 0.75 * u_gain);
@@ -323,7 +326,7 @@ void main() {
         // grating: a broad diagonal band whose colour runs with angle
         float gd = dot(uv, normalize(vec2(0.8, 0.45)));
         vec3 grating = (0.5 + 0.5 * cos(6.2831 * (gd * 3.0 + vec3(0.0, 0.33, 0.67))))
-                     * exp(-pow((gd - 0.05) / 0.22, 2.0));
+                     * gauss((gd - 0.05) / 0.22);
         float scanBand = line(uv.y - 0.14, 0.035) * u_signal;
         emit += wHolo * u_web * (mixo(film, u_c3, 0.45) * inten * 0.12 + grating * inten * 0.08
                                  + soft * scanBand * (0.02 + 0.08 * inten));

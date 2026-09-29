@@ -121,6 +121,9 @@ vec3 knee(vec3 x) {
 // keeps its sRGB mix (and its exact pixels).
 vec3 toLinS(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
 vec3 toSrgbS(vec3 c) { c = max(c, 0.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+// exp(-x^2) without pow(): GLSL leaves pow() undefined for a negative base,
+// and some mobile GPUs return NaN there, which blacked out the whole frame
+float gauss(float x) { return exp(-x * x); }
 vec3 toLab(vec3 c) {
     c = toLinS(c);
     vec3 lms = vec3(0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b,
@@ -159,9 +162,9 @@ vec3 holoRamp(float hx) {
 // one beam with prismatic dispersion: the R/G/B channels land at slightly
 // offset heights, so the beam's edges split into color fringes
 vec3 beamRGB(float y, float c, float w, float o) {
-    return vec3(exp(-pow((y - c + o) / w, 2.0)),
-                exp(-pow((y - c) / w, 2.0)),
-                exp(-pow((y - c - o) / w, 2.0)));
+    return vec3(gauss((y - c + o) / w),
+                gauss((y - c) / w),
+                gauss((y - c - o) / w));
 }
 
 void main() {
@@ -240,7 +243,7 @@ void main() {
     leak += CYAN   * beamRGB(lq.y, -0.28, 0.14, 0.040)
           * smoothstep(0.50, -0.45, lq.x) * 0.50;
     // halation: an extra-wide faint copy of the cyan beam glowing outward
-    leak += CYAN * exp(-pow((lq.y + 0.28) / 0.42, 2.0))
+    leak += CYAN * gauss((lq.y + 0.28) / 0.42)
           * smoothstep(0.50, -0.45, lq.x) * 0.10;
     leak = mix(leak, vec3(dot(leak, vec3(0.33))), 0.15);
     leak += STAR * starsNight * (1.0 - lfade * 0.7) * 0.45;
@@ -318,9 +321,9 @@ void main() {
     // leak dawn: the same beams as washes of pastel; dispersion would be
     // invisible at this key, so the light cut trades it for pure color
     vec3 dawnL = dawnBase;
-    float dV = exp(-pow((lq.y - 0.36) / 0.20, 2.0)) * lfade;
-    float dP = exp(-pow((lq.y - 0.05) / 0.26, 2.0)) * lfade;
-    float dC = exp(-pow((lq.y + 0.28) / 0.14, 2.0)) * smoothstep(0.50, -0.45, lq.x);
+    float dV = gauss((lq.y - 0.36) / 0.20) * lfade;
+    float dP = gauss((lq.y - 0.05) / 0.26) * lfade;
+    float dC = gauss((lq.y + 0.28) / 0.14) * smoothstep(0.50, -0.45, lq.x);
     dawnL = mix(dawnL, vec3(0.700, 0.650, 0.930), dV * 0.75);
     dawnL = mix(dawnL, vec3(0.700, 0.760, 0.970), dP * 0.68);
     dawnL = mix(dawnL, vec3(0.590, 0.840, 0.975), dC * 0.75);
@@ -416,7 +419,7 @@ void main() {
         vec3 film = 0.5 + 0.5 * cos(6.2831 * (thick + vec3(0.0, 0.33, 0.67)));
         float gd = dot(uv, normalize(vec2(0.8, 0.45)));
         vec3 grating = (0.5 + 0.5 * cos(6.2831 * (gd * 3.0 + vec3(0.0, 0.33, 0.67))))
-                     * exp(-pow((gd - 0.05) / 0.22, 2.0));
+                     * gauss((gd - 0.05) / 0.22);
         float scanBand = glowLine(uv.y - 0.14, 0.035);
         emit += wHolo * (mix(film, CYAN, 0.45) * inten * 0.12 + grating * inten * 0.08
                          + PERI * scanBand * (0.02 + 0.08 * inten));
