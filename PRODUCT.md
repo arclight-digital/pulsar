@@ -32,8 +32,8 @@ appear on the site, in the README or in release notes; the Fedora Silverblue
 base is stated plainly where it is a technical fact (install, provenance),
 never as the pitch. Four pillars, in this order on the home page:
 
-1. **Make it yours in one command.** Sixteen themes (twelve light-and-dark, plus four single-mode: Dracula,
-   Phosphor and Amber dark, Alucard light),
+1. **Make it yours in one command.** Twenty themes (fourteen light-and-dark, plus six single-mode: Dracula,
+   Poimandres, Synthwave '84, Phosphor and Amber dark, Alucard light),
    recolouring the whole desktop at once; shipped in the image, exact revert,
    graceful restarts, on by default.
 2. **The safest machine to hand to an agent.** AGENTS.md in the image,

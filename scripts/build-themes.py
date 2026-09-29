@@ -336,7 +336,132 @@ THEMES = [
              R("dark", "silk", c1="red", c2="orange", c3="yellow", seed=[3.3, 5.1], stars=0.3, desat=0.0, gain=1.3),
              R("light", "silk", c1="#f07171", c2="#fa8d3e", c3="#ffb454", seed=[3.3, 5.1], wash=0.2, stars=0.2),
          ]),
+    dict(slug="one", name="One", author="Atom (atom/one-dark-syntax, one-light-syntax), MIT", prefer="dark",
+         # upstream's own syntax palettes; no faithful base16 port keeps the
+         # slots, so by hand from one-dark-syntax / one-light-syntax colors.less
+         dark=V(pal=dict(background="#282c34", foreground="#abb2bf", foreground_dim="#9da5b4",
+                         foreground_bright="#d7dae0", muted="#5c6370", selection="#3e4451",
+                         red="#e06c75", orange="#d19a66", yellow="#e5c07b", green="#98c379",
+                         cyan="#56b6c2", blue="#61afef", magenta="#c678dd", brown="#be5046"),
+                accent="#61afef", background_deep="#1b1d23", background_sunken="#21252b", window="#282c34",
+                view="#21252b", headerbar="#21252b", sidebar="#21252b", card="#2c313a", popover="#333842"),
+         light=V(pal=dict(background="#fafafa", foreground="#383a42", foreground_dim="#696c77",
+                          foreground_bright="#232324", muted="#a0a1a7", selection="#e5e5e6",
+                          red="#e45649", orange="#986801", yellow="#c18401", green="#50a14f",
+                          cyan="#0184bc", blue="#4078f2", magenta="#a626a4", brown="#ca1243"),
+                 accent="#4078f2", background_deep="#eaeaeb", background_sunken="#f0f0f0", window="#fafafa",
+                 view="#ffffff", headerbar="#eaeaeb", sidebar="#f0f0f0", card="#ffffff", popover="#ffffff"),
+         renders=[
+             R("dark", "silk", c1="blue", c2="magenta", c3="cyan", stars=0.6, desat=0.0, gain=1.3),
+             R("light", "silk", c1="blue", c2="magenta", c3="cyan", wash=0.3, stars=0.3),
+         ]),
+
+    dict(slug="oxocarbon", name="Oxocarbon", author="nyoom-engineering (oxocarbon.nvim), MIT; IBM Carbon palette",
+         prefer="dark",
+         # oxocarbon.nvim's base16 table. It has no orange or yellow of its
+         # own (its terminal puts blue in slot 3), so those two are IBM
+         # Carbon's orange 40 / yellow 30, the palette oxocarbon is cut from.
+         dark=V(pal=dict(background="#161616", foreground="#f2f4f8", foreground_dim="#dde1e6",
+                         foreground_bright="#ffffff", muted="#6f6f6f", selection="#393939",
+                         red="#ee5396", orange="#ff832b", yellow="#f1c21b", green="#42be65",
+                         cyan="#3ddbd9", blue="#78a9ff", magenta="#be95ff", brown="#ff7eb6"),
+                accent="#ff7eb6", background_deep="#0e0e0e", background_sunken="#121212", window="#161616",
+                view="#121212", headerbar="#262626", sidebar="#1c1c1c", card="#262626", popover="#262626"),
+         light=V(pal=dict(background="#ffffff", foreground="#161616", foreground_dim="#393939",
+                          foreground_bright="#000000", muted="#6f6f6f", selection="#dde1e6",
+                          red="#ee5396", orange="#ff6f00", yellow="#f1c21b", green="#42be65",
+                          cyan="#08bdba", blue="#0f62fe", magenta="#673ab7", brown="#ff7eb6"),
+                 accent="#ee5396", background_deep="#dde1e6", background_sunken="#f2f4f8", window="#ffffff",
+                 view="#ffffff", headerbar="#f2f4f8", sidebar="#f2f4f8", card="#ffffff", popover="#ffffff"),
+         renders=[
+             R("dark", "silk", c1="brown", c2="cyan", c3="magenta", stars=0.6, desat=0.0, gain=1.3),
+             R("light", "silk", c1="red", c2="cyan", c3="blue", wash=0.3, stars=0.3),
+         ]),
+
+    dict(slug="poimandres", name="Poimandres", author="drcmda (poimandres-theme), MIT", prefer="dark",
+         # upstream's own palette (the VS Code theme's colors); it has no
+         # orange, so orange is its hot pink 45% toward its yellow (OKLab), ours
+         dark=V(pal=dict(background="#1b1e28", foreground="#e4f0fb", foreground_dim="#a6accd",
+                         foreground_bright="#ffffff", muted="#767c9d", selection="#303340",
+                         red="#d0679d", orange="#e5a9ae", yellow="#fffac2", green="#5de4c7",
+                         cyan="#89ddff", blue="#add7ff", magenta="#fcc5e9", brown="#5fb3a1"),
+                accent="#5de4c7", background_deep="#15171f", background_sunken="#171922", window="#1b1e28",
+                view="#171922", headerbar="#252b37", sidebar="#1b1e28", card="#252b37", popover="#252b37"),
+         renders=[
+             R("dark", "silk", c1="green", c2="blue", c3="magenta", stars=0.6, desat=0.0, gain=1.3),
+         ]),
+
+    dict(slug="synthwave-84", name="Synthwave '84", author="Robb Owen (synthwave-vscode), MIT", prefer="dark",
+         shell_glow=True,
+         # upstream's own palette; its blue is the theme's periwinkle, lifted
+         # to text contrast by the floor below
+         dark=V(pal=dict(background="#262335", foreground="#ffffff", foreground_dim="#bbbbbb",
+                         foreground_bright="#ffffff", muted="#848bbd", selection="#463465",
+                         red="#fe4450", orange="#ff8b39", yellow="#fede5d", green="#72f1b8",
+                         cyan="#36f9f6", blue="#6d77b3", magenta="#ff7edb", brown="#f97e72"),
+                accent="#ff7edb", background_deep="#171520", background_sunken="#1e1a2b", window="#262335",
+                view="#241b2f", headerbar="#241b2f", sidebar="#241b2f", card="#2a2139", popover="#2a2139"),
+         renders=[
+             R("dark", "silk", c1="magenta", c2="cyan", c3="yellow", stars=0.8, desat=0.0, gain=1.3),
+         ]),
 ]
+
+# --------------------------------------------------------------------------
+# The look pass (2026-09-29): every theme's own wallpaper look, chosen anew
+# from the eight on merit and spread across them (Pulsar keeps Silk and
+# Pulsar Holo keeps Holo; they are written by hand). Each pick is that
+# variant's first wallpaper -- the one the theme sets and the site's hero
+# opens on -- with its own table; the theme's previous first wallpaper stays
+# as the second when it was a different look.
+L = lambda **kw: kw   # shared knobs for a look, per theme
+PICKS = {
+    "catppuccin": ("holo", None),          # pastel foil: keeps its own tables
+    "gruvbox": ("satin", None),            # warm crushed cloth
+    "flexoki": ("satin", None),            # ink-blue cloth on paper
+    "rose-pine": ("silk", None),           # rose smoke
+    "amber": ("silk", None),               # embers
+    "dracula": ("leak", None),             # violet light leak
+    "alucard": ("leak", None),
+    "one": ("leak", L(c1="blue", c2="cyan", c3="magenta", stars=0.4, desat=0.0)),
+    "oxocarbon": ("holo", L(c1="brown", c4="red", c2="blue", c3="cyan", gain=1.15, stars=0.6, desat=0.0)),
+    # topographic lines: a forest map, a quiet teal survey, a neon wireframe
+    "everforest": ("relief", L(c1="green", c2="cyan", c3="yellow", desat=0.05, gain=1.25)),
+    "poimandres": ("relief", L(c1="green", c2="cyan", c3="blue", desat=0.0)),
+    "synthwave-84": ("relief", L(c1="magenta", c2="cyan", c3="orange", desat=0.0, gain=1.35)),
+    # caustics: arctic water with an aurora in it; the great wave's indigo
+    # and spring blue
+    "nord": ("tide", L(c1="cyan", c2="green", c3="blue", desat=0.0, gain=1.2)),
+    "kanagawa": ("tide", L(c1="cyan", c2="blue", c3="blue", desat=0.0, gain=1.25)),
+    # a ringed planet: Solarized's teal and sun, Ayu's gold dusk
+    "solarized": ("orbit", L(c1="cyan", c2="blue", c3="yellow", stars=0.8, desat=0.0)),
+    "ayu": ("orbit", L(c1="orange", c2="yellow", c3="yellow", stars=0.6, desat=0.0)),
+    # a pulsar's sweep: neon night, a phosphor radar
+    "tokyo-night": ("beacon", L(c1="blue", c2="magenta", c3="cyan", stars=0.8, desat=0.0)),
+    "phosphor": ("beacon", L(c1="green", c2="bright_green", c3="accent", stars=0.3, desat=0.0)),
+}
+
+
+def apply_pick(t):
+    """Put the picked look first in each variant, one previous look after it."""
+    look, knobs = PICKS[t["slug"]]
+    out = []
+    for mode in ("dark", "light"):
+        if mode not in t:
+            continue
+        mine = [r for r in t["renders"] if r["variant"] == mode]
+        own = next((r for r in mine if r["look"] == look), None)
+        if knobs is not None:
+            own = R(mode, look, **knobs)
+            if mode == "light":
+                own.setdefault("wash", 0.3)
+                own["dawn_bottom"] = f"background"
+                own["dawn_top"] = "background~muted@0.16"
+        if own is None:
+            raise SystemExit(f"{t['slug']}: pick {look} has no {mode} table")
+        rest = next((r for r in mine if r["look"] != look), None)
+        out += [own] + ([rest] if rest else [])
+    t["renders"] = out
+
 
 FLOORS = {"hue": 4.55, "bright": 3.05, "muted": 3.05, "foreground_dim": 4.55}
 
@@ -411,6 +536,7 @@ def toml_value(v):
 def main():
     report_only = "--report" in sys.argv
     for t in THEMES:
+        apply_pick(t)
         lines = [f"# GENERATED by scripts/build-themes.py -- edit the table there, not this file.",
                  f'name = "{t["name"]}"', f'author = "{t["author"]}"', f'prefer = "{t["prefer"]}"']
         srcs = []

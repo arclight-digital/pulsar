@@ -69,8 +69,17 @@ card = "#f4f6f9"
 popover = "#f7f9fb"
 
 [wallpaper]
-dark = ["backgrounds/silk-dark.jxl", "backgrounds/satin-dark.jxl"]
-light = ["backgrounds/silk-light.jxl", "backgrounds/satin-light.jxl"]
+dark = ["backgrounds/tide-dark.jxl", "backgrounds/silk-dark.jxl"]
+light = ["backgrounds/tide-light.jxl", "backgrounds/silk-light.jxl"]
+
+[[wallpaper.render]]
+variant = "dark"
+look = "tide"
+c1 = "cyan"
+c2 = "green"
+c3 = "blue"
+desat = 0.0
+gain = 1.2
 
 [[wallpaper.render]]
 variant = "dark"
@@ -88,6 +97,18 @@ gain = 1.5
 
 [[wallpaper.render]]
 variant = "light"
+look = "tide"
+c1 = "cyan"
+c2 = "green"
+c3 = "blue"
+desat = 0.0
+gain = 1.2
+wash = 0.3
+dawn_bottom = "background"
+dawn_top = "background~muted@0.16"
+
+[[wallpaper.render]]
+variant = "light"
 look = "silk"
 c1 = "#5e81ac"
 c2 = "#88c0d0"
@@ -98,26 +119,5 @@ fold = 1.9
 wash = 0.0
 gain = 1.7
 stars = 0.25
-dawn_bottom = "#eceff4"
-dawn_top = "#d8dee9"
-
-[[wallpaper.render]]
-variant = "dark"
-look = "satin"
-c1 = "#5e81ac"
-c2 = "blue"
-c3 = "cyan"
-bloom = [-0.3, -0.22]
-stars = 0
-desat = 0.0
-
-[[wallpaper.render]]
-variant = "light"
-look = "satin"
-c1 = "#5e81ac"
-c2 = "#81a1c1"
-c3 = "#88c0d0"
-bloom = [-0.3, -0.22]
-wash = 0.15
 dawn_bottom = "#eceff4"
 dawn_top = "#d8dee9"

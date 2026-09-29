@@ -84,6 +84,17 @@ stars = 0.8
 desat = 0.0
 
 [[wallpaper.render]]
+variant = "dark"
+look = "silk"
+c1 = "magenta"
+c2 = "blue"
+c3 = "bright_magenta"
+seed = [2.4, -1.1]
+stars = 0.6
+desat = 0.0
+gain = 1.35
+
+[[wallpaper.render]]
 variant = "light"
 look = "holo"
 c1 = "magenta"
@@ -94,17 +105,6 @@ wash = 0.42
 gain = 0.9
 dawn_bottom = "#eff1f5"
 dawn_top = "#dce0e8"
-
-[[wallpaper.render]]
-variant = "dark"
-look = "silk"
-c1 = "magenta"
-c2 = "blue"
-c3 = "bright_magenta"
-seed = [2.4, -1.1]
-stars = 0.6
-desat = 0.0
-gain = 1.35
 
 [[wallpaper.render]]
 variant = "light"

@@ -83,17 +83,6 @@ stars = 0
 desat = 0.0
 
 [[wallpaper.render]]
-variant = "light"
-look = "satin"
-c1 = "blue"
-c2 = "cyan"
-c3 = "cyan"
-bloom = [-0.3, -0.2]
-wash = 0.35
-dawn_bottom = "#fffcf0"
-dawn_top = "#e6e4d9"
-
-[[wallpaper.render]]
 variant = "dark"
 look = "silk"
 c1 = "magenta"
@@ -103,6 +92,17 @@ seed = [-5.0, 3.0]
 stars = 0
 desat = 0.05
 gain = 1.3
+
+[[wallpaper.render]]
+variant = "light"
+look = "satin"
+c1 = "blue"
+c2 = "cyan"
+c3 = "cyan"
+bloom = [-0.3, -0.2]
+wash = 0.35
+dawn_bottom = "#fffcf0"
+dawn_top = "#e6e4d9"
 
 [[wallpaper.render]]
 variant = "light"

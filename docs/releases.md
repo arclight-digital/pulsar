@@ -16,7 +16,7 @@ The first numbered release: Pulsar's own look, and glass.
 
 ### Themes
 
-- 16 themes, each recoloring the whole desktop in one step: GNOME Shell, GTK
+- 20 themes, each recoloring the whole desktop in one step: GNOME Shell, GTK
   4 and GTK 3 apps, the terminal, Text Editor, btop, coding agents and the
   wallpaper. Two-mode themes follow Dark Style on their own.
 - The theme picker (Super+T) shows every theme as a card in its own colors;

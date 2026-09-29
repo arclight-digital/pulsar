@@ -63,14 +63,17 @@ setup() {
 @test "engine lists every shipped theme, brand first and dark-leading, none broken" {
     run python3 "$ENGINE" list
     [ "$status" -eq 0 ]
-    [ "$(printf '%s\n' "$output" | wc -l)" -ge 16 ]
+    [ "$(printf '%s\n' "$output" | wc -l)" -ge 20 ]
     [ -z "$(printf '%s\n' "$output" | grep '^!')" ]
-    # every theme follows Dark Style except the one-sided ones: Dracula and
-    # Alucard as upstream ships them, and the two CRT phosphors
-    [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 4 ]
+    # every theme follows Dark Style except the one-sided ones: Dracula,
+    # Alucard, Poimandres and Synthwave '84 as upstream ships them, and the
+    # two CRT phosphors
+    [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 6 ]
     printf '%s\n' "$output" | grep -q '^  phosphor .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  amber .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  dracula .*\[dark\]$'
+    printf '%s\n' "$output" | grep -q '^  poimandres .*\[dark\]$'
+    printf '%s\n' "$output" | grep -q '^  synthwave-84 .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  alucard .*\[light\]$'
     [ "$(printf '%s\n' "$output" | head -1 | awk '{print $1}')" = pulsar ]
     [ "$(printf '%s\n' "$output" | tail -1 | awk '{print $1}')" = alucard ]

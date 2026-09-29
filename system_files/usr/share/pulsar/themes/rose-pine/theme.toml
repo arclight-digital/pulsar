@@ -85,6 +85,15 @@ desat = 0.0
 gain = 1.6
 
 [[wallpaper.render]]
+variant = "dark"
+look = "leak"
+c1 = "magenta"
+c2 = "#eb6f92"
+c3 = "yellow"
+beam = -0.3
+stars = 0.2
+
+[[wallpaper.render]]
 variant = "light"
 look = "silk"
 c1 = "#907aa9"
@@ -96,15 +105,6 @@ wash = 0.35
 stars = 0.2
 dawn_bottom = "#faf4ed"
 dawn_top = "#f2e9e1"
-
-[[wallpaper.render]]
-variant = "dark"
-look = "leak"
-c1 = "magenta"
-c2 = "#eb6f92"
-c3 = "yellow"
-beam = -0.3
-stars = 0.2
 
 [[wallpaper.render]]
 variant = "light"

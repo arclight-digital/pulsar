@@ -11,7 +11,7 @@ leaves alone.
 |---|---|
 | engine (python, stdlib only) | `/usr/libexec/pulsar/pulsar-theme`, from `scripts/pulsar-theme`; `pulsar theme ...` execs it |
 | picker (libadwaita) | `/usr/libexec/pulsar/pulsar-theme-picker`, "Themes" in the app grid |
-| 16 themes: 12 dark + light; Dracula, Phosphor and Amber dark only; Alucard light only | `/usr/share/pulsar/themes/<slug>/theme.toml` + `backgrounds/*.jxl` |
+| 20 themes: 14 dark + light; Dracula, Poimandres, Synthwave '84, Phosphor and Amber dark only; Alucard light only | `/usr/share/pulsar/themes/<slug>/theme.toml` + `backgrounds/*.jxl` |
 | per-target templates | `/usr/share/pulsar/theme/templates/` |
 | Shell extension (+ glass and light) | `/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital`, settings schema `org.gnome.shell.extensions.pulsar-theme` |
 | image default | `zz1-pulsar-theme.gschema.override`: `enabled-extensions` only |

@@ -69,8 +69,17 @@ card = "#e9e9ed"
 popover = "#f0f0f3"
 
 [wallpaper]
-dark = ["backgrounds/leak-dark.jxl", "backgrounds/silk-dark.jxl"]
-light = ["backgrounds/leak-light.jxl", "backgrounds/silk-light.jxl"]
+dark = ["backgrounds/beacon-dark.jxl", "backgrounds/leak-dark.jxl"]
+light = ["backgrounds/beacon-light.jxl", "backgrounds/leak-light.jxl"]
+
+[[wallpaper.render]]
+variant = "dark"
+look = "beacon"
+c1 = "blue"
+c2 = "magenta"
+c3 = "cyan"
+stars = 0.8
+desat = 0.0
 
 [[wallpaper.render]]
 variant = "dark"
@@ -83,6 +92,18 @@ stars = 0.35
 
 [[wallpaper.render]]
 variant = "light"
+look = "beacon"
+c1 = "blue"
+c2 = "magenta"
+c3 = "cyan"
+stars = 0.8
+desat = 0.0
+wash = 0.3
+dawn_bottom = "background"
+dawn_top = "background~muted@0.16"
+
+[[wallpaper.render]]
+variant = "light"
 look = "leak"
 c1 = "magenta"
 c2 = "blue"
@@ -91,24 +112,3 @@ beam = -0.42
 wash = 0.45
 dawn_bottom = "#e1e2e7"
 dawn_top = "#d0d5e3"
-
-[[wallpaper.render]]
-variant = "dark"
-look = "silk"
-c1 = "magenta"
-c2 = "blue"
-c3 = "cyan"
-seed = [4.0, 2.0]
-stars = 0.5
-desat = 0.0
-gain = 1.4
-
-[[wallpaper.render]]
-variant = "light"
-look = "silk"
-c1 = "magenta"
-c2 = "blue"
-c3 = "cyan"
-seed = [4.0, 2.0]
-wash = 0.35
-stars = 0.3

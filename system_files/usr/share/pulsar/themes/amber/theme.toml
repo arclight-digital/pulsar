@@ -38,21 +38,7 @@ card = "#1a1207"
 popover = "#241a0a"
 
 [wallpaper]
-dark = ["backgrounds/leak-dark.jxl", "backgrounds/silk-dark.jxl"]
-
-[[wallpaper.render]]
-variant = "dark"
-look = "leak"
-c1 = "#7a3a00"
-c2 = "orange"
-c3 = "#ffc84a"
-beam = -0.2
-stars = 0.0
-desat = 0.0
-glow = 1.15
-signal = 1.4
-seed = [-4.1, 3.3]
-web = 0.8
+dark = ["backgrounds/silk-dark.jxl", "backgrounds/leak-dark.jxl"]
 
 [[wallpaper.render]]
 variant = "dark"
@@ -69,3 +55,17 @@ gain = 1.6
 glow = 1.15
 signal = 1.4
 down = 0.06
+
+[[wallpaper.render]]
+variant = "dark"
+look = "leak"
+c1 = "#7a3a00"
+c2 = "orange"
+c3 = "#ffc84a"
+beam = -0.2
+stars = 0.0
+desat = 0.0
+glow = 1.15
+signal = 1.4
+seed = [-4.1, 3.3]
+web = 0.8

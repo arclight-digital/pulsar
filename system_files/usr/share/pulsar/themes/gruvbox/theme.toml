@@ -83,6 +83,16 @@ stars = 0
 desat = 0.1
 
 [[wallpaper.render]]
+variant = "dark"
+look = "leak"
+c1 = "red"
+c2 = "orange"
+c3 = "yellow"
+beam = -0.22
+stars = 0
+desat = 0.2
+
+[[wallpaper.render]]
 variant = "light"
 look = "satin"
 c1 = "orange"
@@ -92,16 +102,6 @@ bloom = [-0.35, -0.18]
 wash = 0.35
 dawn_bottom = "#fbf1c7"
 dawn_top = "#ebdbb2"
-
-[[wallpaper.render]]
-variant = "dark"
-look = "leak"
-c1 = "red"
-c2 = "orange"
-c3 = "yellow"
-beam = -0.22
-stars = 0
-desat = 0.2
 
 [[wallpaper.render]]
 variant = "light"

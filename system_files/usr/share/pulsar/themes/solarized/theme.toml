@@ -69,8 +69,17 @@ card = "#fffbef"
 popover = "#fffbef"
 
 [wallpaper]
-dark = ["backgrounds/satin-dark.jxl", "backgrounds/leak-dark.jxl"]
-light = ["backgrounds/satin-light.jxl", "backgrounds/leak-light.jxl"]
+dark = ["backgrounds/orbit-dark.jxl", "backgrounds/satin-dark.jxl"]
+light = ["backgrounds/orbit-light.jxl", "backgrounds/satin-light.jxl"]
+
+[[wallpaper.render]]
+variant = "dark"
+look = "orbit"
+c1 = "cyan"
+c2 = "blue"
+c3 = "yellow"
+stars = 0.8
+desat = 0.0
 
 [[wallpaper.render]]
 variant = "dark"
@@ -84,31 +93,23 @@ desat = 0.0
 
 [[wallpaper.render]]
 variant = "light"
+look = "orbit"
+c1 = "cyan"
+c2 = "blue"
+c3 = "yellow"
+stars = 0.8
+desat = 0.0
+wash = 0.3
+dawn_bottom = "background"
+dawn_top = "background~muted@0.16"
+
+[[wallpaper.render]]
+variant = "light"
 look = "satin"
 c1 = "blue"
 c2 = "cyan"
 c3 = "cyan"
 bloom = [-0.1, -0.25]
 wash = 0.3
-dawn_bottom = "#fdf6e3"
-dawn_top = "#eee8d5"
-
-[[wallpaper.render]]
-variant = "dark"
-look = "leak"
-c1 = "magenta"
-c2 = "blue"
-c3 = "cyan"
-beam = -0.35
-stars = 0.3
-
-[[wallpaper.render]]
-variant = "light"
-look = "leak"
-c1 = "magenta"
-c2 = "blue"
-c3 = "cyan"
-beam = -0.35
-wash = 0.55
 dawn_bottom = "#fdf6e3"
 dawn_top = "#eee8d5"
