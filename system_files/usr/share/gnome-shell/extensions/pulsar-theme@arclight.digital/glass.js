@@ -103,7 +103,11 @@ const SURFACE_GRADE = {dark: [1.7, 0.75, 0.8], light: [1.5, 0.75, 1.14]};
 const WINDOW_RADIUS = 16;
 const WINDOW_PAD = 48;
 const WINDOW_GRADE_EDGE = 4;
-const WINDOW_GRADE = [1.9, 0.9, 1.35];     // saturate, contrast, brightness
+// The popups' saturation and contrast, so a window and a menu over the same
+// wallpaper read as one material; brightness neutral because it serves both
+// modes (the popups' own is per mode: 0.8 dark, 1.14 light). It was
+// [1.9, 0.9, 1.35], which pushed what is beneath a window into loud blobs.
+const WINDOW_GRADE = [1.7, 0.75, 1.0];     // saturate, contrast, brightness
 const ENGINE = '/usr/libexec/pulsar/pulsar-theme';
 
 const MASK_DECL = `
