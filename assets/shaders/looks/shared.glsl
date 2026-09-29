@@ -21,16 +21,31 @@ vec3 tide(vec2 uv, vec3 dawnBase, out vec3 emitN, out vec3 dawnN, out float lit)
 vec3 orbit(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 dawnN, out float lit);
 vec3 beacon(vec2 uv, vec3 dawnBase, float starsNight, out vec3 emitN, out vec3 dawnN, out float lit);
 
+// Each look its own sky: the first looks' two star layers at a seed of the
+// look's own, so no two looks show the same stars. Twinkles live.
+float lookStars(float look) {
+    vec2 s = uv + u_seed + vec2(look * 37.1, look * 11.9);
+    return starLayer(s, 110.0, 0.030, 600.0, u_live) + starLayer(s, 28.0, 0.050, 260.0, u_live);
+}
+
 // u_look -> a look's light (added to the ground by freshNight), its light-mode
 // cut and its luminescence. Slot 7 is Beacon; looks/warp.glsl draws the same
 // contract, so Warp in its place is this one line plus its file in looks.json.
 vec3 freshLook(float look, out vec3 dawnN, out vec3 emitN) {
     float lit;
-    if (look < 2.5) return satin(uv, dawnBase, emitN, dawnN, lit);
-    if (look < 4.5) return relief(uv, dawnBase, emitN, dawnN, lit);
-    if (look < 5.5) return tide(uv, dawnBase, emitN, dawnN, lit);
-    if (look < 6.5) return orbit(uv, dawnBase, starsNight, emitN, dawnN, lit);
-    return beacon(uv, dawnBase, starsNight, emitN, dawnN, lit);
+    float stars = lookStars(floor(look + 0.5));
+    // the sky places its own stars; the rest get theirs in the dark between
+    // their light (fainter on the cloth, where they are dust in the weave)
+    if (look > 5.5) {
+        if (look < 6.5) return orbit(uv, dawnBase, stars, emitN, dawnN, lit);
+        return beacon(uv, dawnBase, stars, emitN, dawnN, lit);
+    }
+    vec3 lightc;
+    float amount = 0.40;
+    if (look < 2.5) { lightc = satin(uv, dawnBase, emitN, dawnN, lit); amount = 0.22; }
+    else if (look < 4.5) lightc = relief(uv, dawnBase, emitN, dawnN, lit);
+    else lightc = tide(uv, dawnBase, emitN, dawnN, lit);
+    return lightc + u_star * stars * amount * u_stars * clamp(1.0 - dot(lightc, vec3(0.3333)) * 5.0, 0.0, 1.0);
 }
 
 // the night under a look: the theme's ground, lit from its side, the look's
