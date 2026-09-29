@@ -131,9 +131,12 @@ APPS = {
 
 
 def cell(cls):
+    # windows are placed in logical pixels: SIZE over SCALE (desktops)
+    sc = float(os.environ.get("SCALE", "1"))
+    lw, lh = round(W / sc), round(H / sc)
     x, y, w, h = APPS[cls][1]
-    ah = H - TOP
-    return round(x * W) + 5, TOP + round(y * ah) + 5, round(w * W) - 10, round(h * ah) - 10
+    ah = lh - TOP
+    return round(x * lw) + 5, TOP + round(y * ah) + 5, round(w * lw) - 10, round(h * ah) - 10
 
 
 def launch_apps():
@@ -499,13 +502,39 @@ def picker():
     stop_shell()
 
 
+def set_scale(scale):
+    """The virtual monitor's scale, through Mutter's DisplayConfig: the
+    nearest one its current mode supports."""
+    from gi.repository import Gio, GLib
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+    def call(method, args=None):
+        return bus.call_sync("org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
+                             "org.gnome.Mutter.DisplayConfig", method, args, None, 0, -1, None).unpack()
+    serial, monitors, _logical, _props = call("GetCurrentState")
+    conn = monitors[0][0][0]
+    mode = [m for m in monitors[0][1] if m[6].get("is-current")][0]
+    scale = min(mode[5], key=lambda s: abs(s - scale))
+    call("ApplyMonitorsConfig", GLib.Variant("(uua(iiduba(ssa{sv}))a{sv})",
+         (serial, 1, [(0, 0, scale, 0, True, [(conn, mode[0], {})])], {})))
+    time.sleep(2)
+    print(f"  scale {scale}", flush=True)
+
+
 def desktops(only):
     """The site's desktop pictures: every theme x variant with the effects on,
     as a new account has them (the gate's own account has them off). Apps
     start after each theme is set, since GTK takes the glass half at launch."""
-    for k in ("glass", "window-glass", "lighting", "power-on"):
+    for k in ("glass", "window-glass", "lighting", "power-on", "glow"):
         dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    # SCALE (1.25 with SIZE=3200x2000): the desktop laid out at SIZE/SCALE
+    # -- the 2560x1600 the four apps' cells need -- and drawn at every pixel
+    # of SIZE, so the picture is sharper than the layout. A fractional scale
+    # needs Mutter's framebuffer scaling, set before the Shell starts.
+    if os.environ.get("SCALE") and float(os.environ["SCALE"]) % 1:
+        dconf("/org/gnome/mutter/experimental-features", "['scale-monitor-framebuffer']")
     start_shell()
+    if os.environ.get("SCALE"):
+        set_scale(float(os.environ["SCALE"]))
     for slug, modes in theme_list().items():
         if only and slug not in only:
             continue
