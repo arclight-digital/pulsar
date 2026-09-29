@@ -193,7 +193,11 @@ void main() {
     theme = clamp(u_theme, 0.0, 1.0);
 
     // two fields at fixed places, faded between by theme (see pulsar.frag)
-    vec2 seedD = uv + u_seed, seedL = uv + vec2(31.7, 17.3) + u_seed;
+    // and each look its own sky: the field shifts with the look, so swapping
+    // looks swaps the stars too (Silk, look 0, keeps its field exactly)
+    float lookN = floor(clamp(u_look, 0.0, 7.0) + 0.5);
+    vec2 skySeed = vec2(lookN * 37.1, lookN * 11.9);
+    vec2 seedD = uv + u_seed + skySeed, seedL = uv + vec2(31.7, 17.3) + u_seed + skySeed;
     starsNight = mix(starLayer(seedD, 110.0, 0.030, 600.0, 0.0) + starLayer(seedD, 28.0, 0.050, 260.0, 0.0),
                      starLayer(seedL, 110.0, 0.030, 600.0, 0.0) + starLayer(seedL, 28.0, 0.050, 260.0, 0.0), step(0.5, theme));
     starsDawn  = mix(starLayer(seedD,  60.0, 0.018, 380.0, 0.0) + starLayer(seedD, 18.0, 0.040, 180.0, 0.0),

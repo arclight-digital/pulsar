@@ -247,7 +247,11 @@ void main() {
     // move WITH theme, so the site's light/dark crossfade slid every star
     // across the sky. Dark and light stills are unchanged; the second field
     // is computed only mid-fade (uniform branch).
-    vec2 seedD = uv, seedL = uv + vec2(31.7, 17.3);
+    // and each look its own sky: the field shifts with the look, so swapping
+    // looks swaps the stars too (Silk, look 0, keeps the field it shipped with)
+    float lookN = floor(clamp(u_look, 0.0, 7.0) + 0.5);
+    vec2 skySeed = vec2(lookN * 37.1, lookN * 11.9);
+    vec2 seedD = uv + skySeed, seedL = uv + vec2(31.7, 17.3) + skySeed;
     if (theme <= 0.0) {
         starsNight = starLayer(seedD, 110.0, 0.030, 600.0, u_live) + starLayer(seedD, 28.0, 0.050, 260.0, u_live);
         starsDawn  = starLayer(seedD,  60.0, 0.018, 380.0, u_live) + starLayer(seedD, 18.0, 0.040, 180.0, u_live);
