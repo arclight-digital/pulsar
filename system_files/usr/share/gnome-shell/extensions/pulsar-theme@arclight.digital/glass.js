@@ -81,6 +81,8 @@ const BLUR_PAD = 64;
 const SHADOW = {y: 14, blur: 44, dark: [0, 0, 0, 0.42], light: [0.14, 0.12, 0.24, 0.2]};
 // The top bar's: short and close, a ledge rather than a float.
 const PANEL_SHADOW = {pad: 16};
+// the overview's own show/hide time (ui/overview.js ANIMATION_TIME)
+const PANEL_FADE_MS = 250;
 // The dash's: it floats over the overview like a menu, a little lower.
 // How far the light may spill past the edge.
 const LIGHT_PAD = 48;
@@ -1469,10 +1471,27 @@ class PanelGlass {
         this._line.queue_redraw();
     }
 
+    // Faded, not switched, as the overview comes and goes: the bar's glass
+    // leaves as Activities opens and is back as it closes, over the
+    // overview's own 250 ms. ease() is instant with animations off.
     set visible(v) {
-        this._actor.visible = v;
-        this._shadow.visible = v;
-        this._line.visible = v;
+        for (const a of [this._actor, this._shadow, this._line]) {
+            a.remove_transition('opacity');
+            if (v) {
+                if (!a.visible) {
+                    a.opacity = 0;
+                    a.show();
+                }
+                a.ease({opacity: 255, duration: PANEL_FADE_MS, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            } else if (a.visible) {
+                a.ease({
+                    opacity: 0,
+                    duration: PANEL_FADE_MS,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    onStopped: finished => finished && a.hide(),
+                });
+            }
+        }
     }
 
     destroy() {
@@ -1873,9 +1892,21 @@ export class Glass {
             this._engine('window-glass');
         }, this);
         Main.sessionMode.connectObject('updated', () => this._sync(), this);
+        // 'hiding', not only 'hidden': the top bar's glass fades back in as
+        // the overview closes, not after it has gone
         Main.overview.connectObject(
-            'showing', () => this._sync(),
-            'hidden', () => this._sync(),
+            'showing', () => {
+                this._leavingOverview = false;
+                this._sync();
+            },
+            'hiding', () => {
+                this._leavingOverview = true;
+                this._sync();
+            },
+            'hidden', () => {
+                this._leavingOverview = false;
+                this._sync();
+            },
             this);
         Main.layoutManager.panelBox.connectObject('notify::visible', () => this._sync(), this);
         Main.layoutManager.connectObject('monitors-changed', () => {
@@ -2081,7 +2112,8 @@ export class Glass {
             this._panel = null;
         }
         if (this._panel) {
-            this._panel.visible = Main.layoutManager.panelBox.visible && !Main.overview.visible;
+            this._panel.visible = Main.layoutManager.panelBox.visible &&
+                (!Main.overview.visible || this._leavingOverview);
             this._panel.lit = this.lighting;
         }
         if (this.brackets && !this._brackets)
