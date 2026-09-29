@@ -127,11 +127,24 @@ stays `claude`, and says `sandboxed: only ~/code/x is visible` as it starts.
 
 What it sees:
 
-- **The project** it was started in (the git root), read-write, except
-  `.git/config` and `.git/hooks`, which are read-only. A hook or a
-  `core.fsmonitor` planted there would run on the host the next time *you*
-  ran git in that repo; read-only, it can still commit but cannot change what
-  git runs.
+- **The project** it was started in (the git root), read-write, except what
+  git runs things from, which is read-only: `.git/config` and `.git/hooks`,
+  each submodule's config and hooks under `.git/modules`, and any hooks folder
+  or included config the project's git points at inside the project (a
+  `core.hooksPath` like husky's `.husky/_`, an `include.path`). A hook or a
+  `core.fsmonitor` planted in any of them would run on the host the next time
+  *you* ran git in that repo; read-only, the agent can still commit but cannot
+  change what git runs. `.git` and each submodule's git directory are pinned
+  in place, so none can be moved aside and replaced with one the agent wrote.
+  Two things git would follow can't be made read-only before they exist, so
+  they are checked when the session ends, before Pulsar runs git itself: a
+  `.git/commondir` (git reads config and hooks from wherever it points), and a
+  new or changed `.git` file or folder anywhere in the tree (with a gitlink in
+  the index, your `git status` runs git in it). Either is renamed to
+  `<name>.from-sandbox`, with a note. Until then, an editor that runs git in
+  the background could reach one; close the editor on the project while an
+  agent you don't trust works in it. The sandbox refuses a linked worktree or
+  a submodule checkout, whose git directory is outside the project.
 - **A home of its own**, one per agent (`~/.local/share/pulsar/sandbox/<agent>`),
   where its history and caches live. Your agent setup comes in without
   anything going back out:

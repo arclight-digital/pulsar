@@ -2727,6 +2727,134 @@ SH
     [ "$(cat "${HOME}/.claude/.credentials.json")" = '{"token":"old"}' ]
 }
 
+@test "the sandbox refuses a project whose git directory it cannot protect" {
+    sandbox_env
+    git -C "$PROJ" commit -q --allow-empty -m a
+    # a linked worktree: its git directory is in another checkout
+    git -C "$PROJ" worktree add -q "${HOME}/code/wt" -b wt
+    cd "${HOME}/code/wt"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is not a folder: this is a linked worktree or a submodule"* ]]
+    [ ! -e "$PODMAN_LOG" ]
+    # a commondir sends git's config and hooks somewhere else
+    echo ../evil > "${PROJ}/.git/commondir"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *".git/commondir exists"* ]]
+    [ ! -e "$PODMAN_LOG" ]
+}
+
+@test "every git directory is pinned in place, with its config and hooks read-only" {
+    sandbox_env
+    local m="${PROJ}/.git/modules/sub" n="${PROJ}/.git/modules/sub/modules/inner"
+    mkdir -p "$m" "$n"
+    printf '[core]\n' > "${m}/config"; echo ref > "${m}/HEAD"
+    printf '[core]\n' > "${n}/config"; echo ref > "${n}/HEAD"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    # bound onto themselves, so the agent cannot move one aside for its own
+    grep -qx "${PROJ}/.git:${PROJ}/.git" "$PODMAN_LOG"
+    grep -qx "${m}:${m}" "$PODMAN_LOG"
+    grep -qx "${n}:${n}" "$PODMAN_LOG"
+    local d
+    for d in "$m" "$n"; do
+        grep -qx "${d}/config:${d}/config:ro" "$PODMAN_LOG"
+        grep -qx "${d}/hooks:${d}/hooks:ro" "$PODMAN_LOG"
+    done
+}
+
+@test "hooks and config the project's git is pointed at are read-only when they are in the project" {
+    sandbox_env
+    mkdir -p "${PROJ}/.husky/_"
+    printf '[core]\n' > "${PROJ}/shared.gitconfig"
+    printf '[core]\n' > "${HOME}/outside.gitconfig"
+    git -C "$PROJ" config core.hooksPath .husky/_
+    # relative to the file that names it: .git/config, so ../ is the project
+    git -C "$PROJ" config --add include.path ../shared.gitconfig
+    git -C "$PROJ" config --add include.path "${HOME}/outside.gitconfig"
+    git -C "$PROJ" config "includeIf.gitdir:${PROJ}/.path" "${PROJ}/cond.gitconfig"
+    printf '[core]\n' > "${PROJ}/cond.gitconfig"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -qx "${PROJ}/.husky/_:${PROJ}/.husky/_:ro" "$PODMAN_LOG"
+    grep -qx "${PROJ}/shared.gitconfig:${PROJ}/shared.gitconfig:ro" "$PODMAN_LOG"
+    grep -qx "${PROJ}/cond.gitconfig:${PROJ}/cond.gitconfig:ro" "$PODMAN_LOG"
+    # one outside the project is simply not in there
+    ! grep -q "outside.gitconfig" "$PODMAN_LOG"
+}
+
+@test "what the agent plants for the user's git is defused before Pulsar runs git" {
+    sandbox_env
+    git -C "$PROJ" commit -q --allow-empty -m a
+    local h pwned="${BATS_TEST_TMPDIR}/pwned"
+    h=$(git -C "$PROJ" rev-parse HEAD)
+    # a submodule the user already had: its pointer must survive
+    mkdir -p "${PROJ}/.git/modules/kept" "${PROJ}/kept"
+    echo "gitdir: ../.git/modules/kept" > "${PROJ}/kept/.git"
+    # the "agent": a commondir to a config of its own, and a gitlink with a
+    # .git pointing at another, both with a core.fsmonitor for your git to run
+    cat > "${STUB}/podman" <<SH
+#!/bin/sh
+case "\$1" in
+    image) exit 0 ;;
+    run) for a in "\$@"; do printf '%s\n' "\$a"; done > "$PODMAN_LOG"
+         mkdir -p "${PROJ}/evil" "${PROJ}/sub" "${PROJ}/evilsub"
+         cp -r "${PROJ}/.git/." "${PROJ}/evil/"
+         git config -f "${PROJ}/evil/config" core.fsmonitor "touch ${pwned}; false"
+         echo ../evil > "${PROJ}/.git/commondir"
+         git init -q --bare "${PROJ}/evilsub"
+         git config -f "${PROJ}/evilsub/config" core.bare false
+         git config -f "${PROJ}/evilsub/config" core.worktree ../sub
+         git config -f "${PROJ}/evilsub/config" core.fsmonitor "touch ${pwned}; false"
+         echo "gitdir: ../evilsub" > "${PROJ}/sub/.git"
+         exit 0 ;;
+esac
+SH
+    chmod +x "${STUB}/podman"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    [ ! -e "${PROJ}/.git/commondir" ]
+    [ -e "${PROJ}/.git/commondir.from-sandbox" ]
+    [ ! -e "${PROJ}/sub/.git" ]
+    [ -e "${PROJ}/sub/.git.from-sandbox" ]
+    [[ "$output" == *"left .git/commondir, which your git would follow"* ]]
+    [[ "$output" == *"left sub/.git, which your git would follow"* ]]
+    # the user's own submodule pointer is untouched
+    [ "$(cat "${PROJ}/kept/.git")" = "gitdir: ../.git/modules/kept" ]
+    # and the user's git, now, runs nothing the agent wrote
+    git -C "$PROJ" update-index --add --cacheinfo "160000,${h},sub"
+    git -C "$PROJ" status >/dev/null 2>&1 || true
+    [ ! -e "$pwned" ]
+}
+
+@test "a changed submodule pointer is defused too, and a planted one inside .git/modules" {
+    sandbox_env
+    mkdir -p "${PROJ}/.git/modules/kept" "${PROJ}/kept"
+    echo "gitdir: ../.git/modules/kept" > "${PROJ}/kept/.git"
+    cat > "${STUB}/podman" <<SH
+#!/bin/sh
+case "\$1" in
+    image) exit 0 ;;
+    run) echo "gitdir: ../evilsub" > "${PROJ}/kept/.git"
+         echo ../../../evil > "${PROJ}/.git/modules/kept/commondir"
+         exit 0 ;;
+esac
+SH
+    chmod +x "${STUB}/podman"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    [ ! -e "${PROJ}/kept/.git" ]
+    [ "$(cat "${PROJ}/kept/.git.from-sandbox")" = "gitdir: ../evilsub" ]
+    [ ! -e "${PROJ}/.git/modules/kept/commondir" ]
+    [ -e "${PROJ}/.git/modules/kept/commondir.from-sandbox" ]
+}
+
 @test "branches the agent pushed track their remote after the session, and nothing else is written" {
     sandbox_env
     git -C "$PROJ" commit -q --allow-empty -m a

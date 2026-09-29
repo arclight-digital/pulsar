@@ -2133,9 +2133,9 @@ agent_status() {
 # container that holds:
 #
 #   the project       the git root it was started in, read-write, except
-#                     .git/config and .git/hooks, read-only: a hook or a
+#                     what git runs things from, read-only: a hook or a
 #                     core.fsmonitor planted there would run on the host the
-#                     next time the USER runs git in it
+#                     next time the USER runs git in it (sandbox_git_mounts)
 #   its own state     ~/.claude, ~/.codex, ...: one login, both modes
 #   git identity      ~/.gitconfig and ~/.config/git, read-only
 #   the guide         AGENTS.md and the skills, read-only
@@ -2502,6 +2502,117 @@ sandbox_tracking() {
     rm -f "$log"
 }
 
+# Git runs things out of its own files: a hook, core.fsmonitor, any config it
+# is pointed at. The project is read-write in here, so each of those the agent
+# could write would run on the host the next time you ran git in the project,
+# or your editor did in the background. .git/config and .git/hooks being
+# read-only closed only the front door. The others:
+#
+#   .git itself        moved aside, it takes its read-only mounts with it,
+#                      and a new .git with a config of the agent's takes its
+#                      place; bound onto itself, it is a mount point, and a
+#                      mount point cannot be renamed
+#   .git/commondir     git then reads config and hooks from wherever it
+#                      points; a plain repository never has one
+#   submodules         their git directories under .git/modules have a
+#                      config and hooks of their own, and a gitlink in the
+#                      index plus a .git file or folder anywhere in the tree
+#                      makes the user's `git status` run git in it
+#   config it names    core.hooksPath (husky's .husky/_), include.path and
+#                      includeIf: in the project, they are .git/hooks and
+#                      .git/config by another name
+#
+# What a mount can close is closed before the agent starts. What it cannot --
+# a file that does not exist yet, since mounting over it would make it on the
+# host -- is checked when the session ends, before Pulsar runs git itself.
+
+# Refuse a project whose git directory the sandbox cannot protect.
+sandbox_git_check() {
+    local root=$1
+    { [ -e "${root}/.git" ] || [ -L "${root}/.git" ]; } || return 0
+    [ -d "${root}/.git" ] && [ ! -L "${root}/.git" ] \
+        || die "${root}/.git is not a folder: this is a linked worktree or a submodule, and its git directory is outside the project, where the sandbox cannot protect it; start the agent from the main checkout"
+    [ ! -e "${root}/.git/commondir" ] \
+        || die "${root}/.git/commondir exists, which a plain repository never has: git would read its config and hooks from wherever it points. Read it before starting an agent here"
+}
+
+# The git mounts, one podman -v per line: each git directory bound onto itself
+# and its config and hooks read-only, then what the project's config points at.
+sandbox_git_mounts() {
+    local root=$1 g="${1}/.git" p d line key val src
+    [ -d "$g" ] || return 0
+    printf '%s:%s\n' "$g" "$g"
+    [ ! -e "${g}/config" ] || printf '%s:%s:ro\n' "${g}/config" "${g}/config"
+    mkdir -p "${g}/hooks"
+    printf '%s:%s:ro\n' "${g}/hooks" "${g}/hooks"
+    # linked worktrees live outside the project; their git side is not the
+    # agent's to change
+    [ ! -d "${g}/worktrees" ] || printf '%s:%s:ro\n' "${g}/worktrees" "${g}/worktrees"
+    if [ -d "${g}/modules" ]; then
+        while IFS= read -r -d '' p; do
+            d=$(dirname "$p")
+            mkdir -p "${d}/hooks"
+            printf '%s:%s\n%s:%s:ro\n%s:%s:ro\n' "$d" "$d" "$p" "$p" "${d}/hooks" "${d}/hooks"
+        done < <(find "${g}/modules" -name config -type f -print0 | sort -z)
+    fi
+    # As the user's git reads it: every scope, includes followed. An include
+    # is relative to the file that names it; hooksPath to the checkout. One
+    # outside the project is not in here at all, so it needs nothing.
+    while IFS= read -r line; do
+        src=${line%%$'\t'*}; src=${src#file:}
+        line=${line#*$'\t'}
+        key=${line%% *}; val=${line#* }
+        case "$val" in "~/"*) val="${HOME}/${val#\~/}" ;; esac
+        case "$key" in
+            core.hookspath) case "$val" in /*) ;; *) val="${root}/${val}" ;; esac
+                            val=$(realpath -m "$val")
+                            case "$val/" in "${root}/"*) mkdir -p "$val" ;; esac ;;
+            *) case "$val" in /*) ;; *) val="$(dirname "$src")/${val}" ;; esac
+               val=$(realpath -m "$val") ;;
+        esac
+        case "$val" in "${root}/"*) [ ! -e "$val" ] || printf '%s:%s:ro\n' "$val" "$val" ;; esac
+    done < <(git -C "$root" config --show-origin --get-regexp '^(core\.hookspath|include\.path|includeif\..*\.path)$' 2>/dev/null)
+}
+
+# What in the tree could make the user's git run something, as NUL-separated
+# records: every .git below the project's own (a submodule's pointer, or a
+# repository), and every commondir in a git directory, each with its content
+# or its identity. The records compare whole, so no name can forge a line.
+sandbox_git_state() {
+    local root=$1 p
+    while IFS= read -r -d '' p; do
+        if [ -f "$p" ] && [ ! -L "$p" ]; then
+            printf 'f\t%s\t%s\0' "$(sha256sum < "$p" | cut -c1-64)" "$p"
+        else
+            printf 'x\t%s\t%s\0' "$(stat -c %d:%i "$p")" "$p"
+        fi
+    done < <(find "$root" -path "${root}/.git" -prune -o -name .git -print0 2>/dev/null)
+    [ -d "${root}/.git" ] || return 0
+    while IFS= read -r -d '' p; do
+        printf 'c\t%s\t%s\0' "$(sha256sum < "$p" | cut -c1-64)" "$p"
+    done < <(find "${root}/.git" -path "${root}/.git/worktrees" -prune -o -name commondir -print0 2>/dev/null)
+}
+
+# Anything new or changed since $2 (sandbox_git_state before the session) is
+# renamed out of git's way, the way sandbox_defuse does agent config.
+sandbox_git_defuse() {
+    local root=$1 before=$2 rec p
+    local -A seen=()
+    if [ -f "$before" ]; then
+        while IFS= read -r -d '' rec; do seen["$rec"]=1; done < "$before"
+    fi
+    while IFS= read -r -d '' rec; do
+        [ -z "${seen["$rec"]:-}" ] || continue
+        p=${rec#*$'\t'}; p=${p#*$'\t'}
+        { [ -e "$p" ] || [ -L "$p" ]; } || continue
+        rm -rf "${p}.from-sandbox"
+        mv "$p" "${p}.from-sandbox"
+        printf 'note: the sandboxed agent left %s, which your git would follow; renamed to %s.from-sandbox. Read it, and any git directory it points at, before renaming it back.\n' \
+            "${p#"${root}/"}" "$(basename "$p")" >&2
+    done < <(sandbox_git_state "$root")
+    rm -f "$before"
+}
+
 # Agent config in the project that an agent loads by itself: read-only in
 # here when it exists; created in here, it is defused when the session ends.
 PROJECT_AGENT_CONFIG='.claude .mcp.json .codex .gemini .opencode opencode.json opencode.jsonc'
@@ -2525,6 +2636,8 @@ sandbox_run() {
     [ "$root" != "$HOME" ] && [ "$root" != / ] \
         || die "the sandbox shows the agent one project; start it inside one, not in ${root}"
     need podman; need python3; need git
+    # before anything here runs git in the project
+    sandbox_git_check "$root"
     [ -r "$GATE_TOOL" ] || die "the push gate is not staged in this image (${GATE_TOOL})"
     cmd=$(agent_command "$name") || die "${name} is not installed (pulsar agent add ${name})"
     agent_row "$name"
@@ -2556,11 +2669,12 @@ sandbox_run() {
         -e "PATH=${HOME}/.local/bin:${HOME}/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
         -e "TERM=${TERM:-xterm-256color}" -e "LANG=${LANG:-C.UTF-8}")
     [ ! -t 0 ] || args+=(-t)
-    if [ -d "${root}/.git" ]; then
-        [ ! -e "${root}/.git/config" ] || args+=(-v "${root}/.git/config:${root}/.git/config:ro")
-        mkdir -p "${root}/.git/hooks"
-        args+=(-v "${root}/.git/hooks:${root}/.git/hooks:ro")
-    fi
+    while IFS= read -r p; do
+        [ -z "$p" ] || args+=(-v "$p")
+    done < <(sandbox_git_mounts "$root")
+    local gitstate="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gitstate-${id}"
+    mkdir -p "$(dirname "$gitstate")"
+    sandbox_git_state "$root" > "$gitstate"
     while IFS= read -r p; do
         [ -z "$p" ] || args+=(-v "$p")
     done < <(sandbox_ro_mounts "$name")
@@ -2636,7 +2750,8 @@ sandbox_run() {
         2>>"${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log" &
     local gate_pid=$!
     # shellcheck disable=SC2064  # the values are fixed now, on purpose
-    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'; sandbox_defuse '${root}' '${existed}'; sandbox_tracking '${root}' '${pushed}' '${mirror}'; sandbox_creds_out '${name}' '${home}' '${before}'" EXIT
+    # git's own files are defused first: sandbox_tracking runs git on the host
+    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'; sandbox_git_defuse '${root}' '${gitstate}'; sandbox_defuse '${root}' '${existed}'; sandbox_tracking '${root}' '${pushed}' '${mirror}'; sandbox_creds_out '${name}' '${home}' '${before}'" EXIT
     local waited=0
     while [ ! -S "$sock" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
     [ -S "$sock" ] || die "the push gate did not start (see ${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log)"
