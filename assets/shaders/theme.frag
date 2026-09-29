@@ -82,15 +82,18 @@ float starLayer(vec2 uv, float scale, float density, float size, float tw) {
     // core radius in pixels, never under half a pixel so it stays resolved
     float r = clamp(ppc / sqrt(2.0 * size) * 0.55, 0.45, 1.1) * (0.8 + 0.4 * b);
     float dp2 = dot(v, v);
-    float star = 1.3 * exp(-dp2 / (r * r)) + 0.32 * exp(-sqrt(dp2) / (r * 3.5));
+    // Each cell draws only its own star, so anything reaching past the
+    // cell's edge is cut off square there. The glow's reach is capped to the
+    // cell, and the glow and the cross both fade out before the edge.
+    vec2 fc = fract(g);
+    float edge = min(min(fc.x, 1.0 - fc.x), min(fc.y, 1.0 - fc.y)) * ppc;  // px to the nearest edge
+    float gr = min(r * 3.5, ppc * 0.12);
+    float star = 1.3 * exp(-dp2 / (r * r))
+               + 0.32 * exp(-sqrt(dp2) / gr) * smoothstep(0.0, gr * 3.0, edge);
     // the brightest few get a thin four-point diffraction cross
     float L = r * (7.0 + 9.0 * b);
     float cross = exp(-abs(v.x) / L * 2.5) * exp(-v.y * v.y / (r * r * 0.3))
                 + exp(-abs(v.y) / L * 2.5) * exp(-v.x * v.x / (r * r * 0.3));
-    // each cell draws only its own star, so a spike reaching the cell's
-    // edge would be cut off there: fade it out before the edge
-    vec2 fc = fract(g);
-    float edge = min(min(fc.x, 1.0 - fc.x), min(fc.y, 1.0 - fc.y)) * ppc;
     star += cross * 0.55 * smoothstep(0.86, 1.0, b) * smoothstep(0.0, L, edge);
     // twinkle, live only (stills pass 0): slow, each star on its own phase
     float twk = 1.0 - tw * 0.35 * (0.5 + 0.5 * sin(u_time * (0.8 + b * 1.6) + hash(id + 1.3) * 6.2831));
