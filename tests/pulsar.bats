@@ -18,7 +18,7 @@ setup() {
 {
   "image": "pulsar",
   "variant": "vanilla",
-  "release": "1.0.0",
+  "release": "26.9.1",
   "version": "44.20260805.0",
   "base": "fedora-silverblue:44",
   "built": "2026-08-05T19:44:00Z",
@@ -86,13 +86,13 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
 @test "manifest shows the Pulsar release beside the nightly build" {
     run "$PULSAR" manifest
     [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | grep -qE 'release.*1\.0\.0'
+    printf '%s\n' "$output" | grep -qE 'release.*26\.9\.1'
     printf '%s\n' "$output" | grep -qE 'build.*44\.20260805\.0'
 }
 
 @test "doctor's header names the full release and the build" {
     run "$PULSAR" doctor
-    [[ "${lines[0]}" == *"1.0.0 · build 44.20260805.0"* ]]
+    [[ "${lines[0]}" == *"26.9.1 · build 44.20260805.0"* ]]
 }
 
 @test "manifest lists facts, not other commands to run" {

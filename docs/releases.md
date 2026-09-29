@@ -1,16 +1,19 @@
 # Releases
 
-- **Releases** (`MAJOR.MINOR.PATCH`, written up here) are changes to what
-  Pulsar adds on top of Silverblue. The About page and boot menu show the
-  first two numbers ("Pulsar 1.0"); `pulsar manifest` and `pulsar doctor`
-  show all three.
+- **Releases** (`YY.M.N`, written up here) are changes to what Pulsar adds
+  on top of Silverblue: the year, the month, and that month's release
+  number, so `26.9.1` is September 2026's first. The About page, the boot
+  menu, `pulsar manifest` and `pulsar doctor` all show it.
 - **Nightly builds** (`44.20260929.0`) carry each day's Fedora and Silverblue
   updates, listed in the [nightly changelog](/docs/changelog), generated from
   the images.
 
-Releases ship inside a nightly; both arrive through the same update.
+Releases ship inside a nightly; both arrive through the same update. The two
+move independently: a month with no new Pulsar features keeps its release
+while the builds go on, so the About page may read
+`Pulsar 26.9.1 (44.20261103.0)` in November.
 
-## 1.0.0
+## 26.9.1
 
 The first numbered release: Pulsar's own look, and glass.
 

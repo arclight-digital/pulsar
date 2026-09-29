@@ -546,25 +546,24 @@ RUN [ -f /usr/share/plymouth/themes/spinner/throbber-0001.png ] || \
 #
 # Two numbers, two jobs. PULSAR_VERSION is the BUILD (44.YYYYMMDD.N): what
 # bootc, the update check and the gate track, and it moves every night with
-# whatever Silverblue ships. /usr/share/pulsar/release is the RELEASE, semver,
-# which moves only when Pulsar's own features do (1.0.0: the themes and
-# glass). PRETTY_NAME -- the boot menu and Settings' About -- names it the
-# way people say it, MAJOR.MINOR ("Pulsar 1.0"), with the build beside it;
-# the full MAJOR.MINOR.PATCH is for the tools (PULSAR_RELEASE, the manifest,
-# pulsar manifest and doctor).
+# whatever Silverblue ships. /usr/share/pulsar/release is the RELEASE,
+# YY.M.N -- the year, the month, and that month's release number (26.9.1:
+# the themes and glass) -- which moves only when Pulsar's own features do.
+# PRETTY_NAME -- the boot menu and Settings' About -- names it in full,
+# "Pulsar 26.9.1", with the build beside it; so do the tools (PULSAR_RELEASE,
+# the manifest, pulsar manifest and doctor).
 # ---------------------------------------------------------------------------
 ARG PULSAR_VERSION=""
 RUN rel=$(cat /usr/share/pulsar/release) && \
-    printf '%s' "${rel}" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+' || \
-      { echo "FATAL: /usr/share/pulsar/release is '${rel}', not a semver MAJOR.MINOR.PATCH"; exit 1; }; \
+    printf '%s' "${rel}" | grep -qxE '[0-9]{2}\.([1-9]|1[0-2])\.[1-9][0-9]*' || \
+      { echo "FATAL: /usr/share/pulsar/release is '${rel}', not YY.M.N (26.9.1)"; exit 1; }; \
     sed -i -e '/^PULSAR_RELEASE=/d' /usr/lib/os-release && \
     echo "PULSAR_RELEASE=\"${rel}\"" >> /usr/lib/os-release && \
-    short="${rel%.*}" && \
-    sed -i -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${short}\"|" /usr/lib/os-release; \
+    sed -i -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${rel}\"|" /usr/lib/os-release; \
     if [ -n "${PULSAR_VERSION}" ]; then \
       sed -i \
         -e "s|^VERSION=.*|VERSION=\"${PULSAR_VERSION}\"|" \
-        -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${short} (${PULSAR_VERSION})\"|" \
+        -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${rel} (${PULSAR_VERSION})\"|" \
         /usr/lib/os-release; \
       grep -E '^(VERSION|VERSION_ID|PRETTY_NAME)=' /usr/lib/os-release; \
       vid=$(. /usr/lib/os-release; echo "${VERSION_ID}"); \

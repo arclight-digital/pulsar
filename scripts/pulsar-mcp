@@ -22,7 +22,12 @@ import sys
 
 CLI = os.environ.get("PULSAR_CLI", "/usr/bin/pulsar")
 GUIDE = os.environ.get("PULSAR_AGENTS_MD", "/usr/share/pulsar/AGENTS.md")
-VERSION = "1.0.0"
+# the release (YY.M.N) the image carries; a checkout has none installed
+try:
+    with open(os.environ.get("PULSAR_RELEASE_FILE", "/usr/share/pulsar/release")) as f:
+        VERSION = f.read().strip() or "dev"
+except OSError:
+    VERSION = "dev"
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
 
