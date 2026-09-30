@@ -86,6 +86,12 @@ const PANEL_FADE_MS = 250;
 // The dash's: it floats over the overview like a menu, a little lower.
 // How far the light may spill past the edge.
 const LIGHT_PAD = 48;
+// How close the light may come to the glass. A menu opened at the pointer
+// (the desktop's, a window's) has its source on its own corner, inside the
+// spill's reach: the spill lit the square behind the rounded corner, cut
+// off where the source passes from one side of each point to the other.
+// A panel button sits about 25px off its menu, and lights it cleanly.
+const LIGHT_MIN_DISTANCE = 24;
 const GRAIN = 0.008;
 const GAIN = 1.3;
 const POWER_ON_MS = 300;
@@ -1118,6 +1124,30 @@ function rgb(c) {
     return c ? [c.red / 255, c.green / 255, c.blue / 255] : [0.24, 0.8, 1.0];
 }
 
+// The shaders' sd(): signed distance from (px, py) to the rounded rect.
+function roundedDistance(px, py, [x, y, w, h], r) {
+    const qx = Math.abs(px - (x + w / 2)) - w / 2 + r;
+    const qy = Math.abs(py - (y + h / 2)) - h / 2 + r;
+    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+}
+
+// The light, held back to LIGHT_MIN_DISTANCE from the glass along the line
+// from its middle.
+function holdBack([lx, ly], rect, r) {
+    const cx = rect[0] + rect[2] / 2, cy = rect[1] + rect[3] / 2;
+    let [dx, dy] = [lx - cx, ly - cy];
+    const len = Math.hypot(dx, dy);
+    [dx, dy] = len > 1e-3 ? [dx / len, dy / len] : [0, -1];
+    for (let i = 0; i < 8; i++) {
+        const d = roundedDistance(lx, ly, rect, r);
+        if (d >= LIGHT_MIN_DISTANCE - 0.5)
+            break;
+        lx += dx * (LIGHT_MIN_DISTANCE - d);
+        ly += dy * (LIGHT_MIN_DISTANCE - d);
+    }
+    return [lx, ly];
+}
+
 function luminance(c) {
     return (0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue) / 255;
 }
@@ -1348,7 +1378,9 @@ class Surface {
         this._lightActor.set_size(lw, lh);
         const lx0 = origin.x + o.x - LIGHT_PAD, ly0 = origin.y + o.y - LIGHT_PAD;
         const src = this._opts.source(origin.x + o.x, origin.y + o.y, w, h);
-        const light = src ? [src[0] - lx0, src[1] - ly0] : [lw / 2, -LIGHT_PAD];
+        const light = src
+            ? holdBack([src[0] - lx0, src[1] - ly0], [LIGHT_PAD, LIGHT_PAD, w, h], r)
+            : [lw / 2, -LIGHT_PAD];
         const column = this._opts.divider?.();
         // stock draws no line there, only a gap (the column's margin); light its middle
         const divx = column
