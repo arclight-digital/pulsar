@@ -2667,6 +2667,11 @@ export class Glass {
         const parent = win.get_transient_for()?.get_compositor_private();
         if (parent && this._windows.has(parent) && !this._windows.has(actor)) {
             this._windows.set(actor, new WindowGlass(this, actor, true));
+            // as glassy as the window it opened from: with Glass windows
+            // off, _sync keeps only glassy windows' glass, and stripped it
+            // from an open popover of a glassy window
+            if (this._glassy.has(parent))
+                this._glassy.add(actor);
             return;
         }
         const cull = new Uncull(actor);
