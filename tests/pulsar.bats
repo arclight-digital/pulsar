@@ -105,23 +105,49 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
     [[ "$output" != *"gh attestation"* ]]
 }
 
-@test "verify runs the verify command the manifest carries, not a baked one" {
-    # The owner and registry are build-time facts: an image built from a fork
-    # must verify against the fork, so the command comes from the manifest.
-    # Naming a verifier that does not exist proves which one it reached for.
-    cat > "$PULSAR_MANIFEST" <<'JSON'
-{"image":"pulsar","attestation":"definitely-not-a-real-verifier verify oci://x"}
-JSON
-    run "$PULSAR" verify
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"definitely-not-a-real-verifier"* ]]
+# A fake rpm-ostree (booted on a tagged ghcr ref) and a fake cosign that
+# accepts only what $COSIGN_OK names: "logged" (a plain verify passes),
+# "key" (only with --insecure-ignore-tlog), or nothing.
+fake_verify_env() {
+    local bin="${BATS_TEST_TMPDIR}/bin"
+    mkdir -p "$bin"
+    cat > "$bin/rpm-ostree" <<'SH'
+#!/bin/sh
+echo '{"deployments":[{"booted":true,"container-image-reference":"ostree-unverified-registry:ghcr.io/x/pulsar-nvidia:latest","container-image-reference-digest":"sha256:abc"}]}'
+SH
+    cat > "$bin/cosign" <<'SH'
+#!/bin/sh
+echo "$*" >> "$COSIGN_LOG"
+case "$*" in *insecure-ignore-tlog*) [ "$COSIGN_OK" = logged ] || [ "$COSIGN_OK" = key ] ;; *) [ "$COSIGN_OK" = logged ] ;; esac
+SH
+    chmod +x "$bin/rpm-ostree" "$bin/cosign"
+    export PATH="$bin:$PATH" COSIGN_LOG="${BATS_TEST_TMPDIR}/cosign.log"
+    export PULSAR_COSIGN_KEY="${BATS_TEST_TMPDIR}/pulsar.pub"
+    echo key > "$PULSAR_COSIGN_KEY"
 }
 
-@test "verify refuses an image whose manifest has no attestation" {
-    echo '{"image":"pulsar"}' > "$PULSAR_MANIFEST"
-    run "$PULSAR" verify
+@test "verify checks the booted digest, not a tag, against the shipped key" {
+    fake_verify_env
+    COSIGN_OK=logged run "$PULSAR" verify
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ghcr.io/x/pulsar-nvidia@sha256:abc"* ]]
+    [[ "$output" != *":latest"* ]]
+    [[ "$output" == *"logged in Rekor"* ]]
+    grep -q -- "--key ${PULSAR_COSIGN_KEY} ghcr.io/x/pulsar-nvidia@sha256:abc" "$COSIGN_LOG"
+}
+
+@test "verify passes a signature from before Rekor logging, and says so" {
+    fake_verify_env
+    COSIGN_OK=key run "$PULSAR" verify
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"predates Rekor"* ]]
+}
+
+@test "verify fails an image no signature verifies" {
+    fake_verify_env
+    COSIGN_OK=none run "$PULSAR" verify
     [ "$status" -ne 0 ]
-    [[ "$output" == *"not signed yet"* ]]
+    [[ "$output" == *"no signature"* ]]
 }
 
 @test "manifest --json is machine readable and unstyled" {

@@ -3306,27 +3306,39 @@ cmd_sbom() {
 # laptop that has never booted Pulsar as it is from here.
 # ---------------------------------------------------------------------------
 cmd_verify() {
-    local cmd; cmd=$(mf attestation)
-    # No command is the honest state of every image since the build left
-    # GitHub Actions in August: the GitHub attestations stopped, and signing
-    # with Pulsar's own cosign key is not wired yet. Say that plainly rather
-    # than print a verifier that can only fail.
-    if [ -z "$cmd" ]; then
-        printf '%s\n' \
-          "this image is not signed yet, so there is nothing to verify it against." \
-          "signing moves to Pulsar's own cosign release key, the one that already signs" \
-          "the installer ISOs: https://github.com/arclight-digital/pulsar/blob/main/keys/cosign.pub" \
-          "until then: \`pulsar sbom\` lists what is in it, and \`pulsar status\` shows the" \
-          "digest you are running, to compare with the registry's." >&2
-        return 1
-    fi
-    local -a argv=(); read -ra argv <<<"$cmd"
-    [ "${#argv[@]}" -gt 0 ] || die "the manifest's attestation command is empty"
+    # The booted image, by digest (a tag moves; the digest is what is
+    # running), against the release key the image itself ships. Images are
+    # signed on the build host after the boot gate; each signature carries its
+    # Rekor entry, which cosign checks offline. A signature from before the
+    # build logged them has none: that one is checked on the key alone, and
+    # this says so rather than failing a genuinely signed image.
+    local key="${PULSAR_COSIGN_KEY:-/etc/pki/containers/pulsar.pub}"
+    need rpm-ostree; need jq
+    [ -r "$key" ] || die "this image ships no release key at ${key}"
+    local js; js=$(rpm-ostree status --json 2>/dev/null) || die "could not read deployment status"
+    local booted='[ .deployments[]? | select(.booted == true) ][0]'
+    local ref digest
+    ref=$(printf '%s' "$js" | jq -r "${booted} | (.\"container-image-reference\" // \"\") | sub(\"^([a-z-]+:)+(//)?\"; \"\")")
+    digest=$(printf '%s' "$js" | jq -r "${booted} | .\"container-image-reference-digest\" // \"\"")
+    [ -n "$ref" ] && [ -n "$digest" ] || die "the booted deployment is not a registry image; there is no signature to check"
+    # the tag, if any, is on the last path component (a registry may have a port)
+    local image="${ref%%@*}"
+    case "${image##*/}" in *:*) image="${image%:*}" ;; esac
+    image="${image}@${digest}"
+    local cmd="cosign verify --key ${key} ${image}"
     # Echoed first: the point of the command is that you can check it yourself,
     # and a verifier you cannot read is not much of one.
     printf '%s%s%s\n' "$C_DIM" "$cmd" "$C_RESET"
-    have "${argv[0]}" || die "this image does not ship '${argv[0]}'; run the command above wherever you have it"
-    "${argv[@]}"
+    have cosign || die "cosign is not on this machine; run the command above wherever it is (a toolbox: dnf install cosign)"
+    if cosign verify --key "$key" "$image" >/dev/null 2>&1; then
+        printf 'signed with the release key, and the signature is logged in Rekor\n'
+        return 0
+    fi
+    if cosign verify --key "$key" --insecure-ignore-tlog=true "$image" >/dev/null 2>&1; then
+        printf 'signed with the release key; this signature predates Rekor logging, so it has no log entry\n'
+        return 0
+    fi
+    die "no signature on ${image} verifies against ${key}"
 }
 
 # ---------------------------------------------------------------------------
@@ -4545,7 +4557,7 @@ This image
   pulsar manifest          what is in this image, and what it runs on
   pulsar changelog         packages that moved in the latest published build
   pulsar sbom              this system's packages as SPDX 2.3
-  pulsar verify            how to check where this image came from
+  pulsar verify            check the running image's signature
 
 Updates and undo
   pulsar update            fetch and stage the newest image       (root)
