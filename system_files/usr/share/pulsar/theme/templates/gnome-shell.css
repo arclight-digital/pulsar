@@ -963,8 +963,6 @@ stage {
 .check-box:checked:hover StIcon,
 .toggle-switch:checked:hover {
   color: st-lighten({{accent_fg}}, 5%); }
-.quick-toggle-has-menu:checked .quick-toggle-separator {
-  background-color: st-mix({{accent_fg}}, {{accent}}, 30%); }
 .ripple-pointer-location {
   background-color: st-lighten(st-transparentize({{accent}}, 0.7), 30%); }
 .select-area-rubberband {
@@ -976,6 +974,11 @@ stage {
 .tile-preview {
   background-color: st-transparentize({{accent}}, 0.5); }
 /* END stock states */
+/* A checked toggle's divider before its arrow: stock mixes its accent's
+   text color into the accent, which reads with its own white on its own
+   accents and all but vanishes with most themes' pairs. A faint line of the
+   accent's text color holds the same weight on any. */
+.quick-toggle-has-menu:checked .quick-toggle-separator { background-color: st-transparentize({{accent_fg}}, 0.8); }
 
 #panel { background-color: {{background_deep}}; }
 #panel .panel-button { color: {{foreground}}; }
