@@ -76,7 +76,7 @@ API itself uses halo's self-signed **transport** cert (SAN = its VPC address,
 Image signing over a digest, and liveness. Specified by `arclight-infra`; the
 image build doesn't call them.
 
-## Two traps
+## Two easy mistakes
 
 - **The signing macro fails silently.** `kmodtool`'s
   `%__kmodtool_modsign_install_post` skips signing, with no error, unless both
