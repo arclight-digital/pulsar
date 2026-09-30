@@ -58,6 +58,26 @@ def eval_js(js):
     return (m.group(1) == "true", m.group(2)) if m else (False, r.stdout + r.stderr)
 
 
+def eval_json(js):
+    """Eval of an expression that returns JSON.stringify(...): (value, "") or
+    (None, why). The Shell JSON-encodes Eval's result, so a string comes back
+    encoded twice."""
+    from gi.repository import GLib
+    r = sh("gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell",
+           "--method", "org.gnome.Shell.Eval", js, check=False)
+    try:
+        ok, raw = GLib.Variant.parse(None, r.stdout.strip(), None, None).unpack()
+    except Exception:
+        return None, (r.stdout + r.stderr)[:300]
+    if not ok:
+        return None, raw[:300]
+    try:
+        v = json.loads(raw)
+        return (json.loads(v) if isinstance(v, str) else v), ""
+    except ValueError:
+        return None, raw[:300]
+
+
 def screenshot(name):
     SHOTS.mkdir(exist_ok=True)
     out = SHOTS / f"{name}.png"
@@ -215,21 +235,26 @@ def pt(*args, check=True):
     return r
 
 
-def quick_settings(name):
+def quick_settings(name, checked=False):
+    """Screenshot Quick Settings; the checked toggles' boxes, or None when
+    they could not be read. `checked`: Do Not Disturb on for the shot, so a
+    toggle is checked whatever the scheme (Dark Style is the only other one
+    this Shell has, and a light variant leaves it off)."""
     eval_js("global.get_window_actors().forEach(a => a.meta_window.minimize()); 1")
+    if checked:
+        dconf("/org/gnome/desktop/notifications/show-banners", "false")
     time.sleep(0.8)
     eval_js("Main.panel.statusArea.quickSettings.menu.open(false)")
     time.sleep(1.0)
-    ok, box = eval_js("(() => { const out = []; const walk = a => { if (a.has_style_class_name?.('quick-toggle') && a.checked && a.is_mapped()) "
-                      "{ const [x, y] = a.get_transformed_position(); out.push([x, y, a.width, a.height]); } "
-                      "a.get_children().forEach(walk); }; walk(Main.panel.statusArea.quickSettings.menu.actor); "
-                      "return JSON.stringify(out); })()")
+    boxes, _ = eval_json("(() => { const out = []; const walk = a => { if (a.has_style_class_name?.('quick-toggle') && a.checked && a.is_mapped()) "
+                         "{ const [x, y] = a.get_transformed_position(); out.push([x, y, a.width, a.height]); } "
+                         "a.get_children().forEach(walk); }; walk(Main.panel.statusArea.quickSettings.menu.actor); "
+                         "return JSON.stringify(out); })()")
     png = screenshot(name)
     eval_js("Main.panel.statusArea.quickSettings.menu.close(false)")
-    try:
-        return png, json.loads(box.replace('\\"', '"').strip('"'))
-    except Exception:
-        return png, []
+    if checked:
+        sh("dconf", "reset", "/org/gnome/desktop/notifications/show-banners")
+    return png, boxes
 
 
 def theme_list():
@@ -312,19 +337,24 @@ def gate(only):
             pal = palette(slug, mode)
             launch_apps()
             desk = screenshot(f"{slug}-{mode}-desktop")
-            qs, boxes = quick_settings(f"{slug}-{mode}-quicksettings")
+            qs, boxes = quick_settings(f"{slug}-{mode}-quicksettings", checked=True)
             ex, ey, ew, eh = cell("org.gnome.TextEditor")
             ax, ay, aw, ah = cell("org.gnome.Adwaita1.Demo")
             probes = {"top bar = background_deep": (pixel(qs, W * 0.30, 6), [pal["background_deep"]]),
                       "Text Editor view = background": (pixel(desk, ex + ew * 0.85, ey + eh * 0.9), [pal["background"]]),
                       "libadwaita content = window|view": (pixel(desk, ax + aw * 0.95, ay + ah * 0.93),
                                                             [pal["window"], pal["view"]])}
-            boxes = [b for b in boxes if all(isinstance(x, (int, float)) for x in b) and b[2] > 20]
-            if boxes:
-                bx, by, bw, bh = boxes[0]
+            found = [b for b in boxes or [] if all(isinstance(x, (int, float)) for x in b) and b[2] > 20]
+            if found:
+                bx, by, bw, bh = found[0]
                 probes["checked quick toggle = accent"] = (pixel(qs, bx + bw * 0.93, by + bh / 2), [pal["accent"]])
             res = {k: {"ok": any(close(seen, w) for w in want), "seen": seen, "want": want}
                    for k, (seen, want) in probes.items()}
+            if not found:
+                # no toggle to sample is a failure, never a skipped check
+                res["checked quick toggle = accent"] = {
+                    "ok": False, "want": [pal["accent"]],
+                    "seen": "no checked quick toggle could be read" if boxes is None else "no checked quick toggle"}
             res["Ptyxis palette applied"] = {"ok": f"pulsar-{slug}" in sh("dconf", "dump", "/org/gnome/Ptyxis/").stdout}
             report["themes"][f"{slug}/{mode}"] = res
             bad = [k for k, v in res.items() if not v["ok"]]
