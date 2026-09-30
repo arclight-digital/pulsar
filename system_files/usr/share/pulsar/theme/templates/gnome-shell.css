@@ -63,7 +63,6 @@ StScrollBar > .vhandle:active {
 .message:focus,
 .message:insensitive,
 .quick-toggle-menu:focus,
-.quick-toggle-menu:insensitive,
 .weather-button:focus,
 .weather-button:insensitive,
 .world-clocks-button:focus,
@@ -788,7 +787,6 @@ stage {
 .modal-dialog .modal-dialog-button-box .modal-dialog-button:insensitive,
 .notification-button:insensitive,
 .popup-sub-menu .popup-menu-item:insensitive,
-.quick-toggle-menu:insensitive,
 .search-provider-icon:insensitive,
 .switcher-list .item-box:insensitive,
 .weather-button:insensitive,
@@ -1209,6 +1207,12 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
   background-color: rgba({{foreground_rgb}}, 0.1); }
 .message-list { border-color: rgba({{foreground_rgb}}, 0.1); }
 .quick-toggle-menu .header .icon { background-color: rgba({{foreground_rgb}}, 0.2); }
+/* A quick toggle's submenu is a box that is never reactive (its items are),
+   so St keeps it :insensitive, and stock grays an insensitive card's text
+   to half: the title, every item and every icon of an open submenu, which
+   all inherit it, read faint. Its text is the theme's own, and so is its
+   ground (glass restates that below). */
+.quick-toggle-menu:insensitive { background-color: {{background_raised}}; color: {{foreground}}; }
 
 /* The screenshot UI: stock's own dark HUD (#2e2e33, white text) in both
    schemes. Its panel is a popover like the switchers; the mode buttons and
