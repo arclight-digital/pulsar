@@ -407,6 +407,56 @@ PY
     [ "$status" -eq 0 ]
 }
 
+@test "the glass rim's warning and alert lights never read as the accent, in any theme" {
+    fake_dconf
+    # measured on what the Shell sheet actually carries, in OKLab's a/b plane
+    # (a glow's lightness is its own, so only hue and chroma tell it apart)
+    run python3 - "$ENGINE" "${BATS_TEST_TMPDIR}/lights" <<'PY'
+import math, re, subprocess, sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+bad = []
+for slug, t in e.ordered_themes():
+    out = f"{sys.argv[2]}/{slug}"
+    subprocess.run([sys.executable, sys.argv[1], "render", slug, out], check=True, capture_output=True)
+    for mode, v in t.variants.items():
+        css = open(f"{out}/.local/state/pulsar-theme/shell/gnome-shell-{mode}.css").read()
+        rule = re.search(r"-pulsar-light: (#\w+); -pulsar-light-neutral: #\w+;\s*"
+                         r"-pulsar-light-warn: (#\w+); -pulsar-light-alert: (#\w+);", css)
+        if not rule:
+            bad.append(f"{slug} {mode}: no light rule in the Shell sheet")
+            continue
+        acc, warn, alert = (e.Color.parse(x).oklab() for x in rule.groups())
+        for name, c in (("warn", warn), ("alert", alert)):
+            gap = math.hypot(c[1] - acc[1], c[2] - acc[2])
+            if gap < 0.08:
+                bad.append(f"{slug} {mode}: {name} light only {gap:.3f} from the accent")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+    [ "$status" -eq 0 ]
+}
+
+@test "a theme whose red and orange are clear of its accent keeps them as its lights" {
+    run python3 - "$ENGINE" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+for slug in ("pulsar", "nord", "everforest", "tokyo-night"):
+    for mode, v in e.load_theme(slug).variants.items():
+        assert v["light_warn"].hex == v["orange"].hex, (slug, mode)
+        assert v["light_alert"].hex == v["red"].hex, (slug, mode)
+# the ones whose accent IS a signal color move off it
+g = e.load_theme("gruvbox").variants["dark"]
+assert g["light_warn"].hex != g["orange"].hex and g["light_alert"].hex != g["red"].hex
+o = e.load_theme("oxocarbon").variants["light"]
+assert o["light_alert"].hex != o["red"].hex
+PY
+    [ "$status" -eq 0 ]
+}
+
 @test "--without flatpak removes the entries the engine added, and only those" {
     fake_dconf
     f="$XDG_DATA_HOME/flatpak/overrides/global"

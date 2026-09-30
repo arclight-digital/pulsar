@@ -185,6 +185,72 @@ def nearest_gnome_accent(c):
     return best
 
 
+# The glass rim's lights (glass.js): the accent normally, a warning light
+# (low battery) and an alert light (critical). Each must read as a different
+# color from the accent at a glance, on its own, as a glow. Lightness does
+# not tell a glow apart -- its brightness is the glow's own -- so the
+# distance is taken in OKLab's a/b plane only: hue and chroma. 0.08 there is
+# the gap between clearly different hues at a UI's chroma; Gruvbox's orange
+# on its orange accent is 0.00, Oxocarbon's red on its pink 0.00-0.03.
+LIGHT_APART = 0.08
+
+
+def hue_gap(x, y):
+    """Distance between two colors in OKLab's a/b plane (lightness ignored)."""
+    _, a1, b1 = x.oklab()
+    _, a2, b2 = y.oklab()
+    return math.hypot(a1 - a2, b1 - b2)
+
+
+def hue_of(c):
+    """OKLCh hue, in radians."""
+    _, a, b = c.oklab()
+    return math.atan2(b, a)
+
+
+def hue_turn(x, y):
+    """How far apart two colors' hues are, as an angle (0 to pi)."""
+    return abs(math.remainder(hue_of(x) - hue_of(y), math.tau))
+
+
+def turn_apart(c, acc, others):
+    """c with its OKLCh hue turned away from acc's, lightness kept (chroma
+    raised if it is too grey to carry a hue), until it reads apart from
+    every one of others: (color, degrees turned). signal_light's last
+    resort, when no palette color does."""
+    L, a, b = c.oklab()
+    ch = max(math.hypot(a, b), LIGHT_APART)
+    h = math.atan2(b, a)
+    step = math.radians(2) * (1 if math.remainder(h - hue_of(acc), math.tau) >= 0 else -1)
+    best, room = c, -1.0
+    for i in range(180):
+        n = Color.parse(from_oklab(L, ch * math.cos(h), ch * math.sin(h)).hex)
+        r = min(hue_gap(n, o) for o in others)
+        if r >= LIGHT_APART:
+            return n, i * 2
+        if r > room:
+            best, room = n, r
+        h += step
+    return best, 360
+
+
+def signal_light(acc, prefs, avoid=()):
+    """A signal light from the palette: prefs[0] (the color that means it:
+    red for the alert, orange for the warning) whenever it reads apart from
+    the accent and from `avoid` (the other signal light); else, of the rest
+    that do, the one nearest prefs[0] in hue; else the one that needs the
+    least turn to get there (turn_apart), in prefs' order on a tie."""
+    others = [acc, *avoid]
+    room = lambda c: min(hue_gap(c, o) for o in others)
+    if room(prefs[0]) >= LIGHT_APART:
+        return prefs[0]
+    ok = [c for c in prefs[1:] if room(c) >= LIGHT_APART]
+    if ok:
+        return min(ok, key=lambda c: hue_turn(c, prefs[0]))
+    turned = [turn_apart(c, acc, others) for c in prefs]
+    return min(turned, key=lambda t: t[1])[0]
+
+
 def readable_on(bg, *candidates):
     return max(candidates, key=lambda c: c.contrast(bg))
 
@@ -273,6 +339,18 @@ class Variant:
         # --accent-color is the accent used AS TEXT on the window ground: it
         # must clear 4.5:1 (libadwaita's own rule), so nudge it if needed.
         d("accent_text", ensure_contrast(acc, p["window"], 4.5, fg))
+        # The glass rim's alert (critical battery) and warning (low battery)
+        # lights: red and orange, unless that one is the accent's own color
+        # (Gruvbox's accent is its orange, Oxocarbon's is its red); then the
+        # nearest in meaning that reads apart from it. See signal_light.
+        d("light_alert", signal_light(acc, [p["red"], p["orange"], p["magenta"]]))
+        # the warning keeps clear of the alert too, once either has moved
+        # off its own color (with both at home it is the palette's own pair)
+        alert = p["light_alert"]
+        if alert.hex == p["red"].hex and hue_gap(p["orange"], acc) >= LIGHT_APART:
+            d("light_warn", p["orange"])
+        else:
+            d("light_warn", signal_light(acc, [p["orange"], p["yellow"], p["red"]], [alert]))
         # Legacy 16-colour terminal slots, unless the theme gives them.
         ansi = [p["selection"] if dark else p["foreground_dim"], p["red"], p["green"], p["yellow"],
                 p["blue"], p["magenta"], p["cyan"], p["foreground"] if dark else p["selection"],
@@ -1902,6 +1980,11 @@ def audit_variant(v):
         checks.append((f"syntax + ANSI {k}", c(k, "background"), 4.5, 4.5))
     for i in (8, 9, 10, 11, 12, 13, 14):
         checks.append((f"ANSI color{i} (ls --color, btop)", v[f"color{i}"].contrast(v["background"]), 3.0, 3.0))
+    # not a contrast ratio: how far each glass rim light's color is from the
+    # accent's (hue_gap), so low battery never looks like nothing is wrong
+    for k in ("light_warn", "light_alert"):
+        checks.append((f"{k} apart from the accent (OKLab a/b)", hue_gap(v[k], v["accent"]),
+                       LIGHT_APART, LIGHT_APART))
     return checks
 
 
