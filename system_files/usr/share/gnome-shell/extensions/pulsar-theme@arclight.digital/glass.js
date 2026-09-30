@@ -663,7 +663,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (!actor) {
             this._states.clear();
             this._last = null;
-            this._unseen = null;
+            this._preview = null;
         }
         super.vfunc_set_actor(actor);
     }
@@ -675,30 +675,21 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (!this._shape || aw < 1 || ah < 1)
             return;
         const fb = paintContext.get_framebuffer();
-        // A clone's paint (a window's preview or thumbnail in the overview)
-        // shows the kept blur and never re-blurs: its rect differs from the
-        // real one, and re-blurring for each would redo the whole chain for
-        // every window, several times a frame. So does a paint anywhere but
-        // a stage view (a screenshot, a screencast): a window screenshot
-        // paints the window alone, with nothing beneath it to blur.
+        // A clone's paint (a window's preview in the overview) blurs what
+        // is beneath the preview, all the way through the overview's zoom,
+        // kept apart from the real blur. The blur the window's last real
+        // paint kept was of what lay beneath it then: at login that paint
+        // can come before the wallpaper does, and the preview sat unfrosted
+        // until the overview closed. A paint anywhere but a stage view (a
+        // screenshot, a screencast) shows what the screen does: a window
+        // screenshot paints the window alone, with nothing beneath it to
+        // blur.
         const clone = inClonePaint(actor);
-        let unseen = false;
-        if (clone || (this._last?.result && !Views.get(fb))) {
-            if (this._last?.result) {
-                this._draw(fb, actor, x0, y0, w, h, this._last);
-                return;
-            }
-            // Never painted for real, so nothing kept: a window opened in
-            // the overview (at login, the overview is where it opens). Its
-            // preview blurs what is beneath the preview instead, kept apart
-            // from the real blur, until the window's first real paint.
-            if (!clone || !Views.get(fb)) {
-                // a screenshot of the overview shows what the screen does
-                if (clone && this._unseen?.result)
-                    this._draw(fb, actor, x0, y0, w, h, this._unseen);
-                return;
-            }
-            unseen = true;
+        if (!Views.get(fb) && (clone || this._last?.result)) {
+            const s = clone && this._preview?.result ? this._preview : this._last;
+            if (s?.result)
+                this._draw(fb, actor, x0, y0, w, h, s);
+            return;
         }
         // Held (setFrozen): the blur it has, and nothing copied.
         if (this._frozen) {
@@ -717,10 +708,10 @@ class PulsarLiveBlur extends Clutter.Effect {
         // scratch, and keeps nothing.
         let s;
         const onView = !Number.isNaN(r.sx0);
-        if (unseen) {
+        if (clone) {
             if (!onView)
                 return;
-            s = this._unseen ??= {copy: null, result: null, key: [NaN, NaN, NaN, NaN], hw: 0, hh: 0};
+            s = this._preview ??= {copy: null, result: null, key: [NaN, NaN, NaN, NaN], hw: 0, hh: 0};
             // The workspace thumbnail shows the big preview's blur rather
             // than redo it: two previews blurring into one kept copy would
             // each find it moved, and blur whole, every frame.
@@ -802,9 +793,12 @@ class PulsarLiveBlur extends Clutter.Effect {
         bx[2] = Math.min((sp[0] + sp[2] - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2);
         bx[3] = Math.min((sp[1] + sp[3] - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2);
         this._blur(s, r.scale);
-        if (onView && !unseen) {
+        // what is beneath the preview may change anywhere before the next
+        // overview: its next paint copies all of it again
+        if (onView && !clone) {
             this._last = s;
-            this._unseen = null;
+            if (this._preview)
+                this._preview.key[0] = NaN;
         }
         this._draw(fb, actor, x0, y0, w, h, s);
     }
