@@ -447,16 +447,28 @@ c += tap(uv + vec2(-h.x, -h.y)) * 2.0;
 cogl_color_out = c / 12.0;
 `;
 
+// One snippet per shader, shared by every pipeline that runs it. Cogl's
+// program cache tells snippets apart by pointer, not by source: a snippet
+// made per surface is a new GLSL program compiled and linked for every menu,
+// window and popover the first time it paints.
+const SNIPPETS = new Map();
+function snippet(decl, code) {
+    let s = SNIPPETS.get(code);
+    if (!s) {
+        s = Cogl.Snippet.new(Cogl.SnippetHook.FRAGMENT, decl, null);
+        s.set_replace(code);
+        SNIPPETS.set(code, s);
+    }
+    return s;
+}
+
 function pipeline(decl, code) {
     const ctx = global.stage.context.get_backend().get_cogl_context();
     const p = Cogl.Pipeline.new(ctx);
     p.set_layer_filters(0, Cogl.PipelineFilter.LINEAR, Cogl.PipelineFilter.LINEAR);
     p.set_layer_wrap_mode(0, Cogl.PipelineWrapMode.CLAMP_TO_EDGE);
-    if (code) {
-        const snippet = Cogl.Snippet.new(Cogl.SnippetHook.FRAGMENT, decl, null);
-        snippet.set_replace(code);
-        p.add_snippet(snippet);
-    }
+    if (code)
+        p.add_snippet(snippet(decl, code));
     return p;
 }
 
@@ -1145,9 +1157,7 @@ const LightEffect = GObject.registerClass({
         this._pipeline = Cogl.Pipeline.new(ctx);
         // a layer, so the rectangle carries texture coordinates for the shader
         this._pipeline.set_layer_texture(0, Cogl.Texture2D.new_with_size(ctx, 1, 1));
-        const snippet = Cogl.Snippet.new(Cogl.SnippetHook.FRAGMENT, LIGHT_DECL, null);
-        snippet.set_replace(LIGHT_CODE);
-        this._pipeline.add_snippet(snippet);
+        this._pipeline.add_snippet(snippet(LIGHT_DECL, LIGHT_CODE));
         this._loc = {};
         for (const u of LIGHT_UNIFORMS)
             this._loc[u] = this._pipeline.get_uniform_location(u);
@@ -1594,9 +1604,7 @@ class PulsarGlassBrow extends Clutter.Effect {
         const ctx = global.stage.context.get_backend().get_cogl_context();
         this._pipeline = Cogl.Pipeline.new(ctx);
         this._pipeline.set_layer_texture(0, Cogl.Texture2D.new_with_size(ctx, 1, 1));
-        const snippet = Cogl.Snippet.new(Cogl.SnippetHook.FRAGMENT, BROW_DECL, null);
-        snippet.set_replace(BROW_CODE);
-        this._pipeline.add_snippet(snippet);
+        this._pipeline.add_snippet(snippet(BROW_DECL, BROW_CODE));
         this._loc = {};
         for (const u of ['size', 'acc', 'fg', 'lt', 'lit', 'opacity'])
             this._loc[u] = this._pipeline.get_uniform_location(u);
