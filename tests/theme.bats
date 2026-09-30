@@ -853,3 +853,72 @@ print("" if d is None else d)' "$1" "$2"; }
     python3 "$ENGINE" window-glass --if-stale >/dev/null
     [ "$(stat -c %Y.%i "$sheet")" = "$before" ]
 }
+
+# Glass windows reach menus, popovers and dialogs. Popovers and floating
+# dialogs are windows of their own (the extension blurs behind them); a
+# dialog or a toast inside its window can only be blurred by GTK itself, so
+# it is solid unless GTK is new enough to (the reduced-motion gate).
+@test "glass: popovers and floating dialogs go translucent, in-window sheets and toasts solid then gated glass" {
+    fake_dconf
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass true
+    setkey /org/gnome/shell/extensions/pulsar-theme/window-glass true
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    css="$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    # a step more opaque than the window ground (0.72 at the default tint)
+    grep -q -- '--popover-bg-color: alpha(#[0-9a-f]*, 0.77)' "$css"
+    grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0.77)' "$css"
+    # every GTK: the in-window sheet solid, inside each variant's block
+    grep -q '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css"
+    grep -q '^toast { background-color: #[0-9a-f]*; color: #[0-9a-f]*; }$' "$css"
+    # GTK 4.22: glass, in top-level blocks only a GTK that knows reduced motion keeps
+    [ "$(grep -c '^@media (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: no-preference), (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: reduce) {$' "$css")" -eq 2 ]
+    [ "$(grep -c 'backdrop-filter: blur(20px) url("pulsar-backdrop.svg#opaque");' "$css")" -eq 6 ]
+    # the gated blocks come last, so they win over the solid ones
+    last_solid=$(grep -n '^toast { background-color' "$css" | tail -1 | cut -d: -f1)
+    first_gate=$(grep -n 'prefers-reduced-motion' "$css" | head -1 | cut -d: -f1)
+    [ "$last_solid" -lt "$first_gate" ]
+    # and the filter they name sits beside gtk.css
+    grep -q 'feFuncA type="linear" slope="0" intercept="1"' "$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg"
+}
+
+@test "glass off: popovers and dialogs opaque, toasts still themed, no sheet glass" {
+    fake_dconf
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    css="$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    grep -q -- '--popover-bg-color: #[0-9a-f]*;' "$css"
+    grep -q -- '--dialog-bg-color: #[0-9a-f]*;' "$css"
+    grep -q '^toast { background-color: #[0-9a-f]*; color: #[0-9a-f]*; }$' "$css"
+    ! grep -q 'dialog-host\|backdrop-filter\|prefers-reduced-motion' "$css"
+    [ ! -e "$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg" ]
+}
+
+@test "glass: the filter the Glass windows switch writes is revert's to take back" {
+    fake_dconf
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ ! -e "$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg" ]
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass true
+    setkey /org/gnome/shell/extensions/pulsar-theme/window-glass true
+    python3 "$ENGINE" window-glass >/dev/null
+    [ -e "$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg" ]
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ ! -e "$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg" ]
+}
+
+# GTK's own parser on the rendered gtk.css: no errors, and the gated glass
+# kept by a GTK that has backdrop-filter. Skipped without GTK 4 bindings.
+@test "glass: GTK parses the rendered gtk.css cleanly" {
+    python3 -c 'import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk' 2>/dev/null ||
+        skip "no GTK 4 bindings here"
+    fake_dconf
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass true
+    setkey /org/gnome/shell/extensions/pulsar-theme/window-glass true
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    run python3 "${REPO}/tests/fixtures/gtk-css-parse.py" "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"errors: []"* ]]
+    # a GTK that has backdrop-filter keeps it; an older one drops the block
+    [[ "$output" == *"gated: True True"* || "$output" == *"gated: False False"* ]]
+}

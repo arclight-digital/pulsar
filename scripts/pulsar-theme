@@ -329,7 +329,7 @@ class Variant:
         # Shell extension puts behind GTK windows, and the header bar and
         # sidebar become tints over it (they paint on top of the window
         # ground, so their alpha compounds: 1 - 0.28 * 0.65 ~ 82% where they
-        # are). Content -- views, cards, dialogs, popovers -- stays opaque.
+        # are). Content -- views and cards -- stays opaque.
         g = self.window_glass
         def glass(k, a):
             return f"alpha({self.p[k].hex}, {a})" if g else self.p[k].hex
@@ -340,6 +340,34 @@ class Variant:
         c["headerbar_bg"] = glass("headerbar", 0.35)
         c["sidebar_bg"] = glass("sidebar", 0.35)
         c["window_backdrop"] = glass("window", 0.35)
+        # Menus and popovers are windows of their own, and the extension blurs
+        # what is beneath each one; so are dialogs that float (an alert, a
+        # dialog with no parent window). Mostly text over an app's busy
+        # content: a step more opaque again than the window ground.
+        pa = round(min(0.95, self.glass_alpha + 0.12), 3)
+        c["popover_bg"] = glass("popover", pa)
+        c["dialog_bg"] = glass("popover", pa)
+        # A libadwaita dialog inside its window (preferences, about, an alert)
+        # is drawn into the window's own buffer, over the page it covers,
+        # where the Shell's blur cannot reach: its sheet is a .background, at
+        # the window ground's alpha, and the page read through it sharp. So
+        # is a toast. Solid for every GTK; sheet_glass (see the gtk4 target)
+        # gives GTK 4.22 and later, which can blur what is behind a widget
+        # themselves (backdrop-filter), their glass back. GTK lays that blur
+        # over the page rather than in its place, and the page is only as
+        # opaque as the window ground, so the page stayed readable under it;
+        # BACKDROP_SVG makes the blur opaque first.
+        sheet = "dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet"
+        alert = "dialog-host > dialog.alert sheet"
+        if g:
+            c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['window'].hex};\n}}\n"
+                                 f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n")
+            c["sheet_glass"] = "".join(
+                f"{sel} {{\n  background-color: alpha({self.p[k].hex}, {pa});\n"
+                f"  backdrop-filter: blur(20px) url(\"{BACKDROP_SVG}#opaque\");\n}}\n"
+                for sel, k in ((sheet, "window"), (alert, "popover"), ("toast", "popover")))
+        else:
+            c["glass_sheets"] = c["sheet_glass"] = ""
         # Over the blur the ground is close in value to the cards on it, and
         # they sank into it: a step lighter, and a hairline of light round
         # each (cards, boxed lists and their separate rows).
@@ -1195,6 +1223,45 @@ def window_glass():
     return f"'{EXT_UUID}'" in (gsettings_get("org.gnome.shell", "enabled-extensions") or "")
 
 
+# GTK 4.22 blurs what is behind a widget itself (backdrop-filter), so an
+# in-window dialog can be glass there; older GTK -- a Flatpak on an older
+# GNOME runtime reading the same gtk.css -- keeps it solid. The gate is
+# reduced motion, the one @media feature that came in the same release: a
+# GTK that does not know it drops the whole block, and either value is
+# true on one that does. Top-level blocks of their own: an unknown feature
+# nested inside a variant's block might take that block down with it.
+MOTION = ("(prefers-reduced-motion: no-preference)", "(prefers-reduced-motion: reduce)")
+
+# The filter sheet_glass runs after the blur: every pixel of it opaque, so it
+# covers the page it was made from instead of being laid over it. Beside
+# gtk.css, where its url() resolves, and where the Flatpak override reaches.
+BACKDROP_SVG = "pulsar-backdrop.svg"
+BACKDROP_SVG_TEXT = """<svg xmlns="http://www.w3.org/2000/svg">
+  <!-- written by pulsar-theme: gtk.css's in-window glass needs it -->
+  <filter id="opaque" color-interpolation-filters="sRGB">
+    <feComponentTransfer>
+      <feFuncA type="linear" slope="0" intercept="1"/>
+    </feComponentTransfer>
+  </filter>
+</svg>
+"""
+
+
+def sheet_glass_blocks(theme, vm):
+    if vm == "both" and theme.both:
+        modes = ("light", "dark")
+    else:
+        modes = (vm if vm in theme.variants else theme.prefer,)
+    out = ""
+    for m in modes:
+        body = theme.variants[m].ctx()["sheet_glass"]
+        if not body:
+            continue
+        scheme = f"(prefers-color-scheme: {m}) and " if len(modes) == 2 else ""
+        out += f"@media {', '.join(scheme + q for q in MOTION)} {{\n{body}}}\n"
+    return out
+
+
 class Gtk4(Target):
     name, desc, live = "gtk4", "libadwaita CSS variables in gtk-4.0/gtk.css", "new windows only: GTK reads gtk.css once at startup"
 
@@ -1212,7 +1279,12 @@ class Gtk4(Target):
             return f"@media (prefers-color-scheme: {m}) {{\n{body}}}\n"
         # the glass state it was written for, which `window-glass --if-stale` reads
         block = (f"/* {css_comment(theme.name)} */\n/* {GLASS_MARK}{'on' if glass else 'off'} */\n" +
-                 variant_blocks(theme, vm, "gtk4.css", wrap))
+                 variant_blocks(theme, vm, "gtk4.css", wrap) + sheet_glass_blocks(theme, vm))
+        # The filter before the sheet that names it (files commit in order):
+        # GTK reads the url() as it parses, and without the file it drops the
+        # blur and keeps the see-through tint.
+        if glass:
+            tx.write(CONFIG / "gtk-4.0" / BACKDROP_SVG, BACKDROP_SVG_TEXT)
         p = CONFIG / "gtk-4.0" / "gtk.css"
         tx.edit(p, managed(p, block), {"kind": "block"})
 
@@ -2225,9 +2297,11 @@ def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, r
               "off": sorted(off) if only is None else prev.get("off", []),
               "applied": datetime.datetime.now().isoformat(timespec="seconds"),
               # engine-owned files only: shared ones (gtk.css, btop.conf) are
-              # never deleted as "stale", only cleaned by revert
-              "files": sorted(str(f) for f, c in tx.files.items() if c is not None and f not in tx.shared)
-              if only is None else prev.get("files", []),
+              # never deleted as "stale", only cleaned by revert. A redo of part
+              # of the theme adds what it wrote (the Glass windows switch
+              # writes gtk.css's filter) so revert still finds it.
+              "files": sorted(({str(f) for f, c in tx.files.items() if c is not None and f not in tx.shared} |
+                               (set() if only is None else set(prev.get("files", []))))),
               # what the templated targets were rendered from; a redo of part
               # of them leaves the rest as old as they were
               "templates": templates_seen() if only is None else prev.get("templates"),

@@ -27,14 +27,17 @@
   --card-fg-color: {{foreground}};
   --thumbnail-bg-color: {{card_bg}};
   --thumbnail-fg-color: {{foreground}};
-  --dialog-bg-color: {{popover}};
+  --dialog-bg-color: {{dialog_bg}};
   --dialog-fg-color: {{foreground}};
-  --popover-bg-color: {{popover}};
+  --popover-bg-color: {{popover_bg}};
   --popover-fg-color: {{foreground}};
   --overview-bg-color: {{view}};
   --overview-fg-color: {{foreground}};
   --active-toggle-bg-color: {{selection}};
   --active-toggle-fg-color: {{foreground}};
 }
+/* stock paints toasts one fixed grey, whatever the palette */
+toast { background-color: {{popover}}; color: {{foreground}}; }
 {{glass_cards}}
+{{glass_sheets}}
 {{glow}}
