@@ -659,6 +659,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (!actor) {
             this._states.clear();
             this._last = null;
+            this._unseen = null;
         }
         super.vfunc_set_actor(actor);
     }
@@ -676,10 +677,24 @@ class PulsarLiveBlur extends Clutter.Effect {
         // every window, several times a frame. So does a paint anywhere but
         // a stage view (a screenshot, a screencast): a window screenshot
         // paints the window alone, with nothing beneath it to blur.
-        if (inClonePaint(actor) || (this._last?.result && !Views.get(fb))) {
-            if (this._last?.result)
+        const clone = inClonePaint(actor);
+        let unseen = false;
+        if (clone || (this._last?.result && !Views.get(fb))) {
+            if (this._last?.result) {
                 this._draw(fb, actor, x0, y0, w, h, this._last);
-            return;
+                return;
+            }
+            // Never painted for real, so nothing kept: a window opened in
+            // the overview (at login, the overview is where it opens). Its
+            // preview blurs what is beneath the preview instead, kept apart
+            // from the real blur, until the window's first real paint.
+            if (!clone || !Views.get(fb)) {
+                // a screenshot of the overview shows what the screen does
+                if (clone && this._unseen?.result)
+                    this._draw(fb, actor, x0, y0, w, h, this._unseen);
+                return;
+            }
+            unseen = true;
         }
         // Held (setFrozen): the blur it has, and nothing copied.
         if (this._frozen) {
@@ -698,7 +713,18 @@ class PulsarLiveBlur extends Clutter.Effect {
         // scratch, and keeps nothing.
         let s;
         const onView = !Number.isNaN(r.sx0);
-        if (onView) {
+        if (unseen) {
+            if (!onView)
+                return;
+            s = this._unseen ??= {copy: null, result: null, key: [NaN, NaN, NaN, NaN], hw: 0, hh: 0};
+            // The workspace thumbnail shows the big preview's blur rather
+            // than redo it: two previews blurring into one kept copy would
+            // each find it moved, and blur whole, every frame.
+            if (s.result && r.w < s.key[2] / 2) {
+                this._draw(fb, actor, x0, y0, w, h, s);
+                return;
+            }
+        } else if (onView) {
             if (this._gen !== Views.gen) {
                 this._states.clear();
                 this._gen = Views.gen;
@@ -772,8 +798,10 @@ class PulsarLiveBlur extends Clutter.Effect {
         bx[2] = Math.min((sp[0] + sp[2] - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2);
         bx[3] = Math.min((sp[1] + sp[3] - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2);
         this._blur(s, r.scale);
-        if (onView)
+        if (onView && !unseen) {
             this._last = s;
+            this._unseen = null;
+        }
         this._draw(fb, actor, x0, y0, w, h, s);
     }
 
