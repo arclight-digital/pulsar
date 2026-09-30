@@ -980,7 +980,7 @@ stage {
    stock's own grey, a foreign line on any colored theme. Each is a faint
    line of the text color it sits among, the same weight on any theme. */
 .quick-toggle-has-menu .quick-toggle-separator { background-color: rgba({{foreground_rgb}}, 0.26); }
-.quick-toggle-has-menu:checked .quick-toggle-separator { background-color: st-transparentize({{accent_fg}}, 0.86); }
+.quick-toggle-has-menu:checked .quick-toggle-separator { background-color: st-transparentize({{accent_fg}}, 0.83); }
 
 #panel { background-color: {{background_deep}}; }
 #panel .panel-button { color: {{foreground}}; }
