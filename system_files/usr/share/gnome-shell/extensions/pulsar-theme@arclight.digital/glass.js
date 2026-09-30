@@ -53,6 +53,8 @@ import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as AppDisplay from 'resource:///org/gnome/shell/ui/appDisplay.js';
+import * as Background from 'resource:///org/gnome/shell/ui/background.js';
+import * as Dash from 'resource:///org/gnome/shell/ui/dash.js';
 import * as IBusCandidatePopup from 'resource:///org/gnome/shell/ui/ibusCandidatePopup.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
@@ -1268,7 +1270,9 @@ class PulsarGlassMirror extends St.Widget {
 // bin); opts.box() is the styled surface inside it, opts.source() the
 // light's stage position, opts.divider() the date menu's column,
 // opts.tone() 'warn' / 'alert' / null, opts.frame() a still ancestor to
-// measure from when one between it and the host animates.
+// measure from when one between it and the host animates, opts.still a
+// surface that shows without the power-on trace (a tooltip, shown on every
+// hover).
 class Surface {
     constructor(owner, host, opts) {
         this._owner = owner;
@@ -1344,7 +1348,7 @@ class Surface {
 
     _powerOn() {
         this._lightActor.remove_transition('@effects.pulsar-light.trace');
-        if (!this._owner.powerOn || !this._host.visible) {
+        if (!this._owner.powerOn || this._opts.still || !this._host.visible) {
             this._light.trace = 1;
             return;
         }
@@ -1686,6 +1690,58 @@ class PanelGlass {
         this._shadow.destroy();
         this._line.disconnectObject(this);
         this._line.destroy();
+    }
+}
+
+// The overview's ground: the wallpaper, blurred, under a tint of the theme's
+// deep ground (.pulsar-overview-ground), in place of its flat color, so
+// what floats in the overview (the dash, the search entry and its results,
+// the thumbnails) has something to be glass over. The same blurred
+// wallpaper the lock screen shows, a Shell.BlurEffect on a wallpaper actor
+// per monitor, which blurs once and keeps the result until the wallpaper
+// changes. It is the overview group's bottom child: the workspace opens
+// full screen over it and uncovers it as it shrinks, so it never pops in.
+const GROUND_BLUR = 60;
+
+class OverviewGround {
+    constructor() {
+        this._actor = new St.Widget({reactive: false});
+        Main.layoutManager.overviewGroup.insert_child_at_index(this._actor, 0);
+        this._bgManagers = [];
+        Main.layoutManager.connectObject('monitors-changed', () => this._build(), this);
+        St.ThemeContext.get_for_stage(global.stage).connectObject(
+            'notify::scale-factor', () => this._radius(), this);
+        this._build();
+    }
+
+    _build() {
+        this._bgManagers.forEach(m => m.destroy());
+        this._bgManagers = [];
+        this._actor.destroy_all_children();
+        Main.layoutManager.monitors.forEach((m, monitorIndex) => {
+            const geometry = {x: m.x, y: m.y, width: m.width, height: m.height};
+            const wall = new St.Widget({...geometry, effect: new Shell.BlurEffect({name: 'blur'})});
+            this._bgManagers.push(new Background.BackgroundManager({
+                container: wall, monitorIndex, controlPosition: false,
+            }));
+            this._actor.add_child(wall);
+            this._actor.add_child(new St.Widget({...geometry, style_class: 'pulsar-overview-ground'}));
+        });
+        this._radius();
+    }
+
+    _radius() {
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        for (const c of this._actor)
+            c.get_effect('blur')?.set({brightness: 1, radius: GROUND_BLUR * scale});
+    }
+
+    destroy() {
+        Main.layoutManager.disconnectObject(this);
+        St.ThemeContext.get_for_stage(global.stage).disconnectObject(this);
+        this._bgManagers.forEach(m => m.destroy());
+        this._bgManagers = [];
+        this._actor.destroy();
     }
 }
 
@@ -2093,6 +2149,7 @@ export class Glass {
         after(ModalDialog.ModalDialog.prototype, 'open', this._trackDialog);
         after(AppDisplay.AppFolderDialog.prototype, 'popup', this._trackFolder);
         after(IBusCandidatePopup.CandidatePopup.prototype, 'open', this._trackCandidates);
+        after(Dash.DashItemContainer.prototype, 'showLabel', this._trackDashLabel);
         // The overview's controls lay out only the children they know; the
         // dash's mirrors (_trackDash) stand where they were put.
         const controls = Main.overview.dash?.get_parent()?.layout_manager;
@@ -2365,6 +2422,37 @@ export class Glass {
         });
     }
 
+    // The overview's search entry, in the controls beside the dash, and like
+    // the dash placed after their layout. Nothing opened it: lit along its
+    // whole top edge.
+    _trackSearch() {
+        const entry = Main.overview.searchEntry;
+        const bin = entry?.get_parent();
+        if (!bin?.get_parent())
+            return;
+        this._add(bin, {box: () => entry, source: () => null, tone: () => this._battery});
+    }
+
+    // A dash icon's name, over the icon: lit from below, like the dash. A
+    // tooltip comes and goes with every hover, so no power-on trace.
+    _trackDashLabel(item) {
+        const label = item?.label;
+        if (!label || this._surfaces.has(label))
+            return;
+        this._add(label, {
+            box: () => label,
+            source: () => {
+                if (!item.has_allocation())
+                    return null;
+                const [sx, sy] = item.get_transformed_position();
+                const [sw, sh] = item.get_transformed_size();
+                return [sx + sw / 2, sy + sh / 2];
+            },
+            tone: () => this._battery,
+            still: true,
+        });
+    }
+
     // The banner bin, lit from the top edge banners come down from; a
     // critical banner's rim is the theme's red.
     _trackBanner() {
@@ -2486,6 +2574,12 @@ export class Glass {
             this._panel.destroy();
             this._panel = null;
         }
+        if (glass && !this._ground)
+            this._ground = new OverviewGround();
+        else if (!glass && this._ground) {
+            this._ground.destroy();
+            this._ground = null;
+        }
         if (this._panel) {
             // 'showing' comes after the overview has taken the screen but
             // before it paints, so this holds the desktop's last frame
@@ -2504,6 +2598,7 @@ export class Glass {
             this._trackOsds();
             this._trackScreenshot();
             this._trackDash();
+            this._trackSearch();
             // A banner already up: at unlock the tray shows what queued
             // during the lock in the same sessionMode update that turns this
             // extension back on, before the _showNotification hook exists,
@@ -2542,6 +2637,8 @@ export class Glass {
         this._unwrapFolders();
         this._panel?.destroy();
         this._panel = null;
+        this._ground?.destroy();
+        this._ground = null;
         this._brackets?.destroy();
         this._brackets = null;
         global.display.disconnectObject(this);

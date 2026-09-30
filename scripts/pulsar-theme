@@ -312,6 +312,12 @@ class Variant:
         else:
             c["glass_panel"] = f"rgba({self.p['background'].mix(WHITE, 0.35).rgb}, {self.glass_alpha})"
             c["panel_shadow"] = f"rgba({self.p['foreground'].rgb}, 0.1)"
+        # The overview's ground: the wallpaper, blurred, under the deep ground
+        # a step more opaque than the glass, so the app grid's labels and the
+        # search results read on any wallpaper: 0.8 at the Glass tint
+        # slider's default (0.65), 0.92 at most.
+        c["glass_ground"] = (f"rgba({self.p['background_deep'].rgb}, "
+                             f"{round(min(0.92, self.glass_alpha + 0.15), 3)})")
         # A CRT theme's text glows like its phosphor while Lighting is on
         # (the Shell sheet's .pulsar-lit block); every other theme's is an
         # empty rule.
