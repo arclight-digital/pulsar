@@ -1392,7 +1392,10 @@ class Wallpaper(Target):
         # none, and pointing GNOME at a missing file shows a grey desktop.
         have = {m: [w for w in theme.wallpapers[m] if w.exists()] for m in ("dark", "light")}
         if not have["dark"] and not have["light"]:
-            have = {m: [BRAND_WALLPAPER[m]] if BRAND_WALLPAPER[m].exists() else [] for m in ("dark", "light")}
+            # only the modes the theme has: a dark-only theme keeps a dark
+            # desktop when Dark Style is flipped from Settings
+            have = {m: [BRAND_WALLPAPER[m]] if BRAND_WALLPAPER[m].exists() and m in theme.variants else []
+                    for m in ("dark", "light")}
         theme.wallpapers = have
         dark = pick(theme.wallpapers["dark"], idx) or pick(theme.wallpapers["light"], idx)
         light = pick(theme.wallpapers["light"], idx) or dark
