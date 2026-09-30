@@ -974,13 +974,14 @@ stage {
 .tile-preview {
   background-color: st-transparentize({{accent}}, 0.5); }
 /* END stock states */
-/* A toggle's divider before its arrow. Checked, stock mixes its accent's
-   text color into the accent, which reads with its own white on its own
-   accents and all but vanishes with most themes' pairs; unchecked, it is
-   stock's own grey, a foreign line on any colored theme. Each is a faint
-   line of the text color it sits among, the same weight on any theme. */
+/* A toggle's divider before its arrow, a 1px line over a gap between the
+   toggle's two halves. Checked, it is solid: the accent's text color mixed
+   into the accent (a translucent one showed the panel through the gap, a
+   cream or near-black stripe on the accent, or nothing over glass).
+   Unchecked, the toggle itself is a faint tint over the panel, and so is
+   the line: the theme's text color, not stock's grey. */
 .quick-toggle-has-menu .quick-toggle-separator { background-color: rgba({{foreground_rgb}}, 0.26); }
-.quick-toggle-has-menu:checked .quick-toggle-separator { background-color: st-transparentize({{accent_fg}}, 0.83); }
+.quick-toggle-has-menu:checked .quick-toggle-separator { background-color: st-mix({{accent_fg}}, {{accent}}, 17%); }
 
 #panel { background-color: {{background_deep}}; }
 #panel .panel-button { color: {{foreground}}; }
