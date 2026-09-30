@@ -1266,6 +1266,10 @@ function luminance(c) {
     return (0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue) / 255;
 }
 
+// A kept origin, for the transforms a layout reads (see the note on boxed
+// values above): never written to.
+const ZERO = new Graphene.Point3D();
+
 function laterAdd(fn) {
     return global.compositor.get_laters().add(Meta.LaterType.BEFORE_REDRAW, () => {
         fn();
@@ -1461,7 +1465,9 @@ class Surface {
 
     _layout() {
         const b = this._box;
-        if (!this._under || !this._over || !b || !this._host.visible)
+        // unparented (on its way out): nowhere to place the mirrors
+        const parent = this._host.get_parent();
+        if (!this._under || !this._over || !b || !this._host.visible || !parent)
             return;
         // Still waiting on a relayout: try again next frame. It may land on
         // the same box as before, and then no notify::allocation comes.
@@ -1475,7 +1481,7 @@ class Surface {
         // This runs before the frame's layout, where a box's width and
         // height are already the size this frame gives it.
         const resizing = this._placed && this._host.visible && b.is_mapped();
-        const o = b.apply_relative_transform_to_point(this._host, new Graphene.Point3D());
+        const o = b.apply_relative_transform_to_point(this._host, ZERO);
         const hb = this._host.get_allocation_box();
         // Either way, only on numbers it can use: a banner's box reads NaN
         // against its bin for a moment as it comes and goes, and an actor
@@ -1514,14 +1520,16 @@ class Surface {
         if (frame) {
             const [fx, fy] = frame.get_transformed_position();
             origin = {x: fx + hx, y: fy + hy};
-            for (let a = this._host.get_parent(); a && a !== frame; a = a.get_parent()) {
+            for (let a = parent; a && a !== frame; a = a.get_parent()) {
                 const ab = a.get_allocation_box();
                 origin.x += ab.x1;
                 origin.y += ab.y1;
             }
         } else {
-            origin = this._host.get_parent().apply_relative_transform_to_point(null,
-                new Graphene.Point3D({x: hx, y: hy}));
+            const pt = this._hostPoint ??= new Graphene.Point3D();
+            pt.x = hx;
+            pt.y = hy;
+            origin = parent.apply_relative_transform_to_point(null, pt);
         }
 
         // under: the live blur, reaching past the surface for its shadow
@@ -1541,7 +1549,7 @@ class Surface {
         const column = this._opts.divider?.();
         // stock draws no line there, only a gap (the column's margin); light its middle
         const divx = column
-            ? column.apply_relative_transform_to_point(b, new Graphene.Point3D()).x -
+            ? column.apply_relative_transform_to_point(b, ZERO).x -
               column.get_theme_node().get_margin(St.Side.LEFT) / 2
             : 0;
         // Relaid out with nothing moved (a relayout anywhere inside the
