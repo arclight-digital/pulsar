@@ -971,8 +971,15 @@ class PulsarLiveBlur extends Clutter.Effect {
     }
 
     // The copy down the pyramid and back up into the kept result.
+    // As wide in logical pixels at every scale as at 1.0, where it was
+    // tuned. Each extra level doubles the width in device pixels, and whole
+    // levels alone missed the fractional scales: 1.25 got none and was 20%
+    // narrower, 1.5 got one and was a third wider. The taps' spread makes
+    // up the rest: scale / 2^extra, exactly 1 at 1.0 and 2.0.
     _blur(s, scale) {
-        const n = this._depth + Math.max(0, Math.round(Math.log2(scale)));
+        const extra = Math.max(0, Math.round(Math.log2(scale)));
+        const n = this._depth + extra;
+        const offset = this._offset * scale / 2 ** extra;
         const L = levels(s.hw, s.hh, n, this._levels);
         const D = this._down, U = this._up;
         const b = this._v4, hp = this._v2;
@@ -981,8 +988,8 @@ class PulsarLiveBlur extends Clutter.Effect {
             const dst = Scratch.get(`d${i}`, L[i][0], L[i][1]);
             const [sw, sh] = L[i - 1];
             D.set_layer_texture(0, src.tex);
-            hp[0] = 0.5 * this._offset / src.W;
-            hp[1] = 0.5 * this._offset / src.H;
+            hp[0] = 0.5 * offset / src.W;
+            hp[1] = 0.5 * offset / src.H;
             D.set_uniform_float(this._downLoc.halfPixel, 2, 1, hp);
             if (i === 1 && s.box[2] - s.box[0] >= 1 && s.box[3] - s.box[1] >= 1) {
                 b[0] = (s.box[0] + 0.5) / src.W;
@@ -1003,8 +1010,8 @@ class PulsarLiveBlur extends Clutter.Effect {
             const dst = i === 0 ? s.result : Scratch.get(`u${i}`, L[i][0], L[i][1]);
             const [sw, sh] = L[i + 1];
             U.set_layer_texture(0, src.tex);
-            hp[0] = 0.5 * this._offset / src.W;
-            hp[1] = 0.5 * this._offset / src.H;
+            hp[0] = 0.5 * offset / src.W;
+            hp[1] = 0.5 * offset / src.H;
             U.set_uniform_float(this._upLoc.halfPixel, 2, 1, hp);
             b[0] = 0.5 / src.W;
             b[1] = 0.5 / src.H;
