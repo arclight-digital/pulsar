@@ -14,86 +14,178 @@
   <a href="https://getpulsar.dev">getpulsar.dev</a>
 </p>
 
-Pulsar is a bootc image built on Fedora Silverblue, rebuilt every night by an
-ephemeral build host, with a signed NVIDIA driver and signed installer ISOs.
-The machine that runs it never compiles anything; the last good version is
-always one reboot away.
+Pulsar is a desktop operating system built as a bootc image on Fedora
+Silverblue. A new image is built every night, and your machine switches to
+it the next time you restart. If a new image fails to boot, the machine goes
+back to the previous one.
+
+On top of Silverblue, Pulsar adds a theme engine that recolors the whole
+desktop, glass effects for GNOME Shell, a signed NVIDIA driver, and defaults
+for gaming and development. It carries its own branding and ships Flathub
+unfiltered.
+
+## Install
+
+For a fresh install, download the installer ISO from
+[getpulsar.dev](https://getpulsar.dev/#install). If you already run
+Silverblue or Kinoite, you can switch in place:
 
 ```bash
-sudo bootc switch ghcr.io/arclight-digital/pulsar:latest          # runs anywhere
-sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest   # + signed nvidia-open
+sudo bootc switch ghcr.io/arclight-digital/pulsar:latest          # any hardware
+sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest   # adds the signed nvidia-open driver
+sudo systemctl reboot
 ```
 
-```text
-> pulsar manifest
-scaling     gamescale · 1× on demand
-boot        greenboot · auto-rollback
-display     gamescope · gamemode · mangohud
-wine        ntsync
-containers  distrobox · toolbox
-virt        libvirt · qemu-kvm
-tooling     android-tools · gnome-tweaks
-dev         mise · direnv · bpftrace · perf
-driver      nvidia-open, built + signed in CI
-apps        unfiltered Flathub, image-native
-base        Fedora Silverblue 44
+### NVIDIA and Secure Boot
+
+The NVIDIA kernel module is signed with Pulsar's key, so you can keep Secure
+Boot on once your firmware trusts that key. Import it with `mokutil`, which
+asks you to set a one-time password:
+
+```bash
+sudo mokutil --import /etc/pki/pulsar/MOK.der
+sudo systemctl reboot
 ```
 
-Built for one laptop: a Core Ultra 9 275HX (8P+16E, no SMT), an RTX 5080
-Max-Q beside the iGPU, a 2560×1600 panel. The nvidia variant assumes that
-GPU; the vanilla image assumes nothing.
+On the next boot, MokManager asks you to confirm. Choose `Enroll MOK`, then
+`View key 0`, `Continue` and `Yes`, and enter the password. If you miss the
+prompt, run the import again. Once you're back in, check that the driver
+loaded:
 
-## What's in it
+```bash
+modinfo -F signer nvidia && nvidia-smi
+```
 
-Branding down to fontconfig's generics, a plymouth theme, unfiltered Flathub
-as an image-native remote, split-lock mitigation off and `vm.max_map_count`
-raised for the games that need both, hugepage defrag deferred off the faulting
-thread and proactive compaction stood down so neither costs a frame, `ntsync`
-handed to the seat user for Proton. System-level capability only —
-`gamescope`, `gamemode`, `mangohud`, `steam-devices`, `distrobox`, `libvirt`,
-`greenboot`. Anything you merely *run* is a Flatpak. This image is the OS.
+A BIOS update can clear the enrolled keys. On the NVIDIA image, GNOME
+Software offers to enroll the key again, and `pulsar-akmods-cert.service`
+makes sure it offers Pulsar's key.
 
-**Every boot is checked.** `greenboot` waits for a graphical session on a
-seat and rolls back after three failures — the one failure you cannot type
-your way out of. Scheduler and network only warn; a machine without either
-is still a machine.
+## Updates and rollback
 
-**`gamemode` is configured for a machine with two GPUs.** Left at its
-defaults it samples iGPU watts against CPU watts and, above a ratio of 0.3,
-demotes the CPU governor to `powersave` mid-game — a heuristic written for
-machines where the iGPU *is* the game's GPU. Here the Arrow Lake iGPU drives
-the panel while a discrete 5080 renders, so the ratio measures the wrong
-thing and acts on it anyway. `/etc/gamemode.ini` turns the check off and
-claims the `nice -10` grant the package was already shipping unused;
-`pulsar-gamemode-group.service` enrols accounts on first boot, because group
-membership is the one part an image cannot bake. `pulsar doctor` reports the
-gap between *enrolled* and *live in this session* — the state every fresh
-install lands in, since groups are fixed by PAM at login — and separately
-whether the MangoHud layer's pinned branch still matches the runtime Steam
-runs on, because a rotted pin costs you the overlay with nothing logged.
+Pulsar downloads each night's image in the background while the machine is
+plugged in and on an unmetered connection. A notification tells you when the
+update is ready, and it takes effect when you next restart.
 
-**A loading screen is not a hung window.** mutter pings every window and,
-after 5 seconds without an answer, offers to kill it — so a level load, a
-shader pass or an unskippable cutscene raises "not responding" over a
-fullscreen game that is working perfectly. The image raises that to 20s as a
-desktop default, and gamemode's `[custom]` hooks suspend the check outright
-for the length of a game, restoring the value that was there rather than the
-one the image ships. Deliberately not disabled globally: a desktop with no
-frozen-window dialog has no way to kill a hung app but a terminal.
+| To | Run |
+|---|---|
+| Stage the newest image now | the notification's Update button, or `sudo pulsar update` |
+| Go back to the previous image | `sudo pulsar rollback`, or pick it in the boot menu |
+| Stop background downloads | `sudo systemctl disable --now pulsar-update-auto.timer` |
 
-**The scheduler is honest about itself.** `scx_bpfland` takes over because
-8P+16E with no SMT is exactly where stock EEVDF places threads badly. Fedora's
-7.1.5 and 7.1.6 kernels publish scx kfuncs with a stale BTF prototype, so
-every BPF scheduler fails to load; the build checks
-(`scripts/check-scx-btf.sh`), drops `/usr/lib/pulsar/scx-supported` only when
-it can work, and `scx.service` is skipped rather than failed on kernels
-where it can't. A fixed kernel brings it back with no change here.
+`sudo pulsar update` uses `rpm-ostree` when you have layered packages, so
+they carry over to the new image.
 
-**Development happens in containers**, except what a container cannot do:
-`bpftrace`, `bcc-tools`, `sysstat` and `perf` are on the host because probes
-attach to the host kernel. `mise` and `direnv` pin toolchains per project.
-`pulsar setup devbox` assembles a default distrobox; `pulsar setup quadlet`
-gives you a commented template for containers as rootless systemd units.
+`greenboot` checks each boot for a working graphical session. After three
+failed boots in a row, it rolls back automatically.
+
+Rolling back replaces the OS image only. Your home folder, `/var`, Flatpak
+apps and containers stay as they are.
+
+## Themes
+
+`pulsar theme set <name>` applies one of 20 themes to GNOME Shell, GTK 4 and
+GTK 3 apps, the terminal, Text Editor, btop and the wallpaper at once. You
+can also pick one in the Themes app (Super+T). New accounts start on the
+Pulsar theme, and `pulsar theme revert` goes back to stock GNOME.
+
+The Shell extension draws blurred glass behind menus, notifications, OSDs
+and the top bar, and a soft light along their edges. Both can be switched off
+in the extension's settings. See
+[docs/theming.md](docs/theming.md) for what each part of the theme engine
+writes.
+
+## Gaming
+
+Steam, Heroic, Bottles and other launchers are installed as Flatpaks on first
+boot. The image itself includes `gamescope`, `gamemode`, `mangohud`,
+`steam-devices`, and `ntsync` for Proton. It also turns off split-lock
+mitigation and raises `vm.max_map_count`, since some games need both, and
+tunes hugepage defragmentation and memory compaction so they don't stall
+a running game.
+
+### gamemode on laptops with two GPUs
+
+By default, gamemode compares integrated GPU power with CPU power and drops
+the CPU governor to `powersave` when the ratio goes above 0.3. That makes
+sense when the integrated GPU is running the game. On a laptop where it only
+drives the screen and a discrete GPU does the rendering, the check misfires.
+`/etc/gamemode.ini` turns it off and enables the `nice -10` setting the
+package already includes. `pulsar-gamemode-group.service` adds your account
+to the gamemode group on first boot; the change applies from your next
+login, and `pulsar doctor` shows whether it has.
+
+### Loading screens
+
+GNOME offers to force-quit a window that stops responding for 5 seconds,
+which can happen during a long level load or shader compile. Pulsar raises
+the limit to 20 seconds, and switches the check off entirely while gamemode
+is active.
+
+### gamescale
+
+When fractional scaling is on, games running through XWayland render at the
+wrong resolution and look blurry.
+[gamescale](https://github.com/arclight-digital/gamescale) sets the display
+to 100% while a game runs and puts your scaling back when it quits, even if
+it crashes. The image ships a pinned, hash-verified release with an
+indicator in the top bar. Games from native
+launchers work with it as installed. For Flatpak launchers such as Steam,
+install a copy into your home folder:
+
+```bash
+pulsar setup gamescale --platform steam
+```
+
+`gamescale --version` shows which copy is running.
+
+### Scheduler
+
+Pulsar runs the `scx_bpfland` scheduler, which handles CPUs with many
+efficiency cores and no SMT better than the kernel's default. Some Fedora
+kernels can't load BPF schedulers because of a bug in their type
+information. The build tests for this with `scripts/check-scx-btf.sh`, and
+on an affected kernel `scx.service` is skipped and the default scheduler
+runs.
+
+## Development
+
+Install development tools in a toolbox or distrobox. `pulsar setup devbox`
+creates a distrobox with common tools already in it, and
+`pulsar setup quadlet` gives you a template for running a container as a
+systemd service under your account. `mise` and `direnv` handle per-project
+toolchains.
+
+A few tools that need direct access to the kernel are installed on the host:
+`bpftrace`, `bcc-tools`, `sysstat` and `perf`.
+
+On the NVIDIA image, containers can use the GPU through a CDI spec that
+Pulsar regenerates for the current driver at every boot:
+
+```bash
+podman run --rm --device nvidia.com/gpu=all registry.fedoraproject.org/fedora nvidia-smi
+```
+
+The container image needs to bring its own CUDA runtime. Avoid writing your
+own spec to `/etc/cdi`, because it will go stale after the next driver
+update; `pulsar doctor` warns if it finds one.
+
+## Coding agents
+
+You can install a coding agent with `pulsar agent add claude`, or `codex`,
+`gemini`, `opencode` or `aider`. Each one gets its own toolbox and can be
+started from any terminal.
+
+| Command | What it does |
+|---|---|
+| `pulsar agent guide` | prints the guide the image ships for agents about how this system works |
+| `pulsar mcp` | serves health checks, system status and crash reports to MCP clients, without root |
+| `pulsar agent sandbox on` | runs agents in a container that only sees the current project; their pushes go through a gate that blocks force-pushes and deletes |
+| `sudo pulsar agent guard on` | requires a password for layering packages and system-wide Flatpak installs |
+| `sudo pulsar checkpoint` | snapshots `/etc` and your settings so you can compare or restore them later |
+| `pulsar agent model on` | runs a local model on the GPU for opencode and aider (llama.cpp in rootless podman, on 127.0.0.1 with a key) |
+
+[docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md) explains what an agent can
+and can't change on this system.
 
 ## The `pulsar` command
 
@@ -114,173 +206,82 @@ pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale
 pulsar agent            guide | list | add | remove | default | ask | run | sandbox | guard
 ```
 
-**Handing the machine to an agent.** `pulsar agent guide` prints a briefing,
-shipped in the image, that tells a coding agent how this system works:
-toolboxes for dev tools, Flatpaks for apps, never reboot, and what rollback
-does and does not undo. `pulsar agent add claude` (or `codex`, `gemini`,
-`opencode`, `aider`) installs that agent into its own toolbox and runs it from
-any terminal; none is installed by default, and one you installed yourself is
-left alone, and it can make you a theme: the image ships a skill for that.
-`pulsar agent model on` runs a local model on this machine's GPU (llama.cpp
-in rootless podman, 127.0.0.1 only, with a key) for opencode and aider.
-`pulsar mcp` hands any MCP-speaking agent this machine's facts as tools
-(`agent add` registers it), and nothing in it needs root.
-`sudo pulsar agent guard on` makes layering and system Flatpak
-installs ask for your password, for the agent and for you, and
-`sudo pulsar checkpoint` before a session lets you diff and restore `/etc`
-after it. `pulsar agent sandbox on` runs agents in a container that sees only
-the project, and pushes for them through a gate that never gives them your
-keys: no force-push, no deletes. When a program crashes, a notification offers to hand the crash
-to your agent (`pulsar agent ask --crash latest`). `pulsar report` is the one thing to paste when
-something is broken. What an agent can and cannot break here is in
-[docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md).
+If something is broken, run `pulsar report` and include its output when you
+ask for help. `pulsar doctor` checks the actual system state, for example
+reading `/sys/kernel/sched_ext/state` to see whether the scheduler is
+attached, and it doesn't need root.
 
-`doctor` reads `/sys/kernel/sched_ext/state` and the other places the truth
-lives, because `systemctl is-active` once said the scheduler was running
-while nothing was attached. Reads work unprivileged; only writes ask for
-root. `sbom` reads the live rpm database — a file inside an image cannot
-describe the image containing it.
+## Signing and provenance
 
-## gamescale
+The standard image, from `Containerfile`, needs no secrets and can be built
+anywhere. The NVIDIA image signs its kernel module without the build ever
+holding the private key: the build sends the module to a separate signing
+host and attaches the signature it gets back
+([docs/SIGNING.md](docs/SIGNING.md)). The build fails if the signed module
+doesn't match the public key that ships in the image, `MOK.der`.
 
-Run a game at 1× so XWayland hands it the panel's real mode, then put the
-desktop back when it exits, cleanly or not.
-[`gamescale`](https://github.com/arclight-digital/gamescale) ships at a
-pinned, hash-verified tag with its top-bar indicator and a reconcile unit.
-Native launchers need nothing more. Flatpak launchers do, because Flatpak
-reserves `/usr` and no grant can expose a host binary to Steam:
+If you build Pulsar yourself, use your own signing key. Enrolling Pulsar's
+key tells your firmware to trust any module signed with it.
 
-```bash
-pulsar setup gamescale --platform steam   # the installer copy staged in the image
-```
+Every image includes an SPDX software bill of materials, which you can list
+with `oras discover ghcr.io/arclight-digital/pulsar:latest`. Pulsar compares
+each night's bill of materials with the previous night's and publishes the
+difference at [getpulsar.dev/docs/changelog](https://getpulsar.dev/docs/changelog)
+and as [changelog.json](https://getpulsar.dev/changelog.json). On an
+installed system, `pulsar changelog` shows the same list.
 
-The user copy shadows the image copy on purpose — user paths win every
-collision — and `gamescale --version` tells you which one is running.
-
-## Install
-
-```bash
-sudo bootc switch ghcr.io/arclight-digital/pulsar:latest
-sudo systemctl reboot
-```
-
-The nvidia module is signed with Pulsar's key, so Secure Boot stays on once
-your firmware trusts that key. Enrol it — `mokutil` asks for a password you
-retype once at the firmware screen:
-
-```bash
-sudo mokutil --import /etc/pki/pulsar/MOK.der
-sudo systemctl reboot
-```
-
-The next boot stops in **MokManager**: `Enroll MOK` → `View key 0` →
-`Continue` → `Yes` → password → reboot. Miss it and nothing breaks; import
-again. Then take the driver:
-
-```bash
-sudo bootc switch ghcr.io/arclight-digital/pulsar-nvidia:latest
-sudo systemctl reboot
-modinfo -F signer nvidia && nvidia-smi
-```
-
-A BIOS update can wipe the MOK list. On the nvidia image, GNOME Software's
-own Secure Boot prompt re-enrols the right key, because
-`pulsar-akmods-cert.service` keeps `/etc/pki/akmods/certs/public_key.der`
-equal to `MOK.der` on every boot.
-
-**GPU containers** (nvidia image). Local models run in podman, not on the
-host: every boot writes a CDI spec for the running driver to
-`/var/run/cdi/nvidia.yaml`, so any container can ask for the GPU by name.
-
-```bash
-podman run --rm --device nvidia.com/gpu=all registry.fedoraproject.org/fedora nvidia-smi
-podman run -d --device nvidia.com/gpu=all -p 11434:11434 \
-  -v ollama:/root/.ollama docker.io/ollama/ollama
-```
-
-The image brings the driver and `libcuda`; the container brings the CUDA
-runtime. Don't write your own
-spec to `/etc/cdi` — it goes stale at the next driver update, and
-`pulsar doctor` will say so.
-
-**Updates** are built nightly. Pulsar downloads and stages each one in the
-background (on AC power and an unmetered connection), then tells you it is
-ready; it takes over when you restart, and never before. A notification's
-Update button stages one now, and `sudo pulsar update` does the same from a
-terminal. Either hands off to `rpm-ostree` when you have layered packages,
-which plain `bootc upgrade` would drop. `sudo systemctl disable --now
-pulsar-update-auto.timer` turns background staging off.
-
-## Two variants, one key
-
-`Containerfile` has no secrets and builds anywhere. `Containerfile.nvidia`
-needs the Secure Boot signing key, which it never holds: the key lives on a
-signing host, the build sends each module's bytes with a bearer token and
-attaches the signature that comes back ([docs/SIGNING.md](docs/SIGNING.md)).
-The public half, `MOK.der`, ships in both images, and the nvidia build fails
-if the module's signer does not match it — a stale cert is a failed build,
-not a black screen.
-
-**Running this yourself?** Fork it and use your own key. Enrolling mine means
-your machine permanently trusts modules I sign. The vanilla image needs no
-keys at all.
-
-## Every image has a paper trail
-
-Every image carries an SPDX SBOM
-(`oras discover ghcr.io/arclight-digital/pulsar:latest`).
-
-**Images are not signed yet.** They were attested by GitHub Actions until the
-build moved to its own host in August, and nothing has signed them since.
-Signing moves to Pulsar's own cosign release key: the one that already signs
-the installer ISOs, published at [`keys/cosign.pub`](keys/cosign.pub). Until
-that lands, the SBOM and the nightly diff are the paper trail. Each nightly is
-diffed against the one before it from those SBOMs — rendered at
-[getpulsar.dev/docs/changelog](https://getpulsar.dev/docs/changelog),
-served raw as [changelog.json](https://getpulsar.dev/changelog.json),
-and on the machine as `pulsar changelog`. Nothing in it is written by hand.
+The installer ISOs are signed with Pulsar's cosign key,
+[`keys/cosign.pub`](keys/cosign.pub). The container images aren't signed
+yet. They were attested by GitHub Actions until the build moved to its own
+host in August, and signing them with the same cosign key is planned.
 
 ## Working on it
 
 ```text
 Containerfile          -> ghcr.io/arclight-digital/pulsar
 Containerfile.nvidia   -> ghcr.io/arclight-digital/pulsar-nvidia
-scripts/nightly.sh     version, build, push, publish — the build host, 8pm Mountain
-scripts/weekly.sh      installer ISOs, Saturday night — signed with keys/cosign.pub
+scripts/nightly.sh     version, build, push, publish; runs on the build host at 8pm Mountain
+scripts/weekly.sh      installer ISOs, Saturday night, signed with keys/cosign.pub
+scripts/publish.sh     SBOMs, the changelog and the site's data after each nightly
 iso-config.toml        what the installer asks before it partitions
-assets/                source of truth for art; system_files/ branding is GENERATED
-system_files.nvidia/   overlay for nvidia only
-scripts/build.sh       local TEST builds; the build host ships the real ones
-site/                  the site (Astro on ARC UI); Cloudflare builds it on push
-site/src/data/         written by the nightly — never edit by hand
+assets/                source of truth for art; branding in system_files/ is generated
+system_files.nvidia/   overlay for the NVIDIA image only
+scripts/build.sh       local test builds; the build host ships the real ones
+docs/                  published to getpulsar.dev/docs with each nightly
 ```
 
-Push to `main` and the next nightly ships it; nothing builds off a push. A
-build started by hand is tagged `<version>-dev`, moves no tags, touches no
-baseline, and publishes no site — a debugging image, and a machine booted on
-one says so in its boot menu.
+Changes pushed to `main` go out with the next nightly build. Builds started
+by hand are tagged `<version>-dev` and are for testing: they don't move any
+tags or publish anything, and a machine booted from one says so in its boot
+menu.
 
-The site is six pages on [ARC UI](https://arcui.dev), Arclight's own web
-components, pre-rendered into declarative shadow DOM after the build. Its
-content is this README, the CLI's `--help`, and the two files the nightly
-commits; the hero runs the OS wallpaper shader live. `npm run dev` skips the
-pre-render and flashes; `npm run build` is what ships.
+The website, [getpulsar.dev](https://getpulsar.dev), is in
+[arclight-digital/pulsar-site](https://github.com/arclight-digital/pulsar-site).
+`scripts/publish.sh` sends it this repo's docs and brand assets along with
+each night's build data.
+
+Pulsar is developed on a laptop with a Core Ultra 9 275HX, an RTX 5080
+Max-Q alongside the integrated GPU, and a 2560×1600 display. The NVIDIA
+image needs a GPU supported by nvidia-open; the standard image has no
+hardware requirements beyond Fedora's.
 
 ## Field notes
 
-- **Never `dnf install akmods-keys`** — that RPM contains a private key.
-- **Never add `akmod-nvidia`** — Blackwell is nvidia-open only, and the
-  closed akmod silently downgrades it.
-- The `dracut` regen stays the last real step: the initramfs carries the
-  plymouth theme and the nvidia modprobe options.
-- The nvidia akmod comes from `updates-testing` until 610 lands in stable.
-- One patch of ours rides on the nvidia module: open-gpu-kernel-modules
-  PR #1286, for the DIFR deadlock that freezes the desktop after resume.
-  `Containerfile.nvidia` phase 2b says when to drop it.
-- Governor stays `powersave`; on `intel_pstate` with HWP that is correct.
+- Don't `dnf install akmods-keys`. That package contains a private key.
+- Don't add `akmod-nvidia`. Blackwell GPUs need nvidia-open, and the closed
+  akmod quietly replaces it.
+- Keep `dracut` as the last real step of the build. The initramfs includes
+  the Plymouth theme and the NVIDIA modprobe options.
+- The nvidia-open akmod comes from RPM Fusion's nvidia-driver repository.
+  `Containerfile.nvidia` explains why.
+- Pulsar patches the NVIDIA module with open-gpu-kernel-modules PR #1286,
+  which fixes a deadlock that froze the desktop after resume. Phase 2b of
+  `Containerfile.nvidia` says when to remove it.
+- The CPU governor is left on `powersave`, which is the right setting for
+  `intel_pstate` with HWP.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The fonts are OFL and travel with their
-license; the NVIDIA userspace driver is proprietary, redistributed as the
-RPM Fusion packages that carry it.
+MIT; see [LICENSE](LICENSE). The fonts are under the OFL and include their
+license. The NVIDIA userspace driver is proprietary and is redistributed
+through RPM Fusion's packages.
