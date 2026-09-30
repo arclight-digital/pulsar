@@ -687,6 +687,10 @@ SURFACES = [
      "Main.layoutManager.uiGroup", "Main.osdWindowManager.hideAll()"),
     ("banner", "Main.notify('Pulsar leaks', 'a banner, to read its colors')", "Main.messageTray",
      "Main.messageTray.getSources().forEach(s => s.destroy())"),
+    ("screenshot-ui", "Main.screenshotUI.open()", "Main.screenshotUI", "Main.screenshotUI.close(true)"),
+    # needs the a11y screen-keyboard key on (leaks() sets it)
+    ("keyboard", "Main.keyboard.open(Main.layoutManager.primaryIndex)", "Main.layoutManager.keyboardBox",
+     "Main.keyboard.close(true)"),
 ]
 
 
@@ -748,6 +752,7 @@ def leaks():
     for k in ("glass", "window-glass", "lighting"):
         dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
     dconf("/org/gnome/desktop/interface/enable-animations", "false")
+    dconf("/org/gnome/desktop/a11y/applications/screen-keyboard-enabled", "true")
     start_shell()
     runs, notes, accent = [], [], []
     for slug, mode in (("gruvbox", "light"), ("nord", "dark")):

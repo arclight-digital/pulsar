@@ -57,9 +57,8 @@ ALLOW = [
     (r"#LookingGlass|\.lg-", "Looking Glass: the developer console, stock by design"),
     (r"login-dialog|unlock-dialog|#lockDialogGroup",
      "the login and lock screens: extensions do not run there, so neither does the theme"),
-    (r"screenshot-ui", "the screenshot UI: a stock dark HUD over any wallpaper; not themed yet"),
-    (r"#keyboard|\.keyboard-key|\.word-suggestions", "the on-screen keyboard: not themed yet"),
-    (r"parental-controls-shield", "the parental-controls shield: rare, stock"),
+    (r"parental-controls-shield",
+     "the parental-controls shield: it stands in for the unlock prompt (gdm/authPrompt.js), on the lock screen"),
     (r"\.toggle-switch \.handle", "the switch knob: a near-white disc in both schemes, as libadwaita's"),
 ]
 
@@ -68,8 +67,21 @@ FAMILIES = [
     ("accent", re.compile(r"\.calendar-today|\.button\.default|\.keyboard-brightness-level \.button:.*checked|"
                           r"\.quick-toggle(-has-menu)?\b.*:checked"),
      {"rest": "{{accent}}", "hover": "{{accent_hover}}", "press": "{{accent}}"}),
-    # the ground between workspaces while they slide
-    ("deep", re.compile(r"^\.workspace-animation"), {"rest": "{{background_deep}}"}),
+    # the ground between workspaces while they slide, and the on-screen
+    # keyboard's tray
+    ("deep", re.compile(r"^\.workspace-animation|^#keyboard$"), {"rest": "{{background_deep}}"}),
+    # the on-screen keyboard's keys, lifted off its tray as a popover is off
+    # the desktop (raised is too close to deep on a light theme to read as a
+    # key); its modifier keys (shift, enter) a step below the letters, as
+    # stock's are
+    ("modifier-key", re.compile(r"^\.keyboard-key\.default-key"),
+     {"rest": "{{background}}",
+      "hover": "st-mix({{foreground}}, {{background}}, 8%)",
+      "press": "st-mix({{foreground}}, {{background}}, 14%)"}),
+    ("key", re.compile(r"^\.keyboard-key"),
+     {"rest": "{{popover}}",
+      "hover": "st-mix({{foreground}}, {{popover}}, 8%)",
+      "press": "st-mix({{foreground}}, {{popover}}, 14%)"}),
     # a submenu's own ground inside a menu: a faint lift, as a card is
     ("submenu", re.compile(r"^\.popup-sub-menu$"), {"rest": WASH % "0.05"}),
     ("scrollbar", re.compile(r"StScrollBar"),
@@ -85,7 +97,8 @@ FAMILIES = [
     ("raised", re.compile(r"^\.(button|icon-button|notification-button|app-folder|page-navigation-arrow)(:|$)|"
                           r"\.icon-button(?![.\w-])|\.page-navigation-arrow|"
                           r"\.modal-dialog-button|\.quick-toggle-menu-button|"
-                          r"(?<!\.flat)\.message-(expand|close|collapse)-button"),
+                          r"(?<!\.flat)\.message-(expand|close|collapse)-button|"
+                          r"(?<!\.flat)\.screenshot-ui-show-pointer-button"),
      {"rest": WASH % "0.08", "hover": WASH % "0.13", "press": WASH % "0.18"}),
     # text fields: StEntry's own steps
     ("entry", re.compile(r"\.search-entry|\.folder-name-entry"),
@@ -94,7 +107,7 @@ FAMILIES = [
     ("flat", re.compile(r"\.calendar|\.flat|\.overview-tile|\.grid-search-result|\.list-search-result|"
                         r"\.search-provider-icon|\.switcher-list|\.audio-selection-device|"
                         r"\.popup-menu-item|\.datemenu-today-button|\.overview-icon|\.candidate-box|"
-                        r"\.slider-bin"),
+                        r"\.slider-bin|\.screenshot-ui-type-button|\.word-suggestions"),
      {"rest": "transparent", "hover": WASH % "0.08", "press": WASH % "0.14"}),
 ]
 
