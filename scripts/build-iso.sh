@@ -80,6 +80,11 @@ WORK="${PULSAR_ISO_WORK:-/var/tmp/pulsar-iso}"
 DO_PUSH=no
 SIGNER_URL="${PULSAR_SIGNER_URL:-}"
 SIGNER_TOKEN_FILE="${PULSAR_SIGNER_TOKEN_FILE:-}"
+# The transparency log the signer's signatures are recorded in. halo cannot
+# reach it, so this builder does. REKOR_TRUSTED_ROOT is empty in production
+# (Sigstore's public TUF root) and set only against a staging log.
+REKOR_URL="${PULSAR_REKOR_URL:-https://rekor.sigstore.dev}"
+REKOR_TRUSTED_ROOT="${PULSAR_REKOR_TRUSTED_ROOT:-}"
 SIGNER_CA_FILE="${PULSAR_SIGNER_CA_FILE:-}"
 KEYLESS=no
 
@@ -118,7 +123,7 @@ if [ "${KEYLESS}" = no ] && { [ -z "${SIGNER_URL}" ] || [ -z "${SIGNER_TOKEN_FIL
   exit 2
 fi
 
-for tool in podman skopeo jq sha256sum cosign; do
+for tool in podman skopeo jq sha256sum cosign curl basenc; do
   command -v "${tool}" >/dev/null || { echo "missing: ${tool}" >&2; exit 2; }
 done
 
@@ -253,6 +258,74 @@ jq -n \
     tracks: $tracks, built: $built, iso_sha256: $iso_sha256}' > "${NAME}.json"
 
 # ---------------------------------------------------------------------------
+# Rekor
+# ---------------------------------------------------------------------------
+# Rekor answers in hex; Sigstore bundles want base64. coreutils only.
+hex_b64() { printf '%s' "$1" | tr 'a-f' 'A-F' | basenc --base16 -d | base64 -w0; }
+
+# Record a signature halo made offline as a hashedrekord (the file's hash, the
+# signature, the public key -- nothing secret) and write Rekor's entry to $3.
+# Retried, then fatal: the published instructions verify against the log, so
+# a signature with no entry would fail for every user. A 409 means an earlier
+# try landed and only its answer was lost; Rekor names that entry.
+rekor_log() { # <file> <signature, no trailing newline> <entry-out>
+  local file="$1" sig="$2" out="$3" code location attempt
+  jq -n --rawfile sig "${sig}" --arg pub "$(base64 -w0 "${PUBKEY}")" \
+        --arg h "$(sha256sum "${file}" | cut -d' ' -f1)" \
+    '{apiVersion: "0.0.1", kind: "hashedrekord", spec: {
+        signature: {content: $sig, publicKey: {content: $pub}},
+        data: {hash: {algorithm: "sha256", value: $h}}}}' > "${out}.req"
+  for attempt in 1 2 3 4 5; do
+    code="$(curl -sS --max-time 30 -o "${out}" -D "${out}.headers" -w '%{http_code}' \
+      -H 'Content-Type: application/json' --data-binary "@${out}.req" \
+      "${REKOR_URL}/api/v1/log/entries")" || code=000
+    case "${code}" in
+      201) rm -f "${out}.req" "${out}.headers"; return 0 ;;
+      409)
+        location="$(tr -d '\r' < "${out}.headers" | sed -n 's/^[Ll]ocation: *//p' | tail -1)"
+        if [ -n "${location}" ] && curl -fsS --max-time 30 -o "${out}" "${REKOR_URL}${location#"${REKOR_URL}"}"; then
+          rm -f "${out}.req" "${out}.headers"; return 0
+        fi ;;
+      4??)
+        echo "rekor refused the entry (HTTP ${code}): $(head -c 300 "${out}" 2>/dev/null)" >&2
+        return 1 ;;
+    esac
+    echo "rekor upload attempt ${attempt} failed (HTTP ${code})" >&2
+    [ "${attempt}" = 5 ] || sleep $((attempt * 15))
+  done
+  return 1
+}
+
+# A Sigstore v0.3 bundle for $1 from its signature and Rekor entry: what
+# `cosign verify-blob --bundle` reads without --insecure-ignore-tlog. The
+# promise and the inclusion proof are the log's own; nothing here is trusted
+# on this builder's say-so.
+rekor_bundle() { # <file> <signature> <entry> <bundle-out>
+  local file="$1" sig="$2" entry="$3" out="$4" e hashes
+  e="$(jq -c 'to_entries[0].value' "${entry}")"
+  hashes="$(jq -r '.verification.inclusionProof.hashes[]' <<<"${e}" \
+    | while read -r h; do hex_b64 "${h}"; echo; done | jq -R . | jq -s -c .)"
+  jq -n --argjson e "${e}" --argjson hashes "${hashes}" --rawfile sig "${sig}" \
+        --arg logid "$(hex_b64 "$(jq -r .logID <<<"${e}")")" \
+        --arg root "$(hex_b64 "$(jq -r .verification.inclusionProof.rootHash <<<"${e}")")" \
+        --arg dig "$(hex_b64 "$(sha256sum "${file}" | cut -d' ' -f1)")" '{
+    mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+    verificationMaterial: {
+      publicKey: {hint: ""},
+      tlogEntries: [{
+        logIndex: ($e.logIndex | tostring), logId: {keyId: $logid},
+        kindVersion: {kind: "hashedrekord", version: "0.0.1"},
+        integratedTime: ($e.integratedTime | tostring),
+        inclusionPromise: {signedEntryTimestamp: $e.verification.signedEntryTimestamp},
+        inclusionProof: {
+          logIndex: ($e.verification.inclusionProof.logIndex | tostring),
+          rootHash: $root, treeSize: ($e.verification.inclusionProof.treeSize | tostring),
+          hashes: $hashes, checkpoint: {envelope: $e.verification.inclusionProof.checkpoint}},
+        canonicalizedBody: $e.body}]},
+    messageSignature: {messageDigest: {algorithm: "SHA2_256", digest: $dig}, signature: $sig}}' > "${out}"
+}
+
+# ---------------------------------------------------------------------------
 # Sign the manifest
 # ---------------------------------------------------------------------------
 sign_manifest() { # <manifest-file> -> writes <manifest-file>.sig
@@ -269,9 +342,8 @@ sign_manifest() { # <manifest-file> -> writes <manifest-file>.sig
   # and gets base64 back. Then the signature is verified against the COMMITTED
   # public key before anything is published -- if halo's key were ever swapped
   # this build fails here, the same fail-closed shape as the MOK.der check in
-  # Containerfile.nvidia. --insecure-ignore-tlog because halo cannot reach
-  # Rekor (its unit allows only VPC addresses); the trust anchor is the
-  # committed key, not a transparency log.
+  # Containerfile.nvidia. halo cannot reach Rekor (its unit allows only VPC
+  # addresses), so this builder records the signature there itself.
   local curl_args=(-sS --fail-with-body -X POST --data-binary "@${f}"
     -H "Authorization: Bearer $(cat "${SIGNER_TOKEN_FILE}")"
     -H "X-Pulsar-Name: $(basename "${f}")")
@@ -280,13 +352,25 @@ sign_manifest() { # <manifest-file> -> writes <manifest-file>.sig
     | jq -r '.signature // empty' > "${f}.sig"
   [ -s "${f}.sig" ] || { echo "signer returned no signature for ${f}" >&2; exit 1; }
 
+  # Recorded in Rekor from here, then checked the way the site tells users to:
+  # the committed key and the log's proof, no --insecure-ignore-tlog. A
+  # signature from a key this repo has never heard of fails here too -- Rekor
+  # itself refuses a signature that does not match the key it is given.
+  tr -d '\n' < "${f}.sig" > "${f}.sig.raw"
+  rekor_log "${f}" "${f}.sig.raw" "${f}.rekor.json" \
+    || { echo "could not record the signature on ${f} in Rekor (${REKOR_URL})" >&2; exit 1; }
+  rekor_bundle "${f}" "${f}.sig.raw" "${f}.rekor.json" "${f}.sigstore.json"
+  rm -f "${f}.sig.raw" "${f}.rekor.json"
+
+  local root=()
+  [ -n "${REKOR_TRUSTED_ROOT}" ] && root=(--trusted-root "${REKOR_TRUSTED_ROOT}")
   cosign verify-blob \
     --key "${PUBKEY}" \
-    --signature "${f}.sig" \
-    --insecure-ignore-tlog=true \
+    --bundle "${f}.sigstore.json" \
+    "${root[@]}" \
     "${f}" \
-    || { echo "signature on ${f} does not verify against keys/cosign.pub" >&2
-         echo "halo is signing with a key this repo has never heard of" >&2
+    || { echo "signature on ${f} does not verify against keys/cosign.pub and its Rekor entry" >&2
+         echo "halo is signing with a key this repo has never heard of, or the log answer is bad" >&2
          exit 1; }
 }
 
@@ -326,6 +410,7 @@ say "uploading dated artifacts"
 put "${NAME}"        "${NAME}"
 put "${NAME}.sha256" "${NAME}.sha256"
 put "${NAME}.sha256.sig" "${NAME}.sha256.sig"
+[ -f "${NAME}.sha256.sigstore.json" ] && put "${NAME}.sha256.sigstore.json" "${NAME}.sha256.sigstore.json"
 [ -f "${NAME}.sha256.pem" ] && put "${NAME}.sha256.pem" "${NAME}.sha256.pem"
 put "${NAME}.json"   "${NAME}.json"
 
@@ -352,6 +437,7 @@ say "uploading -latest artifacts"
 put "${NAME}"            "${LATEST}"
 put "${LATEST}.sha256"     "${LATEST}.sha256"
 put "${LATEST}.sha256.sig" "${LATEST}.sha256.sig"
+put "${LATEST}.sha256.sigstore.json" "${LATEST}.sha256.sigstore.json"
 put "${NAME}.json"       "${LATEST}.json"
 
 # The public half of the release key, next to what it verifies. Idempotent,
