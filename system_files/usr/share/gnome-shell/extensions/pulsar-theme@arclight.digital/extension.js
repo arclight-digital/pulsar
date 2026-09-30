@@ -17,12 +17,22 @@
 //    Main.loadTheme copies every custom stylesheet across -- ours included.
 //    So unloading goes by directory on the CURRENT theme, not by the GFile
 //    we happened to load, or carried-over copies pile up.
+//
+// A theme with one mode (Dracula is dark only, Alucard light only) has
+// nothing for Dark Style to swap to, so the engine writes one-mode.json
+// beside the sheets and the Quick Settings toggle goes insensitive while
+// the desktop is in that mode. Settings and gsettings can still flip it;
+// then the toggle comes back, so one click returns to the theme's mode.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {Glass} from './glass.js';
+
+// beside the sheets: the one mode the applied theme has (engine's ONE_MODE)
+const ONE_MODE = 'one-mode.json';
 
 export default class PulsarThemeExtension extends Extension {
     enable() {
@@ -38,10 +48,14 @@ export default class PulsarThemeExtension extends Extension {
             const hit = f => f && f.get_basename().startsWith('gnome-shell');
             if (hit(file) || hit(other))
                 this._reload();
+            const lock = f => f && f.get_basename() === ONE_MODE;
+            if (lock(file) || lock(other))
+                this._readOneMode();
         });
         this._iface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         this._schemeId = this._iface.connect('changed::color-scheme', () => {
             this._reload();
+            this._syncDarkStyle();
             // GTK3 apps cannot follow the scheme themselves (no media
             // queries); the engine rewrites their half. Fire and forget.
             try {
@@ -70,6 +84,8 @@ export default class PulsarThemeExtension extends Extension {
                 this._reload();
         });
         this._reload();
+        this._toggle = null;
+        this._readOneMode();
         // Glass and light (glass.js), switched by this extension's own
         // settings: the Extensions app's preferences and the theme picker.
         this._injections = new InjectionManager();
@@ -77,6 +93,11 @@ export default class PulsarThemeExtension extends Extension {
     }
 
     disable() {
+        if (this._toggleRetryId)
+            GLib.source_remove(this._toggleRetryId);
+        this._toggleRetryId = 0;
+        this._oneMode = null;
+        this._syncDarkStyle();      // gives the toggle back as it was
         this._injections?.clear();
         this._injections = null;
         this._glass?.destroy();
@@ -94,6 +115,63 @@ export default class PulsarThemeExtension extends Extension {
         this._unload();
         this._themeCtx = null;
         this._theme = null;
+    }
+
+    _readOneMode() {
+        this._oneMode = null;
+        try {
+            const [, bytes] = GLib.file_get_contents(GLib.build_filenamev([this._dir, ONE_MODE]));
+            const m = JSON.parse(new TextDecoder().decode(bytes));
+            if (m && (m.mode === 'dark' || m.mode === 'light'))
+                this._oneMode = m;
+        } catch (e) {}     // no file: the theme has both modes, or there is none
+        this._syncDarkStyle();
+    }
+
+    // Quick Settings builds its toggles asynchronously at startup, so the
+    // Dark Style one may not exist yet when the extension is first enabled.
+    _findDarkStyle() {
+        return Main.panel?.statusArea?.quickSettings?._darkMode?.quickSettingsItems?.[0] ?? null;
+    }
+
+    _syncDarkStyle() {
+        const want = this._oneMode;
+        let toggle = this._toggle;
+        if (!toggle && want) {
+            toggle = this._findDarkStyle();
+            if (!toggle) {
+                this._toggleRetryId ||= GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+                    this._toggleRetryId = 0;
+                    this._syncDarkStyle();
+                    return GLib.SOURCE_REMOVE;
+                });
+                return;
+            }
+            this._toggle = toggle;
+            this._stock = {subtitle: toggle.subtitle, reactive: toggle.reactive, canFocus: toggle.can_focus};
+            toggle.connectObject('destroy', () => {
+                this._toggle = null;
+            }, this);
+        }
+        if (!toggle)
+            return;
+        if (!want) {
+            toggle.disconnectObject(this);
+            toggle.set({subtitle: this._stock.subtitle, reactive: this._stock.reactive,
+                can_focus: this._stock.canFocus});
+            this._toggle = null;
+            return;
+        }
+        // Insensitive only while the desktop is in the theme's mode: after a
+        // flip from Settings the toggle is the one-click way back.
+        const dark = this._iface?.get_string('color-scheme') === 'prefer-dark';
+        const inMode = (want.mode === 'dark') === dark;
+        const name = String(want.name || 'This theme');
+        toggle.set({
+            subtitle: want.pinned ? `${name} is set to ${want.mode}` : `${name} is ${want.mode} only`,
+            reactive: !inMode,
+            can_focus: !inMode && this._stock.canFocus,
+        });
     }
 
     _path() {
