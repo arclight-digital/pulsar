@@ -1010,8 +1010,6 @@ I += (core * 0.9 + bloom * 0.2) * head * gain * 0.6;
 /* the warning edge: a quiet glow all the way round, in the warning's own
    color, so it reads on any surface wherever its light comes from */
 I += (core * 0.22 + bloom * 0.09) * alarm * trace;
-/* spill past the edge */
-if (d > 0.0) I += exp(-d / 12.0) * 0.10 * pow(face, 2.0) * att * gain * on;
 /* Fresnel: the glass's own thickness, strongest on top */
 float fr = d < 0.0 ? exp(d / 1.3) * (0.04 + 0.07 * max(-n.y, 0.0)) * on : 0.0;
 /* the divider, lit by the same source */
