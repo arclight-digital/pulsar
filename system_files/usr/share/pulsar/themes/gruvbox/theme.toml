@@ -35,6 +35,7 @@ headerbar = "#32302f"
 sidebar = "#282828"
 card = "#32302f"
 popover = "#3c3836"
+light_alert = "#fb4934"
 
 [light]
 accent = "#af3a03"
@@ -67,6 +68,7 @@ headerbar = "#f2e5bc"
 sidebar = "#f2e5bc"
 card = "#f9f5d7"
 popover = "#f9f5d7"
+light_alert = "#9b003a"
 
 [wallpaper]
 dark = ["backgrounds/satin-dark.jxl", "backgrounds/leak-dark.jxl"]
