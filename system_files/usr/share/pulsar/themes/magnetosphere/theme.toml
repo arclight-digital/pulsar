@@ -1,0 +1,66 @@
+# Magnetosphere: oxygen-green curtains over polar night.
+# The ground is the sky an hour after dusk at 70 degrees north, a blue-teal
+# black; the accent is the 557.7 nm auroral line, softened; nitrogen violet
+# stays in the fringes. Dark only: the aurora does not happen by day.
+name = "Magnetosphere"
+author = "Arclight"
+source = "original"
+prefer = "dark"
+
+[dark]
+background = "#0d1417"
+background_deep = "#080d0f"
+background_sunken = "#0a1113"
+background_raised = "#152024"
+foreground = "#d6e4de"
+foreground_dim = "#aebfb9"
+foreground_bright = "#eaf3ef"
+muted = "#6f8a86"
+selection = "#1f3634"
+accent = "#74d3a0"              # the oxygen green line
+red = "#ec7a86"
+orange = "#e6a472"
+yellow = "#e2d383"
+green = "#a2d27e"
+cyan = "#6ccbd0"
+blue = "#82a8ea"
+magenta = "#c39ce9"             # nitrogen, at the curtain's hem
+brown = "#b89c7c"
+bright_red = "#f29aa3"
+bright_yellow = "#ece1a2"
+bright_green = "#bce09e"
+bright_cyan = "#92dade"
+bright_blue = "#a3bff0"
+bright_magenta = "#d5b8f0"
+window = "#0f171a"
+view = "#0b1214"
+headerbar = "#162226"
+sidebar = "#0f171a"
+card = "#152024"
+popover = "#1b282c"
+
+[wallpaper]
+dark = ["backgrounds/leak-dark.jxl", "backgrounds/nebula-dark.jxl"]
+
+# the curtain: one arc of oxygen green with a violet hem
+[[wallpaper.render]]
+variant = "dark"
+look = "leak"
+c1 = "#123f3a"
+c2 = "accent"
+c3 = "blue~magenta@0.5"
+stars = 0.6
+desat = 0.05
+glow = 0.9
+
+# the same sky with the curtain broken up into diffuse glow
+[[wallpaper.render]]
+variant = "dark"
+look = "nebula"
+c1 = "#0f4a3a"
+c2 = "accent"
+c3 = "cyan"
+stars = 0.7
+desat = 0.1
+gain = 1.1
+glow = 0.9
