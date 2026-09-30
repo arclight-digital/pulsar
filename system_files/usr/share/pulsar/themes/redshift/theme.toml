@@ -1,0 +1,116 @@
+# Redshift: light from galaxies moving away, stretched toward the red.
+# A plum dusk ground, a soft hydrogen-alpha coral for the accent, and the
+# far end of the spectrum (violet, blue) kept quiet at the edges. Warm
+# without glare: the text is a rosy grey, never white.
+name = "Redshift"
+author = "Arclight"
+source = "original"
+prefer = "dark"
+
+[dark]
+background = "#17121a"
+background_deep = "#0f0b12"
+background_sunken = "#130f16"
+background_raised = "#221a25"
+foreground = "#eadcd8"
+foreground_dim = "#c1afb0"
+foreground_bright = "#f6ece8"
+muted = "#8f7c8a"
+selection = "#3a2632"
+accent = "#e3806d"              # H-alpha, softened
+red = "#ee6d82"
+orange = "#eba26c"
+yellow = "#e6c97c"
+green = "#a3c98c"
+cyan = "#80c4c2"
+blue = "#93a6e8"
+magenta = "#c79ce4"
+brown = "#bf9580"
+bright_red = "#f48c9c"
+bright_yellow = "#efd89a"
+bright_green = "#bbd8a8"
+bright_cyan = "#a0d6d4"
+bright_blue = "#a6bdf4"
+bright_magenta = "#dcb4e6"
+window = "#1a141d"
+view = "#151017"
+headerbar = "#221a25"
+sidebar = "#1a141d"
+card = "#231b26"
+popover = "#2a202d"
+
+# Dusk by day: rose-grey paper, the coral deepened to brick.
+[light]
+background = "#f4ece9"
+background_deep = "#e6d8d5"
+background_sunken = "#ede2df"
+background_raised = "#ebdfdc"
+foreground = "#3a2530"
+foreground_dim = "#5c4550"
+foreground_bright = "#1f1219"
+muted = "#7d6670"
+selection = "#ecd0c8"
+accent = "#b04a38"
+red = "#b3284a"
+orange = "#a4531a"
+yellow = "#846508"
+green = "#46712a"
+cyan = "#1d7472"
+blue = "#3c5aae"
+magenta = "#8144a6"
+brown = "#8a5a45"
+window = "#f4ece9"
+view = "#faf5f3"
+headerbar = "#ebdfdc"
+sidebar = "#efe5e2"
+card = "#faf5f3"
+popover = "#fdf9f8"
+
+[wallpaper]
+dark = ["backgrounds/nebula-dark.jxl", "backgrounds/leak-dark.jxl"]
+light = ["backgrounds/nebula-light.jxl", "backgrounds/leak-light.jxl"]
+
+# receding gas: a coral core cooling to violet at the rim, few stars
+[[wallpaper.render]]
+variant = "dark"
+look = "nebula"
+c1 = "#4a1a33"
+c2 = "accent"
+c3 = "magenta"
+stars = 0.5
+desat = 0.12
+gain = 1.15
+glow = 0.9
+
+[[wallpaper.render]]
+variant = "dark"
+look = "leak"
+c1 = "#5a2038"
+c2 = "accent"
+c3 = "magenta"
+stars = 0.4
+desat = 0.15
+glow = 0.9
+
+[[wallpaper.render]]
+variant = "light"
+look = "nebula"
+c1 = "accent"
+c2 = "#e3806d"
+c3 = "magenta"
+stars = 0.2
+wash = 0.35
+gain = 1.0
+dawn_bottom = "background"
+dawn_top = "background~muted@0.16"
+
+[[wallpaper.render]]
+variant = "light"
+look = "leak"
+c1 = "accent"
+c2 = "#e3806d"
+c3 = "magenta"
+stars = 0.2
+wash = 0.4
+dawn_bottom = "background"
+dawn_top = "background~muted@0.16"
