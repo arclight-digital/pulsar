@@ -1816,8 +1816,10 @@ class OverviewGround {
 // only under a surface at full opacity. Glass beneath or inside such a
 // window then blurs that window's own last frame back in around its edges.
 // So these surfaces sit at 254 of 255: everything beneath is painted, and
-// one step of opacity cannot be seen. Returns the surfaces it changed.
-function uncull(actor, skip = null, into = new Set()) {
+// one step of opacity cannot be seen. Returns the surfaces it changed;
+// `visit` sees every actor it looks inside.
+function uncull(actor, skip = null, into = new Set(), visit = null) {
+    visit?.(actor);
     for (const c of actor.get_children()) {
         if (c === skip)
             continue;
@@ -1826,7 +1828,7 @@ function uncull(actor, skip = null, into = new Set()) {
             c.opacity = 254;
             into.add(c);
         }
-        uncull(c, skip, into);
+        uncull(c, skip, into, visit);
     }
     return into;
 }
@@ -1835,6 +1837,49 @@ function recull(surfaces) {
     for (const c of surfaces ?? []) {
         if (c.opacity === 254)
             c.opacity = 255;
+    }
+}
+
+// uncull() kept up as a window's surfaces come and go. A window says
+// 'damaged' on every commit (every frame of an app animating), and the tree
+// is walked again only after something was added somewhere in it.
+class Uncull {
+    constructor(root, skip = null) {
+        this._root = root;
+        this._skip = skip;
+        this.surfaces = new Set();
+        this._watched = new Set();
+        this._dirty = true;
+    }
+
+    update() {
+        if (!this._dirty)
+            return;
+        this._dirty = false;
+        uncull(this._root, this._skip, this.surfaces, a => this._watch(a));
+    }
+
+    _watch(actor) {
+        if (this._watched.has(actor))
+            return;
+        this._watched.add(actor);
+        actor.connectObject(
+            'child-added', () => (this._dirty = true),
+            'destroy', () => this._watched.delete(actor),
+            this);
+    }
+
+    // back to full opacity; the next update() walks again
+    recull() {
+        recull(this.surfaces);
+        this.surfaces.clear();
+        this._dirty = true;
+    }
+
+    destroy() {
+        for (const a of this._watched)
+            a.disconnectObject(this);
+        this._watched.clear();
     }
 }
 
@@ -1893,6 +1938,7 @@ class WindowGlass {
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         actor.insert_child_at_index(this._backdrop, 0);
         this._backdrop.connect('destroy', () => (this._backdrop = null));
+        this._cull = new Uncull(actor, this._backdrop);
         this._win.connectObject(
             'size-changed', () => this._layout(),
             'notify::fullscreen', () => this._layout(),
@@ -1912,14 +1958,13 @@ class WindowGlass {
     // boxed lists): see uncull().
     _uncull() {
         if (!this._win.is_fullscreen())
-            this._surfaces = uncull(this._actor, this._backdrop, this._surfaces ?? new Set());
+            this._cull.update();
     }
 
     // back to full opacity: fullscreen (a game keeps direct scanout, which
     // a translucent surface would lose) or the glass going away
     _recull() {
-        recull(this._surfaces);
-        this._surfaces = null;
+        this._cull.recull();
     }
 
     // A GTK app's own windows carry its application id. A libadwaita dialog
@@ -1975,6 +2020,7 @@ class WindowGlass {
         this._actor.disconnectObject(this);
         Main.panel.disconnectObject(this);
         this._recull();
+        this._cull.destroy();
         this._backdrop?.destroy();
         this._backdrop = null;
     }
@@ -2623,12 +2669,16 @@ export class Glass {
             this._windows.set(actor, new WindowGlass(this, actor, true));
             return;
         }
-        const surfaces = uncull(actor);
+        const cull = new Uncull(actor);
+        cull.update();
         this._popups ??= new Map();
-        this._popups.set(actor, surfaces);
+        this._popups.set(actor, cull);
         actor.connectObject(
-            'damaged', () => uncull(actor, null, surfaces),
-            'destroy', () => this._popups?.delete(actor),
+            'damaged', () => cull.update(),
+            'destroy', () => {
+                cull.destroy();
+                this._popups?.delete(actor);
+            },
             this);
     }
 
@@ -2739,9 +2789,10 @@ export class Glass {
         global.display.disconnectObject(this);
         for (const a of [...this._windows.keys()])
             this.forgetWindow(a);
-        for (const [a, surfaces] of this._popups ?? []) {
+        for (const [a, cull] of this._popups ?? []) {
             a.disconnectObject(this);
-            recull(surfaces);
+            cull.recull();
+            cull.destroy();
         }
         this._popups = null;
         Scratch.clear();
