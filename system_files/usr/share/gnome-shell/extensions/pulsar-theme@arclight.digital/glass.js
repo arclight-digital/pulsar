@@ -984,6 +984,7 @@ uniform vec2 size;
 uniform vec4 rect;
 uniform float radius;
 uniform vec2 light;
+uniform float line;
 uniform vec3 acc;
 uniform vec3 neu;
 uniform float gain;
@@ -1013,7 +1014,10 @@ vec2 p = f - ctr;
 float d = sd(p, b, radius);
 vec2 n = normalize(vec2(sd(p + vec2(0.5, 0.0), b, radius) - sd(p - vec2(0.5, 0.0), b, radius),
                         sd(p + vec2(0.0, 0.5), b, radius) - sd(p - vec2(0.0, 0.5), b, radius)) + 1e-5);
-vec2 tl = light - f;
+/* top-full: a line along the top edge, each point lit from the nearest
+   point of it rather than from one spot */
+vec2 src = line > 0.5 ? vec2(clamp(f.x, rect.x + radius, rect.x + rect.z - radius), light.y) : light;
+vec2 tl = src - f;
 float dist = length(tl);
 vec2 L = tl / max(dist, 1e-3);
 float face = max(dot(n, L), 0.0);
@@ -1075,7 +1079,7 @@ if (lt < 0.5) {
 }
 `;
 
-const LIGHT_UNIFORMS = ['size', 'rect', 'radius', 'light', 'acc', 'neu', 'gain', 'grain', 'lt', 'divx',
+const LIGHT_UNIFORMS = ['size', 'rect', 'radius', 'light', 'line', 'acc', 'neu', 'gain', 'grain', 'lt', 'divx',
     'scale', 'trace', 'alarm', 'opacity', 'darkEdge'];
 
 // Draws the light straight onto the stage as one rectangle at the actor's
@@ -1170,6 +1174,26 @@ function holdBack([lx, ly], rect, r) {
         ly += dy * (LIGHT_MIN_DISTANCE - d);
     }
     return [lx, ly];
+}
+
+// The light comes from one of five places, whatever opened the surface:
+// above its left end (a menu under a button on the left of the bar), above
+// its middle (the date menu under the clock), above its right end (Quick
+// Settings), below its middle (the dash, the OSDs, the screenshot panel),
+// or the whole top edge at once (no source: the switchers, the dialogs, and
+// banners, which come down from the top of the screen). A source only picks
+// which, by the third of the surface it is over, or whether it is below
+// the surface's middle. Returns the spot, in the light actor's coordinates
+// (the surface is [LIGHT_PAD, LIGHT_PAD, w, h]), and whether it is the line.
+function lightSpot(src, w, h, r) {
+    const [x0, y0] = [LIGHT_PAD, LIGHT_PAD];
+    if (!src)
+        return [[x0 + w / 2, y0 - LIGHT_MIN_DISTANCE], true];
+    if (src[1] > y0 + h / 2)
+        return [[x0 + w / 2, y0 + h + LIGHT_MIN_DISTANCE], false];
+    const f = (src[0] - x0) / w;
+    const x = f < 1 / 3 ? x0 + r : f > 2 / 3 ? x0 + w - r : x0 + w / 2;
+    return [[x, y0 - LIGHT_MIN_DISTANCE], false];
 }
 
 function luminance(c) {
@@ -1424,9 +1448,8 @@ class Surface {
         this._lightActor.set_size(lw, lh);
         const lx0 = origin.x + o.x - LIGHT_PAD, ly0 = origin.y + o.y - LIGHT_PAD;
         const src = this._opts.source(origin.x + o.x, origin.y + o.y, w, h);
-        const light = src
-            ? holdBack([src[0] - lx0, src[1] - ly0], [LIGHT_PAD, LIGHT_PAD, w, h], r)
-            : [lw / 2, -LIGHT_PAD];
+        const [spot, line] = lightSpot(src && [src[0] - lx0, src[1] - ly0], w, h, r);
+        const light = line ? spot : holdBack(spot, [LIGHT_PAD, LIGHT_PAD, w, h], r);
         const column = this._opts.divider?.();
         // stock draws no line there, only a gap (the column's margin); light its middle
         const divx = column
@@ -1438,6 +1461,7 @@ class Surface {
         L.set('rect', LIGHT_PAD, LIGHT_PAD, w, h);
         L.set('radius', r);
         L.set('light', ...light);
+        L.set('line', line ? 1 : 0);
         L.set('divx', divx);
         L.set('scale', scale);
         L.queue_repaint();
@@ -2297,7 +2321,7 @@ export class Glass {
             return;
         const s = this._surfaces.get(bin) ?? this._add(bin, {
             box: () => bin.get_first_child(),
-            source: (x, y, w) => [x + w / 2, Main.layoutManager.primaryMonitor?.y ?? 0],
+            source: () => null,
             tone: () => tray._notification?.urgency === MessageTray.Urgency.CRITICAL ? 'alert' : this._battery,
         });
         s?.renew();
