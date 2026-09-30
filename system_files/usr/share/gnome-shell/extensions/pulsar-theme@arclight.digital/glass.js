@@ -82,10 +82,32 @@ const BRIGHTNESS = 1.06;
 // The blurred copy reaches this far past a surface on every side, so the
 // blur has real pixels to draw on at the edge, and the shadow has room.
 const BLUR_PAD = 64;
-// The drop shadow: offset down, soft, the depth the flat stock menus lack.
-// Drawn by the blur's mask, not CSS, because a box-shadow would be clipped
-// by the BoxPointer's offscreen buffer.
-const SHADOW = {y: 14, blur: 44, dark: [0, 0, 0, 0.42], light: [0.14, 0.12, 0.24, 0.2]};
+// The shadow floating glass (menus, Quick Settings, OSDs, banners, dialogs,
+// the dash) casts: soft and ambient, from no direction -- 2px down, fading
+// over 22px, in the theme's own deep ground (deepShadow()), at alpha
+// [light theme, dark theme]. With the darkened band just inside the edge
+// ([light, dark], drawn by the light) it lifts the glass off what is behind
+// it. Drawn by the blur's mask, not CSS, because a box-shadow would be
+// clipped by the BoxPointer's offscreen buffer; BLUR_PAD leaves it room.
+const SHADOW = {y: 2, blur: 22, alpha: [0.14, 0.38]};
+const EDGE_DARK = [0.14, 0.32];
+// The theme's deep ground (background_deep), read off the top bar's glass
+// tint, which the sheet makes rgba(background_deep, glass alpha); the last
+// answer stands while the bar is transparent (the overview). A light
+// theme's deep ground is pale: its hue is taken down to a dark ink. A dark
+// one's keeps its hue, a little stronger, at most as light as it is.
+let lastDeep = null;
+function deepShadow(lt) {
+    try {
+        const bg = Main.panel.get_theme_node().get_background_color();
+        if (bg.alpha > 0)
+            lastDeep = [bg.red / 255, bg.green / 255, bg.blue / 255];
+    } catch {}
+    const c = lastDeep ?? [0, 0, 0];
+    const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const [target, chroma] = lt ? [0.1, 3] : [Math.min(l, 0.06), 2];
+    return c.map(v => Math.min(Math.max(target + (v - l) * chroma, 0), 1));
+}
 // The top bar's: short and close, a ledge rather than a float.
 const PANEL_SHADOW = {pad: 16};
 // the overview's own show/hide time (ui/overview.js ANIMATION_TIME)
@@ -237,6 +259,8 @@ vec2 q = gl_FragCoord.xy;
 float n1 = fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453);
 float n2 = fract(sin(dot(q + 17.31, vec2(39.3468, 11.135))) * 24634.6345);
 rgb += (n1 + n2 - 1.0) / 255.0;
+/* shadow is straight color and alpha, and s carries its alpha already:
+   premultiplied once, here */
 cogl_color_out = vec4(rgb * a + shadow.rgb * s, a + s) * opacity;
 `;
 
@@ -573,7 +597,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._v4 = [0, 0, 0, 0];
         this.setGrade(SATURATE, CONTRAST, BRIGHTNESS);
         this.setShadowGeom(SHADOW.y, SHADOW.blur);
-        this.setShadow(false);
+        this.setShadow(0, 0, 0, 0);
         this.setGradeEdge(0);
         this.setSoft(1);
     }
@@ -587,10 +611,9 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._mask.set_uniform_float(this._loc[name], v.length, 1, v);
     }
 
-    // premultiplied shadow color; the light theme's is a soft ink, not black
-    setShadow(light, scale = 1) {
-        const [r, g, b, a] = light ? SHADOW.light : SHADOW.dark;
-        this._f('shadow', r * a * scale, g * a * scale, b * a * scale, a * scale);
+    // straight (not premultiplied) color and alpha; none until set
+    setShadow(r, g, b, a) {
+        this._f('shadow', r, g, b, a);
         this.queue_repaint();
     }
 
@@ -1470,10 +1493,12 @@ class Surface {
             this._light.set('alarm', tone ? 1 : 0);
             this._light.set('neu', ...rgb(tone ? accent : pick('-pulsar-light-neutral') ?? accent));
             this._light.set('lt', this._lt);
-            // iOS 27's glass drops the shadow for a darkened edge
-            this._blur.setShadow(this._lt === 1, 0);
+            // a soft ambient shadow in the theme's deep ground, and the
+            // darkened edge inside the rim, drawn over the tint by the light
+            const i = this._lt ? 0 : 1;
+            this._blur.setShadow(...deepShadow(this._lt), SHADOW.alpha[i]);
             this._blur.setEdgeDark(0);
-            this._light.set('darkEdge', this._lt ? 0.14 : 0.32);
+            this._light.set('darkEdge', EDGE_DARK[i]);
             this._blur.setGrade(...(this._lt ? SURFACE_GRADE.light : SURFACE_GRADE.dark));
             this._radius = node.get_border_radius(St.Corner.TOPLEFT);
         }
@@ -1683,7 +1708,6 @@ class PanelGlass {
         this._actor = new St.Widget({reactive: false});
         this._actor.add_constraint(new Clutter.BindConstraint({source: panelBox, coordinate: Clutter.BindCoordinate.ALL}));
         this._blur = new LiveBlur();
-        this._blur.setShadow(false, 0);
         this._blur.setSoft(0);
         this._actor.add_effect_with_name('pulsar-blur', this._blur);
         Main.layoutManager.uiGroup.insert_child_below(this._actor, panelBox);
@@ -1944,7 +1968,6 @@ class WindowGlass {
         this._popup = popup;
         this._backdrop = new St.Widget({reactive: false, width: 1, height: 1});
         this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS});
-        this._blur.setShadow(false, 0);
         // vibrancy: what is beneath lifted, so its color reads through the
         // window's tint instead of muddying it
         this._blur.setGrade(...windowGrade());
@@ -2372,6 +2395,11 @@ export class Glass {
             },
             this);
         Main.layoutManager.panelBox.connectObject('notify::visible', () => this._sync(), this);
+        // the surfaces' shadow is the top bar's deep ground (deepShadow)
+        Main.panel.connectObject('style-changed', () => {
+            for (const s of this._surfaces.values())
+                s.sync();
+        }, this);
         Main.layoutManager.connectObject('monitors-changed', () => {
             Views.clear();
             laterAdd(() => this._destroyed || this._trackOsds());
@@ -2811,6 +2839,7 @@ export class Glass {
         Main.overview.disconnectObject(this);
         Main.layoutManager.panelBox.disconnectObject(this);
         Main.layoutManager.disconnectObject(this);
+        Main.panel.disconnectObject(this);
         for (const s of [...this._surfaces.values()])
             this.forget(s);
         this._unwrapFolders();

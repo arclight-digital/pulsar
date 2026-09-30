@@ -1290,8 +1290,10 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
    solid step. */
 /* The edge stays the theme's own (the border above), so glass and solid
    menus share one outline. No stock box-shadow under glass: its tight 4px
-   ring reads as a hard cut around the glass, and glass.js draws a soft,
-   deep one of its own. */
+   ring reads as a hard cut around the glass. glass.js draws its own: soft
+   and ambient, 2px down and 22px wide, in the theme's deep ground (a dark
+   ink of its hue on a light theme), and a darkened band just inside the
+   edge. */
 .pulsar-glass .popup-menu-content, .pulsar-glass .candidate-popup-content, .pulsar-glass .quick-settings {
   background-color: transparent; box-shadow: none;
   -pulsar-glass-tint: rgba({{popover_rgb}}, {{surface_alpha}}); }
