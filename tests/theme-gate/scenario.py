@@ -625,6 +625,7 @@ WALK = r"""(() => { const St = imports.gi.St; const out = {};
   const nm = a => { const id = a.get_name?.() || ''; const c = (a.get_style_class_name?.() || '').trim();
     return (id ? '#' + id : '') + (c ? '.' + c.split(' ').filter(Boolean).join('.') : '') || a.constructor.$gtype?.name || 'actor'; };
   const col = c => (c && c.alpha) ? [c.red, c.green, c.blue, c.alpha].join(',') : null;
+  const shadow = n => col(n.get_box_shadow()?.color);
   // only labels, icons and entries draw in their text color; a container's
   // is only what its children inherit
   const leaf = a => a instanceof St.Label || a instanceof St.Icon || a instanceof St.Entry;
@@ -640,7 +641,7 @@ WALK = r"""(() => { const St = imports.gi.St; const out = {};
       a.ensure_style();
       const n = a.get_theme_node();
       out[path + '|'] = [col(n.get_background_color()), leaf(a) ? col(n.get_foreground_color()) : null,
-                         col(n.get_border_color(St.Side.TOP))];
+                         col(n.get_border_color(St.Side.TOP)), shadow(n)];
       if (a.reactive || a.can_focus || a.track_hover) {
         for (const st of ['hover', 'focus', 'active', 'checked', 'selected', 'insensitive']) {
           if (a.has_style_pseudo_class(st)) continue;
@@ -648,10 +649,10 @@ WALK = r"""(() => { const St = imports.gi.St; const out = {};
           a.ensure_style();
           const m = a.get_theme_node();
           out[path + '|' + st] = [col(m.get_background_color()), leaf(a) ? col(m.get_foreground_color()) : null,
-                                  col(m.get_border_color(St.Side.TOP))];
+                                  col(m.get_border_color(St.Side.TOP)), shadow(m)];
           // what the widget's own text inherits in that state
           leaves(a, path, (c, p) => { c.ensure_style(); out[p + '|' + st + ' (on ' + nm(a) + ')'] =
-            [null, col(c.get_theme_node().get_foreground_color()), null]; });
+            [null, col(c.get_theme_node().get_foreground_color()), null, null]; });
           a.remove_style_pseudo_class(st);
           a.ensure_style();
           leaves(a, path, c => c.ensure_style());
@@ -691,14 +692,118 @@ SURFACES = [
     # needs the a11y screen-keyboard key on (leaks() sets it)
     ("keyboard", "Main.keyboard.open(Main.layoutManager.primaryIndex)", "Main.layoutManager.keyboardBox",
      "Main.keyboard.close(true)"),
+    # a key's long-press popup (its extended keys)
+    ("keyboard-subkeys",
+     "Main.keyboard.open(Main.layoutManager.primaryIndex); imports.gi.GLib.timeout_add(0, 800, () => { "
+     "const find = a => a._extendedKeys?.length ? a : a.get_children().map(find).find(Boolean); "
+     "const k = find(Main.layoutManager.keyboardBox); if (k) { k._ensureExtendedKeysPopup(); k._showSubkeys(); "
+     "globalThis.__sk = k; } return false; })",
+     "globalThis.__sk._boxPointer", "globalThis.__sk?._hideSubkeys?.(); Main.keyboard.close(true)", 2.5),
+    ("end-session",
+     "const d = Main.layoutManager.modalDialogGroup.get_children().find(c => c.constructor.name === 'EndSessionDialog'); "
+     "globalThis.__es = d; d.OpenAsync([2, 0, 60, []], {return_error_literal() {}, return_value() {}})",
+     "Main.layoutManager.modalDialogGroup", "globalThis.__es?.close()", 2),
+    ("polkit",
+     "const c = Main.componentManager._allComponents.polkitAgent; "
+     "c._onInitiate(null, 'org.pulsar.leaks', 'Authentication is required to read colors', '', 'leaks', "
+     "[imports.gi.GLib.get_user_name()]); c._currentDialog._ensureOpen()",
+     "Main.layoutManager.modalDialogGroup",
+     "Main.componentManager._allComponents.polkitAgent._currentDialog?.close()", 2),
+    ("keyring",
+     "const k = Main.componentManager._allComponents.keyring; k._enabled = true; k.emit('new-prompt'); "
+     "k._currentPrompt.message = 'Unlock the keyring'; k._currentPrompt.emit('show-password')",
+     "Main.layoutManager.modalDialogGroup",
+     "Main.layoutManager.modalDialogGroup.get_children().forEach(c => c.constructor.name === 'KeyringDialog' && c.close())"),
+    ("run-dialog-error",
+     "Main.openRunDialog(); Main.layoutManager.modalDialogGroup.get_children()"
+     ".find(c => c.constructor.name === 'RunDialog')._showError('Command not found')",
+     "Main.layoutManager.modalDialogGroup",
+     "Main.layoutManager.modalDialogGroup.get_children().forEach(c => c.constructor.name === 'RunDialog' && c.close())"),
+    ("app-folder",
+     "Main.overview.showApps(); const ad = Main.overview._overview.controls._appDisplay; "
+     "const f = (ad._orderedItems ?? []).find(i => i._folder); f._ensureFolderDialog(); f._dialog.popup()",
+     "Main.layoutManager.overviewGroup", "Main.overview.hide()", 2),
+    ("search-apps", "Main.overview.show(); Main.overview.searchEntry.set_text('settings')",
+     "Main.layoutManager.overviewGroup", "Main.overview.searchEntry.set_text(''); Main.overview.hide()", 3),
+    ("search-system",
+     "import('resource:///org/gnome/shell/misc/systemActions.js').then(m => { "
+     "for (const a of m.getDefault()._actions.values()) a.available = true; "
+     "Main.overview.show(); Main.overview.searchEntry.set_text('power'); })",
+     "Main.layoutManager.overviewGroup", "Main.overview.searchEntry.set_text(''); Main.overview.hide()", 3),
+    # the window picker with every preview's caption and close button up,
+    # the workspace thumbnails, and the dash with a label
+    ("window-picker",
+     "Main.overview.show(); imports.gi.GLib.timeout_add(0, 700, () => { const walk = a => { "
+     "if (a.showOverlay && a.constructor.name === 'WindowPreview') a.showOverlay(false); "
+     "a.get_children().forEach(walk); }; walk(Main.layoutManager.overviewGroup); "
+     "Main.overview.dash._box.get_children().find(c => c.showLabel)?.showLabel(); return false; })",
+     "Main.layoutManager.uiGroup", "Main.overview.hide()", 2.5),
+    ("calendar-notification", "Main.notify('Pulsar leaks', 'a notification in the list'); "
+     "Main.panel.statusArea.dateMenu.menu.open(false)",
+     "Main.panel.statusArea.dateMenu.menu.actor",
+     "Main.panel.statusArea.dateMenu.menu.close(false); Main.messageTray.getSources().forEach(s => s.destroy())", 2),
+    ("panel-indicators",
+     "for (const k of ['screenRecording', 'screenSharing', 'dwellClick', 'a11y', 'keyboard']) "
+     "Main.panel.statusArea[k]?.show?.(); "
+     "Main.panel.statusArea.quickSettings._indicators?.get_children().forEach(c => c.show())",
+     "Main.panel", ""),
+    ("input-source-menu", "Main.panel.statusArea.keyboard?.menu.open(false)",
+     "Main.panel.statusArea.keyboard.menu.actor", "Main.panel.statusArea.keyboard?.menu.close(false)"),
+    ("alt-tab",
+     "import('resource:///org/gnome/shell/ui/altTab.js').then(m => { const p = new m.AppSwitcherPopup(); "
+     "p._resetNoModsTimeout = () => {}; p.show(false, 'switch-applications', 0); p._showImmediately(); "
+     "globalThis.__sw = p; })",
+     "globalThis.__sw", "globalThis.__sw?.destroy()"),
+    ("workspace-switcher",
+     "import('resource:///org/gnome/shell/ui/workspaceSwitcherPopup.js').then(m => { "
+     "const p = new m.WorkspaceSwitcherPopup(); p.display(1); "
+     "if (p._timeoutId) { imports.gi.GLib.source_remove(p._timeoutId); p._timeoutId = 0; } globalThis.__ws = p; })",
+     "globalThis.__ws", "globalThis.__ws?.destroy()"),
+    ("window-menu",
+     "import('resource:///org/gnome/shell/ui/windowMenu.js').then(m => { "
+     "const w = global.get_window_actors().map(a => a.meta_window).find(w => w.get_window_type() === 0); "
+     "const src = new imports.gi.St.Widget({width: 1, height: 1}); Main.layoutManager.uiGroup.add_child(src); "
+     "src.set_position(400, 300); const menu = new m.WindowMenu(w, src); "
+     "Main.layoutManager.uiGroup.add_child(menu.actor); menu.open(false); globalThis.__wm = menu; })",
+     "globalThis.__wm.actor", "globalThis.__wm?.close(false); globalThis.__wm?.destroy()"),
+    ("ibus-candidates",
+     "const p = Main.layoutManager.uiGroup.get_children().find(c => c.constructor.name === 'IbusCandidatePopup'); "
+     "globalThis.__cp = p; p._dummyCursor.set_position(500, 400); p._dummyCursor.set_size(1, 20); "
+     "p._preeditText.text = 'pinyin'; p._preeditText.show(); p._auxText.text = 'aux'; p._auxText.show(); "
+     "p._candidateArea.setCandidates(['1', '2', '3'], ['alpha', 'beta', 'gamma'], 1, true); "
+     "p._candidateArea.show(); p._updateVisibility()",
+     "globalThis.__cp", "globalThis.__cp?.close(0)"),
+    ("osd-overdrive",
+     "Main.osdWindowManager.showAll(new imports.gi.Gio.ThemedIcon({name: 'audio-volume-overamplified-symbolic'}), "
+     "'Volume', 1.3, 1.5)", "Main.layoutManager.uiGroup", "Main.osdWindowManager.hideAll()"),
+    ("resize-popup",
+     "Main.wm._showResizePopup(global.display, true, new imports.gi.Mtk.Rectangle({x: 200, y: 200, width: 600, "
+     "height: 400}), 80, 24)", "Main.wm._resizePopup", "Main.wm._showResizePopup(global.display, false)"),
+] + [
+    # every quick settings submenu (network, bluetooth, power, audio output...)
+    (f"quick-settings-menu-{i}",
+     "const qs = Main.panel.statusArea.quickSettings.menu; qs.open(false); "
+     f"qs._grid.get_children().filter(c => c.menu && c.menuEnabled !== false)[{i}]?.menu.open(false)",
+     "Main.panel.statusArea.quickSettings.menu.actor", "Main.panel.statusArea.quickSettings.menu.close(false)")
+    for i in range(8)
+] + [
+    # a banner of each urgency that shows one (a low one never does; a
+    # critical one is lit in the theme's red)
+    (f"banner-{u.lower()}",
+     "import('resource:///org/gnome/shell/ui/messageTray.js').then(m => { "
+     "const src = new m.Source({title: 'Pulsar leaks'}); Main.messageTray.add(src); "
+     f"src.addNotification(new m.Notification({{source: src, title: '{u}', body: 'a banner', "
+     f"urgency: m.Urgency.{u}}})); }})",
+     "Main.messageTray", "Main.messageTray.getSources().forEach(s => s.destroy())", 2)
+    for u in ("NORMAL", "HIGH", "CRITICAL")
 ]
 
 
 def scan(tag):
     got, notes = {}, []
-    for name, opener, root, closer in SURFACES:
+    for name, opener, root, closer, *wait in SURFACES:
         eval_js(f"try {{ {opener}; }} catch (e) {{}} 1")
-        time.sleep(1.2)
+        time.sleep(wait[0] if wait else 1.2)
         ok, raw = eval_js(WALK.replace("ROOT", root))
         eval_js(f"try {{ {closer}; }} catch (e) {{}} 1")
         time.sleep(0.6)
@@ -745,41 +850,75 @@ def checked_toggles(slug, mode):
             for g in got if not close(g, want, 3)]
 
 
+def neutral(prop, color):
+    """Not the theme's to set: no color at all, a translucent white or black
+    wash (reads as a neutral tint on any theme, as the sheet's own washes do;
+    stock_states.py draws the same line), any black or white shadow, and an
+    opaque white or black ground (a knob, a scrim). Opaque white text or
+    edges are NOT neutral: that is stock's text on its own dark grounds."""
+    if color is None:
+        return True
+    r, g, b, a = (int(x) for x in color.split(","))
+    bw = (r, g, b) in ((0, 0, 0), (255, 255, 255))
+    return bw and (a < 255 or prop in ("shadow", "background"))
+
+
+# Stock left as stock on purpose, by the widget path it shows up under.
+LEAKS_ALLOW = [
+    (r"screenshot-ui-area-indicator", "the screenshot selection's white frame and black shade, over any capture"),
+    (r"screen-recording-indicator|screen-sharing-indicator",
+     "the recording and screen-sharing pills: GNOME's own alarm red and orange"),
+]
+
+
 def leaks():
     """Colors that stay the same under two unrelated themes did not come from
-    the theme: stock showing through. Walk each surface in every state under
-    Gruvbox light and Nord dark and report what does not move."""
+    the theme: stock showing through. Walk each surface in every state and
+    report what does not move, two ways:
+
+      Gruvbox light vs Nord dark: stock's own fixed colors.
+      Alucard (a light-only theme) with the system scheme dark vs Nord dark:
+        the same stock sheet under both, so a color stock takes from its
+        scheme (and which the first pair sees move with the sheet) stays put
+        here, and would be stock's dark value on a light theme."""
     for k in ("glass", "window-glass", "lighting"):
         dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
     dconf("/org/gnome/desktop/interface/enable-animations", "false")
     dconf("/org/gnome/desktop/a11y/applications/screen-keyboard-enabled", "true")
+    # two input sources, so the keyboard indicator and its menu exist
+    dconf("/org/gnome/desktop/input-sources/sources", "[('xkb', 'us'), ('xkb', 'de')]")
     start_shell()
-    runs, notes, accent = [], [], []
-    for slug, mode in (("gruvbox", "light"), ("nord", "dark")):
+    # windows for Alt+Tab, the window picker and the window menu
+    launch_apps()
+    time.sleep(3)
+    runs, notes, accent = {}, [], []
+    for slug, mode, scheme in (("gruvbox", "light", "default"), ("nord", "dark", "prefer-dark"),
+                               ("alucard", "light", "prefer-dark")):
         pt("set", slug, "--no-restart")
-        dconf("/org/gnome/desktop/interface/color-scheme", "'prefer-dark'" if mode == "dark" else "'default'")
+        dconf("/org/gnome/desktop/interface/color-scheme", f"'{scheme}'")
         time.sleep(2)
-        got, n = scan(f"{slug}-{mode}")
-        runs.append(got)
+        got, n = scan(f"{slug}-{scheme}")
+        runs[slug] = got
         notes += n
         accent += checked_toggles(slug, mode)
-    a, b = runs
-    # One theme is light and one dark, so even white or black text that
-    # does not move is a leak; only an opaque white or black ground is left
-    # alone (a knob, a scrim), and a transparent one is not a color at all.
-    neutral = {"background": {None, "255,255,255,255", "0,0,0,255"}, "color": {None}, "border": {None}}
     found = []
-    for k in sorted(set(a) & set(b)):
-        for i, prop in enumerate(("background", "color", "border")):
-            if a[k][i] == b[k][i] and a[k][i] not in neutral[prop]:
-                surface, rest = k.split(": ", 1)
-                path, state = rest.rsplit("|", 1)
-                found.append({"surface": surface, "path": path, "state": state or "rest",
-                              "property": prop, "color": a[k][i]})
-    report = {"compared": len(set(a) & set(b)), "leaks": found, "accent": accent, "notes": notes}
+    for pair, (x, y) in (("fixed", ("gruvbox", "nord")), ("scheme", ("alucard", "nord"))):
+        a, b = runs[x], runs[y]
+        for k in sorted(set(a) & set(b)):
+            for i, prop in enumerate(("background", "color", "border", "shadow")):
+                va, vb = (a[k] + [None])[i], (b[k] + [None])[i]
+                if va == vb and not neutral(prop, va):
+                    surface, rest = k.split(": ", 1)
+                    path, state = rest.rsplit("|", 1)
+                    if any(re.search(pat, path) for pat, _ in LEAKS_ALLOW):
+                        continue
+                    found.append({"pair": pair, "surface": surface, "path": path, "state": state or "rest",
+                                  "property": prop, "color": va})
+    compared = len(set(runs["gruvbox"]) & set(runs["nord"])) + len(set(runs["alucard"]) & set(runs["nord"]))
+    report = {"compared": compared, "leaks": found, "accent": accent, "notes": notes}
     SHOTS.mkdir(exist_ok=True)
     (SHOTS / "leaks-report.json").write_text(json.dumps(report, indent=1))
-    print(f"compared {report['compared']} widget states; {len(found)} colors did not move", flush=True)
+    print(f"compared {compared} widget states; {len(found)} colors did not move", flush=True)
     for n in notes:
         print("  note:", n)
     print(f"checked quick toggles off the accent: {len(accent)}", flush=True)
