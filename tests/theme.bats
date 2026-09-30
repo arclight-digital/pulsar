@@ -942,3 +942,30 @@ gate_py() {
     # and the log is kept beside the report
     [ -s "${BATS_TEST_TMPDIR}/out/t-shell.log" ]
 }
+
+@test "theme gate: glass off its host, missing or hidden fails the glass scenario" {
+    run gate_py '
+import copy
+host = [100, 100, 200, 80]
+good = {"name": "m", "kind": "surface", "host": host, "shown": True, "opacity": 255, "box": [100, 106, 200, 74],
+        "under": {"rect": host, "visible": True, "mapped": True, "opacity": 255, "parent": True, "beside": True},
+        "over": {"rect": host, "visible": True, "mapped": True, "opacity": 255, "parent": True, "beside": True},
+        "blur": {"rect": [36, 42, 328, 202], "visible": True, "mapped": True},
+        "light": {"rect": [52, 58, 296, 170], "visible": True, "mapped": True}}
+def bad(fn):
+    r = copy.deepcopy(good); fn(r); return bool(s.glass_faults(r))
+print(s.glass_faults(good) == [],
+      bad(lambda r: r["under"].update(rect=[103, 100, 200, 80])),
+      bad(lambda r: r["over"].update(beside=False)),
+      bad(lambda r: r["blur"].update(visible=False)),
+      bad(lambda r: r["light"].update(rect=[62, 58, 296, 170])),
+      bad(lambda r: r.update(under=None)),
+      bad(lambda r: r.update(host=[None, 100, 200, 80])),
+      bad(lambda r: r.update(error="no glass surface for it")))
+win = {"name": "w", "kind": "window", "frame": [60, 80, 1000, 700], "shown": True,
+       "blur": {"rect": [12, 32, 1096, 796], "visible": True, "mapped": True, "inWindow": True}}
+print(s.glass_faults(win) == [], bool(s.glass_faults(dict(win, blur=dict(win["blur"], rect=[22, 32, 1096, 796])))))'
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[0]}" = "True True True True True True True True" ]
+    [ "${lines[1]}" = "True True" ]
+}
