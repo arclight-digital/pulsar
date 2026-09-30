@@ -2242,17 +2242,28 @@ def cmd_follow_scheme():
     """GTK3 has no media queries, so its gtk.css and gtk-theme are written for
     the scheme in effect at the switch, and so are btop's theme and the
     agents'; everything else follows Dark Style on its own. On a flip, redo
-    just those. A no-op unless a two-variant
-    theme is applied in "both" mode with gtk3 among its targets."""
+    just those. So is the system accent, where the two variants' differ
+    (Pulsar's is teal on dark, blue on light): it is redone only when the
+    key does not already hold the new one, since a flip must not write
+    dconf for nothing. A no-op unless a two-variant theme is applied in
+    "both" mode."""
     st = current_state()
-    redo = [t for t in ("gtk3", "btop", "agents") if t in st.get("targets", [])]
-    if not st.get("theme") or st.get("variant", "both") != "both" or not redo:
+    targets = st.get("targets", [])
+    redo = [t for t in ("gtk3", "btop", "agents") if t in targets]
+    if not st.get("theme") or st.get("variant", "both") != "both" or not (redo or "scheme" in targets):
         return
     try:
         theme = load_theme(st["theme"])
     except SystemExit:
         return
-    if theme.both:
+    if not theme.both:
+        return
+    if "scheme" in targets:
+        key = "/org/gnome/desktop/interface/accent-color"
+        want = gv_str(theme.variants[current_scheme()].gnome_accent)
+        if not gv_equal(dconf_read(key), want):
+            redo.append("scheme")
+    if redo:
         cmd_set(theme, "both", redo, restart_policy="none", gentle="follow")
 
 

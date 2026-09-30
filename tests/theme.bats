@@ -681,6 +681,37 @@ PY
     ! grep -q '"TTY"' "$conf"
 }
 
+@test "follow-scheme re-sets the system accent on a flip, and only when it changes" {
+    fake_dconf
+    acc=/org/gnome/desktop/interface/accent-color
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(key $acc)" = "'teal'" ]
+    # Pulsar is teal on dark, blue on light
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    run python3 "$ENGINE" follow-scheme
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"-> scheme"* ]]
+    [ "$(key $acc)" = "'blue'" ]
+    # already right: the key is not written again
+    run python3 "$ENGINE" follow-scheme
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"scheme"* ]]
+    [ "$(key $acc)" = "'blue'" ]
+    # a theme whose two variants share a name never writes it on a flip
+    python3 "$ENGINE" set solarized --no-restart >/dev/null
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    run python3 "$ENGINE" follow-scheme
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"scheme"* ]]
+    # an accent the user chose since is theirs, flip or no flip
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    setkey $acc "'pink'"
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme >/dev/null
+    [ "$(key $acc)" = "'pink'" ]
+}
+
 @test "follow-scheme does nothing with no theme applied, or a single-mode one" {
     fake_dconf
     python3 "$ENGINE" follow-scheme
