@@ -1013,8 +1013,9 @@ WALK = r"""(() => { const St = imports.gi.St; const out = {};
   };
   walk(ROOT, nm(ROOT), 0); return JSON.stringify(out); })()"""
 
-# Each surface: how to open it, the actor to walk, how to close it. What a
-# given Shell cannot open is skipped with a note, not a failure.
+# Each surface: how to open it, the actor to walk, how to close it. A
+# surface that cannot be read fails the scan (its colors went unchecked),
+# unless LEAKS_UNREADABLE names it with the reason.
 SURFACES = [
     ("desktop-menu", "Main.layoutManager._bgManagers[0].backgroundActor._backgroundMenu.open(false)",
      "Main.layoutManager._bgManagers[0].backgroundActor._backgroundMenu.actor",
@@ -1149,8 +1150,15 @@ SURFACES = [
 ]
 
 
+# Surfaces a scan may fail to read, each with why: nothing else may.
+LEAKS_UNREADABLE = [
+]
+
+
 def scan(tag):
-    got, notes = {}, []
+    """Every surface's widget states under the current theme, and the
+    surfaces that could not be read: (states, notes, unread)."""
+    got, notes, unread = {}, [], []
     for name, opener, root, closer, *wait in SURFACES:
         eval_js(f"try {{ {opener}; }} catch (e) {{}} 1")
         time.sleep(wait[0] if wait else 1.2)
@@ -1162,11 +1170,13 @@ def scan(tag):
         except Exception:
             data = None
         if not data:
-            notes.append(f"{tag}: {name} could not be read ({raw[:120]})")
+            allowed = [why for pat, why in LEAKS_UNREADABLE if re.fullmatch(pat, name)]
+            line = f"{tag}: {name} could not be read ({raw[:120]})"
+            (notes if allowed else unread).append(line + (f" -- allowed: {allowed[0]}" if allowed else ""))
             continue
         for k, v in data.items():
             got[f"{name}: {k}"] = v
-    return got, notes
+    return got, notes, unread
 
 
 # Every quick toggle, forced checked: what its ground resolves to. A leak fix
@@ -1241,15 +1251,16 @@ def leaks():
     # windows for Alt+Tab, the window picker and the window menu
     launch_apps()
     time.sleep(3)
-    runs, notes, accent = {}, [], []
+    runs, notes, accent, unread = {}, [], [], []
     for slug, mode, scheme in (("gruvbox", "light", "default"), ("nord", "dark", "prefer-dark"),
                                ("alucard", "light", "prefer-dark")):
         pt("set", slug, "--no-restart")
         dconf("/org/gnome/desktop/interface/color-scheme", f"'{scheme}'")
         time.sleep(2)
-        got, n = scan(f"{slug}-{scheme}")
+        got, n, u = scan(f"{slug}-{scheme}")
         runs[slug] = got
         notes += n
+        unread += u
         accent += checked_toggles(slug, mode)
     found = []
     for pair, (x, y) in (("fixed", ("gruvbox", "nord")), ("scheme", ("alucard", "nord"))):
@@ -1265,17 +1276,27 @@ def leaks():
                     found.append({"pair": pair, "surface": surface, "path": path, "state": state or "rest",
                                   "property": prop, "color": va})
     compared = len(set(runs["gruvbox"]) & set(runs["nord"])) + len(set(runs["alucard"]) & set(runs["nord"]))
-    report = {"compared": compared, "leaks": found, "accent": accent, "notes": notes}
+    stop_shell()
+    logged = shell_log_problems("leaks")
+    ok = not (found or accent or unread or logged)
+    report = {"ok": ok, "compared": compared, "leaks": found, "accent": accent, "unreadable": unread,
+              "shell_log": logged, "notes": notes}
     SHOTS.mkdir(exist_ok=True)
     (SHOTS / "leaks-report.json").write_text(json.dumps(report, indent=1))
     print(f"compared {compared} widget states; {len(found)} colors did not move", flush=True)
     for n in notes:
         print("  note:", n)
+    print(f"surfaces that could not be read: {len(unread)}", flush=True)
+    for x in unread:
+        print("  ", x)
     print(f"checked quick toggles off the accent: {len(accent)}", flush=True)
     for x in accent:
         print("  ", x)
-    stop_shell()
-    return 1 if found or accent else 0
+    print(f"pulsar-theme warnings and JS errors in the Shell log: {len(logged)}", flush=True)
+    for x in logged[:10]:
+        print("  ", x)
+    print(f"LEAKS {'PASS' if ok else 'FAIL'}", flush=True)
+    return 0 if ok else 1
 
 
 def main():
