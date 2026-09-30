@@ -1231,7 +1231,60 @@ LEAKS_ALLOW = [
 ]
 
 
-def leaks():
+def rgba(color):
+    return tuple(int(x) for x in color.split(","))
+
+
+def over(top, ground):
+    """`top` (r, g, b, a) laid over an opaque (r, g, b) ground."""
+    a = top[3] / 255
+    return tuple(round(t * a + g * (1 - a)) for t, g in zip(top[:3], ground))
+
+
+def contrast(a, b):
+    def lum(c):
+        c = [v / 255 for v in c]
+        c = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def low_contrast(run, minimum=4.5):
+    """Text at rest against the ground it sits on, from a scan: each label,
+    icon or entry's text color over its own background and every ancestor's,
+    down to the first opaque one. Text whose grounds are all translucent sits
+    on glass or the wallpaper and cannot be judged here: counted, not
+    checked. Returns (failures, judged, unjudged)."""
+    bad, judged, unjudged = [], 0, 0
+    for k, v in run.items():
+        if not k.endswith("|") or v[1] is None:
+            continue
+        surface, path = k[:-1].split(": ", 1)
+        parts = path.split(" > ")
+        layers = []
+        for i in range(len(parts), 0, -1):
+            bg = (run.get(f"{surface}: {' > '.join(parts[:i])}|") or [None])[0]
+            if bg:
+                layers.append(rgba(bg))
+                if layers[-1][3] == 255:
+                    break
+        if not layers or layers[-1][3] != 255:
+            unjudged += 1
+            continue
+        ground = layers[-1][:3]
+        for c in reversed(layers[:-1]):
+            ground = over(c, ground)
+        text = over(rgba(v[1]), ground)
+        r = contrast(text, ground)
+        judged += 1
+        if r < minimum:
+            bad.append({"surface": surface, "path": path, "text": "#%02x%02x%02x" % text,
+                        "ground": "#%02x%02x%02x" % ground, "ratio": round(r, 2)})
+    return bad, judged, unjudged
+
+
+def leaks(args=()):
     """Colors that stay the same under two unrelated themes did not come from
     the theme: stock showing through. Walk each surface in every state and
     report what does not move, two ways:
@@ -1240,7 +1293,13 @@ def leaks():
       Alucard (a light-only theme) with the system scheme dark vs Nord dark:
         the same stock sheet under both, so a color stock takes from its
         scheme (and which the first pair sees move with the sheet) stays put
-        here, and would be stock's dark value on a light theme."""
+        here, and would be stock's dark value on a light theme.
+
+    `leaks --contrast` also judges text at rest against its ground, WCAG AA
+    (4.5:1), in each of the three looks (low_contrast), and fails on it. Off
+    by default: the templates' known contrast bugs are their own work, and
+    the gate stays about leaks until they are fixed."""
+    want_contrast = "--contrast" in args
     for k in ("glass", "window-glass", "lighting"):
         dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
     dconf("/org/gnome/desktop/interface/enable-animations", "false")
@@ -1278,9 +1337,18 @@ def leaks():
     compared = len(set(runs["gruvbox"]) & set(runs["nord"])) + len(set(runs["alucard"]) & set(runs["nord"]))
     stop_shell()
     logged = shell_log_problems("leaks")
-    ok = not (found or accent or unread or logged)
+    low = {}
+    if want_contrast:
+        for slug, got in runs.items():
+            bad, judged, unjudged = low_contrast(got)
+            low[slug] = {"below": bad, "judged": judged, "unjudged": unjudged}
+            print(f"contrast {slug}: {len(bad)} of {judged} texts below 4.5:1 ({unjudged} on glass, not judged)",
+                  flush=True)
+            for x in bad[:15]:
+                print(f"   {x['ratio']:5}  {x['text']} on {x['ground']}  {x['surface']}: {x['path'][-110:]}")
+    ok = not (found or accent or unread or logged or any(v["below"] for v in low.values()))
     report = {"ok": ok, "compared": compared, "leaks": found, "accent": accent, "unreadable": unread,
-              "shell_log": logged, "notes": notes}
+              "shell_log": logged, "notes": notes, "contrast": low}
     SHOTS.mkdir(exist_ok=True)
     (SHOTS / "leaks-report.json").write_text(json.dumps(report, indent=1))
     print(f"compared {compared} widget states; {len(found)} colors did not move", flush=True)
@@ -1305,7 +1373,7 @@ def main():
     try:
         rc = {"gate": lambda: gate(sys.argv[2:]), "firstlogin": firstlogin, "restart": restart,
               "picker": picker, "desktops": lambda: desktops(sys.argv[2:]), "glass": glass,
-              "leaks": leaks}[mode]() or 0
+              "leaks": lambda: leaks(sys.argv[2:])}[mode]() or 0
     finally:
         kill_apps()
         for p in procs:

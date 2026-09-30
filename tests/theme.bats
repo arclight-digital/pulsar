@@ -969,3 +969,17 @@ print(s.glass_faults(win) == [], bool(s.glass_faults(dict(win, blur=dict(win["bl
     [ "${lines[0]}" = "True True True True True True True True" ]
     [ "${lines[1]}" = "True True" ]
 }
+
+@test "theme gate: leaks --contrast judges text over the grounds beneath it, and not text on glass" {
+    run gate_py '
+run = {"m: menu|": ["255,255,255,255", None, None, None],
+       "m: menu > box[0]|": ["0,0,0,20", None, None, None],
+       "m: menu > box[0] > label[0]|": [None, "119,119,119,255", None, None],
+       "m: menu > box[0] > label[1]|": [None, "0,0,0,255", None, None],
+       "g: glass|": ["30,30,30,128", None, None, None],
+       "g: glass > label[0]|": [None, "255,255,255,255", None, None]}
+bad, judged, unjudged = s.low_contrast(run)
+print([b["path"] for b in bad], judged, unjudged)'
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "$output" = "['menu > box[0] > label[0]'] 2 1" ]
+}

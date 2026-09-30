@@ -79,7 +79,13 @@ pixels, and blur and light would move every one); `glass` turns them on.
   unless each resolves to the theme's accent, so a leak fix can never cost
   an accent-filled state. A surface it cannot read fails it (its colors went
   unchecked) unless `LEAKS_UNREADABLE` names it with a reason.
-  `leaks-report.json` lands in `GATE_OUT`.
+  `leaks-report.json` lands in `GATE_OUT`. `run.sh leaks --contrast` also
+  fails on text at rest below 4.5:1 against the grounds beneath it (text on
+  glass has no fixed ground and is counted, not judged). It is off in
+  `gate.sh` until the templates' known low-contrast texts are fixed: the
+  overview search entry's hint, an app folder's name entry, a search
+  result's description (Gruvbox light) and the input method's candidate
+  numbers.
 
 ## Stock-grey leaks without a Shell
 
