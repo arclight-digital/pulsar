@@ -1,0 +1,67 @@
+# Eclipse: the minutes of totality.
+# The sky drops to a blue-slate dark, the corona is a pearl glow around a
+# black disc, and the one color is the chromosphere's rose, the thin pink
+# rim of prominences you only catch at second and third contact. Dark only:
+# totality has no daytime version.
+name = "Eclipse"
+author = "Arclight"
+source = "original"
+prefer = "dark"
+
+[dark]
+background = "#0f1117"
+background_deep = "#090a0e"
+background_sunken = "#0c0d12"
+background_raised = "#191c24"
+foreground = "#e2e4e9"          # corona pearl
+foreground_dim = "#b4b8c2"
+foreground_bright = "#f0f1f4"
+muted = "#7a808e"
+selection = "#2c2632"
+accent = "#d98aab"              # chromosphere rose
+red = "#ec7069"
+orange = "#e59a66"
+yellow = "#e0cc7a"
+green = "#9ccc8e"
+cyan = "#82c6d0"
+blue = "#8ea8e6"
+magenta = "#c69be0"
+brown = "#b89a82"
+bright_red = "#f29089"
+bright_yellow = "#eadb9c"
+bright_green = "#b6daaa"
+bright_cyan = "#a2d6de"
+bright_blue = "#a9bef0"
+bright_magenta = "#d7b8ea"
+window = "#12141b"
+view = "#0e1016"
+headerbar = "#1a1d25"
+sidebar = "#12141b"
+card = "#1a1d25"
+popover = "#20232c"
+
+[wallpaper]
+dark = ["backgrounds/beacon-dark.jxl", "backgrounds/nebula-dark.jxl"]
+
+# the diamond ring: one point of photosphere, the rose rim drawn out faint
+[[wallpaper.render]]
+variant = "dark"
+look = "beacon"
+c1 = "#4a4f5c"
+c2 = "accent"
+c3 = "foreground_dim"
+stars = 0.4
+desat = 0.15
+gain = 0.9
+
+# the corona itself: pearl streamers with a rose inner edge
+[[wallpaper.render]]
+variant = "dark"
+look = "nebula"
+c1 = "#3a3e4a"
+c2 = "foreground_dim"
+c3 = "accent"
+stars = 0.5
+desat = 0.2
+gain = 1.0
+glow = 0.9
