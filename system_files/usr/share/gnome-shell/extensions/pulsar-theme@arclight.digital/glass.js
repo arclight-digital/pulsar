@@ -52,10 +52,14 @@ import Mtk from 'gi://Mtk';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
+import * as AppDisplay from 'resource:///org/gnome/shell/ui/appDisplay.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
+import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
+import * as SwitcherPopup from 'resource:///org/gnome/shell/ui/switcherPopup.js';
+import * as WorkspaceSwitcherPopup from 'resource:///org/gnome/shell/ui/workspaceSwitcherPopup.js';
 
 // The blur: a dual-filter (Kawase) pyramid, the kind KWin blurs with.
 // What is beneath is halved, then halved BLUR_LEVELS more times (one more
@@ -1979,6 +1983,22 @@ export class Glass {
                     console.warn(`pulsar-theme: glass: banner: ${e.message}`);
                 }
             });
+        // The switchers (Alt+Tab and its kin, and the workspace one), the
+        // Shell's own dialogs and app folders, each as it is shown.
+        const after = (proto, name, track) => injections.overrideMethod(proto, name,
+            orig => function (...args) {
+                const ret = orig.call(this, ...args);
+                try {
+                    track.call(self, this);
+                } catch (e) {
+                    console.warn(`pulsar-theme: glass: ${name}: ${e.message}`);
+                }
+                return ret;
+            });
+        after(SwitcherPopup.SwitcherPopup.prototype, 'show', this._trackSwitcher);
+        after(WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype, 'display', this._trackWorkspaces);
+        after(ModalDialog.ModalDialog.prototype, 'open', this._trackDialog);
+        after(AppDisplay.AppFolderDialog.prototype, 'popup', this._trackFolder);
         settings.connectObject(
             'changed', () => this._sync(),
             // the other half of Glass windows is the engine's gtk.css
@@ -2108,6 +2128,95 @@ export class Glass {
                 tone: () => this._battery,
             });
         }
+    }
+
+    // Alt+Tab and its kin: the popup covers the screen and fades as one;
+    // the list is the surface. Opened from the keyboard, so lit from above.
+    _trackSwitcher(popup) {
+        const list = popup._switcherList;
+        if (list)
+            this._add(popup, {box: () => list, source: () => null, tone: () => this._battery});
+    }
+
+    // One pill per monitor, in a popup the window manager keeps and reuses.
+    _trackWorkspaces(popup) {
+        for (const m of popup.get_children()) {
+            if (m._list)
+                this._add(m, {box: () => m._list, source: () => null, tone: () => this._battery});
+        }
+    }
+
+    // A Shell dialog (power off, a password, Run): its box paints offscreen
+    // (Dialog sets offscreen_redirect ALWAYS), so the glass goes beside the
+    // layout that holds it, above the dialog's lightbox.
+    _trackDialog(dialog) {
+        const layout = dialog.dialogLayout;
+        if (layout?._dialog)
+            this._add(layout, {box: () => layout._dialog, source: () => null, tone: () => this._battery});
+    }
+
+    // An app folder, lit from the folder it opened from. The dialog is an
+    // St.Bin, which lays out only its one child, and it paints its own
+    // shade beneath that child: the glass has to go between the two. So
+    // the child is wrapped once in a box that holds it and the mirrors,
+    // and the wrapper, now the dialog's child, is what zooms and fades.
+    _trackFolder(dialog) {
+        let wrap = this._folders?.get(dialog);
+        if (!wrap) {
+            const inner = dialog.child;
+            if (!inner || !dialog._viewBox)
+                return;
+            wrap = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
+            dialog.set_child(null);
+            wrap.add_child(inner);
+            dialog.set_child(wrap);
+            (this._folders ??= new Map()).set(dialog, wrap);
+            dialog.connectObject('destroy', () => this._folders?.delete(dialog), this);
+        }
+        const inner = wrap.get_first_child();
+        this._add(inner, {
+            box: () => dialog._viewBox,
+            source: () => {
+                const src = dialog._source;
+                if (!src?.has_allocation())
+                    return null;
+                const [sx, sy] = src.get_transformed_position();
+                const [sw, sh] = src.get_transformed_size();
+                return [sx + sw / 2, sy + sh / 2];
+            },
+            tone: () => this._battery,
+        });
+    }
+
+    _unwrapFolders() {
+        for (const [dialog, wrap] of this._folders ?? []) {
+            dialog.disconnectObject(this);
+            const inner = wrap.get_first_child();
+            if (inner) {
+                wrap.remove_child(inner);
+                dialog.set_child(inner);
+            }
+            wrap.destroy();
+        }
+        this._folders = null;
+    }
+
+    // The screenshot UI's panel, lit from the bottom edge it sits on. The
+    // panel fades itself (and paints offscreen while it does), so the glass
+    // goes beside the monitor box that holds it.
+    _trackScreenshot() {
+        const ui = Main.screenshotUI;
+        const bin = ui?._primaryMonitorBin;
+        if (!bin || !ui._panel)
+            return;
+        this._add(bin, {
+            box: () => ui._panel,
+            source: (x, y, w) => {
+                const m = Main.layoutManager.primaryMonitor;
+                return [x + w / 2, m ? m.y + m.height : y];
+            },
+            tone: () => this._battery,
+        });
     }
 
     // The banner bin, lit from the top edge banners come down from; a
@@ -2241,6 +2350,7 @@ export class Glass {
         }
         if (glass || lit) {
             this._trackOsds();
+            this._trackScreenshot();
             // A banner already up: at unlock the tray shows what queued
             // during the lock in the same sessionMode update that turns this
             // extension back on, before the _showNotification hook exists,
@@ -2276,6 +2386,7 @@ export class Glass {
         Main.layoutManager.disconnectObject(this);
         for (const s of [...this._surfaces.values()])
             this.forget(s);
+        this._unwrapFolders();
         this._panel?.destroy();
         this._panel = null;
         this._brackets?.destroy();

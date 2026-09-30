@@ -724,6 +724,12 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .pulsar-glass .osd-window, .pulsar-glass .notification-banner, .pulsar-glass .notification-banner:hover {
   background-color: transparent; box-shadow: none;
   -pulsar-glass-tint: rgba({{popover_rgb}}, {{glass_alpha}}); }
+/* So are the switchers (Alt+Tab, workspaces), the Shell's dialogs, app
+   folders and the screenshot panel. */
+.pulsar-glass .switcher-list, .pulsar-glass .workspace-switcher, .pulsar-glass .modal-dialog,
+.pulsar-glass .app-folder-dialog, .pulsar-glass .screenshot-ui-panel {
+  background-color: transparent; box-shadow: none;
+  -pulsar-glass-tint: rgba({{popover_rgb}}, {{glass_alpha}}); }
 /* The dash: no blur (all that is behind it is the overview's flat ground),
    but the same material otherwise -- lit from above, a hairline edge, and
    a soft shadow that floats it over the overview. */
@@ -740,7 +746,8 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
    accent, a neutral for the divider, and the warning edge -- warm while the
    battery is low, the theme's red for a critical banner or a battery about
    to run out. Those two keep their meaning in every theme. */
-.popup-menu-content, .quick-settings, .osd-window, .notification-banner {
+.popup-menu-content, .quick-settings, .osd-window, .notification-banner,
+.switcher-list, .workspace-switcher, .modal-dialog, .app-folder-dialog, .screenshot-ui-panel {
   -pulsar-light: {{accent}}; -pulsar-light-neutral: {{blue}};
   -pulsar-light-warn: {{orange}}; -pulsar-light-alert: {{red}}; }
 /* The keyboard-focus brackets glass.js draws around the focused control,
