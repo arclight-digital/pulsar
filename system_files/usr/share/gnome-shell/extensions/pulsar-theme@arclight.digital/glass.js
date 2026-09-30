@@ -37,8 +37,8 @@
 // offscreen_redirect ALWAYS), where a copy of "what is beneath" would read
 // an empty texture. A menu's glass therefore lives BESIDE it: two mirrors in
 // its host's parent, one under it (the blur) and one over it (the light),
-// that copy its geometry, fade and slide. (The dash has no blur: all that is
-// ever behind it is the overview's flat ground. The theme's sheet dresses it.)
+// that copy its geometry, fade and slide. The dash paints offscreen too
+// (it fades as one while a window is dragged), and is dressed the same way.
 //
 // Never while the screen is locked, and never in high contrast.
 import Clutter from 'gi://Clutter';
@@ -88,7 +88,6 @@ const SHADOW = {y: 14, blur: 44, dark: [0, 0, 0, 0.42], light: [0.14, 0.12, 0.24
 const PANEL_SHADOW = {pad: 16};
 // the overview's own show/hide time (ui/overview.js ANIMATION_TIME)
 const PANEL_FADE_MS = 250;
-// The dash's: it floats over the overview like a menu, a little lower.
 // How far the light may spill past the edge.
 const LIGHT_PAD = 48;
 // How close the light may come to the glass. A menu opened at the pointer
@@ -1374,9 +1373,14 @@ class Surface {
             return;
         // Still waiting on a relayout: try again next frame. It may land on
         // the same box as before, and then no notify::allocation comes.
+        // Given up after 30, the count starts over, or a surface that first
+        // tried while hidden (the dash, before the overview has been shown)
+        // would never try again.
         if (!b.has_allocation() || !this._host.has_allocation()) {
             if ((this._retries = (this._retries ?? 0) + 1) <= 30)
                 this._queue();
+            else
+                this._retries = 0;
             return;
         }
         this._retries = 0;
@@ -2018,6 +2022,18 @@ export class Glass {
         after(ModalDialog.ModalDialog.prototype, 'open', this._trackDialog);
         after(AppDisplay.AppFolderDialog.prototype, 'popup', this._trackFolder);
         after(IBusCandidatePopup.CandidatePopup.prototype, 'open', this._trackCandidates);
+        // The overview's controls lay out only the children they know; the
+        // dash's mirrors (_trackDash) stand where they were put.
+        const controls = Main.overview.dash?.get_parent()?.layout_manager;
+        if (controls)
+            injections.overrideMethod(Object.getPrototypeOf(controls), 'vfunc_allocate',
+                allocate => function (container, box) {
+                    allocate.call(this, container, box);
+                    for (const c of container.get_children()) {
+                        if (c instanceof Mirror)
+                            c.allocate_preferred_size(c.fixed_x, c.fixed_y);
+                    }
+                });
         settings.connectObject(
             'changed', () => this._sync(),
             // the other half of Glass windows is the engine's gtk.css
@@ -2260,6 +2276,24 @@ export class Glass {
         });
     }
 
+    // The dash, lit from the bottom edge it sits on. Its host is the
+    // overview's controls, whose layout places only the children it knows:
+    // the mirrors beside the dash are placed after it, where they stand.
+    _trackDash() {
+        const dash = Main.overview.dash;
+        const controls = dash?.get_parent();
+        if (!dash?._background || !controls)
+            return;
+        this._add(dash, {
+            box: () => dash._background,
+            source: (x, y, w) => {
+                const m = Main.layoutManager.primaryMonitor;
+                return [x + w / 2, m ? m.y + m.height : y];
+            },
+            tone: () => this._battery,
+        });
+    }
+
     // The banner bin, lit from the top edge banners come down from; a
     // critical banner's rim is the theme's red.
     _trackBanner() {
@@ -2392,6 +2426,7 @@ export class Glass {
         if (glass || lit) {
             this._trackOsds();
             this._trackScreenshot();
+            this._trackDash();
             // A banner already up: at unlock the tray shows what queued
             // during the lock in the same sessionMode update that turns this
             // extension back on, before the _showNotification hook exists,

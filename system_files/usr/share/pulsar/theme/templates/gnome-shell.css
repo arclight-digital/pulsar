@@ -1312,20 +1312,12 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
   background-color: transparent; box-shadow: none;
   -pulsar-glass-tint: rgba({{popover_rgb}}, {{glass_alpha}}); }
 /* So are the switchers (Alt+Tab, workspaces), the Shell's dialogs, app
-   folders and the screenshot panel. */
+   folders, the screenshot panel and the dash. */
 .pulsar-glass .switcher-list, .pulsar-glass .workspace-switcher, .pulsar-glass .modal-dialog,
-.pulsar-glass .app-folder-dialog, .pulsar-glass .screenshot-ui-panel {
+.pulsar-glass .app-folder-dialog, .pulsar-glass .screenshot-ui-panel,
+.pulsar-glass #dash .dash-background {
   background-color: transparent; box-shadow: none;
   -pulsar-glass-tint: rgba({{popover_rgb}}, {{glass_alpha}}); }
-/* The dash: no blur (all that is behind it is the overview's flat ground),
-   but the same material otherwise -- lit from above, a hairline edge, and
-   a soft shadow that floats it over the overview. */
-.pulsar-glass #dash .dash-background {
-  background-gradient-direction: vertical;
-  background-gradient-start: st-mix({{foreground}}, {{popover}}, 7%);
-  background-gradient-end: {{popover}};
-  border: 1px solid rgba({{foreground_rgb}}, 0.08);
-  box-shadow: 0 10px 28px 0 {{panel_shadow}}; }
 /* running apps' dots glow like the light */
 .pulsar-lit .app-grid-running-dot { box-shadow: 0 0 6px 0 rgba({{accent_rgb}}, 0.7); }
 
@@ -1334,7 +1326,8 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
    battery is low, the theme's red for a critical banner or a battery about
    to run out. Those two keep their meaning in every theme. */
 .popup-menu-content, .quick-settings, .osd-window, .notification-banner,
-.switcher-list, .workspace-switcher, .modal-dialog, .app-folder-dialog, .screenshot-ui-panel {
+.switcher-list, .workspace-switcher, .modal-dialog, .app-folder-dialog, .screenshot-ui-panel,
+#dash .dash-background {
   -pulsar-light: {{accent}}; -pulsar-light-neutral: {{blue}};
   -pulsar-light-warn: {{orange}}; -pulsar-light-alert: {{red}}; }
 /* The keyboard-focus brackets glass.js draws around the focused control,
