@@ -1,0 +1,114 @@
+# Regolith: lunar dust and an oxygen-tank amber.
+# Charcoal greys with no tint to them, like the ground in an Apollo frame,
+# and one warm color from the equipment: the amber of a pressure gauge.
+# Warning stays a lemon yellow so it never reads as the accent.
+name = "Regolith"
+author = "Arclight"
+source = "original"
+prefer = "dark"
+
+[dark]
+background = "#17181a"
+background_deep = "#0f1011"
+background_sunken = "#131415"
+background_raised = "#202124"
+foreground = "#dcdad4"
+foreground_dim = "#b3b1ab"
+foreground_bright = "#eeece6"
+muted = "#7f7e7a"
+selection = "#34332f"
+accent = "#dea05a"              # tank amber
+red = "#e2717a"
+orange = "#e4865e"
+yellow = "#d8d27c"
+green = "#9dc68a"
+cyan = "#84c1c4"
+blue = "#90a9d8"
+magenta = "#c49bc9"
+brown = "#b59a7a"
+bright_red = "#ea9098"
+bright_yellow = "#e4e09c"
+bright_green = "#b6d4a6"
+bright_cyan = "#a2d2d4"
+bright_blue = "#a8c0e8"
+bright_magenta = "#d8b2d6"
+window = "#1a1b1d"
+view = "#141517"
+headerbar = "#222326"
+sidebar = "#1a1b1d"
+card = "#232427"
+popover = "#2a2b2e"
+
+# Sunlit regolith: pale dust, graphite text, the amber burnt darker.
+[light]
+background = "#e8e6e1"
+background_deep = "#d8d6d0"
+background_sunken = "#dfddd8"
+background_raised = "#dedcd6"
+foreground = "#2a2926"
+foreground_dim = "#4c4a46"
+foreground_bright = "#141412"
+muted = "#6e6c67"
+selection = "#d4cfc3"
+accent = "#95570a"
+red = "#aa2a3a"
+orange = "#a2461c"
+yellow = "#666200"
+green = "#2e6b40"
+cyan = "#1c6a6e"
+blue = "#36569c"
+magenta = "#823f88"
+brown = "#7a5a3e"
+window = "#e8e6e1"
+view = "#f3f2ef"
+headerbar = "#dedcd6"
+sidebar = "#e2e0db"
+card = "#f3f2ef"
+popover = "#f7f6f4"
+
+[wallpaper]
+dark = ["backgrounds/orbit-dark.jxl", "backgrounds/relief-dark.jxl"]
+light = ["backgrounds/orbit-light.jxl", "backgrounds/relief-light.jxl"]
+
+# a grey body in orbit with a warm limb; the survey map of the same ground
+[[wallpaper.render]]
+variant = "dark"
+look = "orbit"
+c1 = "#6b6a66"
+c2 = "accent"
+c3 = "foreground_dim"
+stars = 0.6
+desat = 0.3
+gain = 1.0
+
+[[wallpaper.render]]
+variant = "dark"
+look = "relief"
+c1 = "#5a5955"
+c2 = "accent"
+c3 = "muted"
+desat = 0.3
+gain = 0.8
+
+[[wallpaper.render]]
+variant = "light"
+look = "orbit"
+c1 = "#8a8780"
+c2 = "accent"
+c3 = "muted"
+stars = 0.3
+desat = 0.3
+wash = 0.35
+dawn_bottom = "background"
+dawn_top = "background~muted@0.16"
+
+[[wallpaper.render]]
+variant = "light"
+look = "relief"
+c1 = "#8a8780"
+c2 = "accent"
+c3 = "muted"
+desat = 0.3
+wash = 0.35
+dawn_bottom = "background"
+dawn_top = "background~muted@0.16"
