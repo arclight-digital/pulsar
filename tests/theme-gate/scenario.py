@@ -235,11 +235,18 @@ def selector_drift():
         else GATE / "templates" / "gnome-shell.css"
     tpl = re.sub(r"/\*.*?\*/", "", tpl_path.read_text(), flags=re.S)
     missing = set()
-    # Classes the extension itself puts on the UI group (glass.js), not the Shell's.
-    ours = {".pulsar-glass", ".pulsar-lit", ".pulsar-focus-brackets", ".pulsar-panel-shadow", ".pulsar-panel-hairline"}
+    # Classes the extension itself puts on the Shell (glass.js: .pulsar-glass
+    # on the UI group, .pulsar-overview-ground, ...) are looked for in the
+    # extension's own code instead: one it no longer sets is drift too.
+    ext = pathlib.Path("/usr/share/gnome-shell/extensions") / EXT
+    ours = "\n".join(p.read_text() for p in ext.glob("*.js"))
     for sel in re.findall(r"([^{}]+)\{", tpl):
         for tok in re.findall(r"[.#][A-Za-z][\w-]*", sel):
-            if tok not in ours and not re.search(re.escape(tok) + r"(?![\w-])", stock):
+            if tok.startswith(".pulsar-"):
+                found = re.search(r"(?<![\w-])" + re.escape(tok[1:]) + r"(?![\w-])", ours)
+            else:
+                found = re.search(re.escape(tok) + r"(?![\w-])", stock)
+            if not found:
                 missing.add(tok)
     return sorted(missing)
 
