@@ -1553,7 +1553,10 @@ class PanelGlass {
 
     // Faded, not switched, as the overview comes and goes: the bar's glass
     // leaves as Activities opens and is back as it closes, over the
-    // overview's own 250 ms. ease() is instant with animations off.
+    // overview's own 250 ms, on the curve St fades the bar's tint with (its
+    // CSS transition). On a faster curve the blur came back ahead of the
+    // tint that darkens it, and the bar swelled bright before settling.
+    // ease() is instant with animations off.
     set visible(v) {
         for (const a of [this._actor, this._shadow, this._line]) {
             a.remove_transition('opacity');
@@ -1562,12 +1565,12 @@ class PanelGlass {
                     a.opacity = 0;
                     a.show();
                 }
-                a.ease({opacity: 255, duration: PANEL_FADE_MS, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+                a.ease({opacity: 255, duration: PANEL_FADE_MS, mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD});
             } else if (a.visible) {
                 a.ease({
                     opacity: 0,
                     duration: PANEL_FADE_MS,
-                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    mode: Clutter.AnimationMode.EASE_IN_OUT_QUAD,
                     onStopped: finished => finished && a.hide(),
                 });
             }
