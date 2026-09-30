@@ -633,6 +633,11 @@ class PulsarLiveBlur extends Clutter.Effect {
 
     // the rounded shape, in the actor's coordinates
     setShape(rect, radius) {
+        // the same shape again (a relayout that moved nothing): no repaint
+        const s = this._shape;
+        if (s && radius === this._shapeRadius && rect.every((v, i) => v === s[i]))
+            return;
+        this._shapeRadius = radius;
         this._shape = rect;
         this._f('radius', radius);
         this.queue_repaint();
@@ -1539,7 +1544,14 @@ class Surface {
             ? column.apply_relative_transform_to_point(b, new Graphene.Point3D()).x -
               column.get_theme_node().get_margin(St.Side.LEFT) / 2
             : 0;
+        // Relaid out with nothing moved (a relayout anywhere inside the
+        // surface lands here: the date menu's clock, a label), the light
+        // stays as it is, unless sync() has set it since.
         const L = this._light;
+        const key = [lw, lh, w, h, r, light[0], light[1], line ? 1 : 0, divx, scale];
+        if (L._ugen === this._lightGen && this._lightKey?.every((v, i) => v === key[i]))
+            return;
+        this._lightKey = key;
         L.set('size', lw, lh);
         L.set('rect', LIGHT_PAD, LIGHT_PAD, w, h);
         L.set('radius', r);
@@ -1548,6 +1560,7 @@ class Surface {
         L.set('divx', divx);
         L.set('scale', scale);
         L.queue_repaint();
+        this._lightGen = L._ugen;
     }
 
     destroy() {
