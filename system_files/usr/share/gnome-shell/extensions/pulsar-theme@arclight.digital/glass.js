@@ -102,12 +102,22 @@ const POWER_ON_MS = 300;
 // The lens: [rim band px, bend px, red/blue dispersion, sharpness at the rim].
 // Menus, OSDs and banners are thick glass; windows are a thin pane, bent a
 // little and never sharp (no copy kept for them).
-const SURFACE_LENS = [20, 8, 0.1, 0.5];
+const SURFACE_LENS = [28, 14, 0.12, 0.63];
+// Menus, OSDs, banners and the dash are liquid glass: blurred one level
+// less than a window, under a lighter tint (the sheet's surface_alpha), so
+// what is behind them keeps its shapes, soft, and bends at the rim.
+const SURFACE_LEVELS = 2;
+// with its taps spread a little wider than a window's, for a touch more blur
+const SURFACE_OFFSET = 3.5;
 const WINDOW_LENS = [10, 4, 0, 0];
 // What is beneath, lifted so its color reads through a light tint and text
 // on the glass stays readable: darker behind a dark surface, lighter behind
 // a light one (saturate, contrast, brightness).
-const SURFACE_GRADE = {dark: [1.7, 0.75, 0.8], light: [1.5, 0.75, 1.14]};
+// A clearer surface needs less of its contrast taken: text behind it now
+// shows as shapes, and 0.75 flattened them to a wash.
+const SURFACE_GRADE = {dark: [1.6, 0.85, 0.85], light: [1.45, 0.85, 1.1]};
+// Windows keep the grade menus had before they went liquid.
+const WINDOW_GRADE = {dark: [1.7, 0.75, 0.8], light: [1.5, 0.75, 1.14]};
 // libadwaita's window shape, measured on GNOME 50: the frame rect, its 1px
 // border included, with 16px corners (15 inside the border). The mask
 // follows it exactly and fades across the border; over the last few pixels
@@ -116,20 +126,19 @@ const SURFACE_GRADE = {dark: [1.7, 0.75, 0.8], light: [1.5, 0.75, 1.14]};
 const WINDOW_RADIUS = 16;
 const WINDOW_PAD = 48;
 const WINDOW_GRADE_EDGE = 4;
-// A window's grade is the menus' (SURFACE_GRADE), for the scheme the theme
-// is in, so a window and a menu over the same wallpaper read as one
-// material. A fixed [1.9, 0.9, 1.35] made what is beneath a window loud,
+// A window's grade (WINDOW_GRADE) follows the scheme the theme is in, as
+// the menus' does. A fixed [1.9, 0.9, 1.35] made what is beneath a window loud,
 // bright blobs beside a menu. The scheme is read off the top bar's glass,
 // which the same sheet colors for the same mode the GTK theme is in -- a
 // single-mode theme included, where Dark Style says nothing about it. The
 // bar goes transparent in the overview and on the lock screen; then it says
 // nothing either, and the last answer stands.
-let lastWindowGrade = SURFACE_GRADE.dark;
+let lastWindowGrade = WINDOW_GRADE.dark;
 function windowGrade() {
     try {
         const bg = Main.panel.get_theme_node().get_background_color();
         if (bg.alpha > 0)
-            lastWindowGrade = luminance(bg) > 0.5 ? SURFACE_GRADE.light : SURFACE_GRADE.dark;
+            lastWindowGrade = luminance(bg) > 0.5 ? WINDOW_GRADE.light : WINDOW_GRADE.dark;
     } catch {}
     return lastWindowGrade;
 }
@@ -535,6 +544,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._lens = params.lens ?? [0, 0, 0, 0];
         // how many times it is halved past the first: how wide the blur is
         this._depth = params.levels ?? BLUR_LEVELS;
+        // and how far apart each step's taps are
+        this._offset = params.offset ?? BLUR_OFFSET;
         this._f('lens', ...this._lens);
         this.setEdgeDark(0);
         this.setTint(0, 0, 0, 0);
@@ -944,8 +955,8 @@ class PulsarLiveBlur extends Clutter.Effect {
             const dst = Scratch.get(`d${i}`, L[i][0], L[i][1]);
             const [sw, sh] = L[i - 1];
             D.set_layer_texture(0, src.tex);
-            hp[0] = 0.5 * BLUR_OFFSET / src.W;
-            hp[1] = 0.5 * BLUR_OFFSET / src.H;
+            hp[0] = 0.5 * this._offset / src.W;
+            hp[1] = 0.5 * this._offset / src.H;
             D.set_uniform_float(this._downLoc.halfPixel, 2, 1, hp);
             if (i === 1 && s.box[2] - s.box[0] >= 1 && s.box[3] - s.box[1] >= 1) {
                 b[0] = (s.box[0] + 0.5) / src.W;
@@ -966,8 +977,8 @@ class PulsarLiveBlur extends Clutter.Effect {
             const dst = i === 0 ? s.result : Scratch.get(`u${i}`, L[i][0], L[i][1]);
             const [sw, sh] = L[i + 1];
             U.set_layer_texture(0, src.tex);
-            hp[0] = 0.5 * BLUR_OFFSET / src.W;
-            hp[1] = 0.5 * BLUR_OFFSET / src.H;
+            hp[0] = 0.5 * this._offset / src.W;
+            hp[1] = 0.5 * this._offset / src.H;
             U.set_uniform_float(this._upLoc.halfPixel, 2, 1, hp);
             b[0] = 0.5 / src.W;
             b[1] = 0.5 / src.H;
@@ -1285,7 +1296,7 @@ class Surface {
         this._under = new Mirror(host);
         this._under.connect('destroy', () => (this._under = null));
         this._backdrop = new St.Widget({width: 1, height: 1});
-        this._blur = new LiveBlur({lens: SURFACE_LENS});
+        this._blur = new LiveBlur({lens: SURFACE_LENS, levels: SURFACE_LEVELS, offset: SURFACE_OFFSET});
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         this._under.add_child(this._backdrop);
         parent.insert_child_below(this._under, host);

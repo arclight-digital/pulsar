@@ -306,6 +306,10 @@ class Variant:
         # The top bar's glass: the deep ground on dark; on light the ground
         # itself, lifted toward white (the deep one reads as flat grey there).
         c["glass_alpha"] = self.glass_alpha
+        # The Shell's floating glass (menus, OSDs, banners, dialogs, the
+        # dash) is clearer than the bar and the windows: what is behind
+        # should read through as soft shapes, not only as color.
+        c["surface_alpha"] = round(max(0.2, self.glass_alpha - 0.08), 3)
         if self.mode == "dark":
             c["glass_panel"] = f"rgba({self.p['background_deep'].rgb}, {self.glass_alpha})"
             c["panel_shadow"] = "rgba(0, 0, 0, 0.3)"
