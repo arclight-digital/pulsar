@@ -172,6 +172,13 @@ def kill_apps():
         # shadows piling into near-black gutters in the desktop shots
         subprocess.run(["pkill", "-x", name[:15]], capture_output=True)
     time.sleep(0.8)
+    # reap them: an app killed but never waited on stays a zombie, and btop
+    # in the next desktop shot listed every one of them at 0B
+    for p in procs[:]:
+        if p.args and p.args[0] == "gnome-shell":
+            continue
+        if p.poll() is not None:
+            procs.remove(p)
 
 
 def pt(*args, check=True):
