@@ -1045,8 +1045,8 @@ vec2 p = f - ctr;
 float d = sd(p, b, radius);
 vec2 n = normalize(vec2(sd(p + vec2(0.5, 0.0), b, radius) - sd(p - vec2(0.5, 0.0), b, radius),
                         sd(p + vec2(0.0, 0.5), b, radius) - sd(p - vec2(0.0, 0.5), b, radius)) + 1e-5);
-/* top-full: a line along the top edge, each point lit from the nearest
-   point of it rather than from one spot */
+/* top-full, bottom-full: a line along that edge, each point lit from the
+   nearest point of it rather than from one spot */
 vec2 src = line > 0.5 ? vec2(clamp(f.x, rect.x + radius, rect.x + rect.z - radius), light.y) : light;
 vec2 tl = src - f;
 float dist = length(tl);
@@ -1207,24 +1207,28 @@ function holdBack([lx, ly], rect, r) {
     return [lx, ly];
 }
 
-// The light comes from one of five places, whatever opened the surface:
-// above its left end (a menu under a button on the left of the bar), above
-// its middle (the date menu under the clock), above its right end (Quick
-// Settings), below its middle (the dash, the OSDs, the screenshot panel),
-// or the whole top edge at once (no source: the switchers, the dialogs, and
-// banners, which come down from the top of the screen). A source only picks
-// which, by the third of the surface it is over, or whether it is below
-// the surface's middle. Returns the spot, in the light actor's coordinates
-// (the surface is [LIGHT_PAD, LIGHT_PAD, w, h]), and whether it is the line.
-function lightSpot(src, w, h, r) {
+// The light comes from one of eight places, whatever opened the surface:
+// the left end, the middle or the right end of its top edge or of its
+// bottom edge, or the whole of either edge at once. A source picks the edge
+// (whether it is above or below the surface's middle) and the third it is
+// over: a menu under a button on the left of the bar is lit top left, the
+// date menu top center, Quick Settings top right, the OSDs and the
+// screenshot panel bottom center. With no source the whole top edge is lit
+// (the switchers, the dialogs, and banners, which come down from the top
+// of the screen); opts.full 'bottom' lights the whole bottom edge (the
+// dash, a shelf on the bottom of the screen). Returns the spot, in the
+// light actor's coordinates (the surface is [LIGHT_PAD, LIGHT_PAD, w, h]),
+// and whether it is a line along that edge.
+function lightSpot(src, w, h, r, full) {
     const [x0, y0] = [LIGHT_PAD, LIGHT_PAD];
+    const top = y0 - LIGHT_MIN_DISTANCE, bottom = y0 + h + LIGHT_MIN_DISTANCE;
+    if (full === 'bottom')
+        return [[x0 + w / 2, bottom], true];
     if (!src)
-        return [[x0 + w / 2, y0 - LIGHT_MIN_DISTANCE], true];
-    if (src[1] > y0 + h / 2)
-        return [[x0 + w / 2, y0 + h + LIGHT_MIN_DISTANCE], false];
+        return [[x0 + w / 2, top], true];
     const f = (src[0] - x0) / w;
     const x = f < 1 / 3 ? x0 + r : f > 2 / 3 ? x0 + w - r : x0 + w / 2;
-    return [[x, y0 - LIGHT_MIN_DISTANCE], false];
+    return [[x, src[1] > y0 + h / 2 ? bottom : top], false];
 }
 
 function luminance(c) {
@@ -1479,7 +1483,8 @@ class Surface {
         this._lightActor.set_size(lw, lh);
         const lx0 = origin.x + o.x - LIGHT_PAD, ly0 = origin.y + o.y - LIGHT_PAD;
         const src = this._opts.source(origin.x + o.x, origin.y + o.y, w, h);
-        const [spot, line] = lightSpot(src && [src[0] - lx0, src[1] - ly0], w, h, r);
+        const [spot, line] = lightSpot(src && [src[0] - lx0, src[1] - ly0], w, h, r,
+            this._opts.full);
         const light = line ? spot : holdBack(spot, [LIGHT_PAD, LIGHT_PAD, w, h], r);
         const column = this._opts.divider?.();
         // stock draws no line there, only a gap (the column's margin); light its middle
@@ -2347,7 +2352,7 @@ export class Glass {
         });
     }
 
-    // The dash, lit from the bottom edge it sits on. Its host is the
+    // The dash, lit along the whole bottom edge it sits on. Its host is the
     // overview's controls, whose layout places only the children it knows:
     // the mirrors beside the dash are placed after it, where they stand.
     _trackDash() {
@@ -2357,6 +2362,7 @@ export class Glass {
             return;
         this._add(dash, {
             box: () => dash._background,
+            full: 'bottom',
             source: (x, y, w) => {
                 const m = Main.layoutManager.primaryMonitor;
                 return [x + w / 2, m ? m.y + m.height : y];
