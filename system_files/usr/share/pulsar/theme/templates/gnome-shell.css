@@ -1318,6 +1318,24 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .pulsar-glass #dash .dash-background {
   background-color: transparent; box-shadow: none;
   -pulsar-glass-tint: rgba({{popover_rgb}}, {{surface_alpha}}); }
+/* The overview's ground: the wallpaper, blurred (glass.js), under this tint
+   of the deep ground. With glass off the ground is #overviewGroup's own
+   flat color, as it was. */
+.pulsar-overview-ground { background-color: {{glass_ground}}; }
+/* On that ground the overview's chrome is glass too. The search entry and
+   the dash's app names are lit surfaces (glass.js): their own ground goes,
+   and hovering the entry lifts it the way a card on glass lifts. The search
+   results and the app folders need no blur of their own, since the ground
+   beneath them already is one: the results take the glass's tint, the
+   folders its cards'. The window titles under the previews stay solid:
+   they sit over the windows' own sharp edges. */
+.pulsar-glass .search-entry, .pulsar-glass .search-entry:focus, .pulsar-glass .dash-label {
+  background-color: transparent;
+  -pulsar-glass-tint: rgba({{popover_rgb}}, {{surface_alpha}}); }
+.pulsar-glass .search-entry:hover { background-color: {{glass_card}}; }
+.pulsar-glass .search-section-content { background-color: rgba({{popover_rgb}}, {{surface_alpha}}); }
+.pulsar-glass .app-folder { background-color: {{glass_card}}; }
+.pulsar-glass .app-folder:hover, .pulsar-glass .app-folder:highlighted { background-color: {{glass_card_hover}}; }
 /* running apps' dots glow like the light */
 .pulsar-lit .app-grid-running-dot { box-shadow: 0 0 6px 0 rgba({{accent_rgb}}, 0.7); }
 
@@ -1327,7 +1345,7 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
    to run out. Those two keep their meaning in every theme. */
 .popup-menu-content, .quick-settings, .osd-window, .notification-banner,
 .switcher-list, .workspace-switcher, .modal-dialog, .app-folder-dialog, .screenshot-ui-panel,
-#dash .dash-background {
+#dash .dash-background, .search-entry, .dash-label {
   -pulsar-light: {{accent}}; -pulsar-light-neutral: {{blue}};
   -pulsar-light-warn: {{orange}}; -pulsar-light-alert: {{red}}; }
 /* The keyboard-focus brackets glass.js draws around the focused control,
