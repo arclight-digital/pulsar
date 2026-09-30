@@ -1,22 +1,23 @@
-<p align="center">
-  <img src="assets/brand/svg/pulsar-mark.svg" width="140" alt="">
-</p>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="assets/brand/svg/pulsar-lockup-horizontal-light.svg">
+    <img src="assets/brand/svg/pulsar-lockup-horizontal.svg" width="320" alt="Pulsar">
+  </picture>
+</h1>
 
-<h1 align="center">Pulsar</h1>
-
 <p align="center">
-  <strong>Your lighthouse in the sky.</strong><br>
-  An immutable Fedora for gaming and development, built and signed entirely in CI.
+  Your lighthouse in the sky.<br>
+  <sub>Linux that’s beautiful out of the box and rolls back when something breaks.</sub>
 </p>
 
 <p align="center">
   <a href="https://getpulsar.dev">getpulsar.dev</a>
 </p>
 
-A stylish, atomic, modern Linux desktop: a bootc image built on Fedora
-Silverblue, rebuilt every night by an ephemeral build host, with a signed
-NVIDIA driver and signed installer ISOs. The machine that runs it never
-compiles anything; the last good version is always one reboot away.
+Pulsar is a bootc image built on Fedora Silverblue, rebuilt every night by an
+ephemeral build host, with a signed NVIDIA driver and signed installer ISOs.
+The machine that runs it never compiles anything; the last good version is
+always one reboot away.
 
 ```bash
 sudo bootc switch ghcr.io/arclight-digital/pulsar:latest          # runs anywhere

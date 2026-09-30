@@ -47,7 +47,7 @@ BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
 CSS = """
 .wl-display { font-weight: 800; font-size: 3.1em; letter-spacing: -0.02em; }
 .wl-title { font-weight: 800; font-size: 2.3em; letter-spacing: -0.015em; }
-.wl-tagline { font-weight: 800; font-size: 1.45em; color: var(--accent-color); letter-spacing: 0.01em; }
+.wl-tagline { font-size: 1.3em; }
 .wl-lede { font-size: 1.12em; opacity: 0.78; }
 .wl-kicker { font-weight: 800; font-size: 0.78em; letter-spacing: 0.16em; color: var(--accent-color); }
 .wl-h { font-weight: 800; font-size: 1.12em; }
@@ -192,7 +192,7 @@ class Welcome(Adw.ApplicationWindow):
             pick()
         rise = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-rise"])
         rise.append(label("Welcome to Pulsar", ["wl-display"]))
-        rise.append(label("Stylish, atomic, modern.", ["wl-tagline"]))
+        rise.append(label("Your lighthouse in the sky.", ["wl-tagline", "dim-label"]))
         rise.append(spacer(4))
         rise.append(label("A desktop that looks after itself, so you can get on with the work and the play.",
                           ["wl-lede"]))

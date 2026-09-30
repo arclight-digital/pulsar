@@ -26,7 +26,7 @@ the site claims it before it lands. The site's job is to present it well.
 
 ## Positioning
 
-**Public line: "Stylish, atomic, modern Linux, rebuilt every night."** (2026-09-28; replaces "a stylish, atomic, agentic Linux" from 2026-09-26, which read as aimed at other distros. Stylish still leads; the agents are a feature, not the headline.) "Silverblue+"
+**Brand lines (2026-09-29):** the lockup (mark and PULSAR) carries the tagline "Your lighthouse in the sky." everywhere. Where someone may be meeting Pulsar for the first time (the site's hero, share cards, the README) the benefit line follows it: "Linux that's beautiful out of the box and rolls back when something breaks." The descriptor "Stylish · atomic · modern" (2026-09-28, itself replacing "a stylish, atomic, agentic Linux") is retired: an adjective list, with "atomic" as jargon outside Fedora circles. No adjective lists in brand chrome, and copy never leads with "Fedora". "Silverblue+"
 and any comparison to other distros are INTERNAL shorthand only and never
 appear on the site, in the README or in release notes; the Fedora Silverblue
 base is stated plainly where it is a technical fact (install, provenance),
