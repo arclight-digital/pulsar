@@ -1185,6 +1185,8 @@ const LightEffect = GObject.registerClass({
         this.set('darkEdge', 0);
         this._trace = 1;
         this.set('trace', 1);
+        this._scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        this._u('scale', this._scale);
     }
 
     get trace() {
@@ -1196,14 +1198,21 @@ const LightEffect = GObject.registerClass({
             return;
         this._trace = v;
         if (this._loc)
-            this.set('trace', v);
+            this._u('trace', v);
         this.queue_repaint();
         this.notify('trace');
     }
 
+    // what the surface sets (its geometry, its colors), counted so its
+    // layout knows when the light is already as it would set it
     set(name, ...v) {
-        this._pipeline.set_uniform_float(this._loc[name], v.length, 1, v);
+        this._u(name, ...v);
         this._ugen = (this._ugen ?? 0) + 1;
+    }
+
+    // what the light keeps up itself, as it animates and paints
+    _u(name, ...v) {
+        this._pipeline.set_uniform_float(this._loc[name], v.length, 1, v);
     }
 
     // Drawn directly, under the actor's own paint (see pass()).
@@ -1214,7 +1223,16 @@ const LightEffect = GObject.registerClass({
             const opacity = actor.get_paint_opacity();
             if (opacity !== this._opacity) {
                 this._opacity = opacity;
-                this.set('opacity', opacity / 255);
+                this._u('opacity', opacity / 255);
+            }
+            // The grain is one cell per device pixel: the scale of the view
+            // this paints (1.25 draws 1.25 device pixels to a logical one,
+            // where St's own scale says 1). Painted anywhere else (a
+            // screenshot), the last view's.
+            const view = Views.get(paintContext.get_framebuffer());
+            if (view && view.scale !== this._scale) {
+                this._scale = view.scale;
+                this._u('scale', view.scale);
             }
             paintContext.get_framebuffer().draw_textured_rectangle(this._pipeline, 0, 0, w, h, 0, 0, 1, 1);
         }
@@ -1511,7 +1529,6 @@ class Surface {
         this._retries = 0;
         this._placed = true;
         this._restack();
-        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
         const [w, h] = [b.width, b.height];
         // A pill's CSS radius (Shell 50's OSD: 999px) is far past half its
         // height, and the masks' rounded-rect distance then covers nothing:
@@ -1569,7 +1586,7 @@ class Surface {
         // surface lands here: the date menu's clock, a label), the light
         // stays as it is, unless sync() has set it since.
         const L = this._light;
-        const key = [lw, lh, w, h, r, light[0], light[1], line ? 1 : 0, divx, scale];
+        const key = [lw, lh, w, h, r, light[0], light[1], line ? 1 : 0, divx];
         if (L._ugen === this._lightGen && this._lightKey?.every((v, i) => v === key[i]))
             return;
         this._lightKey = key;
@@ -1579,7 +1596,6 @@ class Surface {
         L.set('light', ...light);
         L.set('line', line ? 1 : 0);
         L.set('divx', divx);
-        L.set('scale', scale);
         L.queue_repaint();
         this._lightGen = L._ugen;
     }
