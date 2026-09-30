@@ -323,6 +323,53 @@ setkey() { python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d[s
     [ "$status" -eq 0 ]
 }
 
+onemode() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["mode"], d["name"], d["pinned"])' \
+    "$XDG_STATE_HOME/pulsar-theme/shell/one-mode.json"; }
+
+@test "a one-mode theme tells the Shell extension its mode; a two-mode theme and revert take it back" {
+    fake_dconf
+    lock="$XDG_STATE_HOME/pulsar-theme/shell/one-mode.json"
+    python3 "$ENGINE" set dracula --no-restart >/dev/null
+    [ "$(onemode)" = "dark Dracula False" ]
+    python3 "$ENGINE" set alucard --no-restart >/dev/null
+    [ "$(onemode)" = "light Alucard False" ]
+    python3 "$ENGINE" set nord --no-restart >/dev/null
+    [ ! -e "$lock" ]
+    # --variant pins a two-mode theme to one: the toggle has nothing to swap to either
+    python3 "$ENGINE" set nord --variant light --no-restart >/dev/null
+    [ "$(onemode)" = "light Nord True" ]
+    python3 "$ENGINE" set dracula --no-restart >/dev/null
+    python3 "$ENGINE" revert --to image >/dev/null
+    [ ! -e "$lock" ]
+}
+
+@test "every shipped theme's mode count matches what it tells the extension" {
+    out="${BATS_TEST_TMPDIR}/render"
+    for f in "${PULSAR_THEME_PATH}"/*/theme.toml; do
+        t=$(basename "$(dirname "$f")")
+        rm -rf "$out"
+        python3 "$ENGINE" render "$t" "$out" >/dev/null
+        modes=$(grep -cE '^\[(dark|light)\]' "$f")
+        if [ "$modes" -eq 1 ]; then
+            grep -q "\"mode\": \"$(grep -oE '^\[(dark|light)\]' "$f" | tr -d '[]')\"" \
+                "$out/.local/state/pulsar-theme/shell/one-mode.json"
+        else
+            [ ! -e "$out/.local/state/pulsar-theme/shell/one-mode.json" ]
+        fi
+    done
+}
+
+@test "follow-scheme leaves a one-mode theme and the scheme alone after a Dark Style flip" {
+    fake_dconf
+    python3 "$ENGINE" set dracula --no-restart >/dev/null
+    before=$(cat "$XDG_CONFIG_HOME/gtk-3.0/gtk.css" "$XDG_STATE_HOME/pulsar-theme/shell/"*.css | sha256sum)
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme >/dev/null
+    [ "$(cat "$XDG_CONFIG_HOME/gtk-3.0/gtk.css" "$XDG_STATE_HOME/pulsar-theme/shell/"*.css | sha256sum)" = "$before" ]
+    [ "$(key /org/gnome/desktop/interface/color-scheme)" = "'default'" ]
+    [ "$(onemode)" = "dark Dracula False" ]
+}
+
 @test "revert keeps a btop theme the user picked after theming" {
     fake_dconf
     mkdir -p "$XDG_CONFIG_HOME/btop"
