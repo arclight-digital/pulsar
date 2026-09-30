@@ -1714,10 +1714,12 @@ class WindowGlass {
 }
 
 // Four corner brackets that lock onto the control the keyboard is on and
-// glide between controls. Not on a control under the pointer: hovering a
-// menu item moves key focus too, and the brackets must not chase the mouse.
-// (Watching key presses cannot tell: an open menu holds a grab, and the
-// stage never sees them.) The stock focus ring stays.
+// glide between controls. Only while the keyboard is the last input device:
+// the Shell moves key focus for the mouse too (a hovered menu item takes it,
+// a menu opened by a click gives it to its first item), and brackets on a
+// control nobody tabbed to read as random marks. The backend says which
+// device was used last whatever holds a grab (an open menu does, and the
+// stage never sees its key presses). The stock focus ring stays.
 class FocusBrackets {
     constructor(owner) {
         this._owner = owner;
@@ -1727,6 +1729,14 @@ class FocusBrackets {
         this._area.connect('destroy', () => (this._area = null));
         Main.layoutManager.uiGroup.add_child(this._area);
         global.stage.connectObject('notify::key-focus', () => this._queue(), this);
+        this._keyboard = false;
+        global.backend.connectObject('last-device-changed', (_b, device) => {
+            const keyboard = device?.get_device_type() === Clutter.InputDeviceType.KEYBOARD_DEVICE;
+            if (keyboard === this._keyboard)
+                return;
+            this._keyboard = keyboard;
+            this._queue();
+        }, this);
     }
 
     _queue() {
@@ -1737,18 +1747,12 @@ class FocusBrackets {
             });
     }
 
-    _underPointer(f) {
-        const [px, py] = global.get_pointer();
-        const hit = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, px, py);
-        return !!hit && (hit === f || f.contains(hit));
-    }
-
     _wanted(f) {
-        return this._owner.brackets &&
+        return this._owner.brackets && this._keyboard &&
             f instanceof St.Widget && f.get_stage() && f.get_paint_opacity() > 0 && !(f instanceof St.Entry) && f.mapped && f.can_focus &&
             f.has_style_pseudo_class('focus') &&
             (f instanceof St.Button || f.has_style_class_name('popup-menu-item')) &&
-            Main.layoutManager.uiGroup.contains(f) && !this._underPointer(f);
+            Main.layoutManager.uiGroup.contains(f);
     }
 
     _update() {
@@ -1844,6 +1848,7 @@ class FocusBrackets {
         if (this._watch)
             GLib.source_remove(this._watch);
         global.stage.disconnectObject(this);
+        global.backend.disconnectObject(this);
         this._target?.disconnectObject(this);
         this._area?.destroy();
     }
