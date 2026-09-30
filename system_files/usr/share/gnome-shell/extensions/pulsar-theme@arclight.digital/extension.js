@@ -24,6 +24,10 @@ import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extension
 
 import {Glass} from './glass.js';
 
+// How long a burst of changes may take to arrive before the sheet is
+// reloaded once for all of it (see _reloadSoon).
+const RELOAD_MS = 100;
+
 export default class PulsarThemeExtension extends Extension {
     enable() {
         this._dir = GLib.build_filenamev([GLib.get_user_state_dir(), 'pulsar-theme', 'shell']);
@@ -37,11 +41,11 @@ export default class PulsarThemeExtension extends Extension {
         this._monitorId = this._monitor.connect('changed', (_m, file, other) => {
             const hit = f => f && f.get_basename().startsWith('gnome-shell');
             if (hit(file) || hit(other))
-                this._reload();
+                this._reloadSoon();
         });
         this._iface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         this._schemeId = this._iface.connect('changed::color-scheme', () => {
-            this._reload();
+            this._reloadSoon();
             // GTK3 apps cannot follow the scheme themselves (no media
             // queries); the engine rewrites their half. Fire and forget.
             try {
@@ -60,12 +64,14 @@ export default class PulsarThemeExtension extends Extension {
         this._bg = new Gio.Settings({schema_id: 'org.gnome.desktop.background'});
         this._bgId = this._bg.connect('changed', (_s, key) => {
             if (key.startsWith('picture-'))
-                this._reload();
+                this._reloadSoon();
         });
         this._themeCtx = St.ThemeContext.get_for_stage(global.stage);
         this._themeChangedId = this._themeCtx.connect('changed', () => {
             // Our own load/unload emits this too: only a NEW theme object
-            // (a Shell theme swap) is a reason to reload.
+            // (a Shell theme swap) is a reason to reload. At once, not
+            // soon: the new theme carries our old sheet over, and a frame
+            // of the new stock theme under it would show.
             if (this._themeCtx.get_theme() !== this._theme)
                 this._reload();
         });
@@ -90,6 +96,9 @@ export default class PulsarThemeExtension extends Extension {
         this._bg?.disconnect(this._bgId);
         this._bg = null;
         this._themeCtx?.disconnect(this._themeChangedId);
+        if (this._reloadId)
+            GLib.source_remove(this._reloadId);
+        this._reloadId = 0;
         this._reloading = true;     // nothing from here on re-enters
         this._unload();
         this._themeCtx = null;
@@ -144,9 +153,27 @@ export default class PulsarThemeExtension extends Extension {
         }
     }
 
+    // Changes come in bursts: one `pulsar-theme set` rewrites the sheets,
+    // the scheme and the wallpaper, four reloads inside 70 ms, each of them
+    // restyling the whole Shell. One reload, RELOAD_MS after the first.
+    _reloadSoon() {
+        if (this._reloadId || this._reloading)
+            return;
+        this._reloadId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, RELOAD_MS, () => {
+            this._reloadId = 0;
+            this._reload();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _reload() {
         if (this._reloading)
             return;
+        // done now: whatever was waiting is part of this
+        if (this._reloadId) {
+            GLib.source_remove(this._reloadId);
+            this._reloadId = 0;
+        }
         this._reloading = true;
         try {
             this._unload();
