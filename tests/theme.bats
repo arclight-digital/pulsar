@@ -922,3 +922,23 @@ print("" if d is None else d)' "$1" "$2"; }
     # a GTK that has backdrop-filter keeps it; an older one drops the block
     [[ "$output" == *"gated: True True"* || "$output" == *"gated: False False"* ]]
 }
+
+# The theme gate's own judgments, without a Shell: tests/theme-gate/scenario.py
+# imported for its pure functions.
+gate_py() {
+    GATE_OUT="${BATS_TEST_TMPDIR}/out" GATE_APPS_LOG="${BATS_TEST_TMPDIR}/apps.log" \
+        GATE_SHELL_LOG="${BATS_TEST_TMPDIR}/shell.log" \
+        python3 -c "import sys; sys.path.insert(0, '${REPO}/tests/theme-gate'); import scenario as s; $1"
+}
+
+@test "theme gate: a pulsar-theme warning or a JS error in the Shell log fails it" {
+    printf '%s\n' '(gnome-shell:49): libmutter-WARNING **: There is no colord server available' > "${BATS_TEST_TMPDIR}/shell.log"
+    run gate_py 'print(s.shell_log_problems("t"))'
+    [ "$output" = "[]" ]
+    printf '%s\n' '(gnome-shell:49): GNOME Shell-WARNING **: 23:31:09.539: pulsar-theme: glass: menu: boom' \
+        'JS ERROR: TypeError: x is undefined' >> "${BATS_TEST_TMPDIR}/shell.log"
+    run gate_py 'print(len(s.shell_log_problems("t")))'
+    [ "$output" = "2" ]
+    # and the log is kept beside the report
+    [ -s "${BATS_TEST_TMPDIR}/out/t-shell.log" ]
+}

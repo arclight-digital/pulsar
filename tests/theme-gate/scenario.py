@@ -35,7 +35,10 @@ W, H = (int(x) for x in os.environ.get("SIZE", "2560x1600").split("x"))
 ENV = dict(os.environ, WAYLAND_DISPLAY="wayland-0", GDK_BACKEND="wayland",
            PATH="/gate/bin:" + os.environ["PATH"])
 ENV.pop("DISPLAY", None)
-LOG = open("/tmp/harness-shell.log", "w")
+# (both paths movable, so tests/theme.bats can import this off the container)
+LOG = open(os.environ.get("GATE_APPS_LOG", "/tmp/harness-apps.log"), "w")
+# the Shell's own output, apart from the apps': shell_log_problems() reads it
+SHELL_LOG = pathlib.Path(os.environ.get("GATE_SHELL_LOG", "/tmp/harness-shell.log"))
 procs = []
 EXT = "pulsar-theme@arclight.digital"
 
@@ -91,8 +94,9 @@ def start_shell():
         dconf("/org/gnome/shell/enabled-extensions", f"['gamescale@arclight.digital', '{EXT}', 'gate-harness@local']")
         dconf("/org/gnome/shell/welcome-dialog-last-shown-version", "'999'")
         dconf("/org/gnome/desktop/interface/enable-animations", "false")
+    out = open(SHELL_LOG, "a")
     p = subprocess.Popen(["gnome-shell", "--headless", "--wayland", "--no-x11", "--virtual-monitor", f"{W}x{H}"],
-                         stdout=LOG, stderr=LOG)
+                         stdout=out, stderr=out)
     procs.append(p)
     for _ in range(120):
         time.sleep(0.5)
@@ -118,6 +122,28 @@ def stop_shell():
             p.kill()
     procs.clear()
     time.sleep(1)
+
+
+# What in the Shell's log fails a run. glass.js catches its own errors and
+# console.warn()s them ("pulsar-theme: glass: menu: ...") so that a broken
+# glass never takes a Shell menu down with it -- which also means a glass
+# that throws on every menu still draws every menu, and passes any pixel
+# check. So the log is read: any of our warnings, and any JS error at all.
+SHELL_LOG_FAIL = re.compile(r"pulsar-theme:|JS ERROR")
+# Known harmless, each with why. Match the whole reason, never a bare
+# "pulsar-theme:", or this list swallows the check.
+SHELL_LOG_ALLOW = [
+]
+
+
+def shell_log_problems(name):
+    """Lines in the Shell's log that fail the run. The log is kept beside the
+    report as <name>-shell.log."""
+    text = SHELL_LOG.read_text(errors="replace") if SHELL_LOG.exists() else ""
+    SHOTS.mkdir(exist_ok=True)
+    (SHOTS / f"{name}-shell.log").write_text(text)
+    return [ln.strip() for ln in text.splitlines()
+            if SHELL_LOG_FAIL.search(ln) and not any(re.search(pat, ln) for pat, _ in SHELL_LOG_ALLOW)]
 
 
 SAMPLE = GATE / "sample.py"
@@ -310,6 +336,9 @@ def gate(only):
     ok, detail = revert_check()
     add("revert is byte-exact and dconf-exact", ok, detail)
     stop_shell()
+    bad = shell_log_problems("gate")
+    add("Shell log has no pulsar-theme warnings and no JS errors", not bad,
+        f"{len(bad)} lines, first: " + " | ".join(bad[:5]) if bad else "")
 
     report["ok"] = all(c["ok"] for c in report["checks"])
     (SHOTS / "gate-report.json").write_text(json.dumps(report, indent=1))
