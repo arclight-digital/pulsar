@@ -16,8 +16,33 @@
 .quick-toggle-has-menu .quick-toggle-menu-button:checked:active:focus,
 .quick-toggle-has-menu .quick-toggle-menu-button:checked:active:hover {
   background-color: {{accent}}; }
+#keyboard,
 .workspace-animation {
   background-color: {{background_deep}}; }
+.keyboard-key.default-key {
+  background-color: {{background}}; }
+.keyboard-key.default-key:hover {
+  background-color: st-mix({{foreground}}, {{background}}, 8%); }
+.keyboard-key.default-key:active,
+.keyboard-key.default-key:active:focus,
+.keyboard-key.default-key:active:hover,
+.keyboard-key.default-key:checked,
+.keyboard-key.default-key:checked:active,
+.keyboard-key.default-key:checked:hover {
+  background-color: st-mix({{foreground}}, {{background}}, 14%); }
+.keyboard-key,
+.keyboard-key:focus {
+  background-color: {{popover}}; }
+.keyboard-key:focus:hover,
+.keyboard-key:hover {
+  background-color: st-mix({{foreground}}, {{popover}}, 8%); }
+.keyboard-key:active,
+.keyboard-key:active:focus,
+.keyboard-key:active:hover,
+.keyboard-key:checked,
+.keyboard-key:checked:active,
+.keyboard-key:checked:hover {
+  background-color: st-mix({{foreground}}, {{popover}}, 14%); }
 .popup-sub-menu {
   background-color: rgba({{foreground_rgb}}, 0.05); }
 StScrollBar > .hhandle,
@@ -75,6 +100,7 @@ StScrollBar > .vhandle:active {
 .app-folder-dialog .message .message-header .message-expand-button,
 .app-folder-dialog .message-notification-group .message-collapse-button,
 .app-folder-dialog .page-navigation-arrow,
+.app-folder-dialog .screenshot-ui-show-pointer-button,
 .app-folder:focus,
 .app-folder:insensitive,
 .button:focus,
@@ -91,13 +117,17 @@ StScrollBar > .vhandle:active {
 .message-notification-group .message-collapse-button:focus,
 .message-notification-group .message-collapse-button:insensitive,
 .modal-dialog .modal-dialog-button-box .modal-dialog-button:insensitive,
-.quick-toggle-has-menu .quick-toggle-menu-button:focus {
+.quick-toggle-has-menu .quick-toggle-menu-button:focus,
+.screenshot-ui-show-pointer-button,
+.screenshot-ui-show-pointer-button:focus,
+.screenshot-ui-show-pointer-button:insensitive {
   background-color: rgba({{foreground_rgb}}, 0.08); }
 .app-folder-dialog .icon-button:hover,
 .app-folder-dialog .message .message-header .message-close-button:hover,
 .app-folder-dialog .message .message-header .message-expand-button:hover,
 .app-folder-dialog .message-notification-group .message-collapse-button:hover,
 .app-folder-dialog .page-navigation-arrow:hover,
+.app-folder-dialog .screenshot-ui-show-pointer-button:hover,
 .app-folder:focus:hover,
 .app-folder:highlighted:hover,
 .button:focus:hover,
@@ -109,7 +139,9 @@ StScrollBar > .vhandle:active {
 .message-notification-group .app-folder-dialog .message-collapse-button:hover,
 .message-notification-group .message-collapse-button:focus:hover,
 .quick-toggle-has-menu .quick-toggle-menu-button:focus:hover,
-.quick-toggle-has-menu .quick-toggle-menu-button:hover {
+.quick-toggle-has-menu .quick-toggle-menu-button:hover,
+.screenshot-ui-show-pointer-button:focus:hover,
+.screenshot-ui-show-pointer-button:hover {
   background-color: rgba({{foreground_rgb}}, 0.13); }
 .app-folder-dialog .icon-button:active,
 .app-folder-dialog .icon-button:active:focus,
@@ -126,6 +158,9 @@ StScrollBar > .vhandle:active {
 .app-folder-dialog .page-navigation-arrow:active,
 .app-folder-dialog .page-navigation-arrow:active:focus,
 .app-folder-dialog .page-navigation-arrow:active:hover,
+.app-folder-dialog .screenshot-ui-show-pointer-button:active,
+.app-folder-dialog .screenshot-ui-show-pointer-button:active:focus,
+.app-folder-dialog .screenshot-ui-show-pointer-button:active:hover,
 .app-folder:active:focus,
 .app-folder:active:hover,
 .app-folder:checked,
@@ -197,7 +232,16 @@ StScrollBar > .vhandle:active {
 .page-navigation-arrow:active:hover,
 .quick-toggle-has-menu .quick-toggle-menu-button:active,
 .quick-toggle-has-menu .quick-toggle-menu-button:active:focus,
-.quick-toggle-has-menu .quick-toggle-menu-button:active:hover {
+.quick-toggle-has-menu .quick-toggle-menu-button:active:hover,
+.screenshot-ui-show-pointer-button:active,
+.screenshot-ui-show-pointer-button:active:focus,
+.screenshot-ui-show-pointer-button:active:hover,
+.screenshot-ui-show-pointer-button:checked,
+.screenshot-ui-show-pointer-button:checked:active,
+.screenshot-ui-show-pointer-button:checked:hover,
+.screenshot-ui-show-pointer-button:selected,
+.screenshot-ui-show-pointer-button:selected:focus,
+.screenshot-ui-show-pointer-button:selected:hover {
   background-color: rgba({{foreground_rgb}}, 0.18); }
 .app-folder-dialog .folder-name-container .folder-name-entry,
 .app-folder-dialog .folder-name-container .folder-name-entry:focus,
@@ -222,6 +266,8 @@ StScrollBar > .vhandle:active {
 .calendar .calendar-month-header .pager-button:insensitive,
 .datemenu-today-button:focus,
 .datemenu-today-button:insensitive,
+.flat.screenshot-ui-show-pointer-button,
+.flat.screenshot-ui-show-pointer-button:insensitive,
 .grid-search-result:insensitive,
 .icon-button.flat:insensitive,
 .list-search-result:insensitive,
@@ -232,8 +278,11 @@ StScrollBar > .vhandle:active {
 .popup-menu-item:insensitive,
 .popup-sub-menu .popup-menu-item:insensitive,
 .quick-slider .slider-bin:focus,
+.screenshot-ui-type-button,
+.screenshot-ui-type-button:insensitive,
 .search-provider-icon:insensitive,
-.switcher-list .item-box:insensitive {
+.switcher-list .item-box:insensitive,
+.word-suggestions StButton:focus {
   background-color: transparent; }
 #dash .dash-item-container .grid-search-result:focus .overview-icon:hover,
 #dash .dash-item-container .grid-search-result:hover .overview-icon,
@@ -257,6 +306,8 @@ StScrollBar > .vhandle:active {
 .calendar .calendar-month-header .pager-button:focus:hover,
 .candidate-box:hover,
 .datemenu-today-button:focus:hover,
+.flat.screenshot-ui-show-pointer-button:focus:hover,
+.flat.screenshot-ui-show-pointer-button:hover,
 .grid-search-result:focus:hover,
 .grid-search-result:highlighted:hover,
 .icon-button.flat:focus:hover,
@@ -272,10 +323,14 @@ StScrollBar > .vhandle:active {
 .overview-tile:highlighted:hover,
 .popup-sub-menu .popup-menu-item:hover,
 .quick-slider .slider-bin:focus:hover,
+.screenshot-ui-type-button:focus:hover,
+.screenshot-ui-type-button:hover,
 .search-provider-icon:focus:hover,
 .search-provider-icon:highlighted:hover,
 .switcher-list .item-box:focus:hover,
-.switcher-list .item-box:highlighted:hover {
+.switcher-list .item-box:highlighted:hover,
+.word-suggestions StButton:focus:hover,
+.word-suggestions StButton:hover {
   background-color: rgba({{foreground_rgb}}, 0.08); }
 #dash .dash-item-container .grid-search-result:active .overview-icon,
 #dash .dash-item-container .grid-search-result:active .overview-icon:focus,
@@ -369,6 +424,15 @@ StScrollBar > .vhandle:active {
 .calendar .calendar-month-header .pager-button:selected:hover,
 .datemenu-today-button:active:focus,
 .datemenu-today-button:active:hover,
+.flat.screenshot-ui-show-pointer-button:active,
+.flat.screenshot-ui-show-pointer-button:active:focus,
+.flat.screenshot-ui-show-pointer-button:active:hover,
+.flat.screenshot-ui-show-pointer-button:checked,
+.flat.screenshot-ui-show-pointer-button:checked:active,
+.flat.screenshot-ui-show-pointer-button:checked:hover,
+.flat.screenshot-ui-show-pointer-button:selected,
+.flat.screenshot-ui-show-pointer-button:selected:focus,
+.flat.screenshot-ui-show-pointer-button:selected:hover,
 .grid-search-result:active:focus,
 .grid-search-result:active:hover,
 .grid-search-result:checked,
@@ -440,6 +504,12 @@ StScrollBar > .vhandle:active {
 .popup-sub-menu .popup-menu-item:active:hover,
 .popup-sub-menu .popup-menu-item:checked,
 .popup-sub-menu .popup-menu-item:selected,
+.screenshot-ui-type-button:active,
+.screenshot-ui-type-button:active:focus,
+.screenshot-ui-type-button:active:hover,
+.screenshot-ui-type-button:checked,
+.screenshot-ui-type-button:checked:active,
+.screenshot-ui-type-button:checked:hover,
 .search-provider-icon:active:focus,
 .search-provider-icon:active:hover,
 .search-provider-icon:checked,
@@ -457,7 +527,13 @@ StScrollBar > .vhandle:active {
 .switcher-list .item-box:checked:hover,
 .switcher-list .item-box:highlighted:active,
 .switcher-list .item-box:selected:active,
-.switcher-list .item-box:selected:hover {
+.switcher-list .item-box:selected:hover,
+.word-suggestions StButton:active,
+.word-suggestions StButton:active:focus,
+.word-suggestions StButton:active:hover,
+.word-suggestions StButton:checked,
+.word-suggestions StButton:checked:active,
+.word-suggestions StButton:checked:hover {
   background-color: rgba({{foreground_rgb}}, 0.14); }
 /* END stock states */
 
@@ -677,6 +753,64 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
   background-color: rgba({{foreground_rgb}}, 0.1); }
 .message-list { border-color: rgba({{foreground_rgb}}, 0.1); }
 .quick-toggle-menu .header .icon { background-color: rgba({{foreground_rgb}}, 0.2); }
+
+/* The screenshot UI: stock's own dark HUD (#2e2e33, white text) in both
+   schemes. Its panel is a popover like the switchers; the mode buttons and
+   the pointer toggle take their grounds from the generated block above, and
+   their text from here, in every state stock restates it white. The capture
+   button is drawn in the text color (stock's white disc), and red while it
+   records: the theme's red. The area and screen shades stay stock's black
+   washes, and the selection edge and handles its white: they sit over
+   whatever is being captured, not over the theme. */
+.screenshot-ui-panel { background-color: {{popover}}; color: {{foreground}}; }
+.screenshot-ui-type-button, .screenshot-ui-type-button:hover, .screenshot-ui-type-button:focus,
+.screenshot-ui-type-button:active, .screenshot-ui-type-button:checked,
+.screenshot-ui-show-pointer-button, .screenshot-ui-show-pointer-button:hover,
+.screenshot-ui-show-pointer-button:focus, .screenshot-ui-show-pointer-button:active,
+.screenshot-ui-show-pointer-button:checked, .screenshot-ui-shot-cast-button { color: {{foreground}}; }
+.screenshot-ui-type-button:insensitive, .screenshot-ui-show-pointer-button:insensitive,
+.screenshot-ui-shot-cast-button:insensitive { color: rgba({{foreground_rgb}}, 0.5); }
+.screenshot-ui-shot-cast-container { background-color: rgba({{foreground_rgb}}, 0.08); }
+.screenshot-ui-shot-cast-button:hover, .screenshot-ui-shot-cast-button:focus { background-color: rgba({{foreground_rgb}}, 0.13); }
+.screenshot-ui-shot-cast-button:active { background-color: rgba({{foreground_rgb}}, 0.18); }
+/* the chosen one of Screenshot / Screencast: the text color as a pill */
+.screenshot-ui-shot-cast-button:checked { background-color: {{foreground}}; color: {{popover}}; }
+.screenshot-ui-capture-button { border-color: {{foreground}}; }
+.screenshot-ui-capture-button .screenshot-ui-capture-button-circle { background-color: {{foreground}}; }
+.screenshot-ui-capture-button .screenshot-ui-capture-button-circle:hover,
+.screenshot-ui-capture-button .screenshot-ui-capture-button-circle:focus,
+.screenshot-ui-capture-button:hover .screenshot-ui-capture-button-circle,
+.screenshot-ui-capture-button:focus .screenshot-ui-capture-button-circle {
+  background-color: st-mix({{foreground}}, {{popover}}, 80%); }
+.screenshot-ui-capture-button:active .screenshot-ui-capture-button-circle {
+  background-color: st-mix({{foreground}}, {{popover}}, 55%); }
+.screenshot-ui-capture-button:cast .screenshot-ui-capture-button-circle { background-color: {{red}}; }
+.screenshot-ui-capture-button:cast:hover .screenshot-ui-capture-button-circle,
+.screenshot-ui-capture-button:cast:focus .screenshot-ui-capture-button-circle { background-color: {{bright_red}}; }
+.screenshot-ui-capture-button:cast:active .screenshot-ui-capture-button-circle {
+  background-color: st-mix({{red}}, {{background_deep}}, 80%); }
+/* picking a window: the windows laid out over the overview's own ground */
+.screenshot-ui-window-selector { background-color: {{background_deep}}; }
+/* the round close buttons: the screenshot UI's, and each window's in the overview */
+.window-close, .screenshot-ui-close-button { background-color: {{popover}}; color: {{foreground}}; }
+.window-close:hover, .screenshot-ui-close-button:hover { background-color: st-mix({{foreground}}, {{popover}}, 8%); }
+.window-close:active, .screenshot-ui-close-button:active { background-color: st-mix({{foreground}}, {{popover}}, 14%); }
+/* Tooltips: the screenshot UI's, the dash's app names, the overview's window
+   titles. Stock's are near-black pills with white text in both schemes. */
+.dash-label, .window-caption, .screenshot-ui-tooltip {
+  background-color: {{popover}}; color: {{foreground}}; border-color: rgba({{foreground_rgb}}, 0.1); }
+
+/* The on-screen keyboard: a tray in the deep ground (stock #2e2e33), keys
+   lifted off it and the modifier keys a step below them (grounds in the
+   generated block), all lettered in the text color stock sets white in
+   every state. A latched modifier stays the accent. */
+.keyboard-key, .keyboard-key:hover, .keyboard-key:focus, .keyboard-key:active, .keyboard-key:checked,
+.keyboard-key.default-key, .keyboard-key.default-key:hover, .keyboard-key.default-key:active,
+.keyboard-key.default-key:checked,
+.word-suggestions, .word-suggestions StButton:hover, .word-suggestions StButton:focus,
+.word-suggestions StButton:active, .word-suggestions StButton:checked { color: {{foreground}}; }
+.keyboard-key.default-key:latched { background-color: {{accent}}; color: {{accent_fg}}; }
+.keyboard-subkeys-boxpointer { -arrow-background-color: {{background_deep}}; -arrow-border-color: rgba({{foreground_rgb}}, 0.1); }
 
 /* Restated last: the tints above match these selectors' specificity and
    would otherwise win on order. */

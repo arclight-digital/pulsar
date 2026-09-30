@@ -44,9 +44,10 @@ in `.preview/theme-gate/`. It needs rootless podman and about ten minutes.
   not relaunched. `fixtures/notes.py` is that app.
 - `picker`: screenshots the picker and its restart dialog.
 - `leaks`: stock showing through, found by what does not move. Every
-  visible Shell widget on nine surfaces (the desktop menu, the date menu,
+  visible Shell widget on eleven surfaces (the desktop menu, the date menu,
   quick settings and a submenu, the app grid and an icon's menu, the run
-  dialog, an OSD, a banner) is read in every state it can take -- hover,
+  dialog, an OSD, a banner, the screenshot UI, the on-screen keyboard) is
+  read in every state it can take -- hover,
   focus, active, checked, selected, insensitive -- under Gruvbox light and
   Nord dark: background, border, and the text color its labels and icons
   actually inherit. A color identical under two unrelated themes did not
