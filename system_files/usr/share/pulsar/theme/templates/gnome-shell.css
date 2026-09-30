@@ -739,6 +739,13 @@ StScrollBar > .vhandle:active {
 .search-provider-icon:hover,
 .search-provider-icon:selected,
 .slider:hover,
+.switcher-list .item-box,
+.switcher-list .item-box:active,
+.switcher-list .item-box:checked,
+.switcher-list .item-box:focus,
+.switcher-list .item-box:highlighted,
+.switcher-list .item-box:hover,
+.switcher-list .item-box:selected,
 .system-action-icon,
 .toggle-switch,
 .user-icon,
@@ -757,9 +764,6 @@ stage {
   color: {{orange}}; }
 .app-folder-dialog .grid-search-result:insensitive,
 .app-folder-dialog .overview-tile:insensitive,
-.list-search-result:insensitive,
-.search-provider-icon:insensitive {
-  color: rgba({{foreground_rgb}}, 0.5); }
 .audio-device-selection-dialog .audio-selection-box .audio-selection-device:insensitive,
 .button.flat:insensitive,
 .button:insensitive,
@@ -773,6 +777,7 @@ stage {
 .flat.screenshot-ui-show-pointer-button:insensitive,
 .icon-button.flat:insensitive,
 .icon-button:insensitive,
+.list-search-result:insensitive,
 .message .message-header .flat.message-close-button:insensitive,
 .message .message-header .flat.message-expand-button:insensitive,
 .message .message-header .message-close-button:insensitive,
@@ -784,11 +789,192 @@ stage {
 .notification-button:insensitive,
 .popup-sub-menu .popup-menu-item:insensitive,
 .quick-toggle-menu:insensitive,
+.search-provider-icon:insensitive,
+.switcher-list .item-box:insensitive,
 .weather-button:insensitive,
 .world-clocks-button:insensitive {
-  color: rgba({{foreground_rgb}}, 0.4); }
+  color: rgba({{foreground_rgb}}, 0.5); }
 .polkit-dialog-user-layout .polkit-dialog-user-root-label {
   color: {{yellow}}; }
+/* Stock's accent fills, in the theme's accent rather than the nearest of
+   GNOME's named ones (ACCENT). */
+.app-folder-dialog .grid-search-result:drop,
+.app-folder-dialog .overview-tile:drop,
+.app-folder:drop,
+.audio-device-selection-dialog .audio-selection-box .audio-selection-device:drop,
+.grid-search-result:drop,
+.list-search-result:drop,
+.overview-tile:drop,
+.screenshot-ui-window-selector-window:checked .screenshot-ui-window-selector-window-border,
+.search-provider-icon:drop,
+.switcher-list .item-box:drop {
+  background-color: st-transparentize({{accent}}, 0.8); }
+.button.default:active,
+.calendar .calendar-day.calendar-today:active,
+.calendar .calendar-month-header .default.pager-button:active,
+.default.screenshot-ui-show-pointer-button:active,
+.icon-button.default:active,
+.keyboard-brightness-level .button:active:checked,
+.message .message-header .default.message-close-button:active,
+.message .message-header .default.message-expand-button:active,
+.message-notification-group .default.message-collapse-button:active,
+.quick-toggle:active:checked {
+  background-color: st-lighten({{accent}}, 9%); }
+.button.default:active,
+.button.default:focus,
+.calendar .calendar-day.calendar-today:active,
+.calendar .calendar-day.calendar-today:focus,
+.calendar .calendar-month-header .default.pager-button,
+.calendar .calendar-month-header .default.pager-button:active,
+.calendar .calendar-month-header .default.pager-button:focus,
+.calendar .calendar-month-header .default.pager-button:hover,
+.candidate-box:selected,
+.check-box:checked StIcon,
+.default.screenshot-ui-show-pointer-button,
+.default.screenshot-ui-show-pointer-button:active,
+.default.screenshot-ui-show-pointer-button:focus,
+.default.screenshot-ui-show-pointer-button:hover,
+.icon-button.default,
+.icon-button.default:active,
+.icon-button.default:focus,
+.icon-button.default:hover,
+.keyboard-brightness-level .button:active:checked,
+.keyboard-brightness-level .button:focus:checked,
+.keyboard-brightness-level .button:hover:checked,
+.message .message-header .default.message-close-button,
+.message .message-header .default.message-close-button:active,
+.message .message-header .default.message-close-button:focus,
+.message .message-header .default.message-close-button:hover,
+.message .message-header .default.message-expand-button,
+.message .message-header .default.message-expand-button:active,
+.message .message-header .default.message-expand-button:focus,
+.message .message-header .default.message-expand-button:hover,
+.message-notification-group .default.message-collapse-button,
+.message-notification-group .default.message-collapse-button:active,
+.message-notification-group .default.message-collapse-button:focus,
+.message-notification-group .default.message-collapse-button:hover,
+.osd-break-countdown-label,
+.osd-monitor-label,
+.quick-toggle-has-menu .quick-toggle-menu-button:checked,
+.quick-toggle-has-menu .quick-toggle-menu-button:checked:active,
+.quick-toggle-has-menu .quick-toggle-menu-button:checked:focus,
+.quick-toggle-has-menu .quick-toggle-menu-button:checked:hover,
+.quick-toggle-menu .header .icon.active,
+.quick-toggle:active:checked,
+.quick-toggle:focus:checked,
+.screenshot-ui-window-selector-window:checked .screenshot-ui-window-selector-check,
+.toggle-switch:checked {
+  color: {{accent_fg}}; }
+.button.default:active:focus,
+.calendar .calendar-day.calendar-today:active:focus,
+.calendar .calendar-month-header .default.pager-button:active:focus,
+.default.screenshot-ui-show-pointer-button:active:focus,
+.icon-button.default:active:focus,
+.keyboard-brightness-level .button:active:focus:checked,
+.message .message-header .default.message-close-button:active:focus,
+.message .message-header .default.message-expand-button:active:focus,
+.message-notification-group .default.message-collapse-button:active:focus,
+.quick-toggle:active:focus:checked {
+  background-color: st-mix(st-mix({{accent}}, #ffffff, 60%), st-lighten({{accent}}, 9%), 5%); }
+.button.default:active:hover,
+.calendar .calendar-day.calendar-today:active:hover,
+.calendar .calendar-month-header .default.pager-button:active:hover,
+.default.screenshot-ui-show-pointer-button:active:hover,
+.icon-button.default:active:hover,
+.keyboard-brightness-level .button:active:hover:checked,
+.message .message-header .default.message-close-button:active:hover,
+.message .message-header .default.message-expand-button:active:hover,
+.message-notification-group .default.message-collapse-button:active:hover,
+.quick-toggle:active:hover:checked {
+  background-color: st-lighten(st-lighten({{accent}}, 9%), 4%); }
+.button.default:focus,
+.calendar .calendar-day.calendar-today:focus,
+.calendar .calendar-month-header .default.pager-button:focus,
+.default.screenshot-ui-show-pointer-button:focus,
+.icon-button.default:focus,
+.keyboard-brightness-level .button:focus:checked,
+.message .message-header .default.message-close-button:focus,
+.message .message-header .default.message-expand-button:focus,
+.message-notification-group .default.message-collapse-button:focus,
+.quick-toggle:focus:checked {
+  background-color: st-mix(st-mix({{accent}}, #ffffff, 60%), {{accent}}, 5%); }
+.button.default:focus:hover,
+.calendar .calendar-day.calendar-today:focus:hover,
+.calendar .calendar-month-header .default.pager-button:focus:hover,
+.default.screenshot-ui-show-pointer-button:focus:hover,
+.icon-button.default:focus:hover,
+.keyboard-brightness-level .button:focus:hover:checked,
+.message .message-header .default.message-close-button:focus:hover,
+.message .message-header .default.message-expand-button:focus:hover,
+.message-notification-group .default.message-collapse-button:focus:hover,
+.quick-toggle:focus:hover:checked {
+  background-color: st-mix(st-mix({{accent}}, #ffffff, 60%), st-lighten({{accent}}, 4%), 5%); }
+.button.default:insensitive,
+.calendar .calendar-day.calendar-today:insensitive,
+.calendar .calendar-month-header .default.pager-button:insensitive,
+.default.screenshot-ui-show-pointer-button:insensitive,
+.icon-button.default:insensitive,
+.keyboard-brightness-level .button:insensitive:checked,
+.message .message-header .default.message-close-button:insensitive,
+.message .message-header .default.message-expand-button:insensitive,
+.message-notification-group .default.message-collapse-button:insensitive,
+.quick-toggle:insensitive:checked {
+  background-color: st-darken({{accent}}, 3%); }
+.button.default:insensitive,
+.calendar .calendar-day.calendar-today:insensitive,
+.calendar .calendar-month-header .default.pager-button:insensitive,
+.default.screenshot-ui-show-pointer-button:insensitive,
+.icon-button.default:insensitive,
+.keyboard-brightness-level .button:insensitive:checked,
+.message .message-header .default.message-close-button:insensitive,
+.message .message-header .default.message-expand-button:insensitive,
+.message-notification-group .default.message-collapse-button:insensitive,
+.quick-toggle:insensitive:checked {
+  color: st-transparentize({{accent_fg}}, 0.5); }
+.calendar .calendar-month-header .default.pager-button,
+.candidate-box:selected,
+.check-box:checked StIcon,
+.default.screenshot-ui-show-pointer-button,
+.emoji-panel .keyboard-key:latched,
+.icon-button.default,
+.message .message-header .default.message-close-button,
+.message .message-header .default.message-expand-button,
+.message-notification-group .default.message-collapse-button,
+.osd-break-countdown-label,
+.osd-monitor-label,
+.quick-toggle-menu .header .icon.active,
+.screenshot-ui-window-selector-window:checked .screenshot-ui-window-selector-check {
+  background-color: {{accent}}; }
+.calendar .calendar-month-header .default.pager-button:hover,
+.default.screenshot-ui-show-pointer-button:hover,
+.icon-button.default:hover,
+.keyboard-brightness-level .button:hover:checked,
+.message .message-header .default.message-close-button:hover,
+.message .message-header .default.message-expand-button:hover,
+.message-notification-group .default.message-collapse-button:hover {
+  background-color: st-lighten({{accent}}, 4%); }
+.check-box:checked:active StIcon {
+  background-color: st-darken({{accent}}, 7%); }
+.check-box:checked:active StIcon {
+  color: st-darken({{accent_fg}}, 7%); }
+.check-box:checked:hover StIcon,
+.toggle-switch:checked:hover {
+  background-color: st-lighten({{accent}}, 5%); }
+.check-box:checked:hover StIcon,
+.toggle-switch:checked:hover {
+  color: st-lighten({{accent_fg}}, 5%); }
+.quick-toggle-has-menu:checked .quick-toggle-separator {
+  background-color: st-mix({{accent_fg}}, {{accent}}, 30%); }
+.ripple-pointer-location {
+  background-color: st-lighten(st-transparentize({{accent}}, 0.7), 30%); }
+.select-area-rubberband {
+  background-color: st-transparentize({{accent}}, 0.7); }
+.shell-link {
+  color: st-lighten({{accent}}, 20%); }
+.shell-link:hover {
+  color: st-lighten(st-lighten({{accent}}, 20%), 10%); }
+.tile-preview {
+  background-color: st-transparentize({{accent}}, 0.5); }
 /* END stock states */
 
 #panel { background-color: {{background_deep}}; }
@@ -968,6 +1154,11 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .prompt-dialog .prompt-dialog-error-label, .caps-lock-warning-label,
 .conflicting-session-dialog-content .conflicting-session-dialog-desc-warning {
   color: {{yellow}}; }
+.prompt-dialog .prompt-dialog-error-label { background-color: st-transparentize({{yellow}}, 0.9); }
+/* Alt+Tab's scroll arrows are drawn in the node's border and text color,
+   stock's white: gone on a light switcher. */
+.switcher-arrow { border-color: rgba({{foreground_rgb}}, 0.8); color: rgba({{foreground_rgb}}, 0.8); }
+.switcher-arrow:highlighted { border-color: {{foreground}}; color: {{foreground}}; }
 /* and the notification stack's own greys: the cards behind the top one,
    the tile behind a themed icon, media buttons */
 .message:second-in-stack { background-color: st-mix({{background_deep}}, {{background_raised}}, 25%); }
