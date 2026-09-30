@@ -563,6 +563,20 @@ class PulsarLiveBlur extends Clutter.Effect {
         this.queue_repaint();
     }
 
+    // Hold the blur it has instead of copying what is beneath. Let go, the
+    // next paint copies all of it again: what is beneath may have changed
+    // anywhere while it was held.
+    setFrozen(v) {
+        if (this._frozen === v)
+            return;
+        this._frozen = v;
+        if (!v) {
+            for (const s of this._states.values())
+                s.key[0] = NaN;
+        }
+        this.queue_repaint();
+    }
+
     // the rounded shape, in the actor's coordinates
     setShape(rect, radius) {
         this._shape = rect;
@@ -659,6 +673,13 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (inClonePaint(actor) || (this._last?.result && !Views.get(fb))) {
             if (this._last?.result)
                 this._draw(fb, actor, x0, y0, w, h, this._last);
+            return;
+        }
+        // Held (setFrozen): the blur it has, and nothing copied.
+        if (this._frozen) {
+            const s = this._states.get(fb) ?? this._last;
+            if (s?.result)
+                this._draw(fb, actor, x0, y0, w, h, s);
             return;
         }
         const r = this._rect ??= {x: 0, y: 0, w: 0, h: 0, sx0: 0, sy0: 0, sx1: 0, sy1: 0, scale: 1};
@@ -1489,6 +1510,15 @@ class PanelGlass {
         this._line.queue_redraw();
     }
 
+    // The blur is held on the desktop's last frame while the overview is up.
+    // The overview swaps what is beneath the bar in one frame each way (the
+    // wallpaper for its own flat ground as it opens, and back once it has
+    // gone), and a live blur fading across those swaps showed each as a
+    // flicker at the ends of the fade.
+    set frozen(v) {
+        this._blur.setFrozen(v);
+    }
+
     // Faded, not switched, as the overview comes and goes: the bar's glass
     // leaves as Activities opens and is back as it closes, over the
     // overview's own 250 ms. ease() is instant with animations off.
@@ -2130,6 +2160,9 @@ export class Glass {
             this._panel = null;
         }
         if (this._panel) {
+            // 'showing' comes after the overview has taken the screen but
+            // before it paints, so this holds the desktop's last frame
+            this._panel.frozen = Main.overview.visible;
             this._panel.visible = Main.layoutManager.panelBox.visible &&
                 (!Main.overview.visible || this._leavingOverview);
             this._panel.lit = this.lighting;
