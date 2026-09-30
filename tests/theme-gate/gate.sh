@@ -20,7 +20,10 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 image=${1:-ghcr.io/arclight-digital/pulsar:latest}
-podman build -q --build-arg IMAGE="${image}" -t localhost/pulsar-theme-gate:latest \
+# GATE_IMAGE: the tag to build it as (run.sh runs the same one), so two
+# gates on one host, against two images, do not overwrite each other's
+export GATE_IMAGE=${GATE_IMAGE:-localhost/pulsar-theme-gate:latest}
+podman build -q --build-arg IMAGE="${image}" -t "${GATE_IMAGE}" \
     -f "${here}/Containerfile" "${here}" >/dev/null || { echo "gate: could not build the gate container" >&2; exit 1; }
 out=${GATE_OUT:-$(cd "${here}/../.." && pwd)/.preview/theme-gate}
 rm -f "${out}/gate-report.json"
