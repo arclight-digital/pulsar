@@ -152,6 +152,8 @@ uniform vec2 sharpScale;
 uniform vec4 lens;
 uniform float edgeDark;
 uniform vec4 tint;
+uniform sampler2D cut;
+uniform vec4 cutRect;
 float sd(vec2 p, vec2 b, float r) {
   vec2 q = abs(p) - b + r;
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
@@ -203,6 +205,14 @@ if (gradeEdge > 0.0) rgb = mix(raw, rgb, 1.0 - smoothstep(-gradeEdge, -1.0, d));
    surface with no border on whole pixels (the top bar) gets a hard edge:
    its fade would show as a lighter frame. */
 float a = soft > 0.0 ? 1.0 - smoothstep(-soft, 0.0, d) : step(d, 0.0);
+/* a popup's own shape (cutRect: where its buffer lies, from here): only
+   where it draws its body -- the rounded box and the arrow -- not the soft
+   shadow around them, whose alpha stays well under this */
+if (cutRect.z > 0.0) {
+  vec2 cu = (f + cutRect.xy) / cutRect.zw;
+  vec2 in2 = step(vec2(0.0), cu) * step(cu, vec2(1.0));
+  a *= in2.x * in2.y * smoothstep(0.45, 0.75, texture2D(cut, clamp(cu, 0.0, 1.0)).a);
+}
 /* the shadow: the same shape, dropped and softened, showing only outside it */
 float ds = sd(f - (rect.xy + rect.zw * 0.5) - vec2(0.0, shadowGeom.x), rect.zw * 0.5, radius);
 float s = shadow.a * (1.0 - smoothstep(-shadowGeom.y * 0.3, shadowGeom.y, ds)) * smoothstep(-0.5, 0.5, d);
@@ -508,12 +518,18 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._mask = pipeline(MASK_DECL, MASK_CODE);
         this._loc = {};
         for (const u of ['tex', 'size', 'rect', 'radius', 'grade', 'shadow', 'shadowGeom', 'gradeEdge', 'opacity', 'soft',
-            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'tint'])
+            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'tint', 'cut', 'cutRect'])
             this._loc[u] = this._mask.get_uniform_location(u);
         this._mask.set_uniform_1i(this._loc.tex, 0);
         this._mask.set_uniform_1i(this._loc.sharp, 1);
-        this._mask.set_layer_filters(1, Cogl.PipelineFilter.LINEAR, Cogl.PipelineFilter.LINEAR);
-        this._mask.set_layer_wrap_mode(1, Cogl.PipelineWrapMode.CLAMP_TO_EDGE);
+        this._mask.set_uniform_1i(this._loc.cut, 2);
+        for (const l of [1, 2]) {
+            this._mask.set_layer_filters(l, Cogl.PipelineFilter.LINEAR, Cogl.PipelineFilter.LINEAR);
+            this._mask.set_layer_wrap_mode(l, Cogl.PipelineWrapMode.CLAMP_TO_EDGE);
+        }
+        // setCut(): a popup's buffer, whose alpha is the shape
+        this._cut = null;
+        this._f('cutRect', 0, 0, 0, 0);
         // [band px, bend px, dispersion, clarity]; the sharp rim reads the
         // unblurred half-size copy
         this._lens = params.lens ?? [0, 0, 0, 0];
@@ -591,6 +607,14 @@ class PulsarLiveBlur extends Clutter.Effect {
     setShape(rect, radius) {
         this._shape = rect;
         this._f('radius', radius);
+        this.queue_repaint();
+    }
+
+    // Cut to what another actor's buffer draws: `get()` gives [texture, x,
+    // y, width, height], where the buffer lies in this actor's coordinates,
+    // or null for nothing drawn yet (then no blur at all).
+    setCut(get) {
+        this._cut = get;
         this.queue_repaint();
     }
 
@@ -962,7 +986,14 @@ class PulsarLiveBlur extends Clutter.Effect {
         const rw = s.hw, rh = s.hh;
         const sh = this._shape;
         const opacity = actor.get_paint_opacity();
+        const cut = this._cut?.();
+        if (this._cut && !cut)
+            return;
         this._mask.set_layer_texture(0, out.tex);
+        // a layer must hold a texture; with no cut it reads none of it
+        this._mask.set_layer_texture(2, cut?.[0] ?? out.tex);
+        if (cut)
+            this._f('cutRect', cut[1] + x0, cut[2] + y0, cut[3], cut[4]);
         this._f('uvScale', rw / out.W, rh / out.H);
         // a layer must hold a texture; with no lens it reads none of it
         const sharp = this._lens[3] > 0 && s.copy ? s.copy : out;
@@ -1700,18 +1731,40 @@ const GLASS_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.Window
 // window's frame and corners. Only GTK apps get one: they are the ones the
 // engine's gtk.css makes translucent (anything else paints opaque over it,
 // and would only cost the blur).
+//
+// A popup (a popover, a menu, a tooltip) over a glass window gets one too.
+// Most are opaque and hide it, but an app may make its own translucent --
+// Ptyxis draws its popovers at the terminal's opacity or 0.85, whichever is
+// more, above anything gtk.css can say -- and with nothing beneath them
+// blurred, the terminal's text read through them sharp. A popup's frame
+// rect holds its arrow as well as its body (GTK trims only the shadow), so
+// its blur is cut to what the popup's own buffer draws, not to a shape.
 class WindowGlass {
-    constructor(owner, actor) {
+    constructor(owner, actor, popup = false) {
         this._owner = owner;
         this._actor = actor;
         this._win = actor.meta_window;
+        this._popup = popup;
         this._backdrop = new St.Widget({reactive: false, width: 1, height: 1});
-        this._blur = new LiveBlur({lens: WINDOW_LENS});
+        this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS});
         this._blur.setShadow(false, 0);
         // vibrancy: what is beneath lifted, so its color reads through the
         // window's tint instead of muddying it
         this._blur.setGrade(...windowGrade());
-        this._blur.setGradeEdge(WINDOW_GRADE_EDGE);
+        this._blur.setGradeEdge(popup ? 0 : WINDOW_GRADE_EDGE);
+        if (popup) {
+            this._blur.setCut(() => {
+                // one plane: an RGBA buffer, which a GTK popup always is
+                const mt = actor.get_texture?.()?.get_texture?.();
+                const tex = mt?.is_simple() ? mt.get_plane(0) : null;
+                const b = this._backdrop;
+                if (!tex || !b)
+                    return null;
+                const buffer = this._win.get_buffer_rect();
+                // from the backdrop to the buffer, which starts at the actor's origin
+                return [tex, b.x, b.y, buffer.width, buffer.height];
+            });
+        }
         // a new sheet (a theme, a Dark Style flip) may be the other scheme
         Main.panel.connectObject('style-changed', () => this._blur.setGrade(...windowGrade()), this);
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
@@ -1769,7 +1822,7 @@ class WindowGlass {
         const p = WINDOW_PAD;
         this._backdrop.set_position(frame.x - buffer.x - p, frame.y - buffer.y - p);
         this._backdrop.set_size(frame.width + 2 * p, frame.height + 2 * p);
-        this._blur.setShape([p, p, frame.width, frame.height], square ? 0 : WINDOW_RADIUS);
+        this._blur.setShape([p, p, frame.width, frame.height], square || this._popup ? 0 : WINDOW_RADIUS);
         this._backdrop.show();
     }
 
@@ -2384,6 +2437,12 @@ export class Glass {
         const actor = win.get_compositor_private();
         if (!actor || !POPUP_TYPES.includes(win.get_window_type()) || !this._windows.size)
             return;
+        // over a glass window (or a popup of one): glass of its own
+        const parent = win.get_transient_for()?.get_compositor_private();
+        if (parent && this._windows.has(parent) && !this._windows.has(actor)) {
+            this._windows.set(actor, new WindowGlass(this, actor, true));
+            return;
+        }
         const surfaces = uncull(actor);
         this._popups ??= new Map();
         this._popups.set(actor, surfaces);
