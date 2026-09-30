@@ -2203,14 +2203,15 @@ export class Glass {
 
     // The screenshot UI's panel, lit from the bottom edge it sits on. The
     // panel fades itself (and paints offscreen while it does), so the glass
-    // goes beside the monitor box that holds it.
+    // goes beside it -- beside the panel, not its monitor box: the round
+    // close button overlaps the panel's corner in the same box, and the
+    // light has to go under it.
     _trackScreenshot() {
-        const ui = Main.screenshotUI;
-        const bin = ui?._primaryMonitorBin;
-        if (!bin || !ui._panel)
+        const panel = Main.screenshotUI?._panel;
+        if (!panel)
             return;
-        this._add(bin, {
-            box: () => ui._panel,
+        this._add(panel, {
+            box: () => panel,
             source: (x, y, w) => {
                 const m = Main.layoutManager.primaryMonitor;
                 return [x + w / 2, m ? m.y + m.height : y];
