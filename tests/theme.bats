@@ -830,3 +830,26 @@ print("" if d is None else d)' "$1" "$2"; }
     [ -n "$begin" ]
     [ "$begin" -lt "$first" ]
 }
+
+@test "an image update's new templates reach a theme set before it, once, at the next login" {
+    fake_dconf
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
+    tpl="${BATS_TEST_TMPDIR}/templates"
+    cp -r "$PULSAR_THEME_TEMPLATES" "$tpl"
+    export PULSAR_THEME_TEMPLATES="$tpl"
+    sheet="$XDG_STATE_HOME/pulsar-theme/shell/gnome-shell-dark.css"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    ! grep -q 'pulsar-new-surface' "$sheet"
+    # nothing changed: the extension's check at login redoes nothing
+    before=$(stat -c %Y.%i "$sheet")
+    python3 "$ENGINE" window-glass --if-stale >/dev/null
+    [ "$(stat -c %Y.%i "$sheet")" = "$before" ]
+    # the next image learns a surface
+    echo '.pulsar-new-surface { -pulsar-light: {{accent}}; }' >> "$tpl/gnome-shell.css"
+    python3 "$ENGINE" window-glass --if-stale >/dev/null
+    grep -q '^\.pulsar-new-surface { -pulsar-light: #' "$sheet"
+    # and only once
+    before=$(stat -c %Y.%i "$sheet")
+    python3 "$ENGINE" window-glass --if-stale >/dev/null
+    [ "$(stat -c %Y.%i "$sheet")" = "$before" ]
+}

@@ -945,6 +945,29 @@ def template(name):
     raise FileNotFoundError(name)
 
 
+# The templates each target renders from. An image update that changes one
+# leaves every account's rendered copy as it was until the theme is set
+# again; templates_seen() is what `window-glass --if-stale` compares.
+TEMPLATED = {
+    "gtk4": ("gtk4.css",), "gtk3": ("gtk3.css",), "ptyxis": ("ptyxis.palette",),
+    "gtksourceview": ("gtksourceview.xml",), "shell": ("gnome-shell.css", "gnome-shell-glow.css"),
+    "btop": ("btop.theme",),
+}
+
+
+def templates_seen():
+    """One hash of every template as template() resolves it (a user's own
+    in $XDG_CONFIG_HOME/pulsar/themed/ included), for the rendered copies to
+    be checked against."""
+    h = hashlib.sha256()
+    for name in sorted(n for names in TEMPLATED.values() for n in names):
+        try:
+            h.update(name.encode() + b"\0" + template(name).encode() + b"\0")
+        except FileNotFoundError:
+            h.update(name.encode() + b"\0-\0")
+    return h.hexdigest()[:16]
+
+
 def theme_override(theme, name):
     """A hand-written file in the theme dir beats the template."""
     p = theme.dir / name
@@ -2064,10 +2087,27 @@ def cmd_window_glass(if_stale=False):
     a theme set while it was off wrote opaque windows."""
     st = current_state()
     if if_stale:
-        # Only gtk4's half can be stale. With no gtk4 among the targets there
-        # is nothing to go stale, and redoing the rest on every login and
-        # unlock (the extension asks each time it is enabled) only restyles
-        # the Shell for nothing.
+        # An image update brought new templates: every templated target the
+        # theme wrote is redone from them, quietly, the user's own changes
+        # kept as a Dark Style flip keeps them. Without this, the Shell sheet
+        # stayed the one the theme was first set with, and each surface the
+        # sheet has learned about since drew untinted, lit in plain white.
+        if st.get("theme") and st.get("templates") != templates_seen():
+            redo = [t for t in TEMPLATED if t in st.get("targets", [])]
+            try:
+                theme = load_theme(st["theme"])
+            except SystemExit:
+                return
+            if redo:
+                cmd_set(theme, st.get("variant", "both"), redo, restart_policy="none", gentle="follow")
+            st = current_state()
+            st["templates"] = templates_seen()
+            atomic_write(STATE / "current.json", json.dumps(st, indent=1).encode())
+            return
+        # Otherwise only gtk4's half can be stale. With no gtk4 among the
+        # targets there is nothing to go stale, and redoing the rest on every
+        # login and unlock (the extension asks each time it is enabled) only
+        # restyles the Shell for nothing.
         if "gtk4" not in st.get("targets", []) or window_glass_written() == window_glass():
             return
     # gtk3 for Glow, whose GTK3 block this redoes too
@@ -2178,6 +2218,9 @@ def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, r
               # never deleted as "stale", only cleaned by revert
               "files": sorted(str(f) for f, c in tx.files.items() if c is not None and f not in tx.shared)
               if only is None else prev.get("files", []),
+              # what the templated targets were rendered from; a redo of part
+              # of them leaves the rest as old as they were
+              "templates": templates_seen() if only is None else prev.get("templates"),
               "wallpaper_index": wallpaper_index if wallpaper_index is not None else
               (current_state().get("wallpaper_index", 0) if current_state().get("theme") == theme.slug else 0)}
         atomic_write(STATE / "current.json", json.dumps(st, indent=1).encode())
