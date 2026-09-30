@@ -1341,6 +1341,9 @@ class Surface {
         this._box = b;
         b?.connectObject(
             'notify::allocation', () => this._queue(),
+            // a size about to change (Quick Settings growing round an open
+            // submenu): laid out in the same frame, not the one after
+            'queue-relayout', () => this._queue(),
             'style-changed', () => this.sync(),
             'destroy', () => {
                 this._box = null;
@@ -1360,6 +1363,9 @@ class Surface {
         const v = this._host.visible;
         if (v && !this._wasVisible)
             this._powerOn();
+        // shown again: wait for where it lands before laying out
+        if (!v)
+            this._placed = false;
         this._wasVisible = v;
         this._queue();
     }
@@ -1447,7 +1453,21 @@ class Surface {
         // Given up after 30, the count starts over, or a surface that first
         // tried while hidden (the dash, before the overview has been shown)
         // would never try again.
-        if (!b.has_allocation() || !this._host.has_allocation()) {
+        // A surface already up and placed that is only changing size (Quick
+        // Settings growing and shrinking round an open submenu) does not
+        // wait: it needs a relayout on every frame of that, and waiting for
+        // one left the glass at its old size until the animation had ended.
+        // This runs before the frame's layout, where a box's width and
+        // height are already the size this frame gives it.
+        const resizing = this._placed && this._host.visible && b.is_mapped();
+        const o = b.apply_relative_transform_to_point(this._host, new Graphene.Point3D());
+        const hb = this._host.get_allocation_box();
+        // Either way, only on numbers it can use: a banner's box reads NaN
+        // against its bin for a moment as it comes and goes, and an actor
+        // placed at NaN is never drawn (and Clutter complains).
+        const finite = [o.x, o.y, b.width, b.height, hb.x1, hb.y1, hb.get_width(), hb.get_height()]
+            .every(Number.isFinite);
+        if (!finite || (!resizing && (!b.has_allocation() || !this._host.has_allocation()))) {
             if ((this._retries = (this._retries ?? 0) + 1) <= 30)
                 this._queue();
             else
@@ -1455,17 +1475,16 @@ class Surface {
             return;
         }
         this._retries = 0;
+        this._placed = true;
         this._restack();
         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        const o = b.apply_relative_transform_to_point(this._host, new Graphene.Point3D());
         const [w, h] = [b.width, b.height];
         // A pill's CSS radius (Shell 50's OSD: 999px) is far past half its
         // height, and the masks' rounded-rect distance then covers nothing:
         // blur and light both vanished. Clamp it as CSS itself does.
         const r = Math.min(this._radius ?? 0, w / 2, h / 2);
-        // the host's own allocation: its x/y can read 0 while a layout that
-        // centers it (the banner bin's) is still settling
-        const hb = this._host.get_allocation_box();
+        // the host's own allocation (hb, above): its x/y can read 0 while a
+        // layout that centers it (the banner bin's) is still settling
         const [hx, hy, pw, ph] = [hb.x1, hb.y1, hb.get_width(), hb.get_height()];
         for (const m of [this._under, this._over]) {
             m.set_position(hx, hy);
