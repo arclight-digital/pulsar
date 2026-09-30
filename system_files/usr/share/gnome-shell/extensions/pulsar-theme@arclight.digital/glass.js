@@ -533,6 +533,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         // [band px, bend px, dispersion, clarity]; the sharp rim reads the
         // unblurred half-size copy
         this._lens = params.lens ?? [0, 0, 0, 0];
+        // how many times it is halved past the first: how wide the blur is
+        this._depth = params.levels ?? BLUR_LEVELS;
         this._f('lens', ...this._lens);
         this.setEdgeDark(0);
         this.setTint(0, 0, 0, 0);
@@ -933,7 +935,7 @@ class PulsarLiveBlur extends Clutter.Effect {
 
     // The copy down the pyramid and back up into the kept result.
     _blur(s, scale) {
-        const n = BLUR_LEVELS + Math.max(0, Math.round(Math.log2(scale)));
+        const n = this._depth + Math.max(0, Math.round(Math.log2(scale)));
         const L = levels(s.hw, s.hh, n, this._levels);
         const D = this._down, U = this._up;
         const b = this._v4, hp = this._v2;
