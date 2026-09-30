@@ -810,10 +810,16 @@ class PulsarLiveBlur extends Clutter.Effect {
                 return;
             }
             if (onView) {
-                if (!s.copy || s.copy.W < hw || s.copy.H < hh)
-                    s.copy = makeTarget(Math.ceil(hw / 32) * 32 + 32, Math.ceil(hh / 32) * 32 + 32, false);
-                if (!s.result || s.result.W < hw || s.result.H < hh)
-                    s.result = makeTarget(Math.ceil(hw / 32) * 32 + 32, Math.ceil(hh / 32) * 32 + 32);
+                // made to fit, and made again when it no longer fits: too
+                // small, or four times the size it needs (a maximized window
+                // restored kept a whole screen's worth). Only here, where
+                // all of it is copied and blurred again anyway.
+                const tw = Math.ceil(hw / 32) * 32 + 32, th = Math.ceil(hh / 32) * 32 + 32;
+                const fits = t => t && t.W >= hw && t.H >= hh && t.W * t.H <= 4 * tw * th;
+                if (!fits(s.copy))
+                    s.copy = makeTarget(tw, th, false);
+                if (!fits(s.result))
+                    s.result = makeTarget(tw, th);
             } else {
                 s.copy = Scratch.get('tcopy', hw, hh);
                 s.result = Scratch.get('tresult', hw, hh);
