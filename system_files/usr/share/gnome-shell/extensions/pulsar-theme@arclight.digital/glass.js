@@ -1219,7 +1219,8 @@ class PulsarGlassMirror extends St.Widget {
 // that moves and fades (a menu's BoxPointer, an OSD window, the banner
 // bin); opts.box() is the styled surface inside it, opts.source() the
 // light's stage position, opts.divider() the date menu's column,
-// opts.tone() 'warn' / 'alert' / null.
+// opts.tone() 'warn' / 'alert' / null, opts.frame() a still ancestor to
+// measure from when one between it and the host animates.
 class Surface {
     constructor(owner, host, opts) {
         this._owner = owner;
@@ -1395,8 +1396,24 @@ class Surface {
             m.set_position(hx, hy);
             m.set_size(pw, ph);
         }
-        const origin = this._host.get_parent().apply_relative_transform_to_point(null,
-            new Graphene.Point3D({x: hx, y: hy}));
+        // Where the host sits once it has settled. opts.frame() is a still
+        // ancestor above one that animates in (an app folder zooms out of
+        // its icon on its child's scale and translation): the stage
+        // transform would place the source by wherever the zoom had got to.
+        const frame = this._opts.frame?.();
+        let origin;
+        if (frame) {
+            const [fx, fy] = frame.get_transformed_position();
+            origin = {x: fx + hx, y: fy + hy};
+            for (let a = this._host.get_parent(); a && a !== frame; a = a.get_parent()) {
+                const ab = a.get_allocation_box();
+                origin.x += ab.x1;
+                origin.y += ab.y1;
+            }
+        } else {
+            origin = this._host.get_parent().apply_relative_transform_to_point(null,
+                new Graphene.Point3D({x: hx, y: hy}));
+        }
 
         // under: the live blur, reaching past the surface for its shadow
         this._backdrop.set_position(o.x - BLUR_PAD, o.y - BLUR_PAD);
@@ -2198,6 +2215,7 @@ export class Glass {
         const inner = wrap.get_first_child();
         this._add(inner, {
             box: () => dialog._viewBox,
+            frame: () => dialog,
             source: () => {
                 const src = dialog._source;
                 if (!src?.has_allocation())
