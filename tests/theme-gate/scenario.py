@@ -683,7 +683,7 @@ SURFACES = [
      "Main.layoutManager.uiGroup", "Main.overview.hide()"),
     ("run-dialog", "Main.openRunDialog()", "Main.layoutManager.modalDialogGroup",
      "Main.layoutManager.modalDialogGroup.get_children().forEach(c => c.close?.() ?? c._dialog?.close?.())"),
-    ("osd", "Main.osdWindowManager.show(-1, new imports.gi.Gio.ThemedIcon({name: 'audio-volume-medium-symbolic'}), 'Volume', 0.5)",
+    ("osd", "Main.osdWindowManager.showAll(new imports.gi.Gio.ThemedIcon({name: 'audio-volume-medium-symbolic'}), 'Volume', 0.5, 1)",
      "Main.layoutManager.uiGroup", "Main.osdWindowManager.hideAll()"),
     ("banner", "Main.notify('Pulsar leaks', 'a banner, to read its colors')", "Main.messageTray",
      "Main.messageTray.getSources().forEach(s => s.destroy())"),

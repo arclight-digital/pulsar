@@ -1271,6 +1271,20 @@ class Surface {
         this._queue();
     }
 
+    // Keep the mirrors on either side of the host. A host can restack itself:
+    // Shell 50's OsdWindow.show() raises the OSD to the top of uiGroup every
+    // time it appears, which left the blur and the light far below it, and
+    // the OSD (its own background cleared for glass) drew as bare text.
+    _restack() {
+        const parent = this._host.get_parent();
+        if (!parent)
+            return;
+        if (this._under.get_parent() === parent && this._under.get_next_sibling() !== this._host)
+            parent.set_child_below_sibling(this._under, this._host);
+        if (this._over.get_parent() === parent && this._over.get_previous_sibling() !== this._host)
+            parent.set_child_above_sibling(this._over, this._host);
+    }
+
     _layout() {
         const b = this._box;
         if (!this._under || !this._over || !b || !this._host.visible)
@@ -1283,10 +1297,14 @@ class Surface {
             return;
         }
         this._retries = 0;
+        this._restack();
         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
         const o = b.apply_relative_transform_to_point(this._host, new Graphene.Point3D());
         const [w, h] = [b.width, b.height];
-        const r = this._radius ?? 0;
+        // A pill's CSS radius (Shell 50's OSD: 999px) is far past half its
+        // height, and the masks' rounded-rect distance then covers nothing:
+        // blur and light both vanished. Clamp it as CSS itself does.
+        const r = Math.min(this._radius ?? 0, w / 2, h / 2);
         // the host's own allocation: its x/y can read 0 while a layout that
         // centers it (the banner bin's) is still settling
         const hb = this._host.get_allocation_box();
