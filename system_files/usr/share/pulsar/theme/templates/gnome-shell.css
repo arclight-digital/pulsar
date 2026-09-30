@@ -1145,6 +1145,8 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .calendar .calendar-day.calendar-weekend, .calendar .calendar-week-number,
 .popup-inactive-menu-item:insensitive, .candidate-index {
   color: rgba({{foreground_rgb}}, 0.6); }
+/* a selected candidate is filled with the accent: its number dims on that */
+.candidate-box:selected .candidate-index { color: st-transparentize({{accent_fg}}, 0.35); }
 .calendar .calendar-day.calendar-other-month,
 .calendar .calendar-day.calendar-other-month.calendar-weekend,
 .device-subtitle, StEntry StLabel.hint-text, .message-media-control:insensitive,

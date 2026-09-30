@@ -53,6 +53,7 @@ import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as AppDisplay from 'resource:///org/gnome/shell/ui/appDisplay.js';
+import * as IBusCandidatePopup from 'resource:///org/gnome/shell/ui/ibusCandidatePopup.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
@@ -1999,6 +2000,7 @@ export class Glass {
         after(WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype, 'display', this._trackWorkspaces);
         after(ModalDialog.ModalDialog.prototype, 'open', this._trackDialog);
         after(AppDisplay.AppFolderDialog.prototype, 'popup', this._trackFolder);
+        after(IBusCandidatePopup.CandidatePopup.prototype, 'open', this._trackCandidates);
         settings.connectObject(
             'changed', () => this._sync(),
             // the other half of Glass windows is the engine's gtk.css
@@ -2136,6 +2138,26 @@ export class Glass {
         const list = popup._switcherList;
         if (list)
             this._add(popup, {box: () => list, source: () => null, tone: () => this._battery});
+    }
+
+    // The input method's candidates: a BoxPointer of its own, not a menu's,
+    // so the menu hook never sees it. Lit from the text it follows.
+    _trackCandidates(popup) {
+        const box = popup.bin?.get_child();
+        if (!box)
+            return;
+        this._add(popup, {
+            box: () => box,
+            source: () => {
+                const c = popup._dummyCursor;
+                if (!c?.has_allocation())
+                    return null;
+                const [cx, cy] = c.get_transformed_position();
+                const [cw, ch] = c.get_transformed_size();
+                return [cx + cw / 2, cy + ch / 2];
+            },
+            tone: () => this._battery,
+        });
     }
 
     // One pill per monitor, in a popup the window manager keeps and reuses.
