@@ -1906,15 +1906,25 @@ class WindowGlass {
     // none, and painted with the same translucent ground it showed the app
     // behind it sharp: a window of the same process as one that has an id
     // is that app's too.
-    static wanted(actor) {
+    // `gtkPids` gives the processes with such a window, made once for a
+    // whole pass over the windows, not once per window.
+    static wanted(actor, gtkPids = WindowGlass.gtkPids) {
         const w = actor?.meta_window;
         if (!w || !GLASS_TYPES.includes(w.get_window_type()))
             return false;
         if (w.get_gtk_application_id?.())
             return true;
         const pid = w.get_pid();
-        return pid > 0 && global.get_window_actors().some(a => a.meta_window !== w &&
-            a.meta_window?.get_pid() === pid && !!a.meta_window.get_gtk_application_id?.());
+        return pid > 0 && gtkPids().has(pid);
+    }
+
+    static gtkPids() {
+        const pids = new Set();
+        for (const a of global.get_window_actors()) {
+            if (a.meta_window?.get_gtk_application_id?.())
+                pids.add(a.meta_window.get_pid());
+        }
+        return pids;
     }
 
     _layout() {
@@ -2220,7 +2230,10 @@ export class Glass {
                     }
                 });
         settings.connectObject(
-            'changed', () => this._sync(),
+            // not for the tint: nothing _sync sets reads it (the Shell's half
+            // comes back in the re-rendered sheet), and a slider drag sends
+            // a change per step
+            'changed', (_s, key) => key !== 'glass-tint' && this._sync(),
             // the other half of Glass windows is the engine's gtk.css
             'changed::window-glass', () => this._engine('window-glass'),
             'changed::glass', () => this._engine('window-glass'),
@@ -2599,9 +2612,9 @@ export class Glass {
     }
 
     // `glassy`: one that opened translucent, kept whatever the switch says
-    _trackWindow(actor, glassy = false) {
+    _trackWindow(actor, glassy = false, gtkPids = undefined) {
         if (!(this.windows || (glassy && this._allowed)) || !actor || this._windows.has(actor) ||
-            !WindowGlass.wanted(actor))
+            !WindowGlass.wanted(actor, gtkPids))
             return;
         this._windows.set(actor, new WindowGlass(this, actor));
         if (this.windows)
@@ -2664,15 +2677,18 @@ export class Glass {
             if (Main.messageTray?._banner)
                 this._trackBanner();
         }
+        // the GTK apps' processes, found once for all the windows, if asked
+        let pids = null;
+        const gtkPids = () => (pids ??= WindowGlass.gtkPids());
         if (this.windows)
-            global.get_window_actors().forEach(a => this._trackWindow(a));
+            global.get_window_actors().forEach(a => this._trackWindow(a, false, gtkPids));
         else if (!this._allowed)
             [...this._windows.keys()].forEach(a => this.forgetWindow(a));
         else
             // switched off: the translucent ones keep their blur (back after
             // a lock too); the rest go
             global.get_window_actors().forEach(a => this._glassy.has(a)
-                ? this._trackWindow(a, true) : this.forgetWindow(a));
+                ? this._trackWindow(a, true, gtkPids) : this.forgetWindow(a));
 
         for (const s of this._surfaces.values())
             s.sync();
