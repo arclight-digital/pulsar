@@ -981,7 +981,7 @@ stage {
    Unchecked, the toggle itself is a faint tint over the panel, and so is
    the line: the theme's text color, not stock's grey. */
 .quick-toggle-has-menu .quick-toggle-separator { background-color: rgba({{foreground_rgb}}, 0.26); }
-.quick-toggle-has-menu:checked .quick-toggle-separator { background-color: st-mix({{accent_fg}}, {{accent}}, 17%); }
+.quick-toggle-has-menu:checked .quick-toggle-separator { background-color: st-mix({{accent_fg}}, {{accent}}, 38%); }
 
 #panel { background-color: {{background_deep}}; }
 #panel .panel-button { color: {{foreground}}; }
