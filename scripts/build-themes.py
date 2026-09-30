@@ -555,6 +555,10 @@ def main():
         if t.get("shell_glow"):
             # the Shell's text glows like the phosphor while Lighting is on
             lines.insert(5, "shell_glow = true")
+        if t.get("gnome_accent"):
+            # the system accent, where the one derived from the accent's hue
+            # is the wrong name for it
+            lines.insert(5, f'gnome_accent = "{t["gnome_accent"]}"')
         lines.append("")
         lines.append("[wallpaper]")
         for mode in ("dark", "light"):

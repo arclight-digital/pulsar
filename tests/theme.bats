@@ -457,6 +457,68 @@ PY
     [ "$status" -eq 0 ]
 }
 
+@test "no chromatic accent maps to GNOME's grey slate, and each maps to its own hue" {
+    run python3 - "$ENGINE" <<'PY'
+import math, sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+hue = lambda c: math.degrees(math.atan2(c.oklab()[2], c.oklab()[1])) % 360
+bad = []
+for slug, t in e.ordered_themes():
+    for mode, v in t.variants.items():
+        if "gnome_accent" in t.raw or "gnome_accent" in t.raw[mode]:
+            continue   # the theme's own choice
+        acc = v["accent"]
+        _, a, b = acc.oklab()
+        if math.hypot(a, b) >= 0.04 and v.gnome_accent == "slate":
+            bad.append(f"{slug} {mode}: {acc.hex} is slate")
+        # no other GNOME accent is nearer in hue than the one chosen
+        if v.gnome_accent != "slate":
+            gap = lambda n: min(abs(hue(acc) - hue(e.Color.parse(e.GNOME_ACCENTS[n]))),
+                                360 - abs(hue(acc) - hue(e.Color.parse(e.GNOME_ACCENTS[n]))))
+            best = min((n for n in e.GNOME_ACCENTS if n != "slate"), key=gap)
+            if best != v.gnome_accent:
+                bad.append(f"{slug} {mode}: {acc.hex} is {v.gnome_accent}, nearer {best}")
+# the ones that came out grey before
+want = {("kanagawa", "dark"): "blue", ("kanagawa", "light"): "blue", ("nord", "light"): "blue",
+        ("rose-pine", "dark"): "purple", ("rose-pine", "light"): "purple"}
+for (slug, mode), name in want.items():
+    got = e.load_theme(slug).variants[mode].gnome_accent
+    if got != name:
+        bad.append(f"{slug} {mode}: {got}, not {name}")
+# a grey accent is still slate
+if e.nearest_gnome_accent(e.Color.parse("#808890")) != "slate":
+    bad.append("a grey accent is not slate")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+    [ "$status" -eq 0 ]
+}
+
+@test "gnome_accent in theme.toml overrides the derived one, per variant or for both" {
+    fake_dconf
+    mkdir -p "$HOME/t/both" "$HOME/t/one"
+    printf 'name = "B"\ngnome_accent = "slate"\n[dark]\nbackground = "#101010"\nforeground = "#e0e0e0"\naccent = "#3584e4"\n[light]\nbackground = "#f0f0f0"\nforeground = "#101010"\naccent = "#3584e4"\ngnome_accent = "teal"\n' > "$HOME/t/both/theme.toml"
+    printf 'name = "O"\n[dark]\nbackground = "#101010"\nforeground = "#e0e0e0"\naccent = "#3584e4"\ngnome_accent = "mauve"\n' > "$HOME/t/one/theme.toml"
+    run python3 - "$ENGINE" "$HOME/t" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+t = e.load_theme(sys.argv[2] + "/both")
+assert t.variants["dark"].gnome_accent == "slate", t.variants["dark"].gnome_accent
+assert t.variants["light"].gnome_accent == "teal", t.variants["light"].gnome_accent
+try:
+    e.load_theme(sys.argv[2] + "/one")
+except ValueError as x:
+    assert "mauve" in str(x)
+else:
+    sys.exit("an unknown gnome_accent loaded")
+PY
+    [ "$status" -eq 0 ]
+}
+
 @test "--without flatpak removes the entries the engine added, and only those" {
     fake_dconf
     f="$XDG_DATA_HOME/flatpak/overrides/global"

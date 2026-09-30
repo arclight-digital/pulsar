@@ -170,19 +170,27 @@ GNOME_ACCENTS = {
 }
 
 
+def gnome_accent_name(name):
+    """A theme's own gnome_accent, checked: one of GNOME_ACCENTS, or None."""
+    if name is None:
+        return None
+    if name not in GNOME_ACCENTS:
+        raise ValueError(f"gnome_accent {name!r} is not one of {', '.join(GNOME_ACCENTS)}")
+    return name
+
+
 def nearest_gnome_accent(c):
+    """The system accent a theme accent reads as. By hue alone: a GNOME accent
+    is a hue, and its lightness and chroma say nothing about which one a
+    color is (a muted blue is blue, not slate). Only an accent too grey to
+    carry a hue at all -- chroma under slate's own, near enough -- is slate.
+    A theme overrides this with gnome_accent (see Variant)."""
     L, a, b = c.oklab()
-    chroma = math.hypot(a, b)
-    best, bd = None, 1e9
-    for name, hx in GNOME_ACCENTS.items():
-        L2, a2, b2 = Color.parse(hx).oklab()
-        # hue matters far more than lightness here: weight L down
-        d = (0.3 * (L - L2)) ** 2 + (a - a2) ** 2 + (b - b2) ** 2
-        if chroma < 0.04 and name != "slate":
-            d += 1  # a grey accent is slate, whatever its lightness
-        if d < bd:
-            best, bd = name, d
-    return best
+    if math.hypot(a, b) < 0.04:
+        return "slate"
+    h = math.atan2(b, a)
+    return min((n for n in GNOME_ACCENTS if n != "slate"),
+               key=lambda n: abs(math.remainder(h - hue_of(Color.parse(GNOME_ACCENTS[n])), math.tau)))
 
 
 # The glass rim's lights (glass.js): the accent normally, a warning light
@@ -360,7 +368,10 @@ class Variant:
         for i, c in enumerate(ansi):
             d(f"color{i}", c)
         self.p = p
-        self.gnome_accent = raw.get("gnome_accent") or nearest_gnome_accent(acc)
+        # the system accent (Shell, stock apps, Flatpaks): derived from the
+        # accent's hue, unless the theme names one -- here, for this
+        # variant, or at the top of theme.toml for both (see Theme)
+        self.gnome_accent = gnome_accent_name(raw.get("gnome_accent")) or nearest_gnome_accent(acc)
 
     def __getitem__(self, k):
         return self.p[k]
@@ -526,8 +537,10 @@ class Theme:
         self.author = raw.get("author", "")
         self.source = raw.get("source", "")
         self.variants = {m: Variant(m, raw[m]) for m in ("dark", "light") if m in raw}
-        for v in self.variants.values():
+        for m, v in self.variants.items():
             v.shell_glow = bool(raw.get("shell_glow", False))
+            if "gnome_accent" in raw and "gnome_accent" not in raw[m]:
+                v.gnome_accent = gnome_accent_name(raw["gnome_accent"])
         if not self.variants:
             raise ValueError(f"{path}: needs a [dark] and/or [light] palette")
         self.prefer = raw.get("prefer", "dark" if "dark" in self.variants else "light")

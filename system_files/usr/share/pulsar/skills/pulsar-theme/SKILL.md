@@ -53,6 +53,10 @@ from them and can be set to override the derivation:
 - Terminal and syntax: `red`, `orange`, `yellow`, `green`, `cyan`, `blue`,
   `magenta`, `brown`, and `bright_red`, `bright_yellow`, `bright_green`,
   `bright_cyan`, `bright_blue`, `bright_magenta`.
+- `gnome_accent`: the system accent GNOME's own apps and Flatpaks get,
+  one of `blue`, `teal`, `green`, `yellow`, `orange`, `red`, `pink`,
+  `purple`, `slate`. Derived from the accent's hue; set it (in a variant,
+  or at the top for both) only when the derivation picks the wrong one.
 
 Keep each ANSI color the hue its name says: a red that reads as orange makes
 every error look like a warning. With both `[dark]` and `[light]`, the theme
