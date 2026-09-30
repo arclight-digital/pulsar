@@ -795,6 +795,51 @@ RUN set -eu; \
     echo "theme engine: $(/usr/libexec/pulsar/pulsar-theme list | wc -l) themes, audit clean, extension declares Shell ${SHELL_MAJOR}"
 
 # ---------------------------------------------------------------------------
+# The login screen in Pulsar's colors. GDM runs its own Shell with the stock
+# stylesheet and no extensions, so the theme engine never reaches it: its
+# ground was stock's #222226. scripts/pulsar-login-css takes stock's own
+# login and lock rules and swaps only their colors for the Pulsar theme's
+# dark palette, and the result is appended to both of stock's sheets inside
+# gnome-shell-theme.gresource. Structure stays GNOME's. After every package
+# change, so the resource is the Shell that ships. glib2-devel (the resource
+# compiler) is here for this step only, and the package set must come out
+# exactly as it went in.
+# ---------------------------------------------------------------------------
+COPY scripts/pulsar-login-css /tmp/pulsar-login-css
+RUN set -eu; \
+    res=/usr/share/gnome-shell/gnome-shell-theme.gresource; \
+    before="$(rpm -qa | sort)"; \
+    glib="$(rpm -q --qf '%{VERSION}-%{RELEASE}' glib2.x86_64)"; \
+    dnf5 install -y --enablerepo=updates-archive "glib2-devel-${glib}"; \
+    w="$(mktemp -d)"; \
+    for f in $(gresource list "${res}"); do \
+      mkdir -p "${w}$(dirname "${f}")"; \
+      gresource extract "${res}" "${f}" > "${w}${f}"; \
+    done; \
+    t="${w}/org/gnome/shell/theme"; \
+    [ -s "${t}/gnome-shell-dark.css" ] && [ -s "${t}/gnome-shell-light.css" ] || \
+      { echo "FATAL: the Shell's theme resource no longer has gnome-shell-dark.css and -light.css"; exit 1; }; \
+    python3 /tmp/pulsar-login-css "${t}/gnome-shell-dark.css" /usr/share/pulsar/themes/pulsar/theme.toml > "${w}/login.css"; \
+    grep -q '^#lockDialogGroup {' "${w}/login.css" || \
+      { echo "FATAL: no #lockDialogGroup rule came out of stock's sheet; the login ground stays grey"; exit 1; }; \
+    for v in dark light; do cat "${w}/login.css" >> "${t}/gnome-shell-${v}.css"; done; \
+    { echo '<?xml version="1.0" encoding="UTF-8"?><gresources><gresource prefix="/">'; \
+      gresource list "${res}" | sed 's|^/\(.*\)|<file>\1</file>|'; \
+      echo '</gresource></gresources>'; } > "${w}/theme.gresource.xml"; \
+    n_before="$(gresource list "${res}" | wc -l)"; \
+    glib-compile-resources --sourcedir="${w}" --target="${res}" "${w}/theme.gresource.xml"; \
+    [ "$(gresource list "${res}" | wc -l)" = "${n_before}" ] || \
+      { echo "FATAL: the rebuilt theme resource lost files"; exit 1; }; \
+    gresource extract "${res}" /org/gnome/shell/theme/gnome-shell-dark.css | grep -q 'pulsar-login-css' || \
+      { echo "FATAL: the rebuilt theme resource does not carry the login colors"; exit 1; }; \
+    rules="$(grep -c '{' "${w}/login.css")"; \
+    dnf5 remove -y glib2-devel; \
+    [ "$(rpm -qa | sort)" = "${before}" ] || \
+      { echo "FATAL: glib2-devel left packages behind:"; diff <(echo "${before}") <(rpm -qa | sort); exit 1; }; \
+    rm -rf "${w}" /tmp/pulsar-login-css; \
+    echo "login screen: ${rules} of stock's login and lock rules in Pulsar's colors"
+
+# ---------------------------------------------------------------------------
 # Finalize. The initramfs carries the plymouth theme, so the dracut regen has
 # to come after the overlay lands. The nvidia variant regenerates it a second
 # time because it adds modprobe.d options that also live in the initramfs.

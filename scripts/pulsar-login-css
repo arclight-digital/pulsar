@@ -1,0 +1,97 @@
+#!/usr/bin/python3
+"""The login screen in Pulsar's colors, from GNOME's own login rules.
+
+GDM runs its own Shell with the stock stylesheet: no extensions, so the theme
+engine never reaches it, and its ground is stock's grey (#222226). This reads
+stock's dark sheet, keeps every rule that styles the login and lock screens,
+and swaps only their colors -- stock's grey ramp, its white text and its
+accent -- for the Pulsar theme's dark palette. Sizes, radii, spacing and
+states stay GNOME's, and a new login rule in a new GNOME is picked up by the
+next build without anyone naming it.
+
+  pulsar-login-css <stock-dark.css> <theme.toml>   CSS on stdout
+
+The build appends the output to both of stock's sheets inside
+gnome-shell-theme.gresource (Containerfile), so the login screen is Pulsar's
+whatever the scheme. The lock screen shares these rules: it is Pulsar's too,
+as extensions do not run there either.
+"""
+import re
+import sys
+import tomllib
+
+# The login and lock screens' own rules, kept as they are.
+KEEP = re.compile(r"login-dialog|unlock-dialog|#lockDialogGroup")
+# Widgets they share with the session (the user list's avatars and names,
+# the caps-lock warning): scoped under the login and lock screens' group, so
+# the session's own copies stay stock's, or the theme's.
+SCOPE = re.compile(r"user-widget|user-icon|framed-user-icon|caps-lock-warning")
+
+# stock's dark ramp -> the theme's roles
+GREYS = {
+    "#222226": "background",
+    "#2e2e33": "window",
+    "#36363a": "background_raised", "#38383b": "background_raised", "#39393d": "background_raised",
+    "#404045": "popover", "#4a4a50": "popover",
+    "#fafafb": "foreground", "#ffffff": "foreground",
+    "#dedee4": "foreground_dim",
+    "#cd9309": "yellow",
+}
+
+
+def rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def rules(css):
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    for m in re.finditer(r"([^{}@;]+)\{([^{}]*)\}", css):
+        yield [" ".join(s.split()) for s in m.group(1).split(",")], m.group(2)
+
+
+def main():
+    stock = open(sys.argv[1]).read()
+    pal = tomllib.load(open(sys.argv[2], "rb"))["dark"]
+    hexes = {k: pal[v] for k, v in GREYS.items()}
+    rgbs = {rgb(k): rgb(v) for k, v in hexes.items()}
+
+    def recolor(value):
+        value = value.replace("-st-accent-color", pal["accent"])
+        value = re.sub(r"#[0-9a-fA-F]{6}\b", lambda m: hexes.get(m.group(0).lower(), m.group(0)), value)
+
+        def rgba(m):
+            c = tuple(int(x) for x in re.split(r",\s*", m.group(1)))
+            return "rgba(%d, %d, %d, %s)" % (*rgbs.get(c, c), m.group(2))
+        return re.sub(r"rgba\((\d+,\s*\d+,\s*\d+),\s*([\d.]+)\)", rgba, value)
+
+    out = ["/* Pulsar: the login and lock screens in the brand's colors "
+           "(scripts/pulsar-login-css, at build) */"]
+    for sels, body in rules(stock):
+        picked = [s for s in sels if KEEP.search(s)] + \
+                 ["#lockDialogGroup " + s for s in sels if not KEEP.search(s) and SCOPE.search(s)]
+        if not picked:
+            continue
+        decls = [d.strip() for d in body.split(";") if ":" in d]
+        colored = [d for d in decls if re.search(r"#[0-9a-fA-F]{3,8}\b|-st-accent-color|rgba\(", d.split(":", 1)[1])]
+        if not colored:
+            continue
+        # filled with the accent itself (a default button), not a focus
+        # fill that mixes a few percent of it into the button's own grey
+        on_accent = any(k.strip().startswith("background") and
+                        re.match(r"(st-(lighten|darken)\()?-st-accent-color", v.strip())
+                        for k, v in (d.split(":", 1) for d in colored))
+        new = []
+        for d in colored:
+            k, v = (x.strip() for x in d.split(":", 1))
+            # text on an accent fill: the ground, as the theme's accent-fg is
+            if on_accent and k == "color":
+                new.append(f"{k}: {pal['background']}")
+            else:
+                new.append(f"{k}: {recolor(v)}")
+        out.append(",\n".join(picked) + " {\n  " + ";\n  ".join(new) + "; }")
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
