@@ -218,11 +218,12 @@ if (gradeEdge > 0.0) rgb = mix(raw, rgb, 1.0 - smoothstep(-gradeEdge, -1.0, d));
 float a = soft > 0.0 ? 1.0 - smoothstep(-soft, 0.0, d) : step(d, 0.0);
 /* a popup's own shape (cutRect: where its buffer lies, from here): only
    where it draws its body -- the rounded box and the arrow -- not the soft
-   shadow around them, whose alpha stays well under this */
+   shadow and hairline border around them, whose alpha stays near 0.25. A
+   glass popover's body is 0.47 at the clearest tint, so it is all in. */
 if (cutRect.z > 0.0) {
   vec2 cu = (f + cutRect.xy) / cutRect.zw;
   vec2 in2 = step(vec2(0.0), cu) * step(cu, vec2(1.0));
-  a *= in2.x * in2.y * smoothstep(0.45, 0.75, texture2D(cut, clamp(cu, 0.0, 1.0)).a);
+  a *= in2.x * in2.y * smoothstep(0.3, 0.42, texture2D(cut, clamp(cu, 0.0, 1.0)).a);
 }
 /* the shadow: the same shape, dropped and softened, showing only outside it */
 float ds = sd(f - (rect.xy + rect.zw * 0.5) - vec2(0.0, shadowGeom.x), rect.zw * 0.5, radius);
@@ -1873,9 +1874,20 @@ class WindowGlass {
         this._surfaces = null;
     }
 
+    // A GTK app's own windows carry its application id. A libadwaita dialog
+    // presented without a parent floats in a window of its own that has
+    // none, and painted with the same translucent ground it showed the app
+    // behind it sharp: a window of the same process as one that has an id
+    // is that app's too.
     static wanted(actor) {
         const w = actor?.meta_window;
-        return !!w && GLASS_TYPES.includes(w.get_window_type()) && !!w.get_gtk_application_id?.();
+        if (!w || !GLASS_TYPES.includes(w.get_window_type()))
+            return false;
+        if (w.get_gtk_application_id?.())
+            return true;
+        const pid = w.get_pid();
+        return pid > 0 && global.get_window_actors().some(a => a.meta_window !== w &&
+            a.meta_window?.get_pid() === pid && !!a.meta_window.get_gtk_application_id?.());
     }
 
     _layout() {
