@@ -159,6 +159,49 @@ def template_selectors(text):
     return {s for sels, d in rules(tpl) if "background-color" in d or "background" in d for s in sels}
 
 
+# Text. Stock sets its own foreground on many states, in both sheets (#fafafb
+# dark, #222226 light), and a state's selector is longer than the sheet's
+# base rule, so it wins: text a step off the theme's, or near-white on a light
+# theme. Restated the same way as the backgrounds, in the theme's foreground.
+TEXT_ALLOW = [
+    (r"screen-recording-indicator|screen-sharing-indicator",
+     "the recording and screen-sharing pills: white on GNOME's own alarm red and orange"),
+]
+# Text that means something keeps its meaning, in the theme's own hue.
+TEXT_SPECIAL = [
+    (re.compile(r"polkit-dialog-user-root-label"), "{{yellow}}"),   # asking for an administrator's password
+    (re.compile(r"privacy-indicator"), "{{orange}}"),               # the microphone / location dot in the bar
+]
+
+
+def text_value(sel, value):
+    for pat, color in TEXT_SPECIAL:
+        if pat.search(sel):
+            return color
+    m = re.fullmatch(r"st-transparentize\(#[0-9a-fA-F]{3,8},\s*([\d.]+)\)", value)
+    if m:
+        return "rgba({{foreground_rgb}}, %g)" % round(1 - float(m.group(1)), 2)
+    if re.fullmatch(r"#[0-9a-fA-F]{3,8}", value):
+        return "{{foreground}}"
+    return None
+
+
+def text_leaks(stock_sheets, template_text):
+    tpl = re.sub(r"\{\{[^}]*\}\}", "#000", template_text)
+    named = {s for sels, d in rules(tpl) if "color" in d for s in sels}
+    found = {}
+    for css in stock_sheets:
+        for sels, decls in rules(css):
+            v = decls.get("color", "")
+            if not solid_grey(v):
+                continue
+            for s in sels:
+                if s in named or allowed(s) or any(re.search(p, s) for p, _ in TEXT_ALLOW):
+                    continue
+                found.setdefault(s, v)
+    return found
+
+
 def allowed(sel):
     return next((why for pat, why in ALLOW if re.search(pat, sel)), None)
 
@@ -211,6 +254,7 @@ def main():
     template = TEMPLATE.read_text()
     if mode == "check":
         found = leaks(sheets, template)
+        found.update({f"{s} (text)": v for s, v in text_leaks(sheets, template).items()})
         for s, v in sorted(found.items()):
             print(f"{s}  <- stock {v}")
         if found:
@@ -229,8 +273,16 @@ def main():
             lv = level(s, name)
             # a family with one color keeps it in every state
             groups.setdefault((name, lv), (colors.get(lv, colors["rest"]), []))[1].append(s)
+        texts = {}
+        for s, v in sorted(text_leaks(sheets, without_block(template)).items()):
+            c = text_value(s, v)
+            if c is None:
+                orphans.append(f"{s} (text: {v})")
+                continue
+            texts.setdefault(c, []).append(s)
         if orphans:
-            print("no family claims these; add one to FAMILIES:\n  " + "\n  ".join(orphans), file=sys.stderr)
+            print("no family claims these; add one to FAMILIES or TEXT_SPECIAL:\n  " + "\n  ".join(orphans),
+                  file=sys.stderr)
             return 1
         order = [(f, lv) for f, _, _ in FAMILIES for lv in ("rest", "hover", "press")]
         print(BEGIN)
@@ -244,6 +296,11 @@ def main():
                 continue
             color, sels = groups[key]
             print(",\n".join(sels) + f" {{\n  background-color: {color}; }}")
+        if texts:
+            print("/* Text stock sets in its own foreground, in the theme's (TEXT_SPECIAL: the\n"
+                  "   hues that mean something). */")
+            for color, sels in texts.items():
+                print(",\n".join(sels) + f" {{\n  color: {color}; }}")
         print(END)
         return 0
     print(__doc__)
