@@ -3378,7 +3378,95 @@ SETUP_HELP='usage: pulsar setup <recipe>
   devbox      create the default distrobox
   gamemode    enroll accounts in the gamemode group, for renice (root)
   quadlet     install the quadlet template and enable auto-update
-  gamescale   grant Flatpak launchers, from the staged copy (its own flags pass through)'
+  gamescale   grant Flatpak launchers, from the staged copy, with gg and ggm (its own flags pass through)'
+
+# gg and ggm, the Steam launch options, go beside the gamescale that
+# `setup gamescale` just put in ~/.local/bin. A Flatpak launcher's sandbox
+# PATH reaches that directory (the installer's grant) and never /usr/bin, so
+# without these copies `gg %command%` in Steam is "command not found".
+#
+# The source is the image's /usr/bin copy, so this never downloads anything
+# and never diverges from what native launchers run.
+#
+# A file already there is the user's unless it is provably ours: byte-identical
+# to the image copy, or identical to what this last installed (the recorded
+# hash), which is how a fixed gg reaches a home that has the old one. Anything
+# else -- someone's own gg, a symlink, an edited copy -- is left exactly as it
+# is, and said so. GAMESCALE_BINDIR moves it, as it moves gamescale.
+setup_launch_wrappers() {
+    local mode=install dry=0 a
+    for a in "$@"; do
+        case "$a" in
+            -h|--help) return 0 ;;
+            -u|--uninstall) mode=uninstall ;;
+            -n|--dry-run) dry=1 ;;
+        esac
+    done
+    local from=${PULSAR_LAUNCH_WRAPPERS:-/usr/bin}
+    local to=${GAMESCALE_BINDIR:-$HOME/.local/bin}
+    local rec=${XDG_STATE_HOME:-$HOME/.local/state}/pulsar/launch-wrappers
+    local w dst ours have installed=0
+    for w in gg ggm; do
+        dst="${to}/${w}"
+        if [ ! -r "${from}/${w}" ]; then
+            printf '%s is not in this image (%s); skipping it\n' "$w" "${from}/${w}"
+            continue
+        fi
+        ours=0
+        if [ -f "$dst" ] && [ ! -L "$dst" ]; then
+            if cmp -s "${from}/${w}" "$dst"; then
+                ours=1
+            elif [ -r "${rec}/${w}.sha256" ]; then
+                have=$(sha256sum < "$dst" | cut -d' ' -f1)
+                [ "$have" = "$(cat "${rec}/${w}.sha256")" ] && ours=1
+            fi
+        fi
+
+        if [ "$mode" = uninstall ]; then
+            if [ "$ours" = 1 ]; then
+                if [ "$dry" = 1 ]; then
+                    printf 'would remove %s\n' "$dst"
+                else
+                    rm -f "$dst" "${rec}/${w}.sha256"
+                    printf 'removed %s\n' "$dst"
+                fi
+            elif [ -e "$dst" ] || [ -L "$dst" ]; then
+                printf 'left %s: it is not the copy Pulsar installed\n' "$dst"
+            fi
+            continue
+        fi
+
+        if [ -e "$dst" ] || [ -L "$dst" ]; then
+            if [ "$ours" = 1 ] && cmp -s "${from}/${w}" "$dst"; then
+                # identical is indistinguishable from ours, so adopt it:
+                # the next image's gg can then replace it
+                if [ "$dry" = 0 ] && [ ! -e "${rec}/${w}.sha256" ]; then
+                    mkdir -p "$rec"
+                    sha256sum < "$dst" | cut -d' ' -f1 > "${rec}/${w}.sha256"
+                fi
+                printf '%s is current\n' "$dst"
+                installed=1
+                continue
+            fi
+            if [ "$ours" = 0 ]; then
+                printf 'left %s alone: it is your own and differs from %s\n' "$dst" "${from}/${w}"
+                continue
+            fi
+        fi
+        if [ "$dry" = 1 ]; then
+            printf 'would install %s\n' "$dst"
+            continue
+        fi
+        mkdir -p "$to" "$rec"
+        install -m 0755 "${from}/${w}" "$dst"
+        sha256sum < "$dst" | cut -d' ' -f1 > "${rec}/${w}.sha256"
+        printf 'installed %s\n' "$dst"
+        installed=1
+    done
+    if [ "$mode" = install ] && [ "$dry" = 0 ] && [ "$installed" = 1 ]; then
+        printf 'Steam launch options:  gg %%command%%   (ggm %%command%% adds the MangoHud overlay)\n'
+    fi
+}
 
 cmd_setup() {
     local recipe=${1:-}
@@ -3451,10 +3539,12 @@ cmd_setup() {
         # image, so this runs offline from pinned, hash-verified files and the
         # ~/.local copy matches the image exactly. Reimplementing the flatpak
         # grants here would drift from upstream the moment they change one.
-        local src=/usr/share/pulsar/gamescale/install.sh
+        local src=${PULSAR_GAMESCALE_INSTALLER:-/usr/share/pulsar/gamescale/install.sh}
         [ -x "$src" ] || die "gamescale is not staged in this image (${src})"
         printf 'running the staged gamescale installer (offline, pinned)\n'
+        # set -e: a failed install stops here, before gg lands beside nothing
         "$src" "$@"
+        setup_launch_wrappers "$@"
         ;;
     *) die "unknown recipe: ${recipe} (see: pulsar setup --help)" ;;
     esac
