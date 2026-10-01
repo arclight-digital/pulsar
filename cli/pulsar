@@ -148,15 +148,12 @@ check_scheduler() {
         # nonzero, so the fallback appends to it and you get "failed\nunknown".
         unit=$(systemctl is-active scx.service 2>/dev/null) || true
         [ -n "$unit" ] || unit=unknown
-        # The one cause seen so far that the unit hides: libbpf reads the
-        # kernel config from /boot/config-<release>, which tmpfiles links at
-        # boot. Without it every scheduler fails with -EINVAL.
-        local kv; kv=$(uname -r)
-        if [ ! -e "/boot/config-${kv}" ]; then
-            record scheduler warn "sched_ext is '${state}' -- running stock EEVDF" \
-                   "no /boot/config-${kv}, so libbpf cannot load a scheduler; fix: sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/60-pulsar-kconfig.conf && sudo systemctl restart scx.service"
-            return
-        fi
+        # scx.service binds the kernel config into its own /boot, so the
+        # missing-/boot/config cause this used to name cannot happen to it any
+        # more. What the unit last said is the most useful next clue.
+        local last
+        last=$(journalctl -u scx.service -b -n 1 -o cat --no-pager 2>/dev/null | head -c 200) || true
+        [ -z "$last" ] || unit="${unit}; last: ${last}"
         record scheduler warn "sched_ext is '${state}' -- running stock EEVDF" \
                "scx.service: ${unit}"
     fi

@@ -65,5 +65,17 @@ RestartSec=30
 MemoryMax=2G
 MemorySwapMax=0
 
+# libbpf reads the kernel config from /boot/config-<release> (Fedora builds no
+# /proc/config.gz), and without it bpfland fails with -EINVAL: "failed to
+# open system Kconfig". The config ships in the image at
+# /usr/lib/modules/<release>/config, and 60-pulsar-kconfig.conf links it into
+# /boot at boot -- which only works where /boot is writable. On a machine
+# installed with `bootc install`, the boot gate's, it was not, and every gated
+# night since 2026-09-29 failed on it with the scheduler never attaching. So
+# the unit carries its own: an empty private /boot holding just that file,
+# whatever the real /boot is. %v is the running kernel, so it follows updates.
+TemporaryFileSystem=/boot:ro
+BindReadOnlyPaths=/usr/lib/modules/%v/config:/boot/config-%v
+
 [Install]
 WantedBy=multi-user.target
