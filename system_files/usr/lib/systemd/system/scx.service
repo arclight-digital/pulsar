@@ -1,6 +1,6 @@
 [Unit]
 Description=sched_ext scheduler (scx_bpfland)
-After=multi-user.target
+After=multi-user.target systemd-tmpfiles-setup.service
 # This proves the KERNEL supports sched_ext. It does NOT prove that a
 # scheduler attached -- when this unit fails, the kernel silently keeps
 # running stock EEVDF and nothing announces it. The only honest check is
@@ -67,15 +67,16 @@ MemorySwapMax=0
 
 # libbpf reads the kernel config from /boot/config-<release> (Fedora builds no
 # /proc/config.gz), and without it bpfland fails with -EINVAL: "failed to
-# open system Kconfig". The config ships in the image at
-# /usr/lib/modules/<release>/config, and 60-pulsar-kconfig.conf links it into
-# /boot at boot -- which only works where /boot is writable. On a machine
-# installed with `bootc install`, the boot gate's, it was not, and every gated
-# night since 2026-09-29 failed on it with the scheduler never attaching. So
-# the unit carries its own: an empty private /boot holding just that file,
-# whatever the real /boot is. %v is the running kernel, so it follows updates.
-TemporaryFileSystem=/boot:ro
-BindReadOnlyPaths=/usr/lib/modules/%v/config:/boot/config-%v
+# open system Kconfig". A tmpfiles link in /boot provides it -- where /boot is
+# writable, which on a `bootc install`ed machine it is not (a read-only
+# automount; every gated night since 2026-09-29 failed on it). So the unit
+# sees /run/pulsar/kconfig -- holding only config-<release>, made by
+# 60-pulsar-kconfig.conf -- in place of /boot. A DIRECTORY bound over /boot,
+# not a file into an empty private one: that needs a file created in a
+# boot_t mount, which SELinux refuses (f48be41 did, and failed with
+# 226/NAMESPACE on every machine). Proven on a Pulsar machine under
+# enforcing SELinux: bpfland attached through exactly this binding.
+BindReadOnlyPaths=/run/pulsar/kconfig:/boot
 
 [Install]
 WantedBy=multi-user.target
