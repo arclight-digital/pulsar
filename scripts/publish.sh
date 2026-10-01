@@ -42,6 +42,15 @@
 #                        wants: evidence, defining nothing. R2 also stops being
 #                        mandatory under this flag, because the one reason it is
 #                        mandatory is publish_site, which does not run.
+#   --stage              a gated build, before its boot gate: everything a
+#                        release publishes, but nothing that makes it the
+#                        release. Per-build R2 keys are written, the moving
+#                        pointers are not, and the site commit is pushed to
+#                        the branch release/<version> instead of --branch.
+#                        The build host, once the gate passes (or a person
+#                        promotes it), copies the per-build keys onto the
+#                        pointers and merges that branch. The builder is gone
+#                        by then: this is the half that needs the images.
 #   --dry-run            generate everything, publish nothing
 #
 # --prev-digest CANNOT BE RECOVERED HERE. It is `oras resolve ${IMAGE}:latest`
@@ -80,6 +89,7 @@ SITE_REPO="${PULSAR_SITE_REPO:-https://github.com/arclight-digital/pulsar-site.g
 GIT_TOKEN_FILE="${PULSAR_GIT_TOKEN_FILE:-}"
 DRY_RUN=no
 NO_PROMOTE=no
+STAGE_ONLY=no
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -95,6 +105,7 @@ while [ $# -gt 0 ]; do
     --git-token-file) GIT_TOKEN_FILE="${2:?}"; shift ;;
     --dry-run)        DRY_RUN=yes ;;
     --no-promote)     NO_PROMOTE=yes ;;
+    --stage)          STAGE_ONLY=yes ;;
     # From the header rather than a line range: '2,55p' stopped one line short
     # of the end, and every edit to the comment above moved the boundary again.
     -h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
@@ -105,6 +116,9 @@ done
 
 say()  { printf '\n==> %s\n' "$*"; }
 die()  { echo "publish: $*" >&2; exit 1; }
+
+[ "${NO_PROMOTE}" = no ] || [ "${STAGE_ONLY}" = no ] \
+  || die "--stage and --no-promote are different answers to one question; pass one"
 
 [ -n "${VERSION}" ]      || die "--version is required"
 [ -n "${IMAGE}" ]        || die "--image (or \$IMAGE) is required"
@@ -374,6 +388,12 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
     say "--no-promote: changelog/latest.json and both -latest SBOMs untouched"
     return 0
   fi
+  # Staged: the build host copies these same per-build keys onto the
+  # pointers, in this order, when the build becomes the release.
+  if [ "${STAGE_ONLY}" = yes ]; then
+    say "--stage: the -latest pointers move when this build is released, not now"
+    return 0
+  fi
 
   # vanilla-latest.spdx.json is the key the NEXT nightly diffs against, so it
   # is written last: if anything above failed, the baseline still describes a
@@ -525,7 +545,14 @@ publish_site() {
     git "${cfg[@]}" add src/data/changelog.json \
                         src/data/manifest.json || return 1
     git "${cfg[@]}" commit -q -m "site: package changelog for ${VERSION}" || return 1
-    git "${cfg[@]}" push -q origin "HEAD:${BRANCH}"
+    if [ "${STAGE_ONLY}" = yes ]; then
+      # Its own branch, one per version, merged into ${BRANCH} on release.
+      # Forced only so a retry of this same step can land; no other build
+      # can ever push this name.
+      git "${cfg[@]}" push -q -f origin "HEAD:refs/heads/release/${VERSION}"
+    else
+      git "${cfg[@]}" push -q origin "HEAD:${BRANCH}"
+    fi
   }
 
   say "committing the build data and upstream files the site renders from"
@@ -535,7 +562,12 @@ publish_site() {
   for attempt in 1 2 3; do
     set +e; publish; rc=$?; set -e
     case "${rc}" in
-      0) echo "site commit published (attempt ${attempt})"; return 0 ;;
+      0) if [ "${STAGE_ONLY}" = yes ]; then
+           echo "site commit staged on release/${VERSION} (attempt ${attempt})"
+         else
+           echo "site commit published (attempt ${attempt})"
+         fi
+         return 0 ;;
       2) return 0 ;;
     esac
     echo "could not publish (attempt ${attempt}); resyncing" >&2
@@ -585,7 +617,11 @@ main() {
   else
     publish_site
     echo
-    echo "published ${VERSION}"
+    if [ "${STAGE_ONLY}" = yes ]; then
+      echo "staged ${VERSION}: described, not yet the release"
+    else
+      echo "published ${VERSION}"
+    fi
   fi
 }
 

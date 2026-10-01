@@ -1,11 +1,12 @@
 #!/usr/bin/env bats
 # The boot gate, nightly.sh's half.
 #
-# With PULSAR_GATE=1 a night pushes its version tags and stops, printing
-# `gate: pending <version>` for the build host, which boots each image on a
-# throwaway VM. When both pass, the host runs `nightly.sh --promote`, which
-# moves :latest and describes the night -- changelog, SBOM baseline, site --
-# so none of those ever describe a build that was held back.
+# With PULSAR_GATE=1 a night pushes its version tags, describes itself STAGED
+# (publish.sh --stage: SBOMs, changelog, the site commit on release/<version>,
+# none of the moving pointers), prints `gate: pending <version>` and stops.
+# The builder is deleted then. The build host boots each image on a throwaway
+# VM and, when both pass, moves the floating tags, the R2 pointers and the
+# site itself -- so none of those ever describe a build that was held back.
 #
 # The harness is nightly.sh from a copy of the tree, with build.sh,
 # publish.sh, next-version.sh and check.sh as stubs that write down how they
@@ -31,93 +32,72 @@ setup() {
   chmod +x "${TREE}/scripts/"*.sh
   # (the signer token deliberately does not exist, so preflight skips the
   # signer rather than dialling one; build.sh is a stub and never needs it)
-  # the outgoing :latest, as oras resolves it; a test changes it to prove
-  # --promote uses the one recorded before the build, not the one now
+  # the outgoing :latest, as oras resolves it: the changelog's baseline
   export PREV=sha256:1111111111111111111111111111111111111111111111111111111111111111
   printf '#!/usr/bin/env bash\necho "${PREV}"\n' > "${BIN}/oras"; chmod +x "${BIN}/oras"
+  # the healthcheck: a stub curl that records the ping
+  printf '#!/usr/bin/env bash\necho "curl $*" >> "%s"\n' "${CALLS}" > "${BIN}/curl"; chmod +x "${BIN}/curl"
   export IMAGE=ghcr.io/arclight-digital/pulsar IMAGE_NVIDIA=ghcr.io/arclight-digital/pulsar-nvidia
   export PULSAR_CHANNEL=scheduled PULSAR_FORCE_BUILD=yes
   export PULSAR_SIGNER_URL=http://10.0.0.5:8443 PULSAR_SIGNER_TOKEN_FILE="${BATS_TEST_TMPDIR}/no-token" PULSAR_SIGNER_CA_FILE=/dev/null
   export PULSAR_BUILD_WORK="${BATS_TEST_TMPDIR}/work"; mkdir -p "${PULSAR_BUILD_WORK}"
-  PENDING="${PULSAR_BUILD_WORK}/gate-pending.json"
 }
 
 night()   { run --separate-stderr "${TREE}/scripts/nightly.sh"; }
-promote() { run --separate-stderr "${TREE}/scripts/nightly.sh" --promote; }
 called()  { grep -E "$1" "${CALLS}"; }
 not_called() {
   if grep -qE "$1" "${CALLS}"; then echo "unexpected call: $(grep -E "$1" "${CALLS}")" >&2; return 1; fi
 }
 
-@test "a gated night pushes version tags only, says it is pending, and stops" {
-  PULSAR_GATE=1 night
+@test "a gated night pushes version tags, stages its description, says it is pending, and stops" {
+  PULSAR_GATE=1 PULSAR_HEALTHCHECK_URL=https://hc.example/x night
   [ "$status" -eq 0 ] || { echo "$stderr"; false; }
-  grep -qx "gate: pending ${VERSION}" <<<"$output"
   grep -qx "this build is ${VERSION}" <<<"$output"
   called '^build .*--push' | grep -q -- '--no-floating-tags'
-  not_called '^publish'
-  [ "$(jq -r .version "${PENDING}")" = "${VERSION}" ]
-  [ "$(jq -r .channel "${PENDING}")" = scheduled ]
-  [ "$(jq -r .prev_digest "${PENDING}")" = "${PREV}" ]
+  called '^publish ' | grep -q -- '--stage'
+  called '^publish ' | grep -q -- "--prev-digest ${PREV}"
+  not_called '^publish .*--no-promote'
+  # pending is the LAST thing said: the builder is deleted when it appears,
+  # so everything that needs the images has to be done by then
+  [ "$(tail -1 <<<"$output")" = "gate: pending ${VERSION}" ]
+  # the night is not done until the host releases it, and the host pings then
+  not_called '^curl'
+}
+
+@test "a gated manual build stages too, so it can be promoted later" {
+  PULSAR_CHANNEL=manual PULSAR_GATE=1 night
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+  called '^build .*--push' | grep -q -- '--no-floating-tags'
+  called '^publish ' | grep -q -- '--stage'
+  not_called '^publish .*--no-promote'
+  [ "$(tail -1 <<<"$output")" = "gate: pending ${VERSION}" ]
+}
+
+@test "a staged publish that fails is not pending" {
+  FAIL_PUBLISH=1 PULSAR_GATE=1 night
+  [ "$status" -ne 0 ]
+  if grep -q '^gate: pending' <<<"$output"; then false; fi
 }
 
 @test "an ungated night is what it always was" {
-  night
+  PULSAR_HEALTHCHECK_URL=https://hc.example/x night
   [ "$status" -eq 0 ]
   if grep -q '^gate: pending' <<<"$output"; then false; fi
   not_called '^build .*--no-floating-tags'
-  called '^publish'
-  [ ! -e "${PENDING}" ]
+  called '^publish '
+  not_called '^publish .*--stage'
+  called '^curl'
 }
 
-@test "--promote finishes the gated night: promote, then describe against the recorded baseline" {
-  PULSAR_GATE=1 night
-  : > "${CALLS}"
-  # :latest has not moved, but prove the baseline comes from the record
-  PREV=sha256:2222222222222222222222222222222222222222222222222222222222222222
-  promote
-  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
-  called '^build ' | grep -q -- "--promote-only .*--version ${VERSION}"
-  not_called '^build .*--no-floating-tags'
-  not_called '^build .*--push'
-  called '^publish ' | grep -q -- "--prev-digest sha256:1111"
-  # promote before publish: the changelog describes what :latest now is
-  [ "$(grep -n '^build ' "${CALLS}" | cut -d: -f1)" -lt "$(grep -n '^publish ' "${CALLS}" | cut -d: -f1)" ]
-  [ ! -e "${PENDING}" ]
-}
-
-@test "--promote with nothing pending refuses, and builds nothing" {
-  promote
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"nothing here is waiting on the boot gate"* ]]
-  [ ! -s "${CALLS}" ]
-}
-
-@test "--promote refuses a record from the other channel" {
-  PULSAR_GATE=1 night
-  : > "${CALLS}"
-  PULSAR_CHANNEL=manual promote
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"is a scheduled build; this is manual"* ]]
-  [ ! -s "${CALLS}" ]
-}
-
-@test "a promotion that fails describes nothing and keeps the record" {
-  PULSAR_GATE=1 night
-  : > "${CALLS}"
-  FAIL_BUILD=1 promote
-  [ "$status" -ne 0 ]
-  not_called '^publish'
-  [ -e "${PENDING}" ]
-}
-
-@test "a gated manual build promotes nothing floating and describes itself as manual" {
-  PULSAR_CHANNEL=manual PULSAR_GATE=1 night
+@test "an ungated manual build describes itself without becoming the release" {
+  PULSAR_CHANNEL=manual night
   [ "$status" -eq 0 ]
-  grep -qx "gate: pending ${VERSION}" <<<"$output"
-  : > "${CALLS}"
-  PULSAR_CHANNEL=manual promote
-  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
-  called '^build ' | grep -q -- '--promote-only.*--no-floating-tags'
   called '^publish ' | grep -q -- '--no-promote'
+  not_called '^publish .*--stage'
+}
+
+@test "--promote is gone: the build host releases a gated night" {
+  run --separate-stderr "${TREE}/scripts/nightly.sh" --promote
+  [ "$status" -eq 2 ]
+  [ ! -s "${CALLS}" ]
 }
