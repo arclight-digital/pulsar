@@ -808,6 +808,10 @@ build_args=(
 # for that and is deleted as soon as this line is printed -- keep its shape.
 if [ "${PULSAR_GATE:-0}" = 1 ]; then
   finish_night
+  # "handoff" tells the builder this night published staged and needs nothing
+  # more from it (infra's run-build.sh hands it to helios and leaves). An
+  # older builder does not know the word and goes by "pending" alone.
+  echo "gate: handoff ${VERSION}"
   echo "gate: pending ${VERSION}"
   exit 0
 fi

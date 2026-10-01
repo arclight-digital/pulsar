@@ -60,6 +60,8 @@ not_called() {
   # pending is the LAST thing said: the builder is deleted when it appears,
   # so everything that needs the images has to be done by then
   [ "$(tail -1 <<<"$output")" = "gate: pending ${VERSION}" ]
+  # and the handoff, which tells the builder it may leave, comes just before
+  [ "$(tail -2 <<<"$output" | head -1)" = "gate: handoff ${VERSION}" ]
   # the night is not done until the host releases it, and the host pings then
   not_called '^curl'
 }
@@ -73,10 +75,10 @@ not_called() {
   [ "$(tail -1 <<<"$output")" = "gate: pending ${VERSION}" ]
 }
 
-@test "a staged publish that fails is not pending" {
+@test "a staged publish that fails is not pending, and hands nothing off" {
   FAIL_PUBLISH=1 PULSAR_GATE=1 night
   [ "$status" -ne 0 ]
-  if grep -q '^gate: pending' <<<"$output"; then false; fi
+  if grep -qE '^gate: (pending|handoff)' <<<"$output"; then false; fi
 }
 
 @test "an ungated night is what it always was" {
