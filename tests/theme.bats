@@ -154,6 +154,24 @@ PY
         grep -q "'${k}'" "${ext}/prefs.js"
         grep -q "\"${k}\"" "${REPO}/scripts/pulsar-theme-picker"
     done
+    # glass off while gaming (off by default) and in Power Saver (on), on
+    # both screens with the same words
+    for kd in glass-off-gaming:false glass-off-power-saver:true; do
+        k=${kd%%:*}
+        python3 - "$xml" "$k" "${kd#*:}" <<'PY'
+import sys, xml.etree.ElementTree as ET
+key = ET.parse(sys.argv[1]).find(f".//key[@name='{sys.argv[2]}']")
+assert key is not None and key.get("type") == "b" and key.findtext("default").strip() == sys.argv[3], sys.argv[2]
+PY
+        grep -q "'${k}'" "${ext}/prefs.js"
+        grep -q "\"${k}\"" "${REPO}/scripts/pulsar-theme-picker"
+        grep -q "'${k}'" "${ext}/glass.js"
+    done
+    for words in 'Disable glass when gaming' 'While a game is running' 'Disable glass in Power Saver' \
+                 'While the power mode is Power Saver'; do
+        grep -qF "'${words}'" "${ext}/prefs.js"
+        grep -qF "\"${words}\"" "${REPO}/scripts/pulsar-theme-picker"
+    done
     # the tint slider: a 0..1 double, on both screens
     grep -q '<key name="glass-tint" type="d">' "$xml"
     grep -q '<range min="0.0" max="1.0"/>' "$xml"

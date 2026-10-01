@@ -13,6 +13,8 @@ const EFFECTS = [
     ['power-on', 'Power-on', 'The edge traces out from the light as a menu opens', 'lighting'],
     ['glow', 'Glow', 'What is filled with the accent glows softly; apps opened afterwards pick it up'],
     ['focus-brackets', 'Focus brackets', 'Corner brackets lock onto the control the keyboard is on'],
+    ['glass-off-gaming', 'Disable glass when gaming', 'While a game is running'],
+    ['glass-off-power-saver', 'Disable glass in Power Saver', 'While the power mode is Power Saver'],
 ];
 
 // Glass tint: clear to fully tinted, like the slider it is modeled on.

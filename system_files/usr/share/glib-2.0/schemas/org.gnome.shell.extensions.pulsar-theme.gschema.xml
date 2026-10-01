@@ -36,6 +36,16 @@
       <summary>Glow</summary>
       <description>What is filled with the accent -- a switched-on toggle, today in the calendar, the default button, a slider's fill -- glows softly in it, in the Shell and in apps opened afterwards.</description>
     </key>
+    <key name="glass-off-gaming" type="b">
+      <default>false</default>
+      <summary>Disable glass when gaming</summary>
+      <description>While a game is running (GameMode has a client), the Shell's glass and light are off, as if switched off. Windows opened with glass keep it.</description>
+    </key>
+    <key name="glass-off-power-saver" type="b">
+      <default>true</default>
+      <summary>Disable glass in Power Saver</summary>
+      <description>While the power mode is Power Saver, the Shell's glass and light are off, as if switched off. Windows opened with glass keep it.</description>
+    </key>
     <key name="focus-brackets" type="b">
       <default>true</default>
       <summary>Focus brackets</summary>

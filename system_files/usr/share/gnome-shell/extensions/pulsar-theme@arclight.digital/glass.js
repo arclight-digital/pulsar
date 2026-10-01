@@ -2463,6 +2463,7 @@ export class Glass {
         }, this);
         this._watchBattery();
         this._watchCover();
+        this._watchSuspend();
         this._sync();
     }
 
@@ -2493,6 +2494,63 @@ export class Glass {
         global.workspace_manager.connectObject('active-workspace-changed', cover, this);
         global.get_window_actors().forEach(a => this._watchGeometry(a.meta_window));
         this._cover();
+    }
+
+    // ---- glass off while gaming, or in Power Saver ----
+    //
+    // Read off D-Bus, never through a setting (a dconf write at game launch
+    // is what deadlocked the Shell once), and never written back: the
+    // switches stay as the user left them, and so does the power profile.
+    // GameMode (gamemoded, which Steam and `gamemoderun` start games under)
+    // counts its clients; the power profile comes from power-profiles-daemon
+    // or tuned-ppd under either of their names. Either one gone (quit,
+    // crashed, never there) counts as no game and no Power Saver.
+    _watchSuspend() {
+        this._gaming = false;
+        this._powerSaver = false;
+        this._proxy(Gio.BusType.SESSION, 'com.feralinteractive.GameMode', '/com/feralinteractive/GameMode',
+            p => (this._gamemode = p), () => {
+                const p = this._gamemode;
+                this._suspend('_gaming', !!p.g_name_owner &&
+                    (p.get_cached_property('ClientCount')?.unpack() ?? 0) > 0);
+            });
+        const profile = (name, path) => this._proxy(Gio.BusType.SYSTEM, name, path,
+            p => (this._profiles = [...this._profiles ?? [], p]), () => {
+                const on = this._profiles.find(p => p.g_name_owner);
+                this._suspend('_powerSaver', on?.get_cached_property('ActiveProfile')?.unpack() === 'power-saver');
+            });
+        profile('org.freedesktop.UPower.PowerProfiles', '/org/freedesktop/UPower/PowerProfiles');
+        profile('net.hadess.PowerProfiles', '/net/hadess/PowerProfiles');
+    }
+
+    // A proxy for `name` (also its interface) at `path`, kept by `keep`,
+    // `read` whenever its owner or properties change. Never starts the
+    // service.
+    _proxy(bus, name, path, keep, read) {
+        Gio.DBusProxy.new_for_bus(bus, Gio.DBusProxyFlags.DO_NOT_AUTO_START, null, name, path, name, null,
+            (_o, res) => {
+                let p;
+                try {
+                    p = Gio.DBusProxy.new_for_bus_finish(res);
+                } catch {
+                    return;
+                }
+                if (this._destroyed)
+                    return;
+                keep(p);
+                p.connectObject(
+                    'g-properties-changed', read,
+                    'notify::g-name-owner', read,
+                    this);
+                read();
+            });
+    }
+
+    _suspend(key, v) {
+        if (this[key] === v)
+            return;
+        this[key] = v;
+        this._sync();
     }
 
     _watchGeometry(win) {
@@ -2555,7 +2613,9 @@ export class Glass {
             }
         }
         // a full redraw takes every held copy whole again (Hold.gen)
-        if (Hold.set(false, [...covered.keys()].map(m => monitors[m])))
+        // suspended (a game, Power Saver), what glass is left -- GTK
+        // windows' -- holds still everywhere
+        if (Hold.set(!!this._suspended && !overview, [...covered.keys()].map(m => monitors[m])))
             global.stage.queue_redraw();
         const index = new Map(actors.map((a, i) => [a, i]));
         for (const [a, wg] of this._windows) {
@@ -2570,12 +2630,21 @@ export class Glass {
             !this._a11y.get_boolean('high-contrast');
     }
 
+    // Glass and light off for now, as if switched off, without touching the
+    // switches: while a game runs (GameMode has a client) or the power
+    // profile is Power Saver, each if its own switch says so. GTK windows
+    // keep theirs (see _watchSuspend).
+    get _suspended() {
+        return (this._gaming && this._settings.get_boolean('glass-off-gaming')) ||
+            (this._powerSaver && this._settings.get_boolean('glass-off-power-saver'));
+    }
+
     get glass() {
-        return this._allowed && this._settings.get_boolean('glass');
+        return this._allowed && !this._suspended && this._settings.get_boolean('glass');
     }
 
     get lighting() {
-        return this._allowed && this._settings.get_boolean('lighting');
+        return this._allowed && !this._suspended && this._settings.get_boolean('lighting');
     }
 
     get glowing() {
@@ -2586,8 +2655,10 @@ export class Glass {
         return this.lighting && this._settings.get_boolean('power-on');
     }
 
+    // Not suspended with the rest: a GTK window's translucency is in the
+    // gtk.css it opened with, and without its blur it would be see-through.
     get windows() {
-        return this.glass && this._settings.get_boolean('window-glass');
+        return this._allowed && this._settings.get_boolean('glass') && this._settings.get_boolean('window-glass');
     }
 
     get brackets() {
@@ -2989,6 +3060,8 @@ export class Glass {
     destroy() {
         this._destroyed = true;
         laterRemove(this._coverLater);
+        for (const p of [this._gamemode, ...this._profiles ?? []])
+            p?.disconnectObject(this);
         global.workspace_manager.disconnectObject(this);
         for (const w of this._games ?? [])
             w.disconnectObject(this);

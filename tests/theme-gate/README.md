@@ -69,7 +69,10 @@ pixels, and blur and light would move every one); `glass` turns them on.
   rectangle. Then a stand-in game (`fixtures/game.py`, redrawing every
   frame): window glass beneath it is off while it is fullscreen or
   borderless and monitor-sized, and Quick Settings over it blurs once and
-  holds -- counted in fresh blurs per frame drawn.
+  holds -- counted in fresh blurs per frame drawn. Last, the two switches
+  that take the glass off: a GameMode client (a private `gamemoded`) and
+  Power Saver (`fixtures/fakeppd.py` on the stand-in system bus), each off
+  and back, and twenty Power Saver flips that must leave no actor behind.
 - `leaks`: stock showing through, found by what does not move. Every
   visible Shell widget on eleven surfaces (the desktop menu, the date menu,
   quick settings and a submenu, the app grid and an icon's menu, the run

@@ -941,6 +941,87 @@ def glass_game(add):
         back = js(f"return backdrop({pop})?.visible;")
         add("game: window glass is back when the borderless game quits", back == "true", f"visible={back}")
 
+    # Glass off while a game runs (GameMode has a client) or in Power Saver,
+    # each by its own switch: the Shell as with Glass and Lighting off, and
+    # GTK windows' glass, which they keep, held still. Read back as glass.js
+    # keeps it: the uiGroup classes the sheet keys off, the top bar's glass,
+    # the open Quick Settings' blur and light.
+    state = ("const ui = Main.layoutManager.uiGroup; const s = g._surfaces.get("
+             "Main.panel.statusArea.quickSettings.menu._boxPointer); return [ui.has_style_class_name('pulsar-glass'), "
+             "ui.has_style_class_name('pulsar-lit'), !!g._panel, !!s?._backdrop.visible, !!s?._lightActor.visible]"
+             ".join(' ');")
+    on, off = "true true true true true", "false false false false false"
+    actors = ("let n = 0; const walk = a => { n++; a.get_children().forEach(walk); }; walk(global.stage); return n;")
+    blur = f"g._windows.get(app({demo}))?._blur"
+
+    def glass_now(want):
+        # (Eval answers a string JSON-encoded)
+        return wait_for(GAME_JS.replace("WHAT", state), want=json.dumps(want), secs=5)
+
+    js("Main.panel.statusArea.quickSettings.menu.open(false); return 1;")
+    time.sleep(1.0)
+    if shutil.which("gamemoded"):
+        gm = subprocess.Popen(["gamemoded"], stdout=LOG, stderr=LOG)
+        time.sleep(1.0)
+        start("borderless", 800, 600)
+        js(f"game().meta_window.move_resize_frame(false, {mons[0][0] + 300}, {mons[0][1] + 200}, 800, 600); return 1;")
+        js("Main.panel.statusArea.quickSettings.menu.open(false); return 1;")
+        time.sleep(1.0)
+        gamemode = lambda m: sh("gdbus", "call", "--session", "--dest", "com.feralinteractive.GameMode",
+                                "--object-path", "/com/feralinteractive/GameMode", "--method",
+                                f"com.feralinteractive.GameMode.{m}", str(game[0].pid), check=False)
+        gamemode("RegisterGame")
+        time.sleep(1.0)
+        add("gaming: glass stays on by default while a game runs", glass_now(on), js(state))
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/glass-off-gaming", "true")
+        add("gaming: switched on, the glass is off while a game runs", glass_now(off), js(state))
+        held = work(blur)
+        run["gaming, GTK window glass"] = held
+        add("gaming: a GTK window's glass holds still while the glass is off",
+            held[0] >= 20 and held[1] is not None and held[1] <= 2, f"{held[1]} blurs in {held[0]} frames")
+        gamemode("UnregisterGame")
+        add("gaming: the glass is back when the game leaves GameMode", glass_now(on), js(state))
+        gamemode("RegisterGame")
+        glass_now(off)
+        stop()
+        gm.terminate()
+        gm.wait(5)
+        add("gaming: the glass is back when gamemoded goes", glass_now(on), js(state))
+        sh("dconf", "reset", "/org/gnome/shell/extensions/pulsar-theme/glass-off-gaming")
+    else:
+        add("gaming: gamemoded is in the image", False, "no gamemoded")
+
+    ppd = subprocess.Popen(["python3", "/gate/fixtures/fakeppd.py"], stdout=LOG, stderr=LOG)
+    time.sleep(1.5)
+    profile = lambda p: sh("gdbus", "call", "--system", "--dest", "org.freedesktop.UPower.PowerProfiles",
+                           "--object-path", "/org/freedesktop/UPower/PowerProfiles", "--method",
+                           "org.freedesktop.DBus.Properties.Set", "org.freedesktop.UPower.PowerProfiles",
+                           "ActiveProfile", f"<'{p}'>", check=False)
+    profile("power-saver")
+    add("power saver: the glass is off in Power Saver", glass_now(off), js(state))
+    profile("balanced")
+    add("power saver: the glass is back when Power Saver ends", glass_now(on), js(state))
+    dconf("/org/gnome/shell/extensions/pulsar-theme/glass-off-power-saver", "false")
+    profile("power-saver")
+    time.sleep(1.0)
+    add("power saver: switched off, the glass stays on in Power Saver", glass_now(on), js(state))
+    sh("dconf", "reset", "/org/gnome/shell/extensions/pulsar-theme/glass-off-power-saver")
+    add("power saver: switched back on, the glass goes at once", glass_now(off), js(state))
+    profile("balanced")
+    glass_now(on)
+    # twenty times off and on with Quick Settings open: nothing left behind
+    before = js(actors)
+    for i in range(20):
+        profile("power-saver")
+        glass_now(off)
+        profile("balanced")
+        glass_now(on)
+    after = js(actors)
+    run["actors after 20 flips"] = [before, after]
+    add("power saver: twenty flips leave no actors behind", before == after, f"{before} actors before, {after} after")
+    js("Main.panel.statusArea.quickSettings.menu.close(false); return 1;")
+    ppd.terminate()
+    ppd.wait(5)
     return run
 
 
