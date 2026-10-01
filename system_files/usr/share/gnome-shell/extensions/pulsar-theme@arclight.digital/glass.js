@@ -305,6 +305,35 @@ const Views = {
     },
 };
 
+// Over a game the blurs hold still (see Glass._watchCover): each draws
+// the blur it has, and nothing beneath is copied or blurred again, so a game
+// redrawing every frame beneath costs one textured rectangle a frame, not a
+// capture and a pyramid. One that moves, or has nothing kept yet (a menu
+// first opened over the game), blurs once at its new place and holds that.
+// Held on the stage views of the monitors a window covers (`monitors`,
+// stage rects), or everywhere (`all`). `gen`
+// counts the changes: each one, every kept copy is taken whole again.
+const Hold = {
+    all: false,
+    monitors: [],
+    gen: 0,
+    set(all, monitors) {
+        const same = all === this.all && monitors.length === this.monitors.length &&
+            monitors.every((m, i) => m === this.monitors[i]);
+        if (same)
+            return false;
+        this.all = all;
+        this.monitors = monitors;
+        this.gen++;
+        return true;
+    },
+    // a deviceRect() painted on a view
+    on(r) {
+        return this.all || this.monitors.some(m =>
+            r.vx0 >= m.x && r.vx0 < m.x + m.width && r.vy0 >= m.y && r.vy0 < m.y + m.height);
+    },
+};
+
 // Where the rect (x, y, w, h), in the painted actor's coordinates, lands in
 // the framebuffer being painted, in device pixels (top-left origin), written
 // into `out`. Painting onto a view, from the actor's place on the stage (plain
@@ -815,7 +844,18 @@ class PulsarLiveBlur extends Clutter.Effect {
         }
         const hw = Math.ceil(r.w / 2), hh = Math.ceil(r.h / 2);
         const k = s.key;
+        // Whenever what is held (Hold) changes, the copy is taken whole
+        // again, once: while held, what is beneath may have changed anywhere.
+        if (onView && !clone && s.holdGen !== Hold.gen) {
+            s.holdGen = Hold.gen;
+            k[0] = NaN;
+        }
         const moved = k[0] !== r.x || k[1] !== r.y || k[2] !== r.w || k[3] !== r.h;
+        // Held on this view, in place, with a blur kept: that blur as it is.
+        if (onView && !clone && !moved && s.copy && s.result && Hold.on(r)) {
+            this._draw(fb, actor, x0, y0, w, h, s);
+            return;
+        }
         const clip = paintContext.get_redraw_clip();
         const covered = this._covered(clip, r);
 
@@ -2009,8 +2049,24 @@ class WindowGlass {
     // GTK tells the compositor which parts of a window are opaque (cards,
     // boxed lists): see uncull().
     _uncull() {
-        if (!this._win.is_fullscreen())
+        if (!this._off)
             this._cull.update();
+    }
+
+    // No glass while this window is fullscreen, covers its whole monitor as
+    // a borderless game does (direct scanout wants it opaque and nothing in
+    // its actor but its surfaces), or sits beneath a window that covers it
+    // (unseen, it was blurred afresh on every frame the game drew).
+    // `covered` comes from Glass._cover().
+    get _off() {
+        return this._win.is_fullscreen() || !!this._covered;
+    }
+
+    cover(covered) {
+        if (covered === !!this._covered)
+            return;
+        this._covered = covered;
+        this._layout();
     }
 
     // back to full opacity: fullscreen (a game keeps direct scanout, which
@@ -2049,7 +2105,7 @@ class WindowGlass {
         if (!this._backdrop)
             return;
         const w = this._win;
-        if (w.is_fullscreen()) {
+        if (this._off) {
             this._backdrop.hide();
             this._recull();
             return;
@@ -2403,9 +2459,109 @@ export class Glass {
         Main.layoutManager.connectObject('monitors-changed', () => {
             Views.clear();
             laterAdd(() => this._destroyed || this._trackOsds());
+            this._coverSoon();
         }, this);
         this._watchBattery();
+        this._watchCover();
         this._sync();
+    }
+
+    // ---- a window covering its monitor ----
+    //
+    // Fullscreen, or borderless and exactly the monitor's size, as many
+    // games run (one sized to the work area is maximized by Mutter, and left
+    // alone). Window glass beneath it goes (unseen, it was blurred afresh on
+    // every frame the game drew), its own goes if it is a GTK window (direct
+    // scanout wants it opaque, with nothing in its actor but its surfaces),
+    // and every blur on that monitor -- the bar's, Quick Settings', an
+    // OSD's -- is held (Hold). All of it comes back on its own the frame the
+    // window goes: a held blur copies all of what is beneath again on its
+    // next paint. The overview holds nothing: its window previews carry
+    // their glass.
+    _watchCover() {
+        this._covered = new Map();      // monitor index -> covering window's stack index
+        this._games = new Set();        // windows whose geometry is watched
+        const cover = () => this._coverSoon();
+        global.display.connectObject(
+            'restacked', cover,
+            'in-fullscreen-changed', cover,
+            'window-created', (_d, win) => {
+                this._watchGeometry(win);
+                cover();
+            },
+            this);
+        global.workspace_manager.connectObject('active-workspace-changed', cover, this);
+        global.get_window_actors().forEach(a => this._watchGeometry(a.meta_window));
+        this._cover();
+    }
+
+    _watchGeometry(win) {
+        if (!win || this._games.has(win))
+            return;
+        this._games.add(win);
+        const cover = () => this._coverSoon();
+        win.connectObject(
+            'position-changed', cover,
+            'size-changed', cover,
+            'notify::fullscreen', cover,
+            'notify::minimized', cover,
+            'unmanaged', () => {
+                win.disconnectObject(this);
+                this._games.delete(win);
+                cover();
+            },
+            this);
+    }
+
+    _coverSoon() {
+        if (!this._coverLater)
+            this._coverLater = laterAdd(() => {
+                this._coverLater = 0;
+                if (!this._destroyed)
+                    this._cover();
+            });
+    }
+
+    // Which monitors a window covers, topmost first; then every glass's
+    // part in it.
+    _cover() {
+        const covered = this._covered;
+        if (!covered)
+            return;
+        covered.clear();
+        // Not in the overview: the previews there are clones of the windows,
+        // glass and all, and the dash's blur moves with them.
+        const overview = Main.overview.visible && !this._leavingOverview;
+        const monitors = Main.layoutManager.monitors;
+        const actors = global.get_window_actors();
+        const self = new Set();         // windows that cover their monitor themselves
+        for (let i = overview ? -1 : actors.length - 1; i >= 0; i--) {
+            const a = actors[i], w = a.meta_window;
+            if (!w || !a.visible || w.minimized ||
+                [Meta.WindowType.DESKTOP, Meta.WindowType.DOCK].includes(w.get_window_type()))
+                continue;
+            const m = w.get_monitor();
+            const mon = monitors[m];
+            if (!mon || covered.has(m))
+                continue;
+            const f = w.get_frame_rect();
+            const is = r => r && f.x === r.x && f.y === r.y && f.width === r.width && f.height === r.height;
+            // a maximized window fills a monitor without a top bar too, and
+            // keeps its glass
+            const free = !w.is_maximized?.() && !w.maximized_horizontally && !w.maximized_vertically;
+            if (w.is_fullscreen() || (free && is(mon))) {
+                self.add(a);
+                covered.set(m, i);
+            }
+        }
+        // a full redraw takes every held copy whole again (Hold.gen)
+        if (Hold.set(false, [...covered.keys()].map(m => monitors[m])))
+            global.stage.queue_redraw();
+        const index = new Map(actors.map((a, i) => [a, i]));
+        for (const [a, wg] of this._windows) {
+            const top = covered.get(a.meta_window.get_monitor());
+            wg.cover(self.has(a) || (top !== undefined && (index.get(a) ?? Infinity) < top));
+        }
     }
 
     get _allowed() {
@@ -2752,6 +2908,7 @@ export class Glass {
         this._windows.set(actor, new WindowGlass(this, actor));
         if (this.windows)
             this._glassy.add(actor);
+        this._coverSoon();
     }
 
     forgetWindow(actor) {
@@ -2825,10 +2982,19 @@ export class Glass {
 
         for (const s of this._surfaces.values())
             s.sync();
+        // the overview coming or going, a new bar
+        this._cover();
     }
 
     destroy() {
         this._destroyed = true;
+        laterRemove(this._coverLater);
+        global.workspace_manager.disconnectObject(this);
+        for (const w of this._games ?? [])
+            w.disconnectObject(this);
+        this._games = null;
+        this._covered = null;
+        Hold.set(false, []);
         Views.unwatch();
         if (this._tintId)
             GLib.source_remove(this._tintId);

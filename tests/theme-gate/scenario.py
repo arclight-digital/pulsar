@@ -861,6 +861,89 @@ def popover_action(name):
        "--method", "org.gtk.Actions.Activate", name, "[]", "{}", check=False)
 
 
+# A game covering its monitor (glass.js Glass._watchCover): window glass
+# beneath it is off, and every blur on that monitor holds still instead of
+# blurring again on each frame the game draws. The game is
+# fixtures/game.py, redrawing every frame; a blur's work is counted by
+# wrapping that LiveBlur's own _blur (the pyramid, run once per fresh blur).
+GAME_JS = r"""(() => {
+  const g = Main.extensionManager.lookup('EXT')?.stateObj?._glass;
+  globalThis.__gate ??= {frames: 0};
+  if (!__gate.paintId) __gate.paintId = global.stage.connect('before-paint', () => __gate.frames++);
+  const game = () => global.get_window_actors().find(a => a.meta_window.get_title() === 'GateGame');
+  const app = id => global.get_window_actors().find(a => a.meta_window.get_gtk_application_id?.() === id &&
+    !a.meta_window.get_transient_for());
+  const count = e => { if (!e) return null; if (!e.__gateBlur) { const f = e._blur; e.__gateBlur = 0;
+    e._blur = function (...a) { this.__gateBlur++; return f.apply(this, a); }; } return e; };
+  const backdrop = id => g?._windows.get(app(id))?._backdrop;
+  WHAT
+})()""".replace("EXT", EXT)
+
+
+def glass_game(add):
+    js = lambda what: eval_js(GAME_JS.replace("WHAT", what))[1]
+    jsj = lambda what: eval_json(GAME_JS.replace("WHAT", what))[0]
+    run = {}
+    game = []
+
+    def start(*args):
+        game.append(subprocess.Popen(["python3", "/gate/fixtures/game.py", *map(str, args)], env=ENV,
+                                     stdout=LOG, stderr=LOG))
+        up = wait_for(GAME_JS.replace("WHAT", "return !!game()?.is_mapped();"), secs=15)
+        time.sleep(1.0)
+        return up
+
+    def stop():
+        for p in game:
+            p.terminate()
+            p.wait(5)
+        game.clear()
+        wait_for(GAME_JS.replace("WHAT", "return !!game();"), want="false", secs=5)
+        time.sleep(1.0)
+
+    def work(effect, secs=2.0):
+        """(frames drawn, fresh blurs of `effect`) over `secs`."""
+        js(f"const e = count({effect}); if (e) e.__gateBlur = 0; __gate.frames = 0; return 1;")
+        time.sleep(secs)
+        return jsj(f"return JSON.stringify([__gate.frames, ({effect})?.__gateBlur ?? null]);") or [0, None]
+
+    mons, _ = eval_json("JSON.stringify(Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]))")
+    demo, pop = "'org.gnome.Adwaita1.Demo'", f"'{POPOVER_APP}'"
+
+    # a fullscreen game over the demo, on the first monitor
+    start("fullscreen", 0)
+    off = js(f"return backdrop({demo})?.visible;")
+    add("game: window glass beneath a fullscreen game is off", off == "false", f"visible={off}")
+    js("Main.panel.statusArea.quickSettings.menu.open(false); return 1;")
+    time.sleep(1.0)
+    qs = "g._surfaces.get(Main.panel.statusArea.quickSettings.menu._boxPointer)?._blur"
+    frames, blurs = work(qs)
+    run["quick settings over a fullscreen game"] = {"frames": frames, "blurs": blurs}
+    add("game: Quick Settings over a fullscreen game blurs once and holds",
+        frames >= 20 and blurs is not None and blurs <= 2, f"{blurs} blurs in {frames} frames")
+    js("Main.panel.statusArea.quickSettings.menu.close(false); return 1;")
+    stop()
+    back = js(f"return backdrop({demo})?.visible;")
+    add("game: window glass is back when the fullscreen game quits", back == "true", f"visible={back}")
+
+    # a borderless game exactly the size of the second monitor, over the
+    # popover fixture's window there
+    if mons and len(mons) > 1:
+        x, y, w, h = mons[1]
+        start("borderless", w, h)
+        js(f"game().meta_window.move_resize_frame(false, {x}, {y}, {w}, {h}); return 1;")
+        time.sleep(1.0)
+        rect = js("const r = game().meta_window.get_frame_rect(); return [r.x, r.y, r.width, r.height].join(' ');")
+        off = js(f"return backdrop({pop})?.visible;")
+        add("game: window glass beneath a borderless monitor-sized game is off", off == "false",
+            f"visible={off}, game at {rect}, monitor {mons[1]}")
+        stop()
+        back = js(f"return backdrop({pop})?.visible;")
+        add("game: window glass is back when the borderless game quits", back == "true", f"visible={back}")
+
+    return run
+
+
 def glass():
     """Glass and light on, two monitors, at 1.0 and 1.25: for each surface
     (Quick Settings, a desktop menu on the second monitor, the OSD on each
@@ -953,6 +1036,7 @@ def glass():
         popover_action("popdown")
         wait_for(popped + ".length", want="0", secs=5)
         report["runs"][tag] = {"scales": got, "monitors": mons, "probed": run}
+    report["runs"]["game"] = glass_game(add)
     kill_apps()
     stop_shell()
     bad = shell_log_problems("glass")

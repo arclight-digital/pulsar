@@ -66,7 +66,10 @@ pixels, and blur and light would move every one); `glass` turns them on.
   its opacity and show while it shows, and the blur and light are centered
   on the styled box and cover it. It reads glass.js's internals by name
   (`GLASS_PROBE`); a rename fails it loudly. `glass-report.json` has every
-  rectangle.
+  rectangle. Then a stand-in game (`fixtures/game.py`, redrawing every
+  frame): window glass beneath it is off while it is fullscreen or
+  borderless and monitor-sized, and Quick Settings over it blurs once and
+  holds -- counted in fresh blurs per frame drawn.
 - `leaks`: stock showing through, found by what does not move. Every
   visible Shell widget on eleven surfaces (the desktop menu, the date menu,
   quick settings and a submenu, the app grid and an icon's menu, the run
