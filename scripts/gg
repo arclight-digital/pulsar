@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# gg -- Steam launch option:  gg [gamescale flags] %command%
+#
+# gamescale outermost on purpose. It ends in `exec "$@"`, replacing itself
+# with what it launches, and its restore hangs off FD 9 -- a lock the game
+# inherits and the kernel releases however the game dies. The exec chain
+# gg -> gamescale -> gamemoderun -> game passes that fd straight through.
+#
+# The other order sets LD_PRELOAD before gamescale runs, so gamescale's bash
+# and every gdctl/gsettings/flatpak-spawn helper it shells out to registers
+# with gamemode on the way past. It works; it is churn.
+#
+# LEADING FLAGS ARE FORWARDED TO GAMESCALE, which is the whole reason this is
+# not a one-liner. `exec gamescale gamemoderun "$@"` hands -x to GAMEMODERUN,
+# which tries to execute it and dies with "env: '-x': No such file or
+# directory" -- so a flag typo would stop the game from starting at all. That
+# is the one thing a launch wrapper must never do.
+#
+# -s/--scale and -e/--env carry a value; everything else is a bare flag, and
+# short flags combine (-wn, -xm). Parsing stops at the first non-flag or --,
+# matching gamescale's own parser.
+opts=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --) shift; break ;;
+        -s|--scale|-e|--env)
+            [ $# -ge 2 ] || break
+            opts+=("$1" "$2"); shift 2 ;;
+        -?*) opts+=("$1"); shift ;;
+        *) break ;;
+    esac
+done
+exec gamescale ${opts[@]+"${opts[@]}"} gamemoderun "$@"

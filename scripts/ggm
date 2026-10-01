@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# ggm -- Steam launch option:  ggm [gamescale flags] %command%
+#
+# gg plus the MangoHud overlay, which is also the easiest way to SEE the other
+# two took: MangoHud draws a GAMEMODE indicator, and the resolution it reports
+# tells you gamescale did its job.
+#
+# -m is gamescale's own shorthand for -e MANGOHUD=1, so the overlay is turned
+# on the same way every other variable is and gets echoed at launch with its
+# source. Nothing here duplicates gg's logic; a fix there is a fix here.
+#
+# MANGOHUD=1 is an implicit Vulkan layer switch, so it covers host-native
+# games (the mangohud RPM) and Flatpak games (the
+# org.freedesktop.Platform.VulkanLayer.MangoHud extension) through one path --
+# and with neither installed it is simply ignored and the game still starts.
+exec gg -m "$@"

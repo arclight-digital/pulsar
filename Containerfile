@@ -490,6 +490,33 @@ RUN set -eux; \
     fi; \
     gamescale --version >/dev/null 2>&1 || true
 
+# ---------------------------------------------------------------------------
+# gg and ggm -- the Steam launch options:  gg %command%  /  ggm %command%
+#
+# gg runs `gamescale <flags> gamemoderun <game>`, forwarding leading flags to
+# gamescale (gg -x %command%); ggm is gg -m, the MangoHud overlay. The scripts
+# say why the order and the flag parsing are what they are.
+#
+# /usr/bin is for native launchers. A Flatpak launcher cannot see it (see
+# above), so `pulsar setup gamescale` copies these two into ~/.local/bin
+# beside the gamescale it installs there, from THESE files -- they are the
+# one source, not a second staged copy. Inside the Steam sandbox gamemoderun
+# is the Flatpak runtime's own, which reaches the host's gamemoded through
+# the portal; nothing here has to provide it.
+#
+# No Fedora package ships /usr/bin/gg or /usr/bin/ggm today. If one ever
+# does, this would silently replace it, so the build stops instead.
+# ---------------------------------------------------------------------------
+COPY scripts/gg scripts/ggm /usr/bin/
+RUN set -eu; \
+    for w in gg ggm; do \
+      if rpm -qf "/usr/bin/${w}" >/dev/null 2>&1; then \
+        echo "FATAL: $(rpm -qf "/usr/bin/${w}") now owns /usr/bin/${w}; Pulsar's ${w} would overwrite it"; exit 1; \
+      fi; \
+    done; \
+    chmod 0755 /usr/bin/gg /usr/bin/ggm; \
+    bash -n /usr/bin/gg; bash -n /usr/bin/ggm
+
 # No GUI apps are layered here. Apps are Flatpaks; this image is the OS.
 #
 # Flathub, unfiltered -- Fedora ships a filtered remote. Shipped as a

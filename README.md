@@ -138,6 +138,22 @@ pulsar setup gamescale --platform steam
 
 `gamescale --version` shows which copy is running.
 
+### Steam launch options
+
+`gg` runs a game through gamescale and gamemode. `ggm` does the same and
+turns on the MangoHud overlay. In a game's Properties, set Launch Options to:
+
+```text
+gg %command%
+ggm %command%
+```
+
+Flags before `%command%` go to gamescale, so `gg -x %command%` works too.
+Both are in the image, and `pulsar setup gamescale --platform steam` also
+copies them into `~/.local/bin`, where the Steam Flatpak can reach them. If
+you already have your own `gg` or `ggm` there, setup leaves it alone and
+says so.
+
 ### Scheduler
 
 Pulsar runs the `scx_bpfland` scheduler, which handles CPUs with many
