@@ -52,6 +52,7 @@ shellcheck \
   scripts/rpm-sbom.sh \
   scripts/sbom-changelog.sh \
   scripts/sign-file-oracle \
+  scripts/steam-gpu-watch.sh \
   scripts/sync-branding.sh \
   scripts/theme-test-image.sh \
   scripts/weekly.sh \

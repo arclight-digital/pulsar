@@ -1,0 +1,20 @@
+[Unit]
+# Restarts the Steam client's GPU process when it stalls on an explicit-sync
+# release Xwayland never sends, which on the NVIDIA driver happens after a
+# resume and leaves the Steam window unpainted. See the header of
+# /usr/libexec/pulsar/steam-gpu-watch.sh for the fault and the test for it.
+Description=Unstick the Steam window after a GPU stall
+# The vanilla image ships this unit too. The stall is the NVIDIA driver's, so
+# without the module there is nothing to watch.
+ConditionPathExists=/sys/module/nvidia
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/libexec/pulsar/steam-gpu-watch.sh
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=graphical-session.target

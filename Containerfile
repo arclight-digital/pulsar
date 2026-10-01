@@ -649,12 +649,14 @@ COPY scripts/gamemode-group.sh /usr/libexec/pulsar/gamemode-group.sh
 COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 COPY scripts/pulsar-agent-gate /usr/libexec/pulsar/pulsar-agent-gate
 COPY scripts/pulsar-mcp /usr/libexec/pulsar/pulsar-mcp
+COPY scripts/steam-gpu-watch.sh /usr/libexec/pulsar/steam-gpu-watch.sh
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/flatpak-defaults.sh \
       /usr/libexec/pulsar/gamemode-group.sh \
       /usr/libexec/pulsar/alive-timeout.sh \
       /usr/libexec/pulsar/pulsar-agent-gate \
-      /usr/libexec/pulsar/pulsar-mcp && \
+      /usr/libexec/pulsar/pulsar-mcp \
+      /usr/libexec/pulsar/steam-gpu-watch.sh && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
       { echo "FATAL: flatpaks.list ships no apps; pulsar-flatpaks.service would fail on every boot forever"; exit 1; } && \
     mkdir -p /usr/share/pulsar && \
@@ -924,6 +926,12 @@ RUN set -eu; \
 # installed, offers once per program per boot to hand the crash to it (see
 # crashes_notify in cli/pulsar). With no agent it exits without a word.
 #
+# pulsar-steam-gpu-watch.service is --global because it watches the user's
+# own Steam. After a resume on the NVIDIA driver, Steam's CEF GPU process can
+# wait forever on a buffer release Xwayland never sends, and the window stops
+# repainting; the watcher restarts that one process when it sees the stall
+# (see scripts/steam-gpu-watch.sh). On the vanilla image it never starts.
+#
 # pulsar-theme-init.service and pulsar-theme-notice.service are --global
 # because theming is per account: init themes each account once on its first
 # login (and leaves a customised one alone), notice tells that account what
@@ -983,6 +991,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-update-check.timer && \
     systemctl --global enable pulsar-gl-check.path && \
     systemctl --global enable pulsar-crash-watch.path && \
+    systemctl --global enable pulsar-steam-gpu-watch.service && \
     systemctl --global enable pulsar-theme-init.service && \
     systemctl --global enable pulsar-theme-notice.service && \
     systemctl --global enable pulsar-welcome.service && \
@@ -993,7 +1002,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
-             pulsar-gl-check.path pulsar-crash-watch.path pulsar-theme-init.service pulsar-theme-notice.service \
+             pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
              pulsar-welcome.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
