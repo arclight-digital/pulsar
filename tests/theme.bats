@@ -66,9 +66,12 @@ setup() {
     [ "$(printf '%s\n' "$output" | wc -l)" -ge 20 ]
     [ -z "$(printf '%s\n' "$output" | grep '^!')" ]
     # every theme follows Dark Style except the one-sided ones: Dracula,
-    # Alucard, Poimandres and Synthwave '84 as upstream ships them, and the
-    # two CRT phosphors
-    [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 6 ]
+    # Alucard, Poimandres and Synthwave '84 as upstream ships them, the
+    # two CRT phosphors, and Magnetosphere and Eclipse (no aurora or
+    # eclipse by day)
+    [ "$(printf '%s\n' "$output" | grep -vc '\[dark+light\]')" -eq 8 ]
+    printf '%s\n' "$output" | grep -q '^  magnetosphere .*\[dark\]$'
+    printf '%s\n' "$output" | grep -q '^  eclipse .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  phosphor .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  amber .*\[dark\]$'
     printf '%s\n' "$output" | grep -q '^  dracula .*\[dark\]$'
