@@ -358,8 +358,8 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
   say "publishing to R2"
   up() { aws s3 cp "${STAGE}/$1" "s3://${R2_BUCKET}/$2" --endpoint-url "${R2_ENDPOINT}"; }
   # Immutable, per-build copies first...
-  # The version already carries -dev on a manual build, so these keys are
-  # self-namespacing and need no separate prefix -- which also keeps them
+  # Every build, manual or scheduled, has its own version from one series,
+  # so these keys are unique and need no separate prefix -- which also keeps them
   # inside the three prefixes buildd's artifact ingest will accept when
   # builders stop holding R2 credentials of their own.
   up sbom-vanilla.spdx.json "pulsar/sbom/${VERSION}-vanilla.spdx.json"

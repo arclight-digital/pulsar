@@ -38,19 +38,15 @@
 # answer, and two implementations of a version scheme is how you get two
 # builds claiming one tag.
 #
-# TWO SERIES, ONE PER CHANNEL. A build somebody kicked off by hand used to draw
-# from the published series, so a morning of debugging spent .1 through .6 of
-# numbers users see -- observed on 2026-08-08, where the timer took .0 and a
-# hand-run build took .1. The manual channel gets its own counted series with a
-# -dev suffix instead, and the two never see each other: the scheduled pattern
-# is anchored at both ends, so it cannot match a -dev tag, and the manual
-# pattern requires the suffix.
-#
-# The suffix is one variable used by BOTH the match and the extraction. That is
-# not a style choice -- extracting `3-dev` and handing it to $((n + 1)) dies
-# with "dev: unbound variable", and without set -u it evaluates to 3 and never
-# increments, which is the tag collision at the top of this file wearing a
-# third hat.
+# ONE SERIES FOR BOTH CHANNELS. A manual build runs the same pipeline as the
+# nightly -- gate, signing, push -- so it takes the next number like any
+# build, and that number is what it says inside (os-release, the manifest).
+# What makes it manual is that the floating tags do not move onto it. That is
+# what lets a manual build be promoted by moving :latest alone: the image
+# already carries the version it ships as. (Until 2026-10-01 the manual
+# channel counted a separate -dev series, so a promoted build still said -dev
+# in About.) The cost is that a manual build nobody promotes leaves a gap in
+# the numbers users see, which dated versions already have on skipped nights.
 #
 # The channel must be stated. There is no default, because both possible
 # defaults are wrong in a way that costs something: guessing scheduled hands a
@@ -59,7 +55,7 @@
 #
 #   next-version.sh ghcr.io/arclight-digital/pulsar        -> 44.20260806.3
 #   next-version.sh --fedora 45 ghcr.io/...                -> 45.20260806.0
-#   next-version.sh --channel manual ghcr.io/...           -> 44.20260806.0-dev
+#   next-version.sh --channel manual ghcr.io/...           -> 44.20260806.4
 set -euo pipefail
 
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
@@ -84,8 +80,7 @@ done
 # answer "what would tonight be called"; nightly.sh always passes it through
 # explicitly and refuses to run without it.
 case "${CHANNEL}" in
-  scheduled) SUFFIX="" ;;
-  manual)    SUFFIX="-dev" ;;
+  scheduled|manual) ;;
   *) echo "unknown channel: ${CHANNEL} (want scheduled or manual)" >&2; exit 2 ;;
 esac
 
@@ -110,15 +105,14 @@ else
 fi
 
 n=0
-existing="$(printf '%s\n' "${tags}" | grep -E "^${prefix}\.[0-9]+${SUFFIX}$" || true)"
+# Anchored at both ends, so the -dev tags the manual channel used to push are
+# not counted and cannot be confused for this series.
+existing="$(printf '%s\n' "${tags}" | grep -E "^${prefix}\.[0-9]+$" || true)"
 if [ -n "${existing}" ]; then
-  # The capture drops the suffix as well as the prefix, so what reaches the
-  # arithmetic is a bare integer -- see the note on the suffix above.
-  n=$(printf '%s\n' "${existing}" | sed -E "s/^.*\.([0-9]+)${SUFFIX}\$/\1/" | sort -n | tail -1)
+  n=$(printf '%s\n' "${existing}" | sed -E 's/^.*\.([0-9]+)$/\1/' | sort -n | tail -1)
   n=$((n + 1))
 fi
-
-# stderr, so a human can see which series answered while stdout stays the one
-# line nightly.sh captures.
-echo "channel ${CHANNEL}: counting ${prefix}.N${SUFFIX}" >&2
-printf '%s.%s%s\n' "${prefix}" "${n}" "${SUFFIX}"
+# stderr, so a human can see what was counted while stdout stays the one line
+# nightly.sh captures.
+echo "channel ${CHANNEL}: counting ${prefix}.N" >&2
+printf '%s.%s\n' "${prefix}" "${n}"

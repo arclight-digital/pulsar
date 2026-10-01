@@ -59,14 +59,15 @@ same_day() {
   [ "${DAY}" = "$(date -u +%Y%m%d)" ] || skip "the run crossed UTC midnight"
 }
 
-# A registry holding both series plus the floating tags, another day and
-# another Fedora release -- everything that must NOT be counted.
+# A registry holding the series, an old -dev tag from when the manual channel
+# had its own, the floating tags, another day and another Fedora release --
+# everything but the series that must NOT be counted.
 mixed_tags() {
-  printf '%s\n' latest 44 "44.${DAY}.0" "44.${DAY}.7" "44.${DAY}.3-dev" \
+  printf '%s\n' latest 44 "44.${DAY}.0" "44.${DAY}.7" "44.${DAY}.9-dev" \
     44.20260101.9 "45.${DAY}.4"
 }
 
-@test "scheduled counts only its own series and takes max+1" {
+@test "scheduled takes max+1 of the series" {
   stub_oras "$(mixed_tags)"
   nv ghcr.io/example/pulsar
   same_day
@@ -74,38 +75,25 @@ mixed_tags() {
   [ "$output" = "44.${DAY}.8" ]
 }
 
-@test "manual counts its own series and increments" {
-  # The regression test for the arithmetic: extracting "3-dev" and handing it
-  # to $((n + 1)) dies with "dev: unbound variable" under set -u, and silently
-  # evaluates to 3 without it -- which is the tag collision, again.
+@test "manual draws from the same series: a manual build is a release candidate" {
   stub_oras "$(mixed_tags)"
   nv --channel manual ghcr.io/example/pulsar
   same_day
   [ "$status" -eq 0 ]
-  [ "$output" = "44.${DAY}.4-dev" ]
+  [ "$output" = "44.${DAY}.8" ]
 }
 
-@test "the two series cannot collide" {
-  stub_oras "$(mixed_tags)"
-  nv ghcr.io/example/pulsar
-  local scheduled="$output"
-  nv --channel manual ghcr.io/example/pulsar
-  local manual="$output"
-  same_day
-  [ "${scheduled}" != "${manual}" ]
-  [[ "${scheduled}" =~ ^44\.[0-9]{8}\.[0-9]+$ ]]
-  [[ "${manual}" =~ ^44\.[0-9]{8}\.[0-9]+-dev$ ]]
-}
-
-@test "manual starts at .0-dev rather than inheriting the scheduled number" {
-  stub_oras "$(printf '%s\n' latest "44.${DAY}.0" "44.${DAY}.6")"
+@test "REGRESSION: a manual build carries no -dev, so promoting it is a retag" {
+  # Until 2026-10-01 manual builds were 44.<day>.N-dev, and a promoted one
+  # still said -dev in About: the version is inside the image.
+  stub_oras "$(printf '%s\n' latest "44.${DAY}.0")"
   nv --channel manual ghcr.io/example/pulsar
   same_day
-  [ "$status" -eq 0 ]
-  [ "$output" = "44.${DAY}.0-dev" ]
+  [[ "$output" =~ ^44\.[0-9]{8}\.[0-9]+$ ]]
+  [ "$output" = "44.${DAY}.1" ]
 }
 
-@test "a -dev tag does not raise the scheduled number" {
+@test "an old -dev tag does not raise the number" {
   stub_oras "$(printf '%s\n' "44.${DAY}.1" "44.${DAY}.9-dev")"
   nv ghcr.io/example/pulsar
   same_day
@@ -144,7 +132,8 @@ mixed_tags() {
   PULSAR_CHANNEL=manual nv ghcr.io/example/pulsar
   same_day
   [ "$status" -eq 0 ]
-  [ "$output" = "44.${DAY}.4-dev" ]
+  [ "$output" = "44.${DAY}.8" ]
+  [[ "$stderr" == *"channel manual"* ]]
 }
 
 @test "--fedora selects the release and its own series" {
