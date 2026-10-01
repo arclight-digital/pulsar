@@ -244,14 +244,16 @@ def quick_settings(name, checked=False):
     """Screenshot Quick Settings; the checked toggles' boxes, or None when
     they could not be read. `checked`: Do Not Disturb on for the shot, so a
     toggle is checked whatever the scheme (Dark Style is the only other one
-    this Shell has, and a light variant leaves it off)."""
+    this Shell has, and a light variant leaves it off). Only toggles that
+    take a click count: a one-mode theme locks Dark Style checked and
+    insensitive, and :insensitive:checked is the accent darkened on purpose."""
     eval_js("global.get_window_actors().forEach(a => a.meta_window.minimize()); 1")
     if checked:
         dconf("/org/gnome/desktop/notifications/show-banners", "false")
     time.sleep(0.8)
     eval_js("Main.panel.statusArea.quickSettings.menu.open(false)")
     time.sleep(1.0)
-    boxes, _ = eval_json("(() => { const out = []; const walk = a => { if (a.has_style_class_name?.('quick-toggle') && a.checked && a.is_mapped()) "
+    boxes, _ = eval_json("(() => { const out = []; const walk = a => { if (a.has_style_class_name?.('quick-toggle') && a.checked && a.reactive && a.is_mapped()) "
                          "{ const [x, y] = a.get_transformed_position(); out.push([x, y, a.width, a.height]); } "
                          "a.get_children().forEach(walk); }; walk(Main.panel.statusArea.quickSettings.menu.actor); "
                          "return JSON.stringify(out); })()")
