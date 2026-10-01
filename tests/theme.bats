@@ -1112,3 +1112,64 @@ print("" if d is None else d)' "$1" "$2"; }
     # a GTK that has backdrop-filter keeps it; an older one drops the block
     [[ "$output" == *"gated: True True"* || "$output" == *"gated: False False"* ]]
 }
+
+# The theme gate's own judgments, without a Shell: tests/theme-gate/scenario.py
+# imported for its pure functions.
+gate_py() {
+    GATE_OUT="${BATS_TEST_TMPDIR}/out" GATE_APPS_LOG="${BATS_TEST_TMPDIR}/apps.log" \
+        GATE_SHELL_LOG="${BATS_TEST_TMPDIR}/shell.log" \
+        python3 -c "import sys; sys.path.insert(0, '${REPO}/tests/theme-gate'); import scenario as s; $1"
+}
+
+@test "theme gate: a pulsar-theme warning or a JS error in the Shell log fails it" {
+    printf '%s\n' '(gnome-shell:49): libmutter-WARNING **: There is no colord server available' > "${BATS_TEST_TMPDIR}/shell.log"
+    run gate_py 'print(s.shell_log_problems("t"))'
+    [ "$output" = "[]" ]
+    printf '%s\n' '(gnome-shell:49): GNOME Shell-WARNING **: 23:31:09.539: pulsar-theme: glass: menu: boom' \
+        'JS ERROR: TypeError: x is undefined' >> "${BATS_TEST_TMPDIR}/shell.log"
+    run gate_py 'print(len(s.shell_log_problems("t")))'
+    [ "$output" = "2" ]
+    # and the log is kept beside the report
+    [ -s "${BATS_TEST_TMPDIR}/out/t-shell.log" ]
+}
+
+@test "theme gate: glass off its host, missing or hidden fails the glass scenario" {
+    run gate_py '
+import copy
+host = [100, 100, 200, 80]
+good = {"name": "m", "kind": "surface", "host": host, "shown": True, "opacity": 255, "box": [100, 106, 200, 74],
+        "under": {"rect": host, "visible": True, "mapped": True, "opacity": 255, "parent": True, "beside": True},
+        "over": {"rect": host, "visible": True, "mapped": True, "opacity": 255, "parent": True, "beside": True},
+        "blur": {"rect": [36, 42, 328, 202], "visible": True, "mapped": True},
+        "light": {"rect": [52, 58, 296, 170], "visible": True, "mapped": True}}
+def bad(fn):
+    r = copy.deepcopy(good); fn(r); return bool(s.glass_faults(r))
+print(s.glass_faults(good) == [],
+      bad(lambda r: r["under"].update(rect=[103, 100, 200, 80])),
+      bad(lambda r: r["over"].update(beside=False)),
+      bad(lambda r: r["blur"].update(visible=False)),
+      bad(lambda r: r["light"].update(rect=[62, 58, 296, 170])),
+      bad(lambda r: r.update(under=None)),
+      bad(lambda r: r.update(host=[None, 100, 200, 80])),
+      bad(lambda r: r.update(error="no glass surface for it")))
+win = {"name": "w", "kind": "window", "frame": [60, 80, 1000, 700], "shown": True,
+       "blur": {"rect": [12, 32, 1096, 796], "visible": True, "mapped": True, "inWindow": True}}
+print(s.glass_faults(win) == [], bool(s.glass_faults(dict(win, blur=dict(win["blur"], rect=[22, 32, 1096, 796])))))'
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[0]}" = "True True True True True True True True" ]
+    [ "${lines[1]}" = "True True" ]
+}
+
+@test "theme gate: leaks --contrast judges text over the grounds beneath it, and not text on glass" {
+    run gate_py '
+run = {"m: menu|": ["255,255,255,255", None, None, None],
+       "m: menu > box[0]|": ["0,0,0,20", None, None, None],
+       "m: menu > box[0] > label[0]|": [None, "119,119,119,255", None, None],
+       "m: menu > box[0] > label[1]|": [None, "0,0,0,255", None, None],
+       "g: glass|": ["30,30,30,128", None, None, None],
+       "g: glass > label[0]|": [None, "255,255,255,255", None, None]}
+bad, judged, unjudged = s.low_contrast(run)
+print([b["path"] for b in bad], judged, unjudged)'
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "$output" = "['menu > box[0] > label[0]'] 2 1" ]
+}

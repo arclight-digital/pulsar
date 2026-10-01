@@ -18,8 +18,22 @@ tests/theme-gate/gate.sh localhost/pulsar:44               # a local build
 
 It builds `Containerfile` FROM the given image (adding the apps it
 screenshots), runs a headless gnome-shell on private buses with a scratch
-account, and runs `scenario.py gate`. Screenshots and `gate-report.json` land
-in `.preview/theme-gate/`. It needs rootless podman and about ten minutes.
+account, and runs `scenario.py gate`, then `glass` and `leaks` (below), each
+in a Shell of its own. Screenshots, `gate-report.json`, `glass-report.json`,
+`leaks-report.json` and each run's Shell log (`<scenario>-shell.log`) land in
+`.preview/theme-gate/` (`GATE_OUT`). It needs rootless podman and about
+fifteen minutes. `GATE_IMAGE` names the container it builds (default
+`localhost/pulsar-theme-gate:latest`), so gates against two images can run
+side by side.
+
+Every scenario that writes a report also reads the Shell's log: a
+`pulsar-theme:` warning or any `JS ERROR` fails it. glass.js catches its own
+errors and only warns, so that a broken glass never takes a Shell menu down
+with it; without this a glass that threw on every menu would still pass.
+Known-harmless lines go in `SHELL_LOG_ALLOW`, each with its reason.
+
+The gate's own account has the effects off (the palette probes sample raw
+pixels, and blur and light would move every one); `glass` turns them on.
 
 ## When it runs
 
@@ -43,6 +57,16 @@ in `.preview/theme-gate/`. It needs rootless podman and about ten minutes.
   an app holding unsaved text keeps its own "Save changes?" dialog up and is
   not relaunched. `fixtures/notes.py` is that app.
 - `picker`: screenshots the picker and its restart dialog.
+- `glass`: glass, light, Glow and power-on on, two virtual monitors, at
+  scale 1 and 1.25. For Quick Settings, a desktop menu on the second
+  monitor, the OSD on each monitor, a banner, the dash, two GTK4 windows
+  (one per monitor) and a GTK popover (`fixtures/popover.py`), it reads the
+  glass's own actors and the host's through Eval: the glass exists, its
+  mirrors stand right beside the host at exactly its place and size, share
+  its opacity and show while it shows, and the blur and light are centered
+  on the styled box and cover it. It reads glass.js's internals by name
+  (`GLASS_PROBE`); a rename fails it loudly. `glass-report.json` has every
+  rectangle.
 - `leaks`: stock showing through, found by what does not move. Every
   visible Shell widget on eleven surfaces (the desktop menu, the date menu,
   quick settings and a submenu, the app grid and an icon's menu, the run
@@ -53,7 +77,15 @@ in `.preview/theme-gate/`. It needs rootless podman and about ten minutes.
   actually inherit. A color identical under two unrelated themes did not
   come from the theme. It also forces every quick toggle checked and fails
   unless each resolves to the theme's accent, so a leak fix can never cost
-  an accent-filled state. `leaks-report.json` lands in `GATE_OUT`.
+  an accent-filled state. A surface it cannot read fails it (its colors went
+  unchecked) unless `LEAKS_UNREADABLE` names it with a reason.
+  `leaks-report.json` lands in `GATE_OUT`. `run.sh leaks --contrast` also
+  fails on text at rest below 4.5:1 against the grounds beneath it (text on
+  glass has no fixed ground and is counted, not judged). It is off in
+  `gate.sh` until the templates' known low-contrast texts are fixed: the
+  overview search entry's hint, an app folder's name entry, a search
+  result's description (Gruvbox light) and the input method's candidate
+  numbers.
 
 ## Stock-grey leaks without a Shell
 

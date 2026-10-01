@@ -10,17 +10,29 @@
 #   4. every theme x variant, applied for real: top bar, Text Editor view,
 #      libadwaita content, the checked quick toggle, sampled from a
 #      screenshot and compared with the palette; the Ptyxis palette set;
-#   5. revert leaves the account byte-identical and dconf-identical.
+#   5. revert leaves the account byte-identical and dconf-identical;
+#   6. glass (the `glass` scenario): with glass and light on, on two
+#      monitors at scale 1 and 1.25, every surface's glass exists and sits
+#      exactly where its host does;
+#   7. leaks (the `leaks` scenario): no stock color shows through on any
+#      Shell surface in any state, and every checked quick toggle is accent;
+#   8. in each of them, the Shell logged no pulsar-theme warning (glass.js
+#      catches its own errors and only warns) and no JS error.
 #
 #   tests/theme-gate/gate.sh [image]      default ghcr.io/arclight-digital/pulsar:latest
 #
 # Exit 0 pass, 1 fail. Evidence in .preview/theme-gate/ (screenshots and
-# gate-report.json). Run by hand today; nightly will run it warn-only, and
-# as a hard gate only when the GNOME major changes -- see README.md.
+# gate-report.json, glass-report.json, leaks-report.json, and each run's
+# Shell log as <scenario>-shell.log). Run by hand today; nightly will run
+# it warn-only, and as a hard gate only when the GNOME major changes -- see
+# README.md.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 image=${1:-ghcr.io/arclight-digital/pulsar:latest}
-podman build -q --build-arg IMAGE="${image}" -t localhost/pulsar-theme-gate:latest \
+# GATE_IMAGE: the tag to build it as (run.sh runs the same one), so two
+# gates on one host, against two images, do not overwrite each other's
+export GATE_IMAGE=${GATE_IMAGE:-localhost/pulsar-theme-gate:latest}
+podman build -q --build-arg IMAGE="${image}" -t "${GATE_IMAGE}" \
     -f "${here}/Containerfile" "${here}" >/dev/null || { echo "gate: could not build the gate container" >&2; exit 1; }
 out=${GATE_OUT:-$(cd "${here}/../.." && pwd)/.preview/theme-gate}
 rm -f "${out}/gate-report.json"
@@ -32,7 +44,21 @@ if [ ! -s "${out}/gate-report.json" ]; then
   echo "GATE FAIL: no gate-report.json was written (the headless Shell died?); see ${GATE_LOG:-/tmp/theme-gate.log}"
   exit 1
 fi
-if ! python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1]))["ok"] else 1)' "${out}/gate-report.json"; then
-  [ "${rc}" -ne 0 ] || rc=1
-fi
+report_ok() { python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1]))["ok"] else 1)' "$1"; }
+report_ok "${out}/gate-report.json" || rc=1
+# The glass and leaks scenarios, each in a Shell of its own; the same rule:
+# no report is a FAIL.
+for scenario in glass leaks; do
+  rm -f "${out}/${scenario}-report.json"
+  echo "== ${scenario}"
+  "${here}/run.sh" "${scenario}" 2>>"${GATE_LOG:-/tmp/theme-gate.log}" | grep -v -E '^\s*$'
+  src=${PIPESTATUS[0]}
+  if [ ! -s "${out}/${scenario}-report.json" ]; then
+    echo "GATE FAIL: no ${scenario}-report.json was written (the headless Shell died?); see ${GATE_LOG:-/tmp/theme-gate.log}"
+    rc=1
+  elif [ "${src}" -ne 0 ] || ! report_ok "${out}/${scenario}-report.json"; then
+    rc=1
+  fi
+done
+echo "THEME GATE $([ "${rc}" -eq 0 ] && echo PASS || echo FAIL)"
 exit "${rc}"
