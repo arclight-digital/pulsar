@@ -407,6 +407,118 @@ PY
     [ "$status" -eq 0 ]
 }
 
+@test "the glass rim's warning and alert lights never read as the accent, in any theme" {
+    fake_dconf
+    # measured on what the Shell sheet actually carries, in OKLab's a/b plane
+    # (a glow's lightness is its own, so only hue and chroma tell it apart)
+    run python3 - "$ENGINE" "${BATS_TEST_TMPDIR}/lights" <<'PY'
+import math, re, subprocess, sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+bad = []
+for slug, t in e.ordered_themes():
+    out = f"{sys.argv[2]}/{slug}"
+    subprocess.run([sys.executable, sys.argv[1], "render", slug, out], check=True, capture_output=True)
+    for mode, v in t.variants.items():
+        css = open(f"{out}/.local/state/pulsar-theme/shell/gnome-shell-{mode}.css").read()
+        rule = re.search(r"-pulsar-light: (#\w+); -pulsar-light-neutral: #\w+;\s*"
+                         r"-pulsar-light-warn: (#\w+); -pulsar-light-alert: (#\w+);", css)
+        if not rule:
+            bad.append(f"{slug} {mode}: no light rule in the Shell sheet")
+            continue
+        acc, warn, alert = (e.Color.parse(x).oklab() for x in rule.groups())
+        for name, c in (("warn", warn), ("alert", alert)):
+            gap = math.hypot(c[1] - acc[1], c[2] - acc[2])
+            if gap < 0.08:
+                bad.append(f"{slug} {mode}: {name} light only {gap:.3f} from the accent")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+    [ "$status" -eq 0 ]
+}
+
+@test "a theme whose red and orange are clear of its accent keeps them as its lights" {
+    run python3 - "$ENGINE" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+for slug in ("pulsar", "nord", "everforest", "tokyo-night"):
+    for mode, v in e.load_theme(slug).variants.items():
+        assert v["light_warn"].hex == v["orange"].hex, (slug, mode)
+        assert v["light_alert"].hex == v["red"].hex, (slug, mode)
+# the ones whose accent IS a signal color move off it
+g = e.load_theme("gruvbox").variants["dark"]
+assert g["light_warn"].hex != g["orange"].hex and g["light_alert"].hex != g["red"].hex
+o = e.load_theme("oxocarbon").variants["light"]
+assert o["light_alert"].hex != o["red"].hex
+PY
+    [ "$status" -eq 0 ]
+}
+
+@test "no chromatic accent maps to GNOME's grey slate, and each maps to its own hue" {
+    run python3 - "$ENGINE" <<'PY'
+import math, sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+hue = lambda c: math.degrees(math.atan2(c.oklab()[2], c.oklab()[1])) % 360
+bad = []
+for slug, t in e.ordered_themes():
+    for mode, v in t.variants.items():
+        if "gnome_accent" in t.raw or "gnome_accent" in t.raw[mode]:
+            continue   # the theme's own choice
+        acc = v["accent"]
+        _, a, b = acc.oklab()
+        if math.hypot(a, b) >= 0.04 and v.gnome_accent == "slate":
+            bad.append(f"{slug} {mode}: {acc.hex} is slate")
+        # no other GNOME accent is nearer in hue than the one chosen
+        if v.gnome_accent != "slate":
+            gap = lambda n: min(abs(hue(acc) - hue(e.Color.parse(e.GNOME_ACCENTS[n]))),
+                                360 - abs(hue(acc) - hue(e.Color.parse(e.GNOME_ACCENTS[n]))))
+            best = min((n for n in e.GNOME_ACCENTS if n != "slate"), key=gap)
+            if best != v.gnome_accent:
+                bad.append(f"{slug} {mode}: {acc.hex} is {v.gnome_accent}, nearer {best}")
+# the ones that came out grey before
+want = {("kanagawa", "dark"): "blue", ("kanagawa", "light"): "blue", ("nord", "light"): "blue",
+        ("rose-pine", "dark"): "purple", ("rose-pine", "light"): "purple"}
+for (slug, mode), name in want.items():
+    got = e.load_theme(slug).variants[mode].gnome_accent
+    if got != name:
+        bad.append(f"{slug} {mode}: {got}, not {name}")
+# a grey accent is still slate
+if e.nearest_gnome_accent(e.Color.parse("#808890")) != "slate":
+    bad.append("a grey accent is not slate")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+    [ "$status" -eq 0 ]
+}
+
+@test "gnome_accent in theme.toml overrides the derived one, per variant or for both" {
+    fake_dconf
+    mkdir -p "$HOME/t/both" "$HOME/t/one"
+    printf 'name = "B"\ngnome_accent = "slate"\n[dark]\nbackground = "#101010"\nforeground = "#e0e0e0"\naccent = "#3584e4"\n[light]\nbackground = "#f0f0f0"\nforeground = "#101010"\naccent = "#3584e4"\ngnome_accent = "teal"\n' > "$HOME/t/both/theme.toml"
+    printf 'name = "O"\n[dark]\nbackground = "#101010"\nforeground = "#e0e0e0"\naccent = "#3584e4"\ngnome_accent = "mauve"\n' > "$HOME/t/one/theme.toml"
+    run python3 - "$ENGINE" "$HOME/t" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0])
+import pulsar_theme_engine as m
+e = m.load(sys.argv[1])
+t = e.load_theme(sys.argv[2] + "/both")
+assert t.variants["dark"].gnome_accent == "slate", t.variants["dark"].gnome_accent
+assert t.variants["light"].gnome_accent == "teal", t.variants["light"].gnome_accent
+try:
+    e.load_theme(sys.argv[2] + "/one")
+except ValueError as x:
+    assert "mauve" in str(x)
+else:
+    sys.exit("an unknown gnome_accent loaded")
+PY
+    [ "$status" -eq 0 ]
+}
+
 @test "--without flatpak removes the entries the engine added, and only those" {
     fake_dconf
     f="$XDG_DATA_HOME/flatpak/overrides/global"
@@ -567,6 +679,37 @@ PY
     light=$(grep '^theme\[main_fg\]' "$file")
     [ -n "$dark" ] && [ -n "$light" ] && [ "$dark" != "$light" ]
     ! grep -q '"TTY"' "$conf"
+}
+
+@test "follow-scheme re-sets the system accent on a flip, and only when it changes" {
+    fake_dconf
+    acc=/org/gnome/desktop/interface/accent-color
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(key $acc)" = "'teal'" ]
+    # Pulsar is teal on dark, blue on light
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    run python3 "$ENGINE" follow-scheme
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"-> scheme"* ]]
+    [ "$(key $acc)" = "'blue'" ]
+    # already right: the key is not written again
+    run python3 "$ENGINE" follow-scheme
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"scheme"* ]]
+    [ "$(key $acc)" = "'blue'" ]
+    # a theme whose two variants share a name never writes it on a flip
+    python3 "$ENGINE" set solarized --no-restart >/dev/null
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    run python3 "$ENGINE" follow-scheme
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"scheme"* ]]
+    # an accent the user chose since is theirs, flip or no flip
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    setkey $acc "'pink'"
+    setkey /org/gnome/desktop/interface/color-scheme "'default'"
+    python3 "$ENGINE" follow-scheme >/dev/null
+    [ "$(key $acc)" = "'pink'" ]
 }
 
 @test "follow-scheme does nothing with no theme applied, or a single-mode one" {

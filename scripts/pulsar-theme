@@ -170,19 +170,93 @@ GNOME_ACCENTS = {
 }
 
 
+def gnome_accent_name(name):
+    """A theme's own gnome_accent, checked: one of GNOME_ACCENTS, or None."""
+    if name is None:
+        return None
+    if name not in GNOME_ACCENTS:
+        raise ValueError(f"gnome_accent {name!r} is not one of {', '.join(GNOME_ACCENTS)}")
+    return name
+
+
 def nearest_gnome_accent(c):
+    """The system accent a theme accent reads as. By hue alone: a GNOME accent
+    is a hue, and its lightness and chroma say nothing about which one a
+    color is (a muted blue is blue, not slate). Only an accent too grey to
+    carry a hue at all -- chroma under slate's own, near enough -- is slate.
+    A theme overrides this with gnome_accent (see Variant)."""
     L, a, b = c.oklab()
-    chroma = math.hypot(a, b)
-    best, bd = None, 1e9
-    for name, hx in GNOME_ACCENTS.items():
-        L2, a2, b2 = Color.parse(hx).oklab()
-        # hue matters far more than lightness here: weight L down
-        d = (0.3 * (L - L2)) ** 2 + (a - a2) ** 2 + (b - b2) ** 2
-        if chroma < 0.04 and name != "slate":
-            d += 1  # a grey accent is slate, whatever its lightness
-        if d < bd:
-            best, bd = name, d
-    return best
+    if math.hypot(a, b) < 0.04:
+        return "slate"
+    h = math.atan2(b, a)
+    return min((n for n in GNOME_ACCENTS if n != "slate"),
+               key=lambda n: abs(math.remainder(h - hue_of(Color.parse(GNOME_ACCENTS[n])), math.tau)))
+
+
+# The glass rim's lights (glass.js): the accent normally, a warning light
+# (low battery) and an alert light (critical). Each must read as a different
+# color from the accent at a glance, on its own, as a glow. Lightness does
+# not tell a glow apart -- its brightness is the glow's own -- so the
+# distance is taken in OKLab's a/b plane only: hue and chroma. 0.08 there is
+# the gap between clearly different hues at a UI's chroma; Gruvbox's orange
+# on its orange accent is 0.00, Oxocarbon's red on its pink 0.00-0.03.
+LIGHT_APART = 0.08
+
+
+def hue_gap(x, y):
+    """Distance between two colors in OKLab's a/b plane (lightness ignored)."""
+    _, a1, b1 = x.oklab()
+    _, a2, b2 = y.oklab()
+    return math.hypot(a1 - a2, b1 - b2)
+
+
+def hue_of(c):
+    """OKLCh hue, in radians."""
+    _, a, b = c.oklab()
+    return math.atan2(b, a)
+
+
+def hue_turn(x, y):
+    """How far apart two colors' hues are, as an angle (0 to pi)."""
+    return abs(math.remainder(hue_of(x) - hue_of(y), math.tau))
+
+
+def turn_apart(c, acc, others):
+    """c with its OKLCh hue turned away from acc's, lightness kept (chroma
+    raised if it is too grey to carry a hue), until it reads apart from
+    every one of others: (color, degrees turned). signal_light's last
+    resort, when no palette color does."""
+    L, a, b = c.oklab()
+    ch = max(math.hypot(a, b), LIGHT_APART)
+    h = math.atan2(b, a)
+    step = math.radians(2) * (1 if math.remainder(h - hue_of(acc), math.tau) >= 0 else -1)
+    best, room = c, -1.0
+    for i in range(180):
+        n = Color.parse(from_oklab(L, ch * math.cos(h), ch * math.sin(h)).hex)
+        r = min(hue_gap(n, o) for o in others)
+        if r >= LIGHT_APART:
+            return n, i * 2
+        if r > room:
+            best, room = n, r
+        h += step
+    return best, 360
+
+
+def signal_light(acc, prefs, avoid=()):
+    """A signal light from the palette: prefs[0] (the color that means it:
+    red for the alert, orange for the warning) whenever it reads apart from
+    the accent and from `avoid` (the other signal light); else, of the rest
+    that do, the one nearest prefs[0] in hue; else the one that needs the
+    least turn to get there (turn_apart), in prefs' order on a tie."""
+    others = [acc, *avoid]
+    room = lambda c: min(hue_gap(c, o) for o in others)
+    if room(prefs[0]) >= LIGHT_APART:
+        return prefs[0]
+    ok = [c for c in prefs[1:] if room(c) >= LIGHT_APART]
+    if ok:
+        return min(ok, key=lambda c: hue_turn(c, prefs[0]))
+    turned = [turn_apart(c, acc, others) for c in prefs]
+    return min(turned, key=lambda t: t[1])[0]
 
 
 def readable_on(bg, *candidates):
@@ -273,6 +347,18 @@ class Variant:
         # --accent-color is the accent used AS TEXT on the window ground: it
         # must clear 4.5:1 (libadwaita's own rule), so nudge it if needed.
         d("accent_text", ensure_contrast(acc, p["window"], 4.5, fg))
+        # The glass rim's alert (critical battery) and warning (low battery)
+        # lights: red and orange, unless that one is the accent's own color
+        # (Gruvbox's accent is its orange, Oxocarbon's is its red); then the
+        # nearest in meaning that reads apart from it. See signal_light.
+        d("light_alert", signal_light(acc, [p["red"], p["orange"], p["magenta"]]))
+        # the warning keeps clear of the alert too, once either has moved
+        # off its own color (with both at home it is the palette's own pair)
+        alert = p["light_alert"]
+        if alert.hex == p["red"].hex and hue_gap(p["orange"], acc) >= LIGHT_APART:
+            d("light_warn", p["orange"])
+        else:
+            d("light_warn", signal_light(acc, [p["orange"], p["yellow"], p["red"]], [alert]))
         # Legacy 16-colour terminal slots, unless the theme gives them.
         ansi = [p["selection"] if dark else p["foreground_dim"], p["red"], p["green"], p["yellow"],
                 p["blue"], p["magenta"], p["cyan"], p["foreground"] if dark else p["selection"],
@@ -282,7 +368,10 @@ class Variant:
         for i, c in enumerate(ansi):
             d(f"color{i}", c)
         self.p = p
-        self.gnome_accent = raw.get("gnome_accent") or nearest_gnome_accent(acc)
+        # the system accent (Shell, stock apps, Flatpaks): derived from the
+        # accent's hue, unless the theme names one -- here, for this
+        # variant, or at the top of theme.toml for both (see Theme)
+        self.gnome_accent = gnome_accent_name(raw.get("gnome_accent")) or nearest_gnome_accent(acc)
 
     def __getitem__(self, k):
         return self.p[k]
@@ -448,8 +537,10 @@ class Theme:
         self.author = raw.get("author", "")
         self.source = raw.get("source", "")
         self.variants = {m: Variant(m, raw[m]) for m in ("dark", "light") if m in raw}
-        for v in self.variants.values():
+        for m, v in self.variants.items():
             v.shell_glow = bool(raw.get("shell_glow", False))
+            if "gnome_accent" in raw and "gnome_accent" not in raw[m]:
+                v.gnome_accent = gnome_accent_name(raw["gnome_accent"])
         if not self.variants:
             raise ValueError(f"{path}: needs a [dark] and/or [light] palette")
         self.prefer = raw.get("prefer", "dark" if "dark" in self.variants else "light")
@@ -1902,6 +1993,11 @@ def audit_variant(v):
         checks.append((f"syntax + ANSI {k}", c(k, "background"), 4.5, 4.5))
     for i in (8, 9, 10, 11, 12, 13, 14):
         checks.append((f"ANSI color{i} (ls --color, btop)", v[f"color{i}"].contrast(v["background"]), 3.0, 3.0))
+    # not a contrast ratio: how far each glass rim light's color is from the
+    # accent's (hue_gap), so low battery never looks like nothing is wrong
+    for k in ("light_warn", "light_alert"):
+        checks.append((f"{k} apart from the accent (OKLab a/b)", hue_gap(v[k], v["accent"]),
+                       LIGHT_APART, LIGHT_APART))
     return checks
 
 
@@ -2146,17 +2242,28 @@ def cmd_follow_scheme():
     """GTK3 has no media queries, so its gtk.css and gtk-theme are written for
     the scheme in effect at the switch, and so are btop's theme and the
     agents'; everything else follows Dark Style on its own. On a flip, redo
-    just those. A no-op unless a two-variant
-    theme is applied in "both" mode with gtk3 among its targets."""
+    just those. So is the system accent, where the two variants' differ
+    (Pulsar's is teal on dark, blue on light): it is redone only when the
+    key does not already hold the new one, since a flip must not write
+    dconf for nothing. A no-op unless a two-variant theme is applied in
+    "both" mode."""
     st = current_state()
-    redo = [t for t in ("gtk3", "btop", "agents") if t in st.get("targets", [])]
-    if not st.get("theme") or st.get("variant", "both") != "both" or not redo:
+    targets = st.get("targets", [])
+    redo = [t for t in ("gtk3", "btop", "agents") if t in targets]
+    if not st.get("theme") or st.get("variant", "both") != "both" or not (redo or "scheme" in targets):
         return
     try:
         theme = load_theme(st["theme"])
     except SystemExit:
         return
-    if theme.both:
+    if not theme.both:
+        return
+    if "scheme" in targets:
+        key = "/org/gnome/desktop/interface/accent-color"
+        want = gv_str(theme.variants[current_scheme()].gnome_accent)
+        if not gv_equal(dconf_read(key), want):
+            redo.append("scheme")
+    if redo:
         cmd_set(theme, "both", redo, restart_policy="none", gentle="follow")
 
 

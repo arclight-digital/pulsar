@@ -1356,7 +1356,7 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .switcher-list, .workspace-switcher, .modal-dialog, .app-folder-dialog, .screenshot-ui-panel,
 #dash .dash-background, .search-entry, .dash-label {
   -pulsar-light: {{accent}}; -pulsar-light-neutral: {{blue}};
-  -pulsar-light-warn: {{orange}}; -pulsar-light-alert: {{red}}; }
+  -pulsar-light-warn: {{light_warn}}; -pulsar-light-alert: {{light_alert}}; }
 /* The keyboard-focus brackets glass.js draws around the focused control,
    beside the stock focus ring, never instead of it. */
 .pulsar-focus-brackets { color: {{accent}}; }

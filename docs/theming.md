@@ -43,9 +43,11 @@ Pine, Everforest, Kanagawa, Solarized, Flexoki, Ayu, Dracula and Alucard
 All in the user's own config, each file replaced with rename(2), in one
 transaction:
 
-- **accent**: the nearest libadwaita accent (live everywhere, Flatpaks
-  included, via the settings portal). `color-scheme` is written only by a
-  one-variant theme or `--variant`.
+- **accent**: the libadwaita accent nearest the theme accent's hue (live
+  everywhere, Flatpaks included, via the settings portal); `slate` only for
+  a grey accent, and `gnome_accent` in theme.toml overrides it. A Dark Style
+  flip re-sets it when the other variant's differs. `color-scheme` is
+  written only by a one-variant theme or `--variant`.
 - **`~/.config/gtk-4.0/gtk.css`**: libadwaita color variables in a marked
   block appended to the user's file, both variants under
   `@media (prefers-color-scheme)`.

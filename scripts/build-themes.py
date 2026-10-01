@@ -83,6 +83,9 @@ THEMES = [
          # blue #83a598 reads teal but IS gruvbox's blue -- kept on purpose
          dark=V("base24-gruvbox-dark", red="#fb4934", green="#b8bb26", yellow="#fabd2f", blue="#83a598",
                 magenta="#d3869b", cyan="#8ec07c", orange="#fe8019", accent="#fe8019",
+                # critical battery stays red: gruvbox's own bright red, which
+                # (unlike the fitted red) reads apart from the orange accent
+                light_alert="#fb4934",
                 bright_red="#fb4934", bright_green="#b8bb26", bright_yellow="#fabd2f", bright_blue="#83a598",
                 bright_magenta="#d3869b", bright_cyan="#8ec07c",
                 background_deep="#1d2021", background_sunken="#1d2021", window="#282828", view="#1d2021",
@@ -91,6 +94,9 @@ THEMES = [
          light=V("base24-gruvbox-light", drop=("background_deep", "background_sunken"),
                  red="#9d0006", green="#79740e", yellow="#b57614", blue="#076678", magenta="#8f3f71",
                  cyan="#427b58", orange="#af3a03", accent="#af3a03",
+                 # critical battery stays red: gruvbox's red turned toward
+                 # crimson, the least it takes to read apart from the accent
+                 light_alert="#9b003a",
                  bright_red="#cc241d", bright_green="#98971a", bright_yellow="#d79921", bright_blue="#458588",
                  bright_magenta="#b16286", bright_cyan="#689d6a",
                  background_deep="#ebdbb2", background_sunken="#f2e5bc", window="#fbf1c7", view="#f9f5d7",
@@ -481,6 +487,8 @@ def build_variant(spec, mode):
     fixes = []
     # write every key out: the file is the complete, reviewable palette
     out = {k: v[k].hex for k in pt.PALETTE_KEYS + pt.SURFACE_KEYS}
+    # a pinned glass light is written as given; unpinned ones stay derived
+    out.update({k: v[k].hex for k in ("light_warn", "light_alert") if k in spec["over"]})
     for k in HUES + ["brown"]:
         c = v[k]
         n = pt.fit_contrast(c, bg, FLOORS["hue"])
@@ -548,13 +556,18 @@ def main():
             print(f"{t['slug']:12} {mode:5} contrast fixes: {'; '.join(fixes) or 'none'}")
             lines.append("")
             lines.append(f"[{mode}]")
-            for k in pt.PALETTE_KEYS + pt.SURFACE_KEYS:
+            # the glass rim's own lights, where a theme pins them
+            for k in pt.PALETTE_KEYS + pt.SURFACE_KEYS + ["light_warn", "light_alert"]:
                 if k in out:
                     lines.append(f'{k} = "{out[k]}"')
         lines.insert(3, f'source = "{"; ".join(srcs)}"')
         if t.get("shell_glow"):
             # the Shell's text glows like the phosphor while Lighting is on
             lines.insert(5, "shell_glow = true")
+        if t.get("gnome_accent"):
+            # the system accent, where the one derived from the accent's hue
+            # is the wrong name for it
+            lines.insert(5, f'gnome_accent = "{t["gnome_accent"]}"')
         lines.append("")
         lines.append("[wallpaper]")
         for mode in ("dark", "light"):
