@@ -857,6 +857,8 @@ def atomic_write(path, data):
 
 
 EXT_UUID = "pulsar-theme@arclight.digital"
+# in STATE/shell: the one mode the applied theme has, for the extension
+ONE_MODE = "one-mode.json"
 
 
 def gsettings_get(schema, key, path=None):
@@ -1481,7 +1483,10 @@ class Wallpaper(Target):
         # none, and pointing GNOME at a missing file shows a grey desktop.
         have = {m: [w for w in theme.wallpapers[m] if w.exists()] for m in ("dark", "light")}
         if not have["dark"] and not have["light"]:
-            have = {m: [BRAND_WALLPAPER[m]] if BRAND_WALLPAPER[m].exists() else [] for m in ("dark", "light")}
+            # only the modes the theme has: a dark-only theme keeps a dark
+            # desktop when Dark Style is flipped from Settings
+            have = {m: [BRAND_WALLPAPER[m]] if BRAND_WALLPAPER[m].exists() and m in theme.variants else []
+                    for m in ("dark", "light")}
         theme.wallpapers = have
         dark = pick(theme.wallpapers["dark"], idx) or pick(theme.wallpapers["light"], idx)
         light = pick(theme.wallpapers["light"], idx) or dark
@@ -1511,6 +1516,18 @@ class Shell(Target):
             # the Glow effect's rules, keyed off the class the extension sets
             css += "\n" + render_tpl(template("gnome-shell-glow.css"), ctx, "gnome-shell-glow.css")
             tx.write(STATE / "shell" / f"gnome-shell-{scheme}.css", f"/* {css_comment(theme.name)} ({mode}) */\n" + css)
+        # A theme with one mode (or one pinned with --variant) has nothing for
+        # Dark Style to swap to: the extension greys the Quick Settings toggle
+        # out while this file names the mode in effect. A file, not a key:
+        # the extension already watches this directory, and it costs no
+        # dconf write. Revert and a two-mode theme remove it.
+        lock = STATE / "shell" / ONE_MODE
+        if vm == "both" and theme.both:
+            if lock.exists():
+                tx.remove(lock)
+        else:
+            tx.write(lock, json.dumps({"mode": theme.prefer if vm == "both" else vm, "name": theme.name,
+                                       "pinned": theme.both}) + "\n")
         # Enable it, unless the user switched it off: that choice is theirs,
         # and re-adding it to enabled-extensions would not turn it back on
         # anyway (disabled-extensions wins) -- only confuse window_glass().
