@@ -185,6 +185,14 @@ def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
                    expected_bytes=expected_bytes)
 
 
+def boot_kargs(luks_uuid, keymap, extra=()):
+    """The installed system's kernel arguments: the root to unlock; rhgb
+    quiet for the graphical boot and passphrase prompt (Silverblue's come
+    from Anaconda's kickstart, not the image); the console keymap, so the
+    passphrase typed in the installer's layout unlocks in the same one."""
+    return [f"rd.luks.uuid={luks_uuid}", "rhgb", "quiet", f"rd.vconsole.keymap={keymap}", *extra]
+
+
 def live_setting(path, key, default):
     """KEY's value in a KEY=value file of the live system, else default."""
     try:
@@ -205,7 +213,7 @@ def live_lang(path="/etc/locale.conf"):
     return "en_US.UTF-8" if lang.split(".")[0] in ("", "C", "POSIX") else lang
 
 
-def write_locale(target, lang, keymap):
+def write_locale(target, lang, keymap, xkb_layout=None, xkb_variant=""):
     """The installed system's language and console keyboard, in its
     deployment's /etc: without them it starts with none, and GNOME Initial
     Setup offers "Unspecified". Returns the /etc written to."""
@@ -221,6 +229,11 @@ def write_locale(target, lang, keymap):
         f.write(f'LANG="{lang}"\n')
     with open(os.path.join(etc, "vconsole.conf"), "w") as f:
         f.write(f"KEYMAP={keymap}\n")
+        # the desktop's layout too: systemd-localed keeps XKB settings here
+        if xkb_layout:
+            f.write(f"XKBLAYOUT={xkb_layout}\n")
+            if xkb_variant:
+                f.write(f"XKBVARIANT={xkb_variant}\n")
     return etc
 
 
@@ -318,6 +331,8 @@ def main():
     ap.add_argument("--expected-bytes", type=int, help="the payload's unpacked size, for progress")
     ap.add_argument("--lang", help="the installed system's LANG (default: the live system's)")
     ap.add_argument("--keymap", help="its console keymap (default: the live system's)")
+    ap.add_argument("--xkb-layout", help="its desktop keyboard layout (GNOME's), e.g. de")
+    ap.add_argument("--xkb-variant", default="", help="and variant, e.g. nodeadkeys")
     ap.add_argument("disk")
     a = ap.parse_args()
     if os.geteuid() != 0:
@@ -361,19 +376,22 @@ def main():
             run("mount", dev, path)
             mounted.append(path)
         snap = snapshot_fallback(os.path.join(target, "boot/efi")) if a.mode == "alongside" else None
+        # The passphrase prompt at boot reads the console keymap from the
+        # kernel command line: the keys typed into the installer, in the
+        # live session's layout, must mean the same there.
+        keymap = a.keymap or live_setting("/etc/vconsole.conf", "KEYMAP", "us")
         emit(stage="install")
         # rhgb quiet: Silverblue's graphical boot (and passphrase prompt)
         # comes from Anaconda's kickstart, not the image; without them the
         # prompt sat in the boot log's text
         bootc_install(target, a.source_imgref, a.target_imgref,
-                      [f"rd.luks.uuid={root['uuid']}", "rhgb", "quiet"] + a.karg, a.expected_bytes)
+                      boot_kargs(root["uuid"], keymap, a.karg), a.expected_bytes)
         # bootc finalizes the root read-only; GRUB's custom.cfg lives on /boot
         emit(stage="boot")
         run("mount", "-o", "remount,rw", os.path.join(target, "boot"))
         # bootc finalizes the root read-only too; its /etc takes the language
         run("mount", "-o", "remount,rw", target)
-        write_locale(target, a.lang or live_lang(),
-                     a.keymap or live_setting("/etc/vconsole.conf", "KEYMAP", "us"))
+        write_locale(target, a.lang or live_lang(), keymap, a.xkb_layout, a.xkb_variant)
         if snap is not None:
             restore_fallback(os.path.join(target, "boot/efi"), snap, os.path.join(target, "boot/pulsar/esp-fallback"))
         win = windows_entry(target, esp)

@@ -110,3 +110,19 @@ PY
 @test "the copy's progress fills the bar between its start and the boot setup" {
     [ "$(py 'round(m.install_fraction(0), 2), round(m.install_fraction(0.5), 2), round(m.install_fraction(1), 2), round(m.install_fraction(7), 2)')" = "(0.12, 0.53, 0.94, 0.94)" ]
 }
+
+@test "keyboard: GNOME's layout maps to the console keymap the boot prompt uses" {
+    [ "$(py 'm.current_layout([("xkb", "de+nodeadkeys"), ("xkb", "us")])')" = "('de', 'nodeadkeys')" ]
+    [ "$(py 'm.current_layout([])')" = "('us', '')" ]
+    [ "$(py 'm.console_keymap("de")')" = "de" ]
+    [ "$(py 'm.console_keymap("de", "nodeadkeys")')" = "de-latin1-nodeadkeys" ]
+    [ "$(py 'm.console_keymap("gb")')" = "uk" ]
+    [ "$(py 'm.console_keymap("xx-nowhere")')" = "xx-nowhere" ]
+    [ "$(py 'm.layout_name("de")')" = "German" ]
+}
+
+@test "Install is red only when it deletes something" {
+    [ "$(py 'm.install_destroys("erase", D["/dev/sdb"])')" = "False" ]
+    [ "$(py 'm.install_destroys("erase", D["/dev/nvme1n1"])')" = "True" ]
+    [ "$(py 'm.install_destroys("alongside", D["/dev/nvme1n1"])')" = "False" ]
+}

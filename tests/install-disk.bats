@@ -318,3 +318,17 @@ PY
     [ "${lines[2]}" = "None" ]
     [ "${lines[3]}" = "0.0 0.5 0.99 0.0" ]
 }
+
+@test "boot: the passphrase prompt gets the installer's keymap, and the desktop its layout" {
+    run python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" "$T" <<'PY'
+import importlib.machinery as M, importlib.util as U, os, sys
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+print(" ".join(m.boot_kargs("abc", "de-latin1-nodeadkeys")))
+etc = os.path.join(sys.argv[2], "t/ostree/deploy/default/deploy/x.0/etc"); os.makedirs(etc)
+m.write_locale(os.path.join(sys.argv[2], "t"), "de_DE.UTF-8", "de-latin1-nodeadkeys", "de", "nodeadkeys")
+print(open(os.path.join(etc, "vconsole.conf")).read().replace("\n", ";"))
+PY
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "rd.luks.uuid=abc rhgb quiet rd.vconsole.keymap=de-latin1-nodeadkeys" ]
+    [ "${lines[1]}" = "KEYMAP=de-latin1-nodeadkeys;XKBLAYOUT=de;XKBVARIANT=nodeadkeys;" ]
+}

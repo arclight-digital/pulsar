@@ -101,6 +101,12 @@ def method_title(d, mode):
     return f"Install alongside {d['holds']}" if d["holds"] in ("Windows", "Linux") else "Install in the free space"
 
 
+def install_destroys(mode, d):
+    """Whether pressing Install deletes anything: an erase of a disk that
+    holds something. Only then is the button the destructive red."""
+    return mode == "erase" and not d["empty"]
+
+
 def needs_erase_confirm(d):
     """An empty disk has nothing to lose: no page asking to erase it."""
     return not d["empty"]
@@ -182,6 +188,63 @@ def options(d):
         along = (True, f"Uses the {human(d['free'])} of free space. {d['holds']} stays as it is."
                  if d["holds"] != "other data" else f"Uses the {human(d['free'])} of free space.")
     return {"alongside": along, "erase": erase}
+
+
+KBD_MAP = "/usr/share/systemd/kbd-model-map"
+
+
+def console_keymap(layout, variant="", mapfile=KBD_MAP):
+    """The console keymap for an X11/GNOME layout, from systemd's own table
+    (the boot passphrase prompt reads console keymaps, not XKB layouts):
+    the line whose layout and variant match, else the one for the layout
+    with no variant, else the layout's own name."""
+    rows = []
+    try:
+        for line in open(mapfile):
+            f = line.split()
+            if len(f) >= 4 and not line.startswith("#"):
+                rows.append((f[0], f[1], f[3]))
+    except OSError:
+        pass
+    want = variant or "-"
+    for console, x11, var in rows:
+        if x11 == layout and var == want:
+            return console
+    for console, x11, var in rows:
+        if x11 == layout and var == "-":
+            return console
+    return layout
+
+
+def current_layout(sources):
+    """GNOME's input source in use, as (layout, variant): the first of its
+    sources, e.g. [('xkb', 'de+nodeadkeys')] -> ('de', 'nodeadkeys')."""
+    for kind, name in sources or []:
+        if kind == "xkb":
+            layout, _, variant = name.partition("+")
+            return layout, variant
+    return "us", ""
+
+
+def layout_name(layout, variant=""):
+    """A layout as people know it ("German"), from the XKB registry GNOME
+    reads; its code when that can't be read."""
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.parse("/usr/share/X11/xkb/rules/evdev.xml").getroot()
+        for lay in root.iter("layout"):
+            ci = lay.find("configItem")
+            if ci is None or ci.findtext("name") != layout:
+                continue
+            if variant:
+                for v in lay.iter("variant"):
+                    vci = v.find("configItem")
+                    if vci is not None and vci.findtext("name") == variant:
+                        return vci.findtext("description")
+            return ci.findtext("description")
+    except Exception:     # noqa: BLE001 -- a name is a nicety
+        pass
+    return layout + (f" ({variant})" if variant else "")
 
 
 def install_fraction(copied):
@@ -395,6 +458,17 @@ def main():
             group.append(a)
             group.append(b)
             hint = label("At least 8 characters", ["in-note"])
+            # the startup screen unlocks with the keys typed here: it must
+            # use the same layout (rd.vconsole.keymap), and the page says which
+            try:
+                src = Gio.Settings.new("org.gnome.desktop.input-sources")
+                srcs = src.get_value("mru-sources").unpack() or src.get_value("sources").unpack()
+            except Exception:     # noqa: BLE001 -- no schema: the default
+                srcs = []
+            self.layout, self.variant = current_layout(srcs)
+            self.keymap = console_keymap(self.layout, self.variant)
+            kbd = label(f"Keyboard layout: {layout_name(self.layout, self.variant)}. "
+                        "Pulsar's startup screen uses the same one.", ["in-note"])
             nxt = Gtk.Button(label="Next", css_classes=["suggested-action", "in-pill"], sensitive=False)
 
             def check(*_):
@@ -410,7 +484,7 @@ def main():
                 label("Choose a passphrase", ["in-title"]),
                 label("You'll type it every time Pulsar starts. If you forget it, your files can't be recovered.",
                       ["in-lede"]),
-                group, hint), back=back, nxt=nxt)
+                group, hint, kbd), back=back, nxt=nxt)
 
         # ------------------------------------------- plan, then install
 
@@ -444,8 +518,9 @@ def main():
             for k, v in rows:
                 r = Adw.ActionRow(title=k, subtitle=v, subtitle_selectable=True)
                 listbox.append(r)
-            go = Gtk.Button(label="Install", css_classes=["suggested-action" if self.mode == "alongside"
-                                                          else "destructive-action", "in-pill"])
+            # red only when Install deletes something: never for an empty disk
+            go = Gtk.Button(label="Install", css_classes=["destructive-action" if install_destroys(self.mode, d)
+                                                          else "suggested-action", "in-pill"])
             go.connect("clicked", lambda *_: self.install())
             back = Gtk.Button(label="Back", css_classes=["flat", "in-pill"])
             back.connect("clicked", lambda *_: self.nav.pop())
@@ -468,6 +543,9 @@ def main():
             self.nav.push(page)
             self.tick = GLib.timeout_add(500, self._tick)
             extra = ["--expected-bytes", str(self.payload["size"])] if self.payload.get("size") else []
+            extra += ["--keymap", self.keymap, "--xkb-layout", self.layout]
+            if self.variant:
+                extra += ["--xkb-variant", self.variant]
             self.run(self.backend("--key-file", self.key_path, "--source-imgref", self.payload["source"],
                                   "--target-imgref", self.payload["target"], *extra), self.installed, self.progress)
 
