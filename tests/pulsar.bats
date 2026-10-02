@@ -2689,7 +2689,11 @@ fake_agent() {
     # the newest wireplumber crash, its button, and the command the button runs
     grep -q -- "--unit=pulsar-crash-404 " "$RUN_LOG"
     grep -q "Ask Claude Code wireplumber crashed" "$RUN_LOG"
-    grep -q "agent ask --crash 404$" "$RUN_LOG"
+    grep -q "agent ask --crash 404 " "$RUN_LOG"
+    # and the second button: "Ignore this" adds the program, by name
+    grep -q 'action=ignore="Ignore this"' "$RUN_LOG"
+    grep -q "crashes ignore add" "$RUN_LOG"
+    grep -qE " wireplumber$" "$RUN_LOG"
     grep -q "foo crashed" "$RUN_LOG"
     # a third wireplumber abort is not news; a new program is
     run "$PULSAR" doctor crashes --notify
@@ -2701,6 +2705,52 @@ fake_agent() {
     echo boot-b > "$PULSAR_BOOT_ID_FILE"
     run "$PULSAR" doctor crashes --notify
     [ "$(grep -c "^--user" "$RUN_LOG")" -eq 6 ]
+}
+
+@test "crashes ignore: an ignored program is not announced, but still counted and still found by PID" {
+    crash_env
+    export PULSAR_CRASH_IGNORE="${BATS_TEST_TMPDIR}/crash-ignore"
+    run "$PULSAR" crashes ignore list
+    [[ "$output" == "nothing ignored"* ]]
+    run "$PULSAR" crashes ignore add wireplumber
+    [ "$status" -eq 0 ]
+    run "$PULSAR" crashes ignore add wireplumber
+    [[ "$output" == "already ignored"* ]]
+    [ "$(grep -c . "$PULSAR_CRASH_IGNORE")" -eq 1 ]
+    run "$PULSAR" doctor crashes
+    [[ "$output" == warn*"1 crash(es) of yours this boot: foo (2 ignored"* ]] || fail "$output"
+    # --crash latest is the newest one not ignored; the ignored one by PID still works
+    run "$PULSAR" report --crash latest
+    echo "$output" | jq -e '.crash != null' >/dev/null
+    run "$PULSAR" crashes ignore add foo
+    run "$PULSAR" doctor crashes
+    [[ "$output" == ok*"no crashes of yours this boot (3 ignored"* ]] || fail "$output"
+    run "$PULSAR" report --crash latest
+    [ "$status" -ne 0 ]
+    run "$PULSAR" report --crash 404
+    [ "$status" -eq 0 ]
+    # no notification for an ignored program
+    fake_agent claude
+    run "$PULSAR" doctor crashes --notify
+    [ ! -s "$RUN_LOG" ]
+    run "$PULSAR" crashes ignore remove foo
+    [ "$status" -eq 0 ]
+    run "$PULSAR" crashes ignore remove foo
+    [ "$status" -ne 0 ]
+    run "$PULSAR" doctor crashes --notify
+    grep -q "foo crashed" "$RUN_LOG"
+    ! grep -q "wireplumber crashed" "$RUN_LOG"
+}
+
+@test "crashes ignore: a pattern with a / matches the end of the path, not the name anywhere" {
+    crash_env
+    export PULSAR_CRASH_IGNORE="${BATS_TEST_TMPDIR}/crash-ignore"
+    printf '# comments and blank lines are fine\n\nlocal/bin/wireplumber\n' > "$PULSAR_CRASH_IGNORE"
+    run "$PULSAR" doctor crashes
+    [[ "$output" == warn*"wireplumber (2), foo"* ]] || fail "$output"
+    printf 'usr/bin/wireplumber\n' > "$PULSAR_CRASH_IGNORE"
+    run "$PULSAR" doctor crashes
+    [[ "$output" == warn*"1 crash(es) of yours this boot: foo (2 ignored"* ]] || fail "$output"
 }
 
 @test "agent ask starts the agent on a private report, with the crash and the rule" {

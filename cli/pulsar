@@ -3581,9 +3581,49 @@ SELF=${BASH_SOURCE[0]}
 # reboot is still reachable by PID with --crash, just not announced.
 # ---------------------------------------------------------------------------
 
+# The user's "Ignore this": programs whose crashes are not announced (no
+# notification, no doctor warning, not `--crash latest`). One pattern a line,
+# '#' for comments, nothing in it by default. A bare name matches the
+# executable's name, whatever directory it ran from (wine64-preloader, in
+# every Proton version's tree); a pattern with a '/' matches the end of its
+# path (wine/i386-unix/wine64-preloader). A crash asked for by PID is always
+# found: ignoring stops the announcing, not the record.
+CRASH_IGNORE_FILE=${PULSAR_CRASH_IGNORE:-${XDG_CONFIG_HOME:-$HOME/.config}/pulsar/crash-ignore}
+
+crash_ignored() {
+    local exe=$1 pat
+    [ -r "$CRASH_IGNORE_FILE" ] || return 1
+    while IFS= read -r pat || [ -n "$pat" ]; do
+        pat=${pat%%#*}; pat=${pat#"${pat%%[![:space:]]*}"}; pat=${pat%"${pat##*[![:space:]]}"}
+        [ -n "$pat" ] || continue
+        case "$pat" in
+            */*) case "$exe" in */"$pat"|"$pat") return 0 ;; esac ;;
+            *)   [ "$(basename -- "$exe")" = "$pat" ] && return 0 ;;
+        esac
+    done < "$CRASH_IGNORE_FILE"
+    return 1
+}
+
+# crash_rows without the ignored ones
+crash_unignored() {
+    local pid t sig exe
+    while IFS=$'\t' read -r pid t sig exe; do
+        [ -n "$pid" ] || continue
+        crash_ignored "$exe" || printf '%s\t%s\t%s\t%s\n' "$pid" "$t" "$sig" "$exe"
+    done
+}
+
 # pid <TAB> time (us) <TAB> signal <TAB> exe, oldest first. `all` drops the
-# this-boot limit (an explicit PID may be from an earlier boot).
+# this-boot limit (an explicit PID may be from an earlier boot); `raw` keeps
+# the ignored ones. Without `all` or `raw`, ignored programs are left out.
 crash_rows() {
+    case "${1:-}" in
+        all|raw) crash_rows_raw "${1:-}" ;;
+        *)       crash_rows_raw | crash_unignored ;;
+    esac
+}
+
+crash_rows_raw() {
     have coredumpctl || return 0
     local -a since=()
     if [ "${1:-}" != all ]; then
@@ -3649,10 +3689,16 @@ crash_json() {
 }
 
 check_crashes() {
-    local rows
-    rows=$(crash_rows)
+    local rows raw ignored=""
+    raw=$(crash_rows raw)
+    rows=$(printf '%s\n' "$raw" | crash_unignored)
+    # what "Ignore this" hid is still counted, so nothing vanishes unseen
+    local nraw nrows
+    nraw=$(printf '%s\n' "$raw" | grep -c . || true)
+    nrows=$(printf '%s\n' "$rows" | grep -c . || true)
+    [ "$nraw" -gt "$nrows" ] && ignored=" ($((nraw - nrows)) ignored: pulsar crashes ignore list)"
     if [ -z "$rows" ]; then
-        have coredumpctl && record crashes ok "no crashes of yours this boot"
+        have coredumpctl && record crashes ok "no crashes of yours this boot${ignored}"
         return 0
     fi
     local n summary latest
@@ -3661,7 +3707,7 @@ check_crashes() {
     summary=$(printf '%s\n' "$rows" | cut -f4 | xargs -r -n1 basename | sort | uniq -c | sort -rn \
         | awk '{ printf "%s%s", (NR > 1 ? ", " : ""), ($1 > 1 ? $2 " (" $1 ")" : $2) }')
     latest=$(printf '%s\n' "$rows" | tail -1 | cut -f4)
-    record crashes warn "${n} crash(es) of yours this boot: ${summary}" \
+    record crashes warn "${n} crash(es) of yours this boot: ${summary}${ignored}" \
         "latest: $(basename "$latest"). pulsar agent ask --crash latest, or pulsar report --crash latest --text"
 }
 
@@ -3686,14 +3732,14 @@ crashes_notify() {
         fresh+=("$exe")
         seen+=$'\n'"${boot} ${exe}"
         name=$(basename "$exe")
-        crash_notify_one "$pid" "$name"
+        crash_notify_one "$pid" "$name" "$exe"
     done < <(printf '%s\n' "$rows" | tac)
     [ ${#fresh[@]} -gt 0 ] || return 0
     mkdir -p "$UPDATE_STATE" && printf '%s\n' "$seen" | awk -v b="$boot" '$1 == b' > "$state"
 }
 
 crash_notify_one() {
-    local pid=$1 name=$2 title body
+    local pid=$1 name=$2 exe=${3:-$2} title body
     title="${name} crashed"
     body="${A_DESC%% (*} can read the stack trace and the logs, and help you fix or report it. Nothing is sent to it unless you click."
     have notify-send || return 0
@@ -3705,14 +3751,61 @@ crash_notify_one() {
             "Details: pulsar agent ask --crash ${pid}" || true
         return 0
     fi
-    local ask script
-    ask="$(realpath "$SELF") agent ask --crash ${pid}"
+    local ask script self
+    self=$(realpath "$SELF")
+    ask="${self} agent ask --crash ${pid}"
+    # "Ignore this": that program's crashes are not announced again (by its
+    # name: a Proton update moves the path, not the name)
     # shellcheck disable=SC2016  # expanded by the transient unit's sh, not here
-    script='a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" "$2" "$3") || exit 0
-[ "$a" = ask ] || exit 0
-exec ptyxis --new-window -d "$HOME" -x "$4"'
+    script='a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" --action=ignore="Ignore this" "$2" "$3") || exit 0
+case "$a" in
+    ask) exec ptyxis --new-window -d "$HOME" -x "$4" ;;
+    ignore) exec "$5" crashes ignore add "$6" ;;
+esac'
     systemd-run --user --collect --quiet --unit="pulsar-crash-${pid}" \
-        -- sh -c "$script" sh "Ask ${A_DESC%% (*}" "$title" "$body" "$ask" 2>/dev/null || true
+        -- sh -c "$script" sh "Ask ${A_DESC%% (*}" "$title" "$body" "$ask" "$self" "$(basename -- "$exe")" 2>/dev/null || true
+}
+
+# pulsar crashes [ignore list | ignore add <pattern> | ignore remove <pattern>]
+cmd_crashes() {
+    case "${1:-}" in
+        '') cmd_doctor crashes ;;
+        ignore)
+            shift
+            local act=${1:-list} pat=${2:-}
+            case "$act" in
+                list)
+                    if [ -s "$CRASH_IGNORE_FILE" ] && grep -qvE '^[[:space:]]*(#|$)' "$CRASH_IGNORE_FILE"; then
+                        grep -vE '^[[:space:]]*(#|$)' "$CRASH_IGNORE_FILE"
+                    else
+                        echo "nothing ignored: every crash is announced"
+                    fi ;;
+                add)
+                    [ -n "$pat" ] || die "usage: pulsar crashes ignore add <program name or path end>"
+                    mkdir -p "$(dirname "$CRASH_IGNORE_FILE")"
+                    if grep -qxF -- "$pat" "$CRASH_IGNORE_FILE" 2>/dev/null; then
+                        echo "already ignored: ${pat}"
+                    else
+                        printf '%s\n' "$pat" >> "$CRASH_IGNORE_FILE"
+                        echo "ignoring crashes of ${pat} (undo: pulsar crashes ignore remove ${pat})"
+                    fi ;;
+                remove)
+                    [ -n "$pat" ] || die "usage: pulsar crashes ignore remove <pattern>"
+                    grep -qxF -- "$pat" "$CRASH_IGNORE_FILE" 2>/dev/null || die "not on the list: ${pat}"
+                    local tmp
+                    tmp=$(mktemp "${CRASH_IGNORE_FILE}.XXXXXX")
+                    grep -vxF -- "$pat" "$CRASH_IGNORE_FILE" > "$tmp" || true
+                    mv -f "$tmp" "$CRASH_IGNORE_FILE"
+                    echo "crashes of ${pat} are announced again" ;;
+                *) die "usage: pulsar crashes ignore [list | add <pattern> | remove <pattern>]" ;;
+            esac ;;
+        -h|--help)
+            echo "usage: pulsar crashes [ignore list | ignore add <pattern> | ignore remove <pattern>]"
+            echo "  with no arguments: this boot's crashes (pulsar doctor crashes)"
+            echo "  ignore: programs whose crashes are not announced. A name matches that program"
+            echo "  wherever it ran from; a pattern with a / matches the end of its path." ;;
+        *) die "usage: pulsar crashes [ignore list | add <pattern> | remove <pattern>]" ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -4639,6 +4732,8 @@ Health
   pulsar report            a diagnosis bundle to paste: doctor, status,
                            manifest, failed units, recent warnings, graphics,
                            Flatpak. JSON; --text for people. redacted
+  pulsar crashes           this boot's crashes. ignore list | add | remove:
+                           programs whose crashes are not announced
 
 This image
   pulsar manifest          what is in this image, and what it runs on
@@ -4767,6 +4862,7 @@ main() {
         rollback)   cmd_rollback "$@" ;;
         pin)        cmd_pin "$@" ;;
         checkpoint) cmd_checkpoint "$@" ;;
+        crashes)    cmd_crashes "$@" ;;
         setup)      cmd_setup "$@" ;;
         agent)      cmd_agent "$@" ;;
         mcp)        cmd_mcp "$@" ;;
