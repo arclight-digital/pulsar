@@ -1,26 +1,197 @@
-{"blockdevices": [
- {"name": "zram0", "path": "/dev/zram0", "type": "disk", "size": 8589934592, "ro": false, "rm": false},
- {"name": "sr0", "path": "/dev/sr0", "type": "rom", "size": 6000000000, "ro": true, "rm": true, "label": "PULSAR-INSTALL"},
- {"name": "nvme0n1", "path": "/dev/nvme0n1", "type": "disk", "size": 1024209543168, "ro": false, "rm": false, "tran": "nvme",
-  "model": "SKHynix_HFS001TEJ9X115N", "vendor": null, "children": [
-   {"name": "nvme0n1p1", "size": 629145600, "start": 2048, "fstype": "vfat", "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"},
-   {"name": "nvme0n1p2", "size": 2147483648, "start": 1230848, "fstype": "ext4", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"},
-   {"name": "nvme0n1p3", "size": 1021431513088, "start": 5425152, "fstype": "btrfs", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"}]},
- {"name": "nvme1n1", "path": "/dev/nvme1n1", "type": "disk", "size": 1000204886016, "ro": false, "rm": false, "tran": "nvme",
-  "model": "Samsung SSD 990 PRO 1TB", "children": [
-   {"name": "nvme1n1p1", "size": 104857600, "start": 2048, "fstype": "vfat", "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"},
-   {"name": "nvme1n1p2", "size": 16777216, "start": 206848, "fstype": null, "parttype": "e3c9e316-0b5c-4db8-817d-f92df00215ae"},
-   {"name": "nvme1n1p3", "size": 536870912000, "start": 239616, "fstype": "ntfs", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", "label": "Windows"},
-   {"name": "nvme1n1p4", "size": 786432000, "start": 1952000000, "fstype": "ntfs", "parttype": "de94bba4-06d1-4d40-a16a-bfd50179d6ac"}]},
- {"name": "sda", "path": "/dev/sda", "type": "disk", "size": 512110190592, "ro": false, "rm": false, "tran": "sata",
-  "vendor": "ATA", "model": "Crucial MX500", "children": [
-   {"name": "sda1", "size": 104857600, "start": 2048, "fstype": "vfat", "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"},
-   {"name": "sda2", "size": 200000000000, "start": 206848, "fstype": "BitLocker", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"}]},
- {"name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 256060514304, "ro": false, "rm": false, "tran": "sata", "model": "Empty SSD"},
- {"name": "sdc", "path": "/dev/sdc", "type": "disk", "size": 16000000000, "ro": false, "rm": false, "tran": "sata", "model": "Tiny"},
- {"name": "sdd", "path": "/dev/sdd", "type": "disk", "size": 32000000000, "ro": false, "rm": true, "tran": "usb", "model": "Installer Stick",
-  "label": "PULSAR-INSTALL", "children": [
-   {"name": "sdd1", "size": 6000000000, "start": 64, "fstype": "iso9660", "label": "PULSAR-INSTALL", "mountpoints": ["/run/initramfs/live"]}]},
- {"name": "sde", "path": "/dev/sde", "type": "disk", "size": 2000398934016, "ro": false, "rm": false, "tran": "sata", "model": "Data Only", "children": [
-   {"name": "sde1", "size": 1000000000000, "start": 2048, "fstype": "ntfs", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", "label": "Games"}]}
-]}
+{
+ "blockdevices": [
+  {
+   "name": "zram0",
+   "path": "/dev/zram0",
+   "type": "disk",
+   "size": 8589934592,
+   "ro": false,
+   "rm": false
+  },
+  {
+   "name": "sr0",
+   "path": "/dev/sr0",
+   "type": "rom",
+   "size": 6000000000,
+   "ro": true,
+   "rm": true,
+   "label": "PULSAR-INSTALL"
+  },
+  {
+   "name": "nvme0n1",
+   "path": "/dev/nvme0n1",
+   "type": "disk",
+   "size": 1024209543168,
+   "ro": false,
+   "rm": false,
+   "tran": "nvme",
+   "model": "SKHynix_HFS001TEJ9X115N",
+   "vendor": null,
+   "children": [
+    {
+     "name": "nvme0n1p1",
+     "size": 629145600,
+     "start": 2048,
+     "fstype": "vfat",
+     "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+    },
+    {
+     "name": "nvme0n1p2",
+     "size": 2147483648,
+     "start": 1230848,
+     "fstype": "ext4",
+     "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"
+    },
+    {
+     "name": "nvme0n1p3",
+     "size": 1021431513088,
+     "start": 5425152,
+     "fstype": "btrfs",
+     "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"
+    }
+   ]
+  },
+  {
+   "name": "nvme1n1",
+   "path": "/dev/nvme1n1",
+   "type": "disk",
+   "size": 1000204886016,
+   "ro": false,
+   "rm": false,
+   "tran": "nvme",
+   "model": "Samsung SSD 990 PRO 1TB",
+   "children": [
+    {
+     "name": "nvme1n1p1",
+     "size": 104857600,
+     "start": 2048,
+     "fstype": "vfat",
+     "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+    },
+    {
+     "name": "nvme1n1p2",
+     "size": 16777216,
+     "start": 206848,
+     "fstype": null,
+     "parttype": "e3c9e316-0b5c-4db8-817d-f92df00215ae"
+    },
+    {
+     "name": "nvme1n1p3",
+     "size": 536870912000,
+     "start": 239616,
+     "fstype": "ntfs",
+     "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+     "label": "Windows"
+    },
+    {
+     "name": "nvme1n1p4",
+     "size": 786432000,
+     "start": 1952000000,
+     "fstype": "ntfs",
+     "parttype": "de94bba4-06d1-4d40-a16a-bfd50179d6ac"
+    }
+   ]
+  },
+  {
+   "name": "sda",
+   "path": "/dev/sda",
+   "type": "disk",
+   "size": 512110190592,
+   "ro": false,
+   "rm": false,
+   "tran": "sata",
+   "vendor": "ATA",
+   "model": "Crucial MX500",
+   "children": [
+    {
+     "name": "sda1",
+     "size": 104857600,
+     "start": 2048,
+     "fstype": "vfat",
+     "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+    },
+    {
+     "name": "sda2",
+     "size": 200000000000,
+     "start": 206848,
+     "fstype": "BitLocker",
+     "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+    }
+   ]
+  },
+  {
+   "name": "sdb",
+   "path": "/dev/sdb",
+   "type": "disk",
+   "size": 256060514304,
+   "ro": false,
+   "rm": false,
+   "tran": "sata",
+   "model": "Empty SSD"
+  },
+  {
+   "name": "sdc",
+   "path": "/dev/sdc",
+   "type": "disk",
+   "size": 16000000000,
+   "ro": false,
+   "rm": false,
+   "tran": "sata",
+   "model": "Tiny"
+  },
+  {
+   "name": "sdd",
+   "path": "/dev/sdd",
+   "type": "disk",
+   "size": 32000000000,
+   "ro": false,
+   "rm": true,
+   "tran": "usb",
+   "model": "Installer Stick",
+   "label": "PULSAR-INSTALL",
+   "children": [
+    {
+     "name": "sdd1",
+     "size": 6000000000,
+     "start": 64,
+     "fstype": "iso9660",
+     "label": "PULSAR-INSTALL",
+     "mountpoints": [
+      "/run/initramfs/live"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "sde",
+   "path": "/dev/sde",
+   "type": "disk",
+   "size": 2000398934016,
+   "ro": false,
+   "rm": false,
+   "tran": "sata",
+   "model": "Data Only",
+   "children": [
+    {
+     "name": "sde1",
+     "size": 1000000000000,
+     "start": 2048,
+     "fstype": "ntfs",
+     "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+     "label": "Games"
+    }
+   ]
+  },
+  {
+   "name": "vda",
+   "path": "/dev/vda",
+   "type": "disk",
+   "size": 68719476736,
+   "ro": false,
+   "rm": false,
+   "tran": "virtio",
+   "vendor": "0x1af4",
+   "model": null
+  }
+ ]
+}

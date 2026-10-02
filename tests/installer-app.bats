@@ -22,7 +22,7 @@ PY
 @test "offered: real disks only; not zram, the CD, or the installer's own stick" {
     run py 'sorted(D)'
     [ "$status" -eq 0 ]
-    [ "$output" = "['/dev/nvme0n1', '/dev/nvme1n1', '/dev/sda', '/dev/sdb', '/dev/sdc', '/dev/sde']" ]
+    [ "$output" = "['/dev/nvme0n1', '/dev/nvme1n1', '/dev/sda', '/dev/sdb', '/dev/sdc', '/dev/sde', '/dev/vda']" ]
 }
 
 @test "names read like the drive: NVMe underscores become spaces, SATA keeps its vendor" {
@@ -87,4 +87,22 @@ PY
 @test "the erase page names partitions in words" {
     run py '[p["what"] for p in D["/dev/nvme1n1"]["partitions"]]'
     [ "$output" = "['Startup files (EFI)', 'Microsoft reserved', 'Windows', 'Windows recovery']" ]
+}
+
+@test "a raw hex vendor (a VM's virtio disk: 0x1af4) is never a disk's name" {
+    [ "$(py 'D["/dev/vda"]["name"]')" = "Virtual disk" ]
+}
+
+@test "an empty disk is offered one way: install on it, with no erase to confirm" {
+    run py 'm.options(D["/dev/sdb"])["erase"]'
+    [ "$output" = "(True, 'The disk is empty.')" ]
+    [ "$(py 'm.method_title(D["/dev/sdb"], "erase")')" = "Install Pulsar on this disk" ]
+    [ "$(py 'm.needs_erase_confirm(D["/dev/sdb"])')" = "False" ]
+    [ "$(py 'm.needs_erase_confirm(D["/dev/nvme1n1"])')" = "True" ]
+}
+
+@test "the passphrase hint waits for the second entry before saying they differ" {
+    [ "$(py 'm.passphrase_hint("correct horse", "")')" = "" ]
+    [ "$(py 'm.passphrase_hint("short", "")')" = "At least 8 characters" ]
+    [ "$(py 'm.passphrase_hint("correct horse", "correct")')" = "The two don't match" ]
 }

@@ -261,3 +261,15 @@ PY
     [ "$status" -eq 1 ]
     [[ "$output" == *"found 2"* ]]
 }
+
+@test "a live system on the bare C locale gives the install en_US, not C (Initial Setup shows C as 'Unspecified')" {
+    for lang in C C.UTF-8 POSIX en_US.UTF-8 de_DE.UTF-8; do
+        printf 'LANG="%s"\n' "$lang" > "$T/locale.conf"
+        run python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" "$T/locale.conf" <<'PY'
+import importlib.machinery as M, importlib.util as U, sys
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+print(m.live_lang(sys.argv[2]))
+PY
+        case $lang in C|C.UTF-8|POSIX) [ "$output" = "en_US.UTF-8" ] ;; *) [ "$output" = "$lang" ] ;; esac
+    done
+}
