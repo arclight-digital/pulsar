@@ -226,12 +226,15 @@ def current_layout(sources):
     return "us", ""
 
 
-def layout_name(layout, variant=""):
+XKB_RULES = "/usr/share/X11/xkb/rules/evdev.xml"
+
+
+def layout_name(layout, variant="", rules=XKB_RULES):
     """A layout as people know it ("German"), from the XKB registry GNOME
     reads; its code when that can't be read."""
     try:
         import xml.etree.ElementTree as ET
-        root = ET.parse("/usr/share/X11/xkb/rules/evdev.xml").getroot()
+        root = ET.parse(rules).getroot()
         for lay in root.iter("layout"):
             ci = lay.find("configItem")
             if ci is None or ci.findtext("name") != layout:

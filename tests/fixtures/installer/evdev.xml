@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- HARNESS FIXTURE: two layouts in the shape of /usr/share/X11/xkb/rules/evdev.xml -->
+<xkbConfigRegistry version="1.1">
+  <layoutList>
+    <layout><configItem><name>us</name><description>English (US)</description></configItem></layout>
+    <layout><configItem><name>de</name><description>German</description></configItem>
+      <variantList><variant><configItem><name>nodeadkeys</name><description>German (no dead keys)</description></configItem></variant></variantList>
+    </layout>
+  </layoutList>
+</xkbConfigRegistry>

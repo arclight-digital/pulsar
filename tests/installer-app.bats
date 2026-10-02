@@ -112,13 +112,16 @@ PY
 }
 
 @test "keyboard: GNOME's layout maps to the console keymap the boot prompt uses" {
+    # systemd's table and the XKB registry as fixtures: a build host has neither
+    local map="${BATS_TEST_DIRNAME}/fixtures/installer/kbd-model-map" xml="${BATS_TEST_DIRNAME}/fixtures/installer/evdev.xml"
     [ "$(py 'm.current_layout([("xkb", "de+nodeadkeys"), ("xkb", "us")])')" = "('de', 'nodeadkeys')" ]
     [ "$(py 'm.current_layout([])')" = "('us', '')" ]
-    [ "$(py 'm.console_keymap("de")')" = "de" ]
-    [ "$(py 'm.console_keymap("de", "nodeadkeys")')" = "de-latin1-nodeadkeys" ]
-    [ "$(py 'm.console_keymap("gb")')" = "uk" ]
-    [ "$(py 'm.console_keymap("xx-nowhere")')" = "xx-nowhere" ]
-    [ "$(py 'm.layout_name("de")')" = "German" ]
+    [ "$(py "m.console_keymap('de', mapfile='$map')")" = "de" ]
+    [ "$(py "m.console_keymap('de', 'nodeadkeys', mapfile='$map')")" = "de-latin1-nodeadkeys" ]
+    [ "$(py "m.console_keymap('gb', mapfile='$map')")" = "uk" ]
+    [ "$(py "m.console_keymap('xx-nowhere', mapfile='$map')")" = "xx-nowhere" ]
+    [ "$(py "m.layout_name('de', rules='$xml')")" = "German" ]
+    [ "$(py "m.layout_name('de', 'nodeadkeys', rules='$xml')")" = "German (no dead keys)" ]
 }
 
 @test "Install is red only when it deletes something" {

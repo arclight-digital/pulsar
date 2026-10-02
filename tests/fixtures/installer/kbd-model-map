@@ -1,0 +1,6 @@
+# Originally generated from system-config-keyboard's model list.
+# consolelayout		xlayout	xmodel		xvariant	xoptions
+uk			gb	pc105		-		terminate:ctrl_alt_bksp
+de			de	pc105		-		terminate:ctrl_alt_bksp
+us			us	pc105+inet	-		terminate:ctrl_alt_bksp
+de-latin1-nodeadkeys	de	pc105		nodeadkeys	terminate:ctrl_alt_bksp
