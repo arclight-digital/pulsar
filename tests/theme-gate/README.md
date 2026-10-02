@@ -73,6 +73,20 @@ pixels, and blur and light would move every one); `glass` turns them on.
   that take the glass off: a GameMode client (a private `gamemoded`) and
   Power Saver (`fixtures/fakeppd.py` on the stand-in system bus), each off
   and back, and twenty Power Saver flips that must leave no actor behind.
+- `switchers`: the glass on surfaces that come and go while their popup
+  stays, which the menu, dialog and switcher hooks never see: Alt+Tab's
+  window thumbnails (Ptyxis with two windows) and the "not responding"
+  dialog (a Dialog of its own, not a ModalDialog). Each is probed like
+  `glass`'s surfaces and screenshotted, and the thumbnails' glass must go
+  when the list does. The sheet clears every `.switcher-list` and
+  `.modal-dialog`, so a surface glass.js misses is a bare one.
+  `switchers-report.json` lands in `GATE_OUT`.
+- `overview-glass`: a window's glass in the overview frosts what is beneath
+  its PREVIEW. The wallpaper is red at the sides and green in a middle band;
+  a Ptyxis window sits on the red and its preview lands on the green. Read
+  through the glass, the desktop must come out red (so the check can tell)
+  and the preview green; it came out red while the blur placed itself by
+  the window's own stage position instead of the clone's.
 - `leaks`: stock showing through, found by what does not move. Every
   visible Shell widget on eleven surfaces (the desktop menu, the date menu,
   quick settings and a submenu, the app grid and an icon's menu, the run

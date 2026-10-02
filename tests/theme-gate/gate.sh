@@ -13,7 +13,8 @@
 #   5. revert leaves the account byte-identical and dconf-identical;
 #   6. glass (the `glass` scenario): with glass and light on, on two
 #      monitors at scale 1 and 1.25, every surface's glass exists and sits
-#      exactly where its host does;
+#      exactly where its host does; and (`switchers`) so does the glass
+#      on Alt+Tab's window thumbnails and the "not responding" dialog;
 #   7. leaks (the `leaks` scenario): no stock color shows through on any
 #      Shell surface in any state, and every checked quick toggle is accent;
 #   8. in each of them, the Shell logged no pulsar-theme warning (glass.js
@@ -46,9 +47,9 @@ if [ ! -s "${out}/gate-report.json" ]; then
 fi
 report_ok() { python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1]))["ok"] else 1)' "$1"; }
 report_ok "${out}/gate-report.json" || rc=1
-# The glass and leaks scenarios, each in a Shell of its own; the same rule:
+# The glass, switchers and leaks scenarios, each in a Shell of its own; the same rule:
 # no report is a FAIL.
-for scenario in glass leaks; do
+for scenario in glass switchers overview-glass leaks; do
   rm -f "${out}/${scenario}-report.json"
   echo "== ${scenario}"
   "${here}/run.sh" "${scenario}" 2>>"${GATE_LOG:-/tmp/theme-gate.log}" | grep -v -E '^\s*$'

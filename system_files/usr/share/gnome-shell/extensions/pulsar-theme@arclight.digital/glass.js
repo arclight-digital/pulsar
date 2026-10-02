@@ -52,7 +52,9 @@ import Mtk from 'gi://Mtk';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
+import * as AltTab from 'resource:///org/gnome/shell/ui/altTab.js';
 import * as AppDisplay from 'resource:///org/gnome/shell/ui/appDisplay.js';
+import * as CloseDialog from 'resource:///org/gnome/shell/ui/closeDialog.js';
 import * as Background from 'resource:///org/gnome/shell/ui/background.js';
 import * as Dash from 'resource:///org/gnome/shell/ui/dash.js';
 import * as IBusCandidatePopup from 'resource:///org/gnome/shell/ui/ibusCandidatePopup.js';
@@ -127,12 +129,15 @@ const POWER_ON_MS = 300;
 // Menus, OSDs and banners are thick glass; windows are a thin pane, bent a
 // little and never sharp (no copy kept for them).
 const SURFACE_LENS = [28, 14, 0.12, 0.63];
-// Menus, OSDs, banners and the dash are liquid glass: blurred one level
-// less than a window, under a lighter tint (the sheet's surface_alpha), so
-// what is behind them keeps its shapes, soft, and bends at the rim.
-const SURFACE_LEVELS = 2;
-// with its taps spread a little wider than a window's, for a touch more blur
-const SURFACE_OFFSET = 3.5;
+// Menus, OSDs, banners and the dash are liquid glass: blurred less than a
+// window, under a lighter tint (the sheet's surface_alpha), so what is
+// behind them keeps its shapes, soft, and bends at the rim. Three levels
+// with close taps, not two with wide ones: the same width (within 3% at 1x,
+// 1.33x and 2x), but two levels 3.5 apart blurred a bright point into a
+// diamond (the up-pass's eight taps, spread far: 145% uneven around the
+// blur at 1.33x, 3.5% now), and big bright text behind showed it.
+const SURFACE_LEVELS = 3;
+const SURFACE_OFFSET = 1.6;
 const WINDOW_LENS = [10, 4, 0, 0];
 // What is beneath, lifted so its color reads through a light tint and text
 // on the glass stays readable: darker behind a dark surface, lighter behind
@@ -140,8 +145,10 @@ const WINDOW_LENS = [10, 4, 0, 0];
 // A clearer surface needs less of its contrast taken: text behind it now
 // shows as shapes, and 0.75 flattened them to a wash.
 const SURFACE_GRADE = {dark: [1.6, 0.85, 0.85], light: [1.45, 0.85, 1.1]};
-// Windows keep the grade menus had before they went liquid.
-const WINDOW_GRADE = {dark: [1.7, 0.75, 0.8], light: [1.5, 0.75, 1.14]};
+// Windows match the panels 1:1 (Nick, 2026-10-02): the same grade, and the
+// same blur below. They keep only their own thin lens (WINDOW_LENS): the
+// panels' thick refracting rim would bend the window's own edge.
+const WINDOW_GRADE = SURFACE_GRADE;
 // libadwaita's window shape, measured on GNOME 50: the frame rect, its 1px
 // border included, with 16px corners (15 inside the border). The mask
 // follows it exactly and fades across the border; over the last few pixels
@@ -338,9 +345,26 @@ const Hold = {
 // the framebuffer being painted, in device pixels (top-left origin), written
 // into `out`. Painting onto a view, from the actor's place on the stage (plain
 // numbers); anywhere else (an offscreen, a screenshot's), through the
-// framebuffer's matrices, the rare case that may allocate.
-function deviceRect(fb, actor, x, y, w, h, out) {
+// framebuffer's matrices, the rare case that may allocate. A clone's paint
+// (a window's preview in the overview) goes through the matrices even on a
+// view: the actor's place on the stage is where the WINDOW is, and the
+// preview is somewhere else, scaled, by the clone's transform alone.
+function deviceRect(fb, actor, x, y, w, h, out, clone = false) {
     const v = Views.get(fb);
+    if (v && clone) {
+        if (!matrixRect(fb, x, y, w, h, out))
+            return false;
+        out.scale = v.scale;
+        out.sx0 = out.x / v.scale + v.x;
+        out.sy0 = out.y / v.scale + v.y;
+        out.sx1 = (out.x + out.w) / v.scale + v.x;
+        out.sy1 = (out.y + out.h) / v.scale + v.y;
+        out.vx0 = v.x;
+        out.vy0 = v.y;
+        out.vx1 = v.x + v.w;
+        out.vy1 = v.y + v.h;
+        return true;
+    }
     if (v) {
         const [tx, ty] = actor.get_transformed_position();
         const [tw, th] = actor.get_transformed_size();
@@ -808,7 +832,7 @@ class PulsarLiveBlur extends Clutter.Effect {
             return;
         }
         const r = this._rect ??= {x: 0, y: 0, w: 0, h: 0, sx0: 0, sy0: 0, sx1: 0, sy1: 0, scale: 1};
-        if (!deviceRect(fb, actor, x0, y0, w, h, r) ||
+        if (!deviceRect(fb, actor, x0, y0, w, h, r, clone) ||
             r.w < 2 || r.h < 2 || r.w > 16384 || r.h > 16384)
             return;
 
@@ -1400,7 +1424,9 @@ class PulsarGlassMirror extends St.Widget {
 // that moves and fades (a menu's BoxPointer, an OSD window, the banner
 // bin); opts.box() is the styled surface inside it, opts.source() the
 // light's stage position, opts.divider() the date menu's column,
-// opts.tone() 'warn' / 'alert' / null, opts.frame() a still ancestor to
+// opts.tone() 'warn' / 'alert' / null, opts.follow() the actor whose
+// fade and scale the glass copies when that isn't the host (a dialog that
+// animates its box, not its layout), opts.frame() a still ancestor to
 // measure from when one between it and the host animates, opts.still a
 // surface that shows without the power-on trace (a tooltip, shown on every
 // hover).
@@ -1411,7 +1437,8 @@ class Surface {
         this._opts = opts;
         const parent = host.get_parent();
 
-        this._under = new Mirror(host);
+        const follow = opts.follow?.() ?? host;
+        this._under = new Mirror(follow);
         this._under.connect('destroy', () => (this._under = null));
         this._backdrop = new St.Widget({width: 1, height: 1});
         this._blur = new LiveBlur({lens: SURFACE_LENS, levels: SURFACE_LEVELS, offset: SURFACE_OFFSET});
@@ -1419,7 +1446,7 @@ class Surface {
         this._under.add_child(this._backdrop);
         parent.insert_child_below(this._under, host);
 
-        this._over = new Mirror(host);
+        this._over = new Mirror(follow);
         this._over.connect('destroy', () => (this._over = null));
         this._lightActor = new St.Widget({width: 1, height: 1});
         this._light = new LightEffect();
@@ -1436,6 +1463,10 @@ class Surface {
             'notify::mapped', () => this._queue(),
             'destroy', () => owner.forget(this),
             this);
+        // a surface keyed by something other than its host (Alt+Tab's
+        // thumbnails) goes with that, not with the host that outlives it
+        if (opts.key && opts.key !== host)
+            opts.key.connectObject('destroy', () => owner.forget(this), this);
         this._rebox();
         this.sync();
         this._shown();
@@ -1443,6 +1474,10 @@ class Surface {
 
     get host() {
         return this._host;
+    }
+
+    get key() {
+        return this._opts.key ?? this._host;
     }
 
     // The styled surface can change under the same host (a new banner).
@@ -1670,6 +1705,8 @@ class Surface {
         this._later = 0;
         this._box?.disconnectObject(this);
         this._host.disconnectObject(this);
+        if (this._opts.key && this._opts.key !== this._host)
+            this._opts.key.disconnectObject(this);
         // At Shell exit the host's parent may have destroyed them already.
         for (const m of [this._under, this._over]) {
             m?.unbind();
@@ -2007,7 +2044,8 @@ class WindowGlass {
         this._win = actor.meta_window;
         this._popup = popup;
         this._backdrop = new St.Widget({reactive: false, width: 1, height: 1});
-        this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS});
+        this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS,
+            levels: SURFACE_LEVELS, offset: SURFACE_OFFSET});
         // vibrancy: what is beneath lifted, so its color reads through the
         // window's tint instead of muddying it
         this._blur.setGrade(...windowGrade());
@@ -2326,7 +2364,7 @@ export class Glass {
     constructor(settings, injections) {
         this._settings = settings;
         Views.watch();
-        this._surfaces = new Map();     // host -> Surface
+        this._surfaces = new Map();     // host (or opts.key) -> Surface
         this._panel = null;
         this._brackets = null;
         this._windows = new Map();      // window actor -> WindowGlass
@@ -2387,8 +2425,18 @@ export class Glass {
                 return ret;
             });
         after(SwitcherPopup.SwitcherPopup.prototype, 'show', this._trackSwitcher);
+        // Alt+Tab on an app with several windows opens a second list, the
+        // windows' thumbnails, made new each time and long after show().
+        // The sheet clears every .switcher-list, so without its own glass it
+        // was a bare row of previews.
+        after(AltTab.AppSwitcherPopup.prototype, '_createThumbnails', this._trackThumbnails);
         after(WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype, 'display', this._trackWorkspaces);
         after(ModalDialog.ModalDialog.prototype, 'open', this._trackDialog);
+        // "Not responding" is a Dialog of its own over the window, not a
+        // ModalDialog, but it carries .modal-dialog, which the sheet clears.
+        // (_initDialog, not vfunc_show: GJS reads a vfunc when the class is
+        // registered, so replacing one on the prototype is never called.)
+        after(CloseDialog.CloseDialog.prototype, '_initDialog', this._trackCloseDialog);
         after(AppDisplay.AppFolderDialog.prototype, 'popup', this._trackFolder);
         after(IBusCandidatePopup.CandidatePopup.prototype, 'open', this._trackCandidates);
         after(Dash.DashItemContainer.prototype, 'showLabel', this._trackDashLabel);
@@ -2667,10 +2715,11 @@ export class Glass {
 
     // Surfaces are made lazily, the first time each is shown with an effect on.
     _add(host, opts) {
-        if (!host || this._surfaces.has(host) || !(this.glass || this.lighting) || !host.get_parent())
+        const key = opts.key ?? host;
+        if (!host || this._surfaces.has(key) || !(this.glass || this.lighting) || !host.get_parent())
             return null;
         const s = new Surface(this, host, opts);
-        this._surfaces.set(host, s);
+        this._surfaces.set(key, s);
         return s;
     }
 
@@ -2722,6 +2771,17 @@ export class Glass {
             this._add(popup, {box: () => list, source: () => null, tone: () => this._battery});
     }
 
+    // The thumbnails list under Alt+Tab's apps. Its glass stands beside the
+    // popup, as the apps' list's does: inside it, the popup's allocate
+    // (which places only the lists it knows) would never place the mirrors.
+    // Keyed by the list, which comes and goes while the popup stays, and
+    // following it, since it fades in and out on its own.
+    _trackThumbnails(popup) {
+        const list = popup._thumbnails;
+        if (list)
+            this._add(popup, {key: list, box: () => list, follow: () => list, source: () => null, tone: () => this._battery});
+    }
+
     // The input method's candidates: a BoxPointer of its own, not a menu's,
     // so the menu hook never sees it. Lit from the text it follows.
     _trackCandidates(popup) {
@@ -2757,6 +2817,16 @@ export class Glass {
         const layout = dialog.dialogLayout;
         if (layout?._dialog)
             this._add(layout, {box: () => layout._dialog, source: () => null, tone: () => this._battery});
+    }
+
+    // The "not responding" dialog: a layout the size of the window, inside
+    // the window actor. It scales and fades its box, not the layout, so the
+    // glass copies the box (centered in the layout, so the pivots agree).
+    _trackCloseDialog(close) {
+        const layout = close._dialog;
+        const box = layout?._dialog;
+        if (box)
+            this._add(layout, {box: () => box, follow: () => box, source: () => null, tone: () => this._battery});
     }
 
     // An app folder, lit from the folder it opened from. The dialog is an
@@ -2989,7 +3059,7 @@ export class Glass {
 
     forget(surface) {
         surface.destroy();
-        this._surfaces.delete(surface.host);
+        this._surfaces.delete(surface.key);
     }
 
     _sync() {

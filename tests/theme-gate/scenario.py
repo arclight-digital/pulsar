@@ -720,15 +720,22 @@ GLASS_PROBE = r"""(() => {
   const r = a => { const [x, y] = a.get_transformed_position(); const [w, h] = a.get_transformed_size();
     return [x, y, w, h].map(v => Math.round(v * 100) / 100); };
   const layer = a => a ? {rect: r(a), visible: a.visible, mapped: a.is_mapped()} : null;
-  const surf = (name, host) => {
+  // key: what glass.js files the surface under when it isn't the host;
+  // follow: the actor whose fade the glass copies when it isn't the host
+  const surf = (name, host, key, follow) => {
     if (!host) return {name, error: 'the Shell has no such actor'};
-    const o = {name, kind: 'surface', host: r(host), shown: host.visible && host.is_mapped(), opacity: host.opacity};
-    const s = g._surfaces.get(host);
+    const f = follow ?? host;
+    const o = {name, kind: 'surface', host: r(host), shown: host.visible && host.is_mapped() && f.visible && f.is_mapped(),
+               opacity: f.opacity};
+    const s = g._surfaces.get(key ?? host);
     if (!s) return Object.assign(o, {error: 'no glass surface for it'});
     o.box = s._box ? r(s._box) : null;
+    // beside: next to the host, or with only other glass between (two
+    // surfaces on one host: Alt+Tab's apps and its thumbnails)
+    const glassOnly = (m, next) => { let a = m[next](); while (a && a !== host && a.toString().includes('PulsarGlassMirror')) a = a[next](); return a === host; };
     for (const [k, m, next] of [['under', s._under, 'get_next_sibling'], ['over', s._over, 'get_previous_sibling']])
       o[k] = m ? Object.assign(layer(m), {opacity: m.opacity, parent: m.get_parent() === host.get_parent(),
-                                          beside: m[next]() === host}) : null;
+                                          beside: glassOnly(m, next)}) : null;
     o.blur = layer(s._backdrop);
     o.light = layer(s._lightActor);
     return o;
@@ -1534,12 +1541,169 @@ def leaks(args=()):
     return 0 if ok else 1
 
 
+def switchers():
+    """Glass on the switchers' second surfaces, which come and go while
+    the popup stays: Alt+Tab's window thumbnails (an app with two windows)
+    and the "not responding" dialog, a Dialog of its own that is not a
+    ModalDialog. Each is probed like glass's surfaces and screenshotted;
+    the thumbnails' glass must also go when the list does. Writes
+    switchers-report.json; exit 1 on any failure."""
+    for k in ("glass", "lighting", "power-on"):
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    start_shell()
+    pt("set", "pulsar", "--no-restart")
+    kill_apps()
+    report = {"gnome_shell": sh("gnome-shell", "--version").stdout.strip(), "checks": [], "probed": {}}
+    add = lambda name, ok, detail="": report["checks"].append({"check": name, "ok": bool(ok), "detail": detail})
+    for _ in range(2):
+        procs.append(subprocess.Popen(["ptyxis", "--new-window"], env=ENV, stdout=LOG, stderr=LOG))
+        time.sleep(2)
+    two = wait_for("global.get_window_actors().filter(a => a.meta_window.get_wm_class() === 'org.gnome.Ptyxis').length",
+                   want="2", secs=30)
+    add("two windows of one app (Ptyxis)", two)
+    eval_js("Promise.all([import('resource:///org/gnome/shell/ui/altTab.js'), "
+            "import('resource:///org/gnome/shell/ui/closeDialog.js')])"
+            ".then(([a, c]) => { globalThis._gateAltTab = a; globalThis._gateClose = c; }); 1")
+    add("the Shell's switcher modules loaded", wait_for("!!globalThis._gateAltTab && !!globalThis._gateClose"))
+
+    def check(label, what, before, settle=6.0):
+        eval_js(f"try {{ {before}; }} catch (e) {{ log('gate: ' + e); }} 1")
+        recs, faults = probe_glass(what, settle)
+        report["probed"][label] = recs
+        for name, fl in faults.items():
+            add(f"{label}: {name}", not fl, "; ".join(fl))
+
+    # Alt+Tab, Ptyxis selected with its first window: the thumbnails open
+    check("Alt+Tab", "{ const p = globalThis._gateSwitch; out.push(surf('apps list', p)); "
+          "out.push(surf('window thumbnails', p, p._thumbnails, p._thumbnails)); }",
+          # (no key is held here, and a popup shown without one finishes
+          # itself after a moment: as if Alt were still down)
+          "const p = globalThis._gateSwitch = new globalThis._gateAltTab.AppSwitcherPopup(); "
+          "p._resetNoModsTimeout = () => {}; "
+          "p.show(false, 'switch-applications', 0); "
+          "p._select(p._items.findIndex(i => i.app?.get_id() === 'org.gnome.Ptyxis.desktop'), 0)")
+    screenshot("switchers-alt-tab")
+    # back to the app alone: the list fades and is destroyed, its glass with it
+    had = eval_js("(() => { const g = Main.extensionManager.lookup('" + EXT + "')?.stateObj?._glass; "
+                  "return g._surfaces.has(globalThis._gateSwitch._thumbnails); })()")[1] == "true"
+    eval_js("globalThis._gateThumbs = globalThis._gateSwitch._thumbnails; "
+            "globalThis._gateSwitch._select(globalThis._gateSwitch._selectedIndex, null, true); 1")
+    gone = wait_for("(() => { const g = Main.extensionManager.lookup('" + EXT + "')?.stateObj?._glass; "
+                    "return !!globalThis._gateThumbs && !g._surfaces.has(globalThis._gateThumbs); })()", secs=5)
+    add("Alt+Tab: the thumbnails' glass goes when the list does", had and gone,
+        "" if had else "there was no glass to go")
+    eval_js("globalThis._gateSwitch.destroy(); 1")
+
+    # "not responding" over the first Ptyxis window
+    check("not responding", "{ const d = globalThis._gateCloseDialog._dialog; "
+          "out.push(surf('dialog', d, null, d?._dialog)); }",
+          "const w = global.get_window_actors().filter(a => a.meta_window.get_wm_class() === 'org.gnome.Ptyxis').at(-1).meta_window; "
+          "(globalThis._gateCloseDialog = new globalThis._gateClose.CloseDialog(w)).show()")
+    screenshot("switchers-not-responding")
+    eval_js("globalThis._gateCloseDialog.hide(); 1")
+
+    kill_apps()
+    stop_shell()
+    bad = shell_log_problems("switchers")
+    add("Shell log has no pulsar-theme warnings and no JS errors", not bad,
+        f"{len(bad)} lines, first: " + " | ".join(bad[:5]) if bad else "")
+    report["ok"] = all(c["ok"] for c in report["checks"])
+    SHOTS.mkdir(exist_ok=True)
+    (SHOTS / "switchers-report.json").write_text(json.dumps(report, indent=1))
+    print("\n".join(f"{'PASS' if c['ok'] else 'FAIL'}  {c['check']}" + (f"  -- {c['detail']}" if c["detail"] else "")
+                    for c in report["checks"]))
+    print(f"SWITCHERS {'PASS' if report['ok'] else 'FAIL'} on {report['gnome_shell']}")
+    return 0 if report["ok"] else 1
+
+
+def overview_glass():
+    """A window's glass in the overview frosts what is beneath its preview,
+    not what was beneath the window on the desktop. The wallpaper is red at
+    the sides and green in a middle band; the window sits on the red, its
+    preview lands on the green. Read through the window's glass, the
+    desktop must come out red (else the check can tell nothing) and the
+    preview green. Writes overview-glass-report.json; exit 1 on failure."""
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    for k in ("glass", "window-glass"):
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    start_shell()
+    pt("set", "pulsar", "--no-restart")
+    w, h = (int(v) for v in os.environ.get("SIZE", "2560x1600").split("x"))
+    wall = pathlib.Path(os.environ["HOME"]) / "split.png"
+    pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, w, h)
+    pb.fill(0xff0000ff)
+    band = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, int(w * 0.4), h)
+    band.fill(0x00ff00ff)
+    band.copy_area(0, 0, int(w * 0.4), h, pb, int(w * 0.3), 0)
+    pb.savev(str(wall), "png", [], [])
+    for k in ("picture-uri", "picture-uri-dark"):
+        dconf(f"/org/gnome/desktop/background/{k}", f"'file://{wall}'")
+    kill_apps()
+    procs.append(subprocess.Popen(["ptyxis", "--new-window"], env=ENV, stdout=LOG, stderr=LOG))
+    report = {"gnome_shell": sh("gnome-shell", "--version").stdout.strip(), "checks": []}
+    add = lambda name, ok, detail="": report["checks"].append({"check": name, "ok": bool(ok), "detail": detail})
+    find = "global.get_window_actors().find(a => a.meta_window.get_wm_class() === 'org.gnome.Ptyxis')"
+    add("a Ptyxis window came up", wait_for(f"!!{find}", secs=30))
+    # on the red, well clear of the green band
+    eval_js(f"{find}.meta_window.move_resize_frame(false, 40, 120, {int(w * 0.24)}, {int(h * 0.45)}); 1")
+    time.sleep(2.5)
+
+    def mean(png, rect):
+        """Mean R and G over the middle third of rect: away from text and edges."""
+        img = GdkPixbuf.Pixbuf.new_from_file(str(png))
+        x, y, rw, rh = (int(v) for v in rect)
+        px, n, stride = img.get_pixels(), img.get_n_channels(), img.get_rowstride()
+        r = g = c = 0
+        for yy in range(y + rh // 3, y + 2 * rh // 3, 6):
+            for xx in range(x + rw // 3, x + 2 * rw // 3, 6):
+                o = yy * stride + xx * n
+                r += px[o]; g += px[o + 1]; c += 1
+        return round(r / c, 1), round(g / c, 1)
+
+    rect, _ = eval_json(f"(() => {{ const r = {find}.meta_window.get_frame_rect(); "
+                        "return JSON.stringify([r.x, r.y, r.width, r.height]); })()")
+    desk = mean(screenshot("overview-glass-desktop"), rect)
+    add("on the desktop the window's glass shows the red behind it", desk[0] > desk[1] + 8, f"R,G = {desk}")
+    eval_js("Main.overview.show(); 1")
+    wait_for("Main.overview.visible && !Main.overview.animationInProgress", secs=10)
+    time.sleep(2.5)
+    prev, why = eval_json(f"(() => {{ const src = {find}; let hit = null; "
+                          # the big preview: the largest clone (the workspace thumbnail's is tiny)
+                          "const walk = a => { if (a instanceof imports.gi.Clutter.Clone && a.source === src && "
+                          "(!hit || a.get_transformed_size()[0] > hit.get_transformed_size()[0])) hit = a; "
+                          "a.get_children().forEach(walk); }; walk(Main.layoutManager.overviewGroup); "
+                          "if (!hit) return JSON.stringify(null); const [x, y] = hit.get_transformed_position(); "
+                          "const [w, h] = hit.get_transformed_size(); return JSON.stringify([x, y, w, h]); })()")
+    add("the window has a preview in the overview", bool(prev), f"{prev or why}")
+    if prev:
+        ov = mean(screenshot("overview-glass-overview"), prev)
+        centre = prev[0] + prev[2] / 2
+        add("the preview sits over the green band", w * 0.3 < centre < w * 0.7, f"preview {prev}")
+        add("in the overview the preview's glass shows what is beneath the preview, not the red it left",
+            ov[1] > ov[0] + 8, f"R,G = {ov}")
+    eval_js("Main.overview.hide(); 1")
+    kill_apps()
+    stop_shell()
+    bad = shell_log_problems("overview-glass")
+    add("Shell log has no pulsar-theme warnings and no JS errors", not bad,
+        f"{len(bad)} lines, first: " + " | ".join(bad[:5]) if bad else "")
+    report["ok"] = all(c["ok"] for c in report["checks"])
+    SHOTS.mkdir(exist_ok=True)
+    (SHOTS / "overview-glass-report.json").write_text(json.dumps(report, indent=1))
+    print("\n".join(f"{'PASS' if c['ok'] else 'FAIL'}  {c['check']}" + (f"  -- {c['detail']}" if c["detail"] else "")
+                    for c in report["checks"]))
+    print(f"OVERVIEW-GLASS {'PASS' if report['ok'] else 'FAIL'} on {report['gnome_shell']}")
+    return 0 if report["ok"] else 1
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "gate"
     rc = 0
     try:
         rc = {"gate": lambda: gate(sys.argv[2:]), "firstlogin": firstlogin, "restart": restart,
-              "picker": picker, "desktops": lambda: desktops(sys.argv[2:]), "glass": glass,
+              "picker": picker, "desktops": lambda: desktops(sys.argv[2:]), "glass": glass, "switchers": switchers, "overview-glass": overview_glass,
               "leaks": lambda: leaks(sys.argv[2:])}[mode]() or 0
     finally:
         kill_apps()
