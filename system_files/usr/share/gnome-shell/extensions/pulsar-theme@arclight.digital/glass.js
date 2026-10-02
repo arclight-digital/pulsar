@@ -129,12 +129,15 @@ const POWER_ON_MS = 300;
 // Menus, OSDs and banners are thick glass; windows are a thin pane, bent a
 // little and never sharp (no copy kept for them).
 const SURFACE_LENS = [28, 14, 0.12, 0.63];
-// Menus, OSDs, banners and the dash are liquid glass: blurred one level
-// less than a window, under a lighter tint (the sheet's surface_alpha), so
-// what is behind them keeps its shapes, soft, and bends at the rim.
-const SURFACE_LEVELS = 2;
-// with its taps spread a little wider than a window's, for a touch more blur
-const SURFACE_OFFSET = 3.5;
+// Menus, OSDs, banners and the dash are liquid glass: blurred less than a
+// window, under a lighter tint (the sheet's surface_alpha), so what is
+// behind them keeps its shapes, soft, and bends at the rim. Three levels
+// with close taps, not two with wide ones: the same width (within 3% at 1x,
+// 1.33x and 2x), but two levels 3.5 apart blurred a bright point into a
+// diamond (the up-pass's eight taps, spread far: 145% uneven around the
+// blur at 1.33x, 3.5% now), and big bright text behind showed it.
+const SURFACE_LEVELS = 3;
+const SURFACE_OFFSET = 1.6;
 const WINDOW_LENS = [10, 4, 0, 0];
 // What is beneath, lifted so its color reads through a light tint and text
 // on the glass stays readable: darker behind a dark surface, lighter behind
