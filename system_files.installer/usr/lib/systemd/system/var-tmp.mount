@@ -1,0 +1,17 @@
+# bootc stages the image it installs under /var/tmp. The live root is an
+# overlay on RAM with a small default size; give /var/tmp its own tmpfs.
+[Unit]
+Description=Live installer scratch space (/var/tmp)
+ConditionKernelCommandLine=rd.live.image
+DefaultDependencies=no
+Conflicts=umount.target
+Before=local-fs.target umount.target
+
+[Mount]
+What=tmpfs
+Where=/var/tmp
+Type=tmpfs
+Options=mode=1777,strictatime,size=60%
+
+[Install]
+WantedBy=local-fs.target

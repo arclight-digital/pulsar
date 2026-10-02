@@ -1,0 +1,11 @@
+# image-builder's bootc-generic-iso: the ISO's label and the live kernel's
+# command line. The squashfs isn't SELinux-labeled, hence enforcing=0.
+label: "PULSAR-INSTALL"
+kernel_args:
+  - "root=live:CDLABEL=PULSAR-INSTALL"
+  - "rd.live.image"
+  - "enforcing=0"
+  - "quiet"
+  - "rhgb"
+grub2:
+  timeout: 3

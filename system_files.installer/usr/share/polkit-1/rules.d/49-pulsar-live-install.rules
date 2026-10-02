@@ -1,0 +1,8 @@
+// The live session's user, at the live session's own seat, may run the
+// installer's backend (and only that program: the action is bound to its
+// path) without a password. Live images only.
+polkit.addRule(function (action, subject) {
+    if (action.id == "digital.arclight.pulsar.install" &&
+        subject.user == "liveuser" && subject.local && subject.active)
+        return polkit.Result.YES;
+});

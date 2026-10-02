@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Install Pulsar
+Comment=Install Pulsar on this computer
+Exec=pulsar-installer
+Icon=system-software-install
+Categories=System;
+StartupNotify=true

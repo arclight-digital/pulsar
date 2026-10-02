@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- The live installer's one privileged step. pkexec maps the program to this
+     action by its path; 49-pulsar-live-install.rules lets the live session's
+     user run it without a password, and nothing else. -->
+<policyconfig>
+  <vendor>Pulsar</vendor>
+  <action id="digital.arclight.pulsar.install">
+    <description>Install Pulsar</description>
+    <message>Installing Pulsar needs administrator rights</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/pulsar/pulsar-install-system</annotate>
+  </action>
+</policyconfig>
