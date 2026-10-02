@@ -2921,14 +2921,24 @@ export class Glass {
     }
 
     // The overview's search entry, in the controls beside the dash, and like
-    // the dash placed after their layout. Nothing opened it: lit along its
-    // whole top edge.
+    // the dash placed after their layout. Lit top center (Nick, 2026-10-02:
+    // not along its whole top edge), from a point just above its middle.
     _trackSearch() {
         const entry = Main.overview.searchEntry;
         const bin = entry?.get_parent();
         if (!bin?.get_parent())
             return;
-        this._add(bin, {box: () => entry, source: () => null, tone: () => this._battery});
+        this._add(bin, {
+            box: () => entry,
+            source: () => {
+                if (!entry.has_allocation())
+                    return null;
+                const [ex, ey] = entry.get_transformed_position();
+                const [ew] = entry.get_transformed_size();
+                return [ex + ew / 2, ey - 1];
+            },
+            tone: () => this._battery,
+        });
     }
 
     // A dash icon's name, over the icon: lit from below, like the dash. A
