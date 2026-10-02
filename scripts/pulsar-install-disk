@@ -1,0 +1,104 @@
+#!/usr/bin/python3
+"""Lay out a disk for Pulsar: the one step of an install that can destroy data.
+
+    pulsar-install-disk plan  --mode erase|alongside DISK
+    pulsar-install-disk apply --mode erase|alongside --key-file FILE DISK
+
+Both run systemd-repart from the layouts in /usr/share/pulsar/installer/repart:
+an EFI system partition, a 2G /boot, and a LUKS2 btrfs root unlocked by the
+passphrase in FILE.
+
+  erase      everything on DISK goes. The plan must create exactly those three
+             partitions and nothing else.
+  alongside  DISK keeps every partition it has. Pulsar goes into the free space
+             and shares the existing EFI system partition. The plan must leave
+             every existing partition unchanged, reuse an ESP rather than make
+             one, and create only /boot and the root.
+
+`apply` re-plans first and refuses unless the plan passes the same checks, so a
+caller can't apply something it never saw. repart decides the layout; this
+script decides whether that layout is one Pulsar is willing to write. Exit 0
+prints the plan as JSON; exit 2 means refused, with the reason on stderr.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+LAYOUTS = os.environ.get("PULSAR_INSTALLER_LAYOUTS", "/usr/share/pulsar/installer/repart")
+OURS = {"esp", "xbootldr", "root-x86-64"}
+CREATED = {"erase": ["esp", "xbootldr", "root-x86-64"], "alongside": ["xbootldr", "root-x86-64"]}
+
+
+class Refused(Exception):
+    pass
+
+
+def repart(mode, disk, key_file, dry_run):
+    cmd = [
+        "systemd-repart",
+        f"--definitions={os.path.join(LAYOUTS, mode)}",
+        f"--empty={'force' if mode == 'erase' else 'refuse'}",
+        f"--dry-run={'yes' if dry_run else 'no'}",
+        "--json=short",
+        "--no-pager",
+        # repart derives partition and LUKS UUIDs from the machine ID, which
+        # every boot of one live ISO shares: without this, every install
+        # from it had the same UUIDs
+        "--seed=random",
+    ]
+    if key_file:
+        cmd.append(f"--key-file={key_file}")
+    cmd.append(disk)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        why = r.stderr.strip().splitlines()
+        raise Refused(why[0] if why else f"systemd-repart exited {r.returncode}")
+    return json.loads(r.stdout)
+
+
+def check(mode, plan):
+    """The whole safety argument. Each refusal names what it caught."""
+    created = sorted(p["type"] for p in plan if p["activity"] == "create")
+    if created != sorted(CREATED[mode]):
+        raise Refused(f"plan would create {created}, expected {sorted(CREATED[mode])}")
+    for p in plan:
+        if p["activity"] not in ("create", "unchanged"):
+            raise Refused(f"plan would {p['activity']} partition {p['type']} ({p['label']})")
+    if mode == "erase":
+        if any(p["type"] not in OURS for p in plan):
+            raise Refused("an erase plan kept a partition that isn't Pulsar's")
+        return
+    esps = [p for p in plan if p["type"] == "esp"]
+    if len(esps) != 1 or esps[0]["activity"] != "unchanged":
+        raise Refused("installing alongside needs exactly one existing EFI system partition")
+    if not any(p["type"] not in OURS for p in plan):
+        raise Refused("nothing to install alongside: the disk has no other system")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="pulsar-install-disk")
+    ap.add_argument("action", choices=["plan", "apply"])
+    ap.add_argument("--mode", required=True, choices=sorted(CREATED))
+    ap.add_argument("--key-file")
+    ap.add_argument("disk")
+    a = ap.parse_args()
+    if a.action == "apply" and not a.key_file:
+        ap.error("apply needs --key-file: the root is always encrypted")
+    try:
+        plan = repart(a.mode, a.disk, a.key_file, dry_run=True)
+        check(a.mode, plan)
+        if a.action == "apply":
+            plan = repart(a.mode, a.disk, a.key_file, dry_run=False)
+    except Refused as e:
+        print(f"pulsar-install-disk: refused: {e}", file=sys.stderr)
+        return 2
+    json.dump(plan, sys.stdout, indent=1)
+    print()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

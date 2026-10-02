@@ -1,0 +1,78 @@
+# Pulsar's live installer: the Pulsar image itself, booted from an ISO into a
+# session that runs the installer. scripts/build-installer-iso.sh builds this
+# and hands it to image-builder (bootc-generic-iso), which squashes it into
+# LiveOS/squashfs.img and embeds the image to install (the payload) in its
+# containers-storage, so an install needs no network.
+#
+# image-builder's contract for this image type (doc/20-advanced/20-bootc/
+# 10-isos.md): one kernel in /usr/lib/modules with an initramfs.img beside it
+# that can boot a live squashfs; shim, mm and gcd in /boot/efi/EFI/$VENDOR;
+# grub2's unicode.pf2 and i386-pc modules; podman, mksquashfs, xorriso,
+# implantisomd5, grub2-mkimage and python in the container.
+ARG IMAGE=ghcr.io/arclight-digital/pulsar:latest
+FROM ${IMAGE}
+
+# What the installed system is installed from (inside the ISO) and what it
+# follows afterwards. The GUI reads them from payload.json.
+ARG PAYLOAD_SOURCE=containers-storage:ghcr.io/arclight-digital/pulsar:latest
+ARG PAYLOAD_TARGET=ghcr.io/arclight-digital/pulsar:latest
+ARG VARIANT=vanilla
+# the payload's unpacked size, for the install's progress bar (0: unknown)
+ARG PAYLOAD_SIZE=0
+
+RUN dnf5 install -y --setopt=install_weak_deps=False \
+      dracut-live grub2-efi-x64-cdboot squashfs-tools xorriso isomd5sum && \
+    dnf5 clean all
+
+# No GNOME Software in the live session: nothing here is installed or
+# updated through it, and it popped up "Updates Are Out of Date" over the
+# installer. Nothing in the image requires it.
+RUN dnf5 remove -y gnome-software gnome-software-rpm-ostree && dnf5 clean all && \
+    ! rpm -q gnome-software
+
+# The ESP tree the ISO boots with: shim and grub from the image's bootupd
+# payload, plus gcdx64.efi (grub for optical media) from -cdboot.
+RUN mkdir -p /boot/efi && cp -ra /usr/lib/efi/*/*/EFI /boot/efi && \
+    for f in shimx64.efi mmx64.efi gcdx64.efi; do \
+      test -f /boot/efi/EFI/fedora/$f || { echo "missing /boot/efi/EFI/fedora/$f" >&2; exit 1; }; \
+    done
+
+# The installer: its disk layouts (not in the published image), the backend
+# and the GUI.
+COPY system_files/usr/share/pulsar/installer/repart /usr/share/pulsar/installer/repart
+COPY scripts/pulsar-install-disk scripts/pulsar-install-system /usr/libexec/pulsar/
+COPY scripts/pulsar-installer /usr/bin/pulsar-installer
+COPY system_files.installer/ /
+RUN chmod 0755 /usr/libexec/pulsar/pulsar-install-disk /usr/libexec/pulsar/pulsar-install-system \
+      /usr/bin/pulsar-installer && \
+    printf '{"source": "%s", "target": "%s", "variant": "%s", "size": %s}\n' \
+      "${PAYLOAD_SOURCE}" "${PAYLOAD_TARGET}" "${VARIANT}" "${PAYLOAD_SIZE}" > /usr/share/pulsar/installer/payload.json && \
+    python3 -m json.tool /usr/share/pulsar/installer/payload.json >/dev/null
+
+# The live session's one account: no password, logged in by GDM, past
+# GNOME's first-login setup.
+RUN useradd -m -c "Live session" liveuser && passwd -d liveuser && \
+    install -d -o liveuser -g liveuser /var/home/liveuser/.config && \
+    install -o liveuser -g liveuser -m 0644 /dev/null /var/home/liveuser/.config/gnome-initial-setup-done
+
+# A live system is not a deployment: no updates to stage, no greenboot, no
+# first-boot Flatpaks, no welcome tour. The theme stays, so the installer
+# looks like what it installs.
+RUN systemctl disable bootloader-update.service greenboot-healthcheck.service \
+      greenboot-set-rollback-trigger.service pulsar-flatpaks.service flatpak-add-fedora-repos.service \
+      pulsar-update-auto.timer rpm-ostree-countme.timer fstrim.timer \
+      sysstat.service sysstat-collect.timer sysstat-rotate.timer sysstat-summary.timer && \
+    systemctl --global disable pulsar-crash-watch.path pulsar-gl-check.path pulsar-steam-gpu-watch.service \
+      pulsar-theme-notice.service pulsar-welcome.service podman-auto-update.timer pulsar-update-check.timer \
+      grub-boot-success.timer gamescale-reconcile.service && \
+    systemctl enable var-tmp.mount && \
+    glib-compile-schemas /usr/share/glib-2.0/schemas
+
+# An initramfs that can find the ISO and boot its squashfs. dracut wants
+# /root to exist (it's a symlink into /var in this image).
+RUN mkdir -p "$(realpath /root)" && \
+    kver="$(ls /usr/lib/modules)" && test "$(echo "$kver" | wc -l)" -eq 1 && \
+    DRACUT_NO_XATTR=1 dracut --force --no-hostonly --zstd --reproducible \
+      --add "dmsquash-live dmsquash-live-autooverlay" \
+      "/usr/lib/modules/${kver}/initramfs.img" "${kver}" && \
+    lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -q dmsquash-live-root

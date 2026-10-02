@@ -1,0 +1,5 @@
+# The live session's extensions: the image's two (zz1-pulsar-theme) and the
+# live one that keeps the session out of the overview at start. Sorts after
+# zz1, so it wins.
+[org.gnome.shell]
+enabled-extensions=['gamescale@arclight.digital', 'pulsar-theme@arclight.digital', 'pulsar-live@arclight.digital']

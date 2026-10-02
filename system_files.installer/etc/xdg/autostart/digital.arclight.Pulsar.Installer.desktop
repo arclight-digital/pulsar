@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Install Pulsar
+# The live session exists to run the installer: it opens on login. Only the
+# live system ships this file, and liveuser is its only account.
+Exec=pulsar-installer
+Icon=system-software-install
+OnlyShowIn=GNOME;
+NoDisplay=true
+X-GNOME-Autostart-Phase=Application

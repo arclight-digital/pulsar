@@ -555,6 +555,20 @@ RUN [ -f /usr/share/plymouth/themes/spinner/throbber-0001.png ] || \
     cp -n /usr/share/plymouth/themes/spinner/*.png \
           /usr/share/plymouth/themes/pulsar/ 2>/dev/null || true
 
+# Fedora's logo, asked for by name, is Pulsar's. GNOME Initial Setup -- the
+# first screen of every new install -- does not read os-release's LOGO: it
+# hardcodes one per distro ID (fedora -> fedora-logo-icon), and ID stays
+# "fedora". So fedora-logos' sized PNGs of that name go, and Pulsar's mark
+# takes the name as the one scalable icon. Asserted: a future fedora-logos
+# that moves or renames it must fail the build, not quietly bring it back.
+RUN ls /usr/share/icons/hicolor/*/apps/fedora-logo-icon.* >/dev/null 2>&1 || \
+      { echo "FATAL: no fedora-logo-icon to replace: check Initial Setup's logo by hand"; exit 1; }; \
+    rm -f /usr/share/icons/hicolor/*/apps/fedora-logo-icon.* && \
+    cp /usr/share/icons/hicolor/scalable/apps/pulsar-logo-icon.svg \
+       /usr/share/icons/hicolor/scalable/apps/fedora-logo-icon.svg && \
+    gtk-update-icon-cache -f -q /usr/share/icons/hicolor && \
+    [ "$(ls /usr/share/icons/hicolor/*/apps/fedora-logo-icon.* | wc -l)" = 1 ]
+
 # ---------------------------------------------------------------------------
 # Version stamp. CI passes the build version; a local build leaves it empty and
 # keeps the plain "Pulsar 44", so ./scripts/build.sh needs no arguments.
@@ -650,13 +664,15 @@ COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 COPY scripts/pulsar-agent-gate /usr/libexec/pulsar/pulsar-agent-gate
 COPY scripts/pulsar-mcp /usr/libexec/pulsar/pulsar-mcp
 COPY scripts/steam-gpu-watch.sh /usr/libexec/pulsar/steam-gpu-watch.sh
+COPY scripts/pulsar-esp-fallback /usr/libexec/pulsar/pulsar-esp-fallback
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/flatpak-defaults.sh \
       /usr/libexec/pulsar/gamemode-group.sh \
       /usr/libexec/pulsar/alive-timeout.sh \
       /usr/libexec/pulsar/pulsar-agent-gate \
       /usr/libexec/pulsar/pulsar-mcp \
-      /usr/libexec/pulsar/steam-gpu-watch.sh && \
+      /usr/libexec/pulsar/steam-gpu-watch.sh \
+      /usr/libexec/pulsar/pulsar-esp-fallback && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
       { echo "FATAL: flatpaks.list ships no apps; pulsar-flatpaks.service would fail on every boot forever"; exit 1; } && \
     mkdir -p /usr/share/pulsar && \
@@ -984,6 +1000,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \
     systemctl enable pulsar-flatpaks.service && \
+    systemctl enable pulsar-esp-fallback.service && \
     systemctl enable pulsar-gamemode-group.service && \
     systemctl enable pulsar-update-auto.timer && \
     systemctl --global enable podman-auto-update.timer && \
