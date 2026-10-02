@@ -1,0 +1,11 @@
+#!/bin/sh
+# HARNESS FIXTURE: stands in for pulsar-install-system in screenshots and
+# UI tests. Emits the backend's progress protocol, writes nothing.
+case " $* " in
+*" --plan-only "*) echo '{"stage": "check"}'; echo '{"stage": "plan", "plan": [{"type": "root-x86-64", "raw_size": 460000000000, "activity": "create"}]}'; exit 0 ;;
+esac
+for s in check disk unlock; do echo "{\"stage\": \"$s\"}"; sleep 0.2; done
+echo '{"stage": "install"}'
+echo '{"log": "Installing image: docker://ghcr.io/arclight-digital/pulsar:latest"}'
+sleep 1; echo '{"log": "Fetching layer sha256:4f2c0e1b (412 MB)"}'
+sleep 30; echo '{"stage": "boot"}'; echo '{"stage": "done", "ok": true, "windows_entry": true, "firmware": "firmware entry Pulsar"}'

@@ -18,6 +18,14 @@
      entries on this same ESP
   7. everything is unmounted and the root locked again, failed or not
 
+Progress goes to stdout as one JSON object per line, for the installer app:
+{"stage": "check" | "disk" | "unlock" | "install" | "boot"} as each step
+starts, {"log": "..."} for each line bootc prints, then {"stage": "done",
+...} or {"stage": "failed", "error": ..., "restored": true|false} (whether
+the partitions this install made were taken back). --plan-only prints
+{"stage": "plan", "plan": [...]} (pulsar-install-disk's dry run) and
+writes nothing; it needs no key.
+
 PULSAR_BOOTC_PREFIX, if set, runs bootc through a wrapper (the test bench
 runs it in the image with podman); the default is the live system's own.
 """
@@ -43,6 +51,24 @@ SCRATCH = "/run/pulsar-install"      # mount points for the target
 
 class Failed(Exception):
     pass
+
+
+def emit(**event):
+    print(json.dumps(event), flush=True)
+
+
+def run_stream(*cmd):
+    """run(), with each output line passed on as a progress event."""
+    print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
+    p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+    tail = []
+    for line in p.stdout:
+        line = line.rstrip()
+        if line:
+            emit(log=line)
+            tail = (tail + [line])[-8:]
+    if p.wait() != 0:
+        raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:])
 
 
 def run(*cmd, **kw):
@@ -109,9 +135,9 @@ def bootc_install(target, source, target_ref, kargs):
     if prefix:
         # the wrapper (podman run --privileged IMG) gives bootc its own mount
         # namespace already; the remount happens inside it
-        run(*shlex.split(prefix), "sh", "-c", body, "sh", *cmd)
+        run_stream(*shlex.split(prefix), "sh", "-c", body, "sh", *cmd)
     else:
-        run("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd)
+        run_stream("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd)
 
 
 def windows_entry(target, esp):
@@ -169,23 +195,32 @@ def remove_made(disk, made):
 def main():
     ap = argparse.ArgumentParser(prog="pulsar-install-system")
     ap.add_argument("--mode", required=True, choices=["erase", "alongside"])
-    ap.add_argument("--key-file", required=True)
-    ap.add_argument("--source-imgref", required=True)
-    ap.add_argument("--target-imgref", required=True)
+    ap.add_argument("--plan-only", action="store_true", help="print the disk plan; write nothing")
+    ap.add_argument("--key-file")
+    ap.add_argument("--source-imgref")
+    ap.add_argument("--target-imgref")
     ap.add_argument("--karg", action="append", default=[])
     ap.add_argument("disk")
     a = ap.parse_args()
     if os.geteuid() != 0:
         ap.error("needs root")
+    if not a.plan_only and not (a.key_file and a.source_imgref and a.target_imgref):
+        ap.error("installing needs --key-file, --source-imgref and --target-imgref")
     # not /tmp: bootc copies itself there to enter SELinux's install_t, and
     # a wrapper that shares /tmp for the target's sake breaks that
     os.makedirs(SCRATCH, mode=0o700, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="install-", dir=SCRATCH)
     target = os.path.join(scratch, "target")
-    mounted, opened, made, ok = [], False, set(), False
+    mounted, opened, made, ok, error = [], False, set(), False, None
     try:
+        emit(stage="check")
         if a.mode == "alongside":
             preflight_alongside(a.disk, scratch)
+        if a.plan_only:
+            ok = True
+            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, a.disk)))
+            return 0
+        emit(stage="disk")
         plan = json.loads(run(DISK_TOOL, "apply", "--mode", a.mode, "--key-file", a.key_file, a.disk))
         run("udevadm", "settle")
         # the partitions this install made, by the partition UUIDs repart
@@ -198,6 +233,7 @@ def main():
         if not (root and boot):
             raise Failed(f"cannot find the partitions just made ({made_by_type}) on {a.disk}")
         esp = esp_of(a.disk)
+        emit(stage="unlock")
         run("cryptsetup", "open", "--key-file", a.key_file, root["path"], MAPPER)
         opened = True
         os.makedirs(target)
@@ -206,28 +242,38 @@ def main():
             os.makedirs(path, exist_ok=True)
             run("mount", dev, path)
             mounted.append(path)
+        emit(stage="install")
         bootc_install(target, a.source_imgref, a.target_imgref, [f"rd.luks.uuid={root['uuid']}"] + a.karg)
         # bootc finalizes the root read-only; GRUB's custom.cfg lives on /boot
+        emit(stage="boot")
         run("mount", "-o", "remount,rw", os.path.join(target, "boot"))
         win = windows_entry(target, esp)
         fw = firmware_entry(a.disk, esp, target)
         ok = True
-        print(json.dumps({"ok": True, "windows_entry": win, "firmware": fw}))
+        emit(stage="done", ok=True, windows_entry=win, firmware=fw)
         return 0
     except Failed as e:
+        error = str(e)
         print(f"pulsar-install-system: {e}", file=sys.stderr)
         return 1
+    except Exception as e:     # a bug: still unmount, take back, and say so
+        error = f"{type(e).__name__}: {e}"
+        raise
     finally:
         for path in reversed(mounted):
             subprocess.run(["umount", path])
         if opened:
             subprocess.run(["cryptsetup", "close", MAPPER])
+        restored = not made
         if not ok and made:
             try:
                 gone = remove_made(a.disk, made)
+                restored = len(gone) == len(made)
                 print(f"pulsar-install-system: removed the {len(gone)} partitions this install made", file=sys.stderr)
             except Failed as e:
                 print(f"pulsar-install-system: could not remove the partitions this install made: {e}", file=sys.stderr)
+        if not ok:
+            emit(stage="failed", error=error or "interrupted", restored=restored)
 
 
 if __name__ == "__main__":

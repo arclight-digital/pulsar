@@ -1,0 +1,585 @@
+#!/usr/bin/python3
+"""Install Pulsar: the app the live ISO opens on.
+
+Pick a disk, choose to install beside what is on it or to erase it (a
+deliberate second step), set the passphrase that unlocks the disk at every
+start, and watch it install. The work is pulsar-install-system's, run with
+pkexec; this app only asks, shows, and waits. Nothing is written to any
+disk before the Install button.
+
+For tests and screenshots, each outside piece can be swapped:
+  PULSAR_INSTALLER_LSBLK      a file holding `lsblk -J -b -o ...` output
+  PULSAR_INSTALL_SYSTEM       the backend (default /usr/libexec/pulsar/...)
+  PULSAR_INSTALLER_PKEXEC     how to run it as root ("" to run it directly)
+  PULSAR_INSTALLER_PAYLOAD    payload.json (source and target image refs)
+and `--shots DIR` walks every page with the disks it was given, saving each
+as DIR/NN-name.png, then quits (with a fake backend: for screenshots).
+"""
+
+import json
+import os
+import pathlib
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+
+HERE = pathlib.Path(__file__).resolve().parent
+BACKEND = os.environ.get("PULSAR_INSTALL_SYSTEM", "/usr/libexec/pulsar/pulsar-install-system")
+PKEXEC = shlex.split(os.environ.get("PULSAR_INSTALLER_PKEXEC", "pkexec"))
+PAYLOAD = pathlib.Path(os.environ.get("PULSAR_INSTALLER_PAYLOAD", "/usr/share/pulsar/installer/payload.json"))
+LIVE_LABEL = "PULSAR-INSTALL"
+BRAND = [pathlib.Path("/usr/share/pulsar/brand"), HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
+
+GiB = 2**30
+# Pulsar's layout: 600M ESP (erase only), 2G /boot, a root of at least 32G
+# (system_files/usr/share/pulsar/installer/repart). With room to spare: the
+# backend's own plan is the final word, and is asked before Install.
+NEEDS_ERASE = 36 * GiB
+NEEDS_ALONGSIDE = 36 * GiB
+ESP = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+WINDOWS_DATA = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+LINUX_FS = {"ext4", "ext3", "btrfs", "xfs", "crypto_LUKS", "swap", "f2fs"}
+LSBLK_COLS = "NAME,PATH,TYPE,SIZE,RO,RM,TRAN,MODEL,VENDOR,FSTYPE,PARTTYPE,PARTLABEL,LABEL,START,MOUNTPOINTS"
+
+
+# ------------------------------------------------------------- disks ----
+# Plain functions over lsblk's JSON, so the tests can feed them disks.
+
+def read_lsblk():
+    src = os.environ.get("PULSAR_INSTALLER_LSBLK")
+    if src:
+        return json.loads(pathlib.Path(src).read_text())
+    out = subprocess.run(["lsblk", "-J", "-b", "-o", LSBLK_COLS], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def human(n):
+    for unit, size in (("TB", 10**12), ("GB", 10**9), ("MB", 10**6)):
+        if n >= size:
+            v = n / size
+            return f"{v:.1f} {unit}" if v < 10 else f"{v:.0f} {unit}"
+    return f"{n} B"
+
+
+def free_gaps(disk):
+    """The unpartitioned stretches of a GPT disk, in bytes, largest first.
+    lsblk gives each partition's start (512-byte sectors) and size; GPT keeps
+    its first MiB and its last 33 sectors, and repart aligns to 1 MiB, so a
+    gap is counted from the next MiB after the end of what precedes it."""
+    parts = sorted(((p.get("start") or 0) * 512, p["size"]) for p in disk.get("children", []))
+    end_usable = disk["size"] - 33 * 512
+    cursor, gaps = 2**20, []
+    for start, size in parts:
+        if start > cursor:
+            gaps.append(start - cursor)
+        cursor = max(cursor, -(-(start + size) // 2**20) * 2**20)
+    if end_usable > cursor:
+        gaps.append(end_usable - cursor)
+    return sorted(gaps, reverse=True)
+
+
+def describe(disk):
+    """What a person would want to know about one disk before choosing it."""
+    parts = disk.get("children", [])
+    fs = {(p.get("fstype") or "") for p in parts}
+    ptypes = {(p.get("parttype") or "").lower() for p in parts}
+    labels = {(p.get("label") or "") for p in parts}
+    d = {
+        "path": disk["path"],
+        # NVMe models come with underscores for spaces (SKHynix_HFS001...)
+        "name": " ".join(x for x in ((disk.get("vendor") or "").strip(),
+                                     (disk.get("model") or "").replace("_", " ").strip()) if x) or disk["name"],
+        "size": disk["size"],
+        "usb": disk.get("tran") == "usb" or bool(disk.get("rm")),
+        # a Windows that starts from this disk: its startup files (an ESP)
+        # beside NTFS or BitLocker. A lone NTFS disk is data, not Windows.
+        "windows": ESP in ptypes and ("ntfs" in fs or "BitLocker" in fs),
+        "bitlocker": "BitLocker" in fs,
+        "linux": bool(fs & LINUX_FS),
+        "esp": ESP in ptypes,
+        "empty": not parts,
+        "free": (free_gaps(disk) or [0])[0],
+        "live": LIVE_LABEL in labels or (disk.get("label") or "") == LIVE_LABEL or any(
+            "/run/initramfs/live" in (p.get("mountpoints") or []) for p in parts),
+        "partitions": [{"size": p["size"], "what": part_name(p)} for p in parts],
+    }
+    d["holds"] = ("Windows" if d["windows"] else "Linux" if d["linux"] else
+                  "nothing" if d["empty"] else "other data")
+    return d
+
+
+PART_NAMES = {ESP: "Startup files (EFI)", "e3c9e316-0b5c-4db8-817d-f92df00215ae": "Microsoft reserved",
+              "de94bba4-06d1-4d40-a16a-bfd50179d6ac": "Windows recovery"}
+
+
+def part_name(p):
+    """What a partition is, in words, for the page that asks to erase it."""
+    t, fs = (p.get("parttype") or "").lower(), p.get("fstype") or ""
+    if t in PART_NAMES:
+        return PART_NAMES[t]
+    name = p.get("label") or p.get("partlabel") or ""
+    # a named NTFS partition (Windows, Games) says enough by its name
+    kind = {"ntfs": "" if name else "Windows files" if t == WINDOWS_DATA else "NTFS", "BitLocker": "BitLocker (encrypted)",
+            "crypto_LUKS": "Linux (encrypted)", "swap": "Linux swap"}.get(fs, "Linux" if fs in LINUX_FS else fs)
+    return " · ".join(x for x in (name, kind) if x) or "Unknown"
+
+
+def disks(tree):
+    """The disks Pulsar could go on, live medium and read-only ones out."""
+    out = []
+    for dev in tree.get("blockdevices", []):
+        if dev.get("type") != "disk" or dev.get("ro") or dev["name"].startswith(("zram", "loop", "sr")):
+            continue
+        d = describe(dev)
+        if not d["live"]:
+            out.append(d)
+    return out
+
+
+def options(d):
+    """(available, reason) for each way of installing on disk d."""
+    if d["size"] < NEEDS_ERASE:
+        erase = (False, f"Pulsar needs at least {human(NEEDS_ERASE)}")
+    else:
+        erase = (True, f"Everything on this disk is deleted: {d['holds']} included." if not d["empty"]
+                 else "The disk is empty.")
+    if d["empty"]:
+        along = (False, "There is nothing on this disk to keep")
+    elif d["bitlocker"]:
+        along = (False, "BitLocker is on. Turn it off in Windows first, then start the installer again")
+    elif not d["esp"]:
+        along = (False, "This disk doesn't start another system the way Pulsar can share")
+    elif d["free"] < NEEDS_ALONGSIDE:
+        along = (False, f"Needs {human(NEEDS_ALONGSIDE)} of free space; {human(d['free'])} is free. "
+                        "Shrink a partition from the other system first")
+    else:
+        along = (True, f"Uses the {human(d['free'])} of free space. {d['holds']} stays as it is."
+                 if d["holds"] != "other data" else f"Uses the {human(d['free'])} of free space.")
+    return {"alongside": along, "erase": erase}
+
+
+def passphrase_problem(a, b):
+    if len(a) < 8:
+        return "At least 8 characters"
+    if a != b:
+        return "The two don't match"
+    return None
+
+
+# --------------------------------------------------------------- app ----
+
+def main():
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    gi.require_version("GdkPixbuf", "2.0")
+    gi.require_version("Graphene", "1.0")
+    from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Graphene, Gtk
+
+    CSS = """
+    .in-display { font-weight: 800; font-size: 2.6em; letter-spacing: -0.02em; }
+    .in-title { font-weight: 800; font-size: 1.9em; letter-spacing: -0.015em; }
+    .in-lede { font-size: 1.1em; opacity: 0.78; }
+    .in-note { opacity: 0.62; font-size: 0.92em; }
+    .in-pill { padding: 10px 26px; border-radius: 999px; font-weight: 800; }
+    .in-big { padding: 14px 44px; border-radius: 999px; font-weight: 800; font-size: 1.1em; }
+    .in-stage { font-weight: 800; font-size: 1.25em; }
+    .in-log { font-family: monospace; font-size: 0.85em; opacity: 0.55; }
+    .in-warn { color: var(--warning-color); }
+    /* Host Grotesk's contextual alternates make the X in a model number
+       (HFS001TEJ9X115N) a multiplication sign */
+    window { font-feature-settings: "calt" 0; }
+    """
+
+    def label(text, cls, xalign=0.5, **kw):
+        lb = Gtk.Label(label=text, css_classes=cls, xalign=xalign, wrap=True, justify=(
+            Gtk.Justification.CENTER if xalign == 0.5 else Gtk.Justification.LEFT), **kw)
+        return lb
+
+    def column(*children, width=620, spacing=14):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing, valign=Gtk.Align.CENTER,
+                      margin_top=24, margin_bottom=24, margin_start=32, margin_end=32)
+        for c in children:
+            box.append(c)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(child=box, maximum_size=width), vexpand=True,
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def nav_page(title, tag, content, back=None, nxt=None):
+        tv = Adw.ToolbarView(top_bar_style=Adw.ToolbarStyle.FLAT, bottom_bar_style=Adw.ToolbarStyle.FLAT)
+        tv.add_top_bar(Adw.HeaderBar(show_title=False, show_back_button=False))
+        tv.set_content(content)
+        if back or nxt:
+            bar = Gtk.CenterBox(margin_start=22, margin_end=22, margin_top=10, margin_bottom=18)
+            if back:
+                bar.set_start_widget(back)
+            if nxt:
+                bar.set_end_widget(nxt)
+            tv.add_bottom_bar(bar)
+        return Adw.NavigationPage(title=title, tag=tag, child=tv)
+
+    def mark(px=160):
+        # an Image, not a Picture: a Picture grows to fill its column
+        pic = Gtk.Image(pixel_size=px, halign=Gtk.Align.CENTER)
+        src = next((d for d in BRAND if (d / "pulsar-mark.svg").exists()), None)
+        if not src:
+            return pic
+        sm = Adw.StyleManager.get_default()
+
+        def draw(*_):
+            # at the size shown, in device pixels (an SVG given by path is
+            # rasterized at its own size and stretched: soft on HiDPI)
+            n = round(px * max(1, pic.get_scale_factor()))
+            name = "pulsar-mark.svg" if sm.get_dark() else "pulsar-mark-light.svg"
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_size(str(src / name), n, n)
+            ok, png = pb.save_to_bufferv("png", [], [])
+            pic.set_from_paintable(Gdk.Texture.new_from_bytes(GLib.Bytes.new(png)))
+        sm.connect("notify::dark", draw)
+        pic.connect("notify::scale-factor", draw)
+        draw()
+        return pic
+
+    class Installer(Adw.ApplicationWindow):
+        def __init__(self, app):
+            super().__init__(application=app, title="Install Pulsar", default_width=980, default_height=760)
+            prov = Gtk.CssProvider()
+            prov.load_from_string(CSS)
+            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), prov,
+                                                      Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            try:
+                self.payload = json.loads(PAYLOAD.read_text())
+            except (OSError, ValueError):
+                self.payload = None
+            self.disk = None
+            self.mode = None
+            self.started = None
+            self.nav = Adw.NavigationView()
+            self.set_content(self.nav)
+            self.nav.add(self.welcome_page())
+
+        # -------------------------------------------------------- pages
+
+        def welcome_page(self):
+            start = Gtk.Button(label="Choose a disk", css_classes=["suggested-action", "in-big"],
+                               halign=Gtk.Align.CENTER)
+            start.connect("clicked", lambda *_: self.nav.push(self.disk_page()))
+            body = [mark(), label("Install Pulsar", ["in-display"]),
+                    label("A few minutes, start to finish. Nothing changes on any disk until you press Install.",
+                          ["in-lede"]), Gtk.Box(height_request=12), start]
+            if not self.payload:
+                start.set_sensitive(False)
+                body.append(label("This installer has no Pulsar image to install (payload.json is missing).",
+                                  ["in-note", "in-warn"]))
+            return nav_page("Install Pulsar", "welcome", column(*body))
+
+        def disk_page(self):
+            listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+            try:
+                found = disks(read_lsblk())
+            except Exception as e:     # noqa: BLE001 -- shown, not hidden
+                found = []
+                listbox.append(Adw.ActionRow(title="Couldn't read the disks", subtitle=str(e)))
+            for d in sorted(found, key=lambda d: (d["usb"], -d["size"])):
+                what = {"Windows": "Windows", "Linux": "Linux", "nothing": "Empty",
+                        "other data": "Has data"}[d["holds"]]
+                bits = [human(d["size"]), what]
+                if not d["empty"] and d["free"] >= GiB:
+                    bits.append(f"{human(d['free'])} free")
+                if d["usb"]:
+                    bits.append("USB")
+                usable = any(ok for ok, _ in options(d).values())
+                if not usable:
+                    bits.append("Too small for Pulsar" if d["size"] < NEEDS_ERASE else "Can't be used")
+                row = Adw.ActionRow(title=d["name"], subtitle=" · ".join(bits), activatable=usable,
+                                    sensitive=usable)
+                row.add_prefix(Gtk.Image(icon_name="drive-removable-media-symbolic" if d["usb"]
+                                         else "drive-harddisk-symbolic", pixel_size=32))
+                row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+                row.connect("activated", lambda _r, d=d: self.pick_disk(d))
+                listbox.append(row)
+            if not found:
+                listbox.append(Adw.ActionRow(title="No disk Pulsar can go on",
+                                             subtitle="The installer's own USB stick isn't offered."))
+            back = Gtk.Button(label="Back", css_classes=["flat", "in-pill"])
+            back.connect("clicked", lambda *_: self.nav.pop())
+            return nav_page("Disk", "disk", column(label("Where should Pulsar go?", ["in-title"]), listbox),
+                            back=back)
+
+        def pick_disk(self, d):
+            self.disk = d
+            self.nav.push(self.method_page(d))
+
+        def method_page(self, d):
+            opts = options(d)
+            listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+            for mode, title in (("alongside", f"Install alongside {d['holds']}" if d["holds"] in ("Windows", "Linux")
+                                 else "Install in the free space"),
+                                ("erase", "Erase the disk and install Pulsar")):
+                ok, why = opts[mode]
+                row = Adw.ActionRow(title=title, subtitle=why, activatable=ok, sensitive=ok)
+                row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+                if mode == "erase":
+                    row.add_css_class("in-erase")
+                row.connect("activated", lambda _r, m=mode: self.pick_mode(m))
+                listbox.append(row)
+            back = Gtk.Button(label="Back", css_classes=["flat", "in-pill"])
+            back.connect("clicked", lambda *_: self.nav.pop())
+            return nav_page("How", "method", column(label(d["name"], ["in-title"]),
+                                                    label(f"{human(d['size'])} · holds {d['holds']}", ["in-note"]),
+                                                    Gtk.Box(height_request=6), listbox), back=back)
+
+        def pick_mode(self, mode):
+            self.mode = mode
+            self.nav.push(self.erase_page() if mode == "erase" else self.passphrase_page())
+
+        def erase_page(self):
+            d = self.disk
+            parts = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+            for p in d["partitions"] or [{"size": d["size"], "what": "Empty"}]:
+                parts.append(Adw.ActionRow(title=p["what"], subtitle=human(p["size"])))
+            sure = Gtk.CheckButton(label=f"Delete everything on {d['name']}", halign=Gtk.Align.CENTER)
+            go = Gtk.Button(label="Erase and continue", css_classes=["destructive-action", "in-pill"],
+                            sensitive=False)
+            sure.connect("toggled", lambda b: go.set_sensitive(b.get_active()))
+            go.connect("clicked", lambda *_: self.nav.push(self.passphrase_page()))
+            back = Gtk.Button(label="Back", css_classes=["flat", "in-pill"])
+            back.connect("clicked", lambda *_: self.nav.pop())
+            return nav_page("Erase", "erase", column(
+                label(f"Erase {d['name']}?", ["in-title"]),
+                label("Everything on it is deleted when you press Install. This can't be undone.", ["in-lede"]),
+                parts, sure), back=back, nxt=go)
+
+        def passphrase_page(self):
+            a = Adw.PasswordEntryRow(title="Passphrase")
+            b = Adw.PasswordEntryRow(title="Again")
+            group = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+            group.append(a)
+            group.append(b)
+            hint = label("At least 8 characters", ["in-note"])
+            nxt = Gtk.Button(label="Next", css_classes=["suggested-action", "in-pill"], sensitive=False)
+
+            def check(*_):
+                why = passphrase_problem(a.get_text(), b.get_text())
+                nxt.set_sensitive(why is None)
+                hint.set_label(why or "")
+            a.connect("changed", check)
+            b.connect("changed", check)
+            b.connect("entry-activated", lambda *_: nxt.get_sensitive() and nxt.emit("clicked"))
+            nxt.connect("clicked", lambda *_: self.plan(a.get_text()))
+            back = Gtk.Button(label="Back", css_classes=["flat", "in-pill"])
+            back.connect("clicked", lambda *_: self.nav.pop())
+            return nav_page("Passphrase", "passphrase", column(
+                label("Choose a passphrase", ["in-title"]),
+                label("Pulsar keeps everything on this disk encrypted. You'll type this each time it starts; "
+                      "without it, nobody can read the disk, you included.", ["in-lede"]),
+                group, hint), back=back, nxt=nxt)
+
+        # ------------------------------------------- plan, then install
+
+        def backend(self, *args):
+            return PKEXEC + [BACKEND, "--mode", self.mode, *args, self.disk["path"]]
+
+        def plan(self, passphrase):
+            self.passphrase = passphrase
+            spin = Adw.Spinner(width_request=48, height_request=48, halign=Gtk.Align.CENTER)
+            self.nav.push(nav_page("Checking", "checking", column(spin, label("Checking the disk…", ["in-lede"]))))
+            self.run(self.backend("--plan-only"), self.planned)
+
+        def planned(self, events, code):
+            self.nav.pop()
+            plan = next((e["plan"] for e in events if e.get("stage") == "plan"), None)
+            if code != 0 or plan is None:
+                self.nav.push(self.failed_page(self.error_of(events), restored=True, planning=True))
+                return
+            self.nav.push(self.summary_page(plan))
+
+        def summary_page(self, plan):
+            d = self.disk
+            root = next((p for p in plan if p["type"].startswith("root")), None)
+            rows = [("Disk", f"{d['name']} · {human(d['size'])}"),
+                    ("How", "Alongside " + d["holds"] + ", in its free space" if self.mode == "alongside"
+                     else "Erase the whole disk"),
+                    ("Pulsar's space", human(root["raw_size"]) if root else "?"),
+                    ("Encryption", "On, with your passphrase")]
+            listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+            for k, v in rows:
+                r = Adw.ActionRow(title=k, subtitle=v, subtitle_selectable=True)
+                listbox.append(r)
+            go = Gtk.Button(label="Install", css_classes=["suggested-action" if self.mode == "alongside"
+                                                          else "destructive-action", "in-pill"])
+            go.connect("clicked", lambda *_: self.install())
+            back = Gtk.Button(label="Back", css_classes=["flat", "in-pill"])
+            back.connect("clicked", lambda *_: self.nav.pop())
+            return nav_page("Ready", "summary", column(label("Ready to install", ["in-title"]), listbox),
+                            back=back, nxt=go)
+
+        def install(self):
+            fd, self.key_path = tempfile.mkstemp(prefix="pulsar-key-", dir=os.environ.get("XDG_RUNTIME_DIR"))
+            os.write(fd, self.passphrase.encode())
+            os.close(fd)
+            self.passphrase = None
+            self.started = time.monotonic()
+            self.stage = label("Getting ready", ["in-stage"])
+            self.bar = Gtk.ProgressBar(fraction=0.0)
+            self.logline = label("", ["in-log"], ellipsize=3, lines=1)
+            self.clock = label("0:00", ["in-note"])
+            page = nav_page("Installing", "installing", column(
+                label("Installing Pulsar", ["in-title"]), self.stage, self.bar, self.logline, self.clock))
+            page.set_can_pop(False)
+            self.nav.push(page)
+            self.tick = GLib.timeout_add(500, self._tick)
+            self.run(self.backend("--key-file", self.key_path, "--source-imgref", self.payload["source"],
+                                  "--target-imgref", self.payload["target"]), self.installed, self.progress)
+
+        STAGES = {"check": ("Checking the disk", 0.02), "disk": ("Partitioning and encrypting", 0.06),
+                  "unlock": ("Unlocking the new disk", 0.10), "install": ("Copying Pulsar", 0.12),
+                  "boot": ("Setting up startup", 0.94)}
+
+        def progress(self, ev):
+            st = ev.get("stage")
+            if st in self.STAGES:
+                text, frac = self.STAGES[st]
+                self.stage.set_label(text)
+                self.bar.set_fraction(frac)
+                self.in_install = st == "install"
+            elif "log" in ev:
+                self.logline.set_label(ev["log"])
+                if getattr(self, "in_install", False):
+                    # bootc says nothing countable here; creep toward the
+                    # next stage so the bar never sits still or overshoots
+                    f = self.bar.get_fraction()
+                    self.bar.set_fraction(min(0.9, f + (0.9 - f) * 0.02))
+
+        def _tick(self):
+            s = int(time.monotonic() - self.started)
+            self.clock.set_label(f"{s // 60}:{s % 60:02d}")
+            return True
+
+        def installed(self, events, code):
+            GLib.source_remove(self.tick)
+            try:
+                os.unlink(self.key_path)
+            except OSError:
+                pass
+            done = next((e for e in events if e.get("stage") == "done"), None)
+            if code == 0 and done:
+                self.nav.push(self.done_page(int(time.monotonic() - self.started), done))
+            else:
+                failed = next((e for e in events if e.get("stage") == "failed"), {})
+                self.nav.push(self.failed_page(self.error_of(events), restored=failed.get("restored", False)))
+
+        def done_page(self, secs, done):
+            restart = Gtk.Button(label="Restart", css_classes=["suggested-action", "in-big"], halign=Gtk.Align.CENTER)
+            restart.connect("clicked", lambda *_: subprocess.Popen(["systemctl", "reboot"]))
+            extra = []
+            if done.get("windows_entry"):
+                extra.append(label("Windows is in the startup menu too.", ["in-note"]))
+            page = nav_page("Done", "done", column(
+                mark(120), label("Pulsar is installed", ["in-display"]),
+                label(f"Installed in {secs // 60} min {secs % 60} s.", ["in-lede"]),
+                label("Take out the USB stick and restart. Pulsar asks for your passphrase first.", ["in-note"]),
+                *extra, Gtk.Box(height_request=8), restart))
+            page.set_can_pop(False)
+            return page
+
+        def failed_page(self, error, restored, planning=False):
+            head = "Pulsar can't go on this disk" if planning else "The install didn't finish"
+            state = ("Nothing on the disk was changed." if planning else
+                     "The disk is as it was before you pressed Install." if restored else
+                     "Some of Pulsar's partitions may still be on the disk.")
+            details = Gtk.Expander(label="Details", child=label(error, ["in-log"], 0, selectable=True))
+            again = Gtk.Button(label="Start over", css_classes=["in-pill"], halign=Gtk.Align.CENTER)
+            again.connect("clicked", lambda *_: self.nav.pop_to_tag("disk"))
+            page = nav_page("Problem", "failed", column(label(head, ["in-title"]), label(state, ["in-lede"]),
+                                                        details, again))
+            page.set_can_pop(False)
+            return page
+
+        @staticmethod
+        def error_of(events):
+            for e in events:
+                if e.get("stage") == "failed":
+                    return e.get("error") or "unknown error"
+            logs = [e["log"] for e in events if "log" in e]
+            return (logs[-1] if logs else "") or "The installer's backend stopped without saying why."
+
+        # ------------------------------------------- the backend, async
+
+        def run(self, argv, done, on_event=None):
+            """Run argv, read its JSON lines as they come, call done(events,
+            exit code). The window stays responsive throughout."""
+            proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE)
+            stream = Gio.DataInputStream.new(proc.get_stdout_pipe())
+            events = []
+
+            def line(src, res):
+                text, _ = src.read_line_finish_utf8(res)
+                if text is None:
+                    proc.wait_async(None, lambda p, r: (p.wait_finish(r), done(events, p.get_exit_status())))
+                    return
+                try:
+                    ev = json.loads(text)
+                except ValueError:
+                    ev = {"log": text}
+                events.append(ev)
+                if on_event:
+                    on_event(ev)
+                src.read_line_async(GLib.PRIORITY_DEFAULT, None, line)
+            stream.read_line_async(GLib.PRIORITY_DEFAULT, None, line)
+
+    shots = pathlib.Path(sys.argv[sys.argv.index("--shots") + 1]) if "--shots" in sys.argv else None
+
+    def shoot(win):
+        """Each page in turn, saved as it renders. The fake backend's events
+        drive the installing page; disks come from PULSAR_INSTALLER_LSBLK."""
+        shots.mkdir(parents=True, exist_ok=True)
+        win.nav.set_animate_transitions(False)
+        found = disks(read_lsblk())
+        d = next((x for x in found if x["holds"] == "Windows" and options(x)["alongside"][0]), found[0])
+        steps = [("welcome", lambda: None),
+                 ("disks", lambda: win.nav.push(win.disk_page())),
+                 ("method", lambda: win.pick_disk(d)),
+                 ("erase", lambda: (setattr(win, "mode", "erase"), win.nav.push(win.erase_page()))),
+                 ("passphrase", lambda: win.nav.push(win.passphrase_page())),
+                 ("summary", lambda: (setattr(win, "mode", "alongside"), setattr(win, "passphrase", "x" * 8),
+                                      win.nav.push(win.summary_page([{"type": "root-x86-64",
+                                                                      "raw_size": d["free"] - 2 * GiB}])))),
+                 ("installing", lambda: win.install()),
+                 ("done", lambda: win.nav.push(win.done_page(187, {"windows_entry": True}))),
+                 ("failed", lambda: win.nav.push(win.failed_page(
+                     "bootc exited 1: error: Installing to filesystem: no space left on device", restored=True)))]
+
+        def save(name, n):
+            w, h = win.get_width(), win.get_height()
+            snap = Gtk.Snapshot()
+            Gtk.WidgetPaintable.new(win).snapshot(snap, w, h)
+            node = snap.to_node()
+            if node:
+                tex = win.get_renderer().render_texture(node, Graphene.Rect().init(0, 0, w, h))
+                tex.save_to_png(str(shots / f"{n:02d}-{name}.png"))
+
+        def step(i=0):
+            if i:
+                save(steps[i - 1][0], i)
+            if i == len(steps):
+                win.get_application().quit()
+                return False
+            steps[i][1]()
+            # installing: let the fake backend's stages arrive first
+            GLib.timeout_add(2600 if steps[i][0] == "installing" else 700, step, i + 1)
+            return False
+        GLib.timeout_add(900, step)
+
+    def activate(a):
+        win = a.get_active_window() or Installer(a)
+        win.present()
+        if shots:
+            shoot(win)
+    app = Adw.Application(application_id="digital.arclight.Pulsar.Installer")
+    app.connect("activate", activate)
+    return app.run(sys.argv[:1])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
