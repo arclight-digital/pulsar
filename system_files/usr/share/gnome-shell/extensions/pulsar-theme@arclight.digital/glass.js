@@ -84,6 +84,11 @@ const BRIGHTNESS = 1.06;
 // The blurred copy reaches this far past a surface on every side, so the
 // blur has real pixels to draw on at the edge, and the shadow has room.
 const BLUR_PAD = 64;
+// How far past its own edge a surface's blur reads what is beside it, in
+// logical pixels: about the blur's width, so a bright neighbor glows in at
+// the edge the way it does through frosted glass, instead of the edge
+// pixels repeating outward. Within both pads (BLUR_PAD, WINDOW_PAD).
+const EDGE_SAMPLE = 24;
 // The shadow floating glass (menus, Quick Settings, OSDs, banners, dialogs,
 // the dash) casts: soft and ambient, from no direction -- 2px down, fading
 // over 22px, in the theme's own deep ground (deepShadow()), at alpha
@@ -930,18 +935,19 @@ class PulsarLiveBlur extends Clutter.Effect {
         }
         s.hw = hw;
         s.hh = hh;
-        // What the blur may read: the surface's own shape, on screen, in the
-        // copy's half-size texels. Past its edge are its neighbors (another
-        // window's bright header, or one stacked above whose pixels are last
-        // frame's), which smeared in as a strip along the edge; like CSS's
-        // backdrop-filter, the edge is repeated there instead.
+        // What the blur may read, in the copy's half-size texels: the
+        // surface's own shape and EDGE_SAMPLE beyond it, on screen, so what
+        // is beside the surface bleeds in at its edge as through frosted
+        // glass. (Clamped to the shape alone, the edge pixels repeated
+        // outward and the edge looked unstable as anything beside it moved.)
         const sp = this._shape, fw = fb.get_width(), fh = fb.get_height();
         const kx = r.w / w / 2, ky = r.h / h / 2;
+        const m = EDGE_SAMPLE;
         const bx = s.box ??= [0, 0, 0, 0];
-        bx[0] = Math.max((sp[0] - x0) * kx, (Math.max(r.x, 0) - r.x) / 2);
-        bx[1] = Math.max((sp[1] - y0) * ky, (Math.max(r.y, 0) - r.y) / 2);
-        bx[2] = Math.min((sp[0] + sp[2] - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2);
-        bx[3] = Math.min((sp[1] + sp[3] - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2);
+        bx[0] = Math.max((sp[0] - m - x0) * kx, (Math.max(r.x, 0) - r.x) / 2, 0);
+        bx[1] = Math.max((sp[1] - m - y0) * ky, (Math.max(r.y, 0) - r.y) / 2, 0);
+        bx[2] = Math.min((sp[0] + sp[2] + m - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2, r.w / 2);
+        bx[3] = Math.min((sp[1] + sp[3] + m - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2, r.h / 2);
         this._blur(s, r.scale);
         // what is beneath the preview may change anywhere before the next
         // overview: its next paint copies all of it again
