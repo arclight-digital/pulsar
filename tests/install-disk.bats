@@ -1,0 +1,175 @@
+#!/usr/bin/env bats
+# pulsar-install-disk against disk images: real systemd-repart, real LUKS, no
+# root and no loop devices. Plans run on the image's real layouts against big
+# sparse files; applies run on a copy of the layouts shrunk to fit in a few
+# hundred MiB, because offline encryption writes every byte of the root.
+#
+# The alongside tests prove "Windows is untouched" by fingerprinting each of
+# its partitions before and after. A fingerprint check that reads nothing
+# passes vacuously, so the fixture refuses to start unless it sees four
+# partitions with four DIFFERENT fingerprints, none of them the hash of empty
+# input.
+
+bats_require_minimum_version 1.5.0
+
+EMPTY_SHA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+PASS='correct horse battery staple'
+
+setup() {
+    T="$BATS_TEST_TMPDIR"
+    BIN="${BATS_TEST_DIRNAME}/../scripts/pulsar-install-disk"
+    REAL="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/installer/repart"
+    SMALL="$T/layouts"
+    cp -r "$REAL" "$SMALL"
+    sed -i 's/^SizeMinBytes=600M/SizeMinBytes=40M/; s/^SizeMaxBytes=600M/SizeMaxBytes=40M/' "$SMALL"/*/10-esp.conf
+    sed -i 's/^SizeMinBytes=2G/SizeMinBytes=64M/; s/^SizeMaxBytes=2G/SizeMaxBytes=64M/' "$SMALL"/*/20-boot.conf
+    sed -i 's/^SizeMinBytes=32G/SizeMinBytes=128M/' "$SMALL"/*/30-root.conf
+    printf '%s' "$PASS" > "$T/key"
+    chmod 600 "$T/key"
+}
+
+starts() {
+    sfdisk -J "$1" | python3 -c 'import json,sys
+for p in json.load(sys.stdin)["partitiontable"].get("partitions", []): print(p["start"])'
+}
+
+# sha256 of the first 1 MiB of every partition on the image, one per line
+fingerprints() {
+    local s
+    for s in $(starts "$1"); do
+        dd if="$1" bs=512 skip="$s" count=2048 status=none | sha256sum | cut -d' ' -f1
+    done
+}
+
+# A Windows-shaped GPT disk: ESP, MSR, C:, free space, recovery at the end.
+# $1 image, $2 size, $3 sector where recovery starts. Every partition gets
+# 1 MiB of random data at its start so a fingerprint can tell them apart.
+windows_disk() {
+    truncate -s "$2" "$1"
+    sfdisk -q "$1" <<EOF
+label: gpt
+start=2048, size=100MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="EFI system partition"
+size=16MiB, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE, name="Microsoft reserved partition"
+size=${4:-30GiB}, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="Basic data partition"
+start=$3, size=8MiB, type=DE94BBA4-06D1-4D40-A16A-BFD50179D6AC, name="Recovery"
+EOF
+    local s
+    for s in $(starts "$1"); do
+        head -c 1M /dev/urandom | dd of="$1" bs=512 seek="$s" conv=notrunc status=none
+    done
+}
+
+plan_types() {
+    python3 -c 'import json,sys
+for p in json.load(sys.stdin): print(p["type"], p["activity"])'
+}
+
+luks_opens_with() {
+    local img=$1 n=$2 pass=$3 s
+    s=$(starts "$img" | sed -n "${n}p")
+    dd if="$img" of="$T/part" bs=512 skip="$s" status=none
+    cryptsetup isLuks --type luks2 "$T/part" || return 1
+    printf '%s' "$pass" | cryptsetup open --test-passphrase --key-file=- "$T/part"
+}
+
+@test "the fixture's fingerprints are real: four partitions, four different hashes, none empty" {
+    windows_disk "$T/w.img" 64G 133000000
+    run fingerprints "$T/w.img"
+    [ "${#lines[@]}" -eq 4 ]
+    [ "$(printf '%s\n' "${lines[@]}" | sort -u | wc -l)" -eq 4 ]
+    for l in "${lines[@]}"; do [ "$l" != "$EMPTY_SHA" ]; done
+}
+
+@test "erase: an empty disk gets ESP, /boot and an encrypted root (real layouts)" {
+    truncate -s 64G "$T/d.img"
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode erase "$T/d.img"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | plan_types | sort)" = "$(printf 'esp create\nroot-x86-64 create\nxbootldr create')" ]
+}
+
+@test "erase: the plan for a disk holding Windows replaces it, and planning writes nothing" {
+    windows_disk "$T/w.img" 64G 133000000
+    before=$(fingerprints "$T/w.img"; sfdisk -d "$T/w.img")
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode erase "$T/w.img"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | plan_types | sort)" = "$(printf 'esp create\nroot-x86-64 create\nxbootldr create')" ]
+    [ "$(fingerprints "$T/w.img"; sfdisk -d "$T/w.img")" = "$before" ]
+}
+
+@test "erase: refuses a disk too small for the 32G root (real layouts)" {
+    truncate -s 20G "$T/d.img"
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode erase "$T/d.img"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *refused* ]]
+}
+
+@test "alongside: Windows keeps every partition; Pulsar takes the free space and shares the ESP (real layouts)" {
+    windows_disk "$T/w.img" 128G 260000000
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/w.img"
+    [ "$status" -eq 0 ]
+    types=$(echo "$output" | plan_types | sort)
+    [[ "$types" == *"esp unchanged"* ]]
+    [[ "$types" == *"xbootldr create"* ]]
+    [[ "$types" == *"root-x86-64 create"* ]]
+    [ "$(echo "$types" | grep -c unchanged)" -eq 4 ]
+    [ "$(echo "$types" | grep -c create)" -eq 2 ]
+}
+
+@test "alongside: refuses a disk with no EFI system partition instead of inventing one" {
+    truncate -s 128G "$T/d.img"
+    printf 'label: gpt\nsize=30GiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' | sfdisk -q "$T/d.img"
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/d.img"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == *"would create"* ]]
+}
+
+@test "alongside: refuses when the free space can't hold Pulsar" {
+    windows_disk "$T/w.img" 64G 125000000 50GiB
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/w.img"
+    [ "$status" -eq 2 ]
+}
+
+@test "alongside: refuses a blank disk (no partition table)" {
+    truncate -s 128G "$T/d.img"
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/d.img"
+    [ "$status" -eq 2 ]
+}
+
+@test "apply alongside: Windows' partitions are byte-for-byte and entry-for-entry unchanged" {
+    windows_disk "$T/w.img" 1G 2000000 300MiB
+    before=$(fingerprints "$T/w.img")
+    [ "$(echo "$before" | sort -u | grep -vc "$EMPTY_SHA")" -eq 4 ]
+    table_before=$(sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :' | head -4)
+    [ "$(echo "$table_before" | wc -l)" -eq 4 ]
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+    after=$(fingerprints "$T/w.img")
+    [ "$(echo "$after" | wc -l)" -eq 6 ]
+    # the first four are Windows', in table order: same entries, same bytes
+    [ "$(sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :' | head -4)" = "$table_before" ]
+    [ "$(echo "$after" | head -4)" = "$before" ]
+}
+
+@test "apply alongside: the new root is LUKS2 and opens with the passphrase, not without it" {
+    windows_disk "$T/w.img" 1G 2000000 300MiB
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+    luks_opens_with "$T/w.img" 6 "$PASS"
+    ! luks_opens_with "$T/w.img" 6 "wrong passphrase"
+}
+
+@test "apply erase: three partitions, encrypted root opens with the passphrase" {
+    windows_disk "$T/w.img" 1G 2000000 600MiB
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode erase --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+    [ "$(starts "$T/w.img" | wc -l)" -eq 3 ]
+    luks_opens_with "$T/w.img" 3 "$PASS"
+    ! luks_opens_with "$T/w.img" 3 "wrong passphrase"
+}
+
+@test "apply needs a key file: there is no unencrypted install" {
+    truncate -s 1G "$T/d.img"
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode erase "$T/d.img"
+    [ "$status" -ne 0 ]
+    [ "$(starts "$T/d.img" | wc -l)" -eq 0 ]
+}
