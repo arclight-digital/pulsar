@@ -15,6 +15,17 @@ bats_require_minimum_version 1.5.0
 EMPTY_SHA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 PASS='correct horse battery staple'
 
+# The disk tests need the tools a real install uses. Where they aren't
+# installed (a bare build-host container), say so and skip: every assertion
+# still holds wherever they are. As root they work too (checked: 19/19 in a
+# root Fedora container with them installed).
+DISK_TOOLS="systemd-repart cryptsetup sfdisk mkfs.btrfs mkfs.vfat mkfs.ext4"
+needs_disk_tools() {
+    local t missing=""
+    for t in $DISK_TOOLS; do command -v "$t" >/dev/null || missing="$missing $t"; done
+    [ -z "$missing" ] || skip "needs$missing"
+}
+
 setup() {
     T="$BATS_TEST_TMPDIR"
     BIN="${BATS_TEST_DIRNAME}/../scripts/pulsar-install-disk"
@@ -73,6 +84,7 @@ luks_opens_with() {
 }
 
 @test "the fixture's fingerprints are real: four partitions, four different hashes, none empty" {
+    needs_disk_tools
     windows_disk "$T/w.img" 64G 133000000
     run fingerprints "$T/w.img"
     [ "${#lines[@]}" -eq 4 ]
@@ -81,6 +93,7 @@ luks_opens_with() {
 }
 
 @test "erase: an empty disk gets ESP, /boot and an encrypted root (real layouts)" {
+    needs_disk_tools
     truncate -s 64G "$T/d.img"
     PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode erase "$T/d.img"
     [ "$status" -eq 0 ]
@@ -88,6 +101,7 @@ luks_opens_with() {
 }
 
 @test "erase: the plan for a disk holding Windows replaces it, and planning writes nothing" {
+    needs_disk_tools
     windows_disk "$T/w.img" 64G 133000000
     before=$(fingerprints "$T/w.img"; sfdisk -d "$T/w.img")
     PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode erase "$T/w.img"
@@ -97,6 +111,7 @@ luks_opens_with() {
 }
 
 @test "erase: refuses a disk too small for the 32G root (real layouts)" {
+    needs_disk_tools
     truncate -s 20G "$T/d.img"
     PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode erase "$T/d.img"
     [ "$status" -eq 2 ]
@@ -104,6 +119,7 @@ luks_opens_with() {
 }
 
 @test "alongside: Windows keeps every partition; Pulsar takes the free space and shares the ESP (real layouts)" {
+    needs_disk_tools
     windows_disk "$T/w.img" 128G 260000000
     PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/w.img"
     [ "$status" -eq 0 ]
@@ -116,6 +132,7 @@ luks_opens_with() {
 }
 
 @test "alongside: refuses a disk with no EFI system partition instead of inventing one" {
+    needs_disk_tools
     truncate -s 128G "$T/d.img"
     printf 'label: gpt\nsize=30GiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' | sfdisk -q "$T/d.img"
     PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/d.img"
@@ -124,18 +141,21 @@ luks_opens_with() {
 }
 
 @test "alongside: refuses when the free space can't hold Pulsar" {
+    needs_disk_tools
     windows_disk "$T/w.img" 64G 125000000 50GiB
     PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/w.img"
     [ "$status" -eq 2 ]
 }
 
 @test "alongside: refuses a blank disk (no partition table)" {
+    needs_disk_tools
     truncate -s 128G "$T/d.img"
     PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/d.img"
     [ "$status" -eq 2 ]
 }
 
 @test "apply alongside: Windows' partitions are byte-for-byte and entry-for-entry unchanged" {
+    needs_disk_tools
     windows_disk "$T/w.img" 1G 2000000 300MiB
     before=$(fingerprints "$T/w.img")
     [ "$(echo "$before" | sort -u | grep -vc "$EMPTY_SHA")" -eq 4 ]
@@ -151,6 +171,7 @@ luks_opens_with() {
 }
 
 @test "apply alongside: the new root is LUKS2 and opens with the passphrase, not without it" {
+    needs_disk_tools
     windows_disk "$T/w.img" 1G 2000000 300MiB
     PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
     [ "$status" -eq 0 ]
@@ -159,6 +180,7 @@ luks_opens_with() {
 }
 
 @test "apply erase: three partitions, encrypted root opens with the passphrase" {
+    needs_disk_tools
     windows_disk "$T/w.img" 1G 2000000 600MiB
     PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode erase --key-file "$T/key" "$T/w.img"
     [ "$status" -eq 0 ]
@@ -168,6 +190,7 @@ luks_opens_with() {
 }
 
 @test "apply needs a key file: there is no unencrypted install" {
+    needs_disk_tools
     truncate -s 1G "$T/d.img"
     PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode erase "$T/d.img"
     [ "$status" -ne 0 ]
@@ -175,6 +198,7 @@ luks_opens_with() {
 }
 
 @test "two installs never share a partition table, partition or LUKS UUID" {
+    needs_disk_tools
     # repart derives UUIDs from the machine ID unless told otherwise, and
     # every boot of one live ISO has the same machine ID
     for n in 1 2; do
@@ -204,6 +228,7 @@ PY
 }
 
 @test "a failed alongside install takes back its partitions: Windows as it was, and a retry works" {
+    needs_disk_tools
     windows_disk "$T/w.img" 1G 2000000 300MiB
     before=$(fingerprints "$T/w.img"; sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :')
     PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
@@ -221,6 +246,7 @@ print(" ".join(p["uuid"] for p in json.load(sys.stdin) if p["activity"] == "crea
 }
 
 @test "clean-up removes only the partitions it was given, never another system's or an older Pulsar's" {
+    needs_disk_tools
     windows_disk "$T/w.img" 1G 2000000 300MiB
     PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
     [ "$status" -eq 0 ]
