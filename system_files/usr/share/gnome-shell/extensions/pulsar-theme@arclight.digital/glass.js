@@ -145,8 +145,10 @@ const WINDOW_LENS = [10, 4, 0, 0];
 // A clearer surface needs less of its contrast taken: text behind it now
 // shows as shapes, and 0.75 flattened them to a wash.
 const SURFACE_GRADE = {dark: [1.6, 0.85, 0.85], light: [1.45, 0.85, 1.1]};
-// Windows keep the grade menus had before they went liquid.
-const WINDOW_GRADE = {dark: [1.7, 0.75, 0.8], light: [1.5, 0.75, 1.14]};
+// Windows match the panels 1:1 (Nick, 2026-10-02): the same grade, and the
+// same blur below. They keep only their own thin lens (WINDOW_LENS): the
+// panels' thick refracting rim would bend the window's own edge.
+const WINDOW_GRADE = SURFACE_GRADE;
 // libadwaita's window shape, measured on GNOME 50: the frame rect, its 1px
 // border included, with 16px corners (15 inside the border). The mask
 // follows it exactly and fades across the border; over the last few pixels
@@ -2042,7 +2044,8 @@ class WindowGlass {
         this._win = actor.meta_window;
         this._popup = popup;
         this._backdrop = new St.Widget({reactive: false, width: 1, height: 1});
-        this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS});
+        this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS,
+            levels: SURFACE_LEVELS, offset: SURFACE_OFFSET});
         // vibrancy: what is beneath lifted, so its color reads through the
         // window's tint instead of muddying it
         this._blur.setGrade(...windowGrade());
