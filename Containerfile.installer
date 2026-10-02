@@ -22,6 +22,12 @@ RUN dnf5 install -y --setopt=install_weak_deps=False \
       dracut-live grub2-efi-x64-cdboot squashfs-tools xorriso isomd5sum && \
     dnf5 clean all
 
+# No GNOME Software in the live session: nothing here is installed or
+# updated through it, and it popped up "Updates Are Out of Date" over the
+# installer. Nothing in the image requires it.
+RUN dnf5 remove -y gnome-software gnome-software-rpm-ostree && dnf5 clean all && \
+    ! rpm -q gnome-software
+
 # The ESP tree the ISO boots with: shim and grub from the image's bootupd
 # payload, plus gcdx64.efi (grub for optical media) from -cdboot.
 RUN mkdir -p /boot/efi && cp -ra /usr/lib/efi/*/*/EFI /boot/efi && \

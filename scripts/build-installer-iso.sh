@@ -84,4 +84,11 @@ mkdir -p "$OUT"
 image-builder build --bootc-ref localhost/pulsar-installer:build \
   --bootc-installer-payload-ref "$PAYLOAD" --bootc-default-fs btrfs \
   --output-dir "$OUT" bootc-generic-iso
-find "$OUT" -name '*.iso' -printf '%p %s bytes\n'
+# image-builder names it bootc-fedora-44-bootc-generic-iso-x86_64.iso: the
+# name people see on their download is Pulsar's, with the image's version
+ver=$(skopeo inspect "containers-storage:$PAYLOAD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Labels"].get("org.opencontainers.image.version") or "dev")')
+iso=$(find "$OUT" -name '*.iso' | head -1)
+[ -n "$iso" ] || { echo "image-builder made no ISO" >&2; exit 1; }
+name="pulsar-${VARIANT}-installer-${ver}.iso"
+mv -f "$iso" "$OUT/$name"
+ls -l "$OUT/$name"

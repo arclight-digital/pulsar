@@ -140,6 +140,37 @@ def bootc_install(target, source, target_ref, kargs):
         run_stream("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd)
 
 
+def live_setting(path, key, default):
+    """KEY's value in a KEY=value file of the live system, else default."""
+    try:
+        for line in open(path):
+            k, _, v = line.strip().partition("=")
+            if k == key and v.strip('"'):
+                return v.strip('"')
+    except OSError:
+        pass
+    return default
+
+
+def write_locale(target, lang, keymap):
+    """The installed system's language and console keyboard, in its
+    deployment's /etc: without them it starts with none, and GNOME Initial
+    Setup offers "Unspecified". Returns the /etc written to."""
+    deploy = os.path.join(target, "ostree/deploy")
+    etcs = [os.path.join(deploy, os_, "deploy", d, "etc")
+            for os_ in os.listdir(deploy)
+            for d in os.listdir(os.path.join(deploy, os_, "deploy"))
+            if os.path.isdir(os.path.join(deploy, os_, "deploy", d, "etc"))]
+    if len(etcs) != 1:
+        raise Failed(f"expected one deployment's /etc under {deploy}, found {len(etcs)}")
+    etc = etcs[0]
+    with open(os.path.join(etc, "locale.conf"), "w") as f:
+        f.write(f'LANG="{lang}"\n')
+    with open(os.path.join(etc, "vconsole.conf"), "w") as f:
+        f.write(f"KEYMAP={keymap}\n")
+    return etc
+
+
 def windows_entry(target, esp):
     efi = os.path.join(target, "boot/efi")
     if not os.path.isfile(os.path.join(efi, WINDOWS_LOADER)):
@@ -200,6 +231,8 @@ def main():
     ap.add_argument("--source-imgref")
     ap.add_argument("--target-imgref")
     ap.add_argument("--karg", action="append", default=[])
+    ap.add_argument("--lang", help="the installed system's LANG (default: the live system's)")
+    ap.add_argument("--keymap", help="its console keymap (default: the live system's)")
     ap.add_argument("disk")
     a = ap.parse_args()
     if os.geteuid() != 0:
@@ -243,10 +276,18 @@ def main():
             run("mount", dev, path)
             mounted.append(path)
         emit(stage="install")
-        bootc_install(target, a.source_imgref, a.target_imgref, [f"rd.luks.uuid={root['uuid']}"] + a.karg)
+        # rhgb quiet: Silverblue's graphical boot (and passphrase prompt)
+        # comes from Anaconda's kickstart, not the image; without them the
+        # prompt sat in the boot log's text
+        bootc_install(target, a.source_imgref, a.target_imgref,
+                      [f"rd.luks.uuid={root['uuid']}", "rhgb", "quiet"] + a.karg)
         # bootc finalizes the root read-only; GRUB's custom.cfg lives on /boot
         emit(stage="boot")
         run("mount", "-o", "remount,rw", os.path.join(target, "boot"))
+        # bootc finalizes the root read-only too; its /etc takes the language
+        run("mount", "-o", "remount,rw", target)
+        write_locale(target, a.lang or live_setting("/etc/locale.conf", "LANG", "en_US.UTF-8"),
+                     a.keymap or live_setting("/etc/vconsole.conf", "KEYMAP", "us"))
         win = windows_entry(target, esp)
         fw = firmware_entry(a.disk, esp, target)
         ok = True

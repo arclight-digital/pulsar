@@ -233,3 +233,31 @@ print(" ".join(p["uuid"] for p in json.load(sys.stdin) if p["activity"] == "crea
     [ -z "$output" ]
     [ "$(sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :')" = "$before" ]
 }
+
+# write_locale: no root, a stand-in deployment tree
+locale_py() {
+    python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" "$@" <<'PY'
+import importlib.machinery as M, importlib.util as U, sys
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+try:
+    print(m.write_locale(sys.argv[2], sys.argv[3], sys.argv[4]))
+except m.Failed as e:
+    print("FAILED", e); sys.exit(1)
+PY
+}
+
+@test "the installed system gets the language and keymap, in its one deployment's /etc" {
+    mkdir -p "$T/t/ostree/deploy/default/deploy/abc123.0/etc"
+    touch "$T/t/ostree/deploy/default/deploy/abc123.0.origin"
+    run locale_py "$T/t" de_DE.UTF-8 de
+    [ "$status" -eq 0 ]
+    [ "$(cat "$T/t/ostree/deploy/default/deploy/abc123.0/etc/locale.conf")" = 'LANG="de_DE.UTF-8"' ]
+    [ "$(cat "$T/t/ostree/deploy/default/deploy/abc123.0/etc/vconsole.conf")" = 'KEYMAP=de' ]
+}
+
+@test "two deployments (or none): refuse rather than guess which /etc" {
+    mkdir -p "$T/t/ostree/deploy/default/deploy/a.0/etc" "$T/t/ostree/deploy/default/deploy/b.0/etc"
+    run locale_py "$T/t" en_US.UTF-8 us
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"found 2"* ]]
+}
