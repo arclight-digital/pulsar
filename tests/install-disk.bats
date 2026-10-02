@@ -173,3 +173,21 @@ luks_opens_with() {
     [ "$status" -ne 0 ]
     [ "$(starts "$T/d.img" | wc -l)" -eq 0 ]
 }
+
+@test "two installs never share a partition table, partition or LUKS UUID" {
+    # repart derives UUIDs from the machine ID unless told otherwise, and
+    # every boot of one live ISO has the same machine ID
+    for n in 1 2; do
+        truncate -s 1G "$T/d$n.img"
+        PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode erase --key-file "$T/key" "$T/d$n.img"
+        [ "$status" -eq 0 ]
+    done
+    ids() { sfdisk -J "$1" | python3 -c 'import json,sys
+t = json.load(sys.stdin)["partitiontable"]
+print(t["id"]); [print(p["uuid"]) for p in t["partitions"]]'; }
+    luks() { local s; s=$(starts "$1" | sed -n 3p); dd if="$1" of="$T/p" bs=512 skip="$s" count=32768 status=none; cryptsetup luksUUID "$T/p"; }
+    a=$( (ids "$T/d1.img"; luks "$T/d1.img") | sort)
+    b=$( (ids "$T/d2.img"; luks "$T/d2.img") | sort)
+    [ "$(echo "$a" | wc -l)" -eq 5 ]
+    [ -z "$(comm -12 <(echo "$a") <(echo "$b"))" ]
+}

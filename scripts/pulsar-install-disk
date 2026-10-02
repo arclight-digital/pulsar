@@ -44,6 +44,10 @@ def repart(mode, disk, key_file, dry_run):
         f"--dry-run={'yes' if dry_run else 'no'}",
         "--json=short",
         "--no-pager",
+        # repart derives partition and LUKS UUIDs from the machine ID, which
+        # every boot of one live ISO shares: without this, every install
+        # from it had the same UUIDs
+        "--seed=random",
     ]
     if key_file:
         cmd.append(f"--key-file={key_file}")
