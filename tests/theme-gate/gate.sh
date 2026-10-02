@@ -49,7 +49,7 @@ report_ok() { python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.arg
 report_ok "${out}/gate-report.json" || rc=1
 # The glass, switchers and leaks scenarios, each in a Shell of its own; the same rule:
 # no report is a FAIL.
-for scenario in glass switchers leaks; do
+for scenario in glass switchers overview-glass leaks; do
   rm -f "${out}/${scenario}-report.json"
   echo "== ${scenario}"
   "${here}/run.sh" "${scenario}" 2>>"${GATE_LOG:-/tmp/theme-gate.log}" | grep -v -E '^\s*$'

@@ -81,6 +81,12 @@ pixels, and blur and light would move every one); `glass` turns them on.
   when the list does. The sheet clears every `.switcher-list` and
   `.modal-dialog`, so a surface glass.js misses is a bare one.
   `switchers-report.json` lands in `GATE_OUT`.
+- `overview-glass`: a window's glass in the overview frosts what is beneath
+  its PREVIEW. The wallpaper is red at the sides and green in a middle band;
+  a Ptyxis window sits on the red and its preview lands on the green. Read
+  through the glass, the desktop must come out red (so the check can tell)
+  and the preview green; it came out red while the blur placed itself by
+  the window's own stage position instead of the clone's.
 - `leaks`: stock showing through, found by what does not move. Every
   visible Shell widget on eleven surfaces (the desktop menu, the date menu,
   quick settings and a submenu, the app grid and an icon's menu, the run

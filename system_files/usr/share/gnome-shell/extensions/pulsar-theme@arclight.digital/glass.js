@@ -340,9 +340,26 @@ const Hold = {
 // the framebuffer being painted, in device pixels (top-left origin), written
 // into `out`. Painting onto a view, from the actor's place on the stage (plain
 // numbers); anywhere else (an offscreen, a screenshot's), through the
-// framebuffer's matrices, the rare case that may allocate.
-function deviceRect(fb, actor, x, y, w, h, out) {
+// framebuffer's matrices, the rare case that may allocate. A clone's paint
+// (a window's preview in the overview) goes through the matrices even on a
+// view: the actor's place on the stage is where the WINDOW is, and the
+// preview is somewhere else, scaled, by the clone's transform alone.
+function deviceRect(fb, actor, x, y, w, h, out, clone = false) {
     const v = Views.get(fb);
+    if (v && clone) {
+        if (!matrixRect(fb, x, y, w, h, out))
+            return false;
+        out.scale = v.scale;
+        out.sx0 = out.x / v.scale + v.x;
+        out.sy0 = out.y / v.scale + v.y;
+        out.sx1 = (out.x + out.w) / v.scale + v.x;
+        out.sy1 = (out.y + out.h) / v.scale + v.y;
+        out.vx0 = v.x;
+        out.vy0 = v.y;
+        out.vx1 = v.x + v.w;
+        out.vy1 = v.y + v.h;
+        return true;
+    }
     if (v) {
         const [tx, ty] = actor.get_transformed_position();
         const [tw, th] = actor.get_transformed_size();
@@ -810,7 +827,7 @@ class PulsarLiveBlur extends Clutter.Effect {
             return;
         }
         const r = this._rect ??= {x: 0, y: 0, w: 0, h: 0, sx0: 0, sy0: 0, sx1: 0, sy1: 0, scale: 1};
-        if (!deviceRect(fb, actor, x0, y0, w, h, r) ||
+        if (!deviceRect(fb, actor, x0, y0, w, h, r, clone) ||
             r.w < 2 || r.h < 2 || r.w > 16384 || r.h > 16384)
             return;
 
