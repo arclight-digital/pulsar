@@ -1,0 +1,16 @@
+# On a disk Pulsar shares with Windows, the fallback boot file
+# (EFI/BOOT/BOOTX64.EFI) stays Windows'. bootupd puts Pulsar's shim back
+# there at each shim update (bootloader-update.service), from its own
+# records; this puts Windows' back. Only on machines whose installer saved
+# Windows' file: on anything else it never runs.
+[Unit]
+Description=Keep Windows' fallback boot file on a shared EFI partition
+After=bootloader-update.service boot.mount
+ConditionPathExists=/boot/pulsar/esp-fallback/BOOTX64.EFI
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/pulsar-esp-fallback boot
+
+[Install]
+WantedBy=multi-user.target

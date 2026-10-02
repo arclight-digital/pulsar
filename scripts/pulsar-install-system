@@ -218,6 +218,37 @@ def write_locale(target, lang, keymap):
     return etc
 
 
+def snapshot_fallback(efi_root):
+    """What is in EFI/BOOT before installing beside another system: every
+    file, by name, with its bytes (the fallback loader is a few hundred KB)."""
+    d = os.path.join(efi_root, "EFI", "BOOT")
+    if not os.path.isdir(d):
+        return {}
+    return {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))}
+
+
+def restore_fallback(efi_root, snap, saved_dir):
+    """Put EFI/BOOT back as the other system had it: its files as they were,
+    what bootupd added there gone. Installing beside Windows leaves Windows'
+    fallback loader alone (Nick, 2026-10-02: Ubuntu's way, not Fedora's).
+    Its BOOTX64.EFI is also kept in saved_dir, for pulsar-esp-fallback to
+    put back after a bootloader update replaces it again."""
+    d = os.path.join(efi_root, "EFI", "BOOT")
+    if os.path.isdir(d):
+        for n in os.listdir(d):
+            if n not in snap and os.path.isfile(os.path.join(d, n)):
+                os.unlink(os.path.join(d, n))
+        if not snap:
+            os.rmdir(d)
+    for n, data in snap.items():
+        with open(os.path.join(d, n), "wb") as f:
+            f.write(data)
+    if "BOOTX64.EFI" in snap:
+        os.makedirs(saved_dir, exist_ok=True)
+        with open(os.path.join(saved_dir, "BOOTX64.EFI"), "wb") as f:
+            f.write(snap["BOOTX64.EFI"])
+
+
 def windows_entry(target, esp):
     efi = os.path.join(target, "boot/efi")
     if not os.path.isfile(os.path.join(efi, WINDOWS_LOADER)):
@@ -322,6 +353,7 @@ def main():
             os.makedirs(path, exist_ok=True)
             run("mount", dev, path)
             mounted.append(path)
+        snap = snapshot_fallback(os.path.join(target, "boot/efi")) if a.mode == "alongside" else None
         emit(stage="install")
         # rhgb quiet: Silverblue's graphical boot (and passphrase prompt)
         # comes from Anaconda's kickstart, not the image; without them the
@@ -335,6 +367,8 @@ def main():
         run("mount", "-o", "remount,rw", target)
         write_locale(target, a.lang or live_lang(),
                      a.keymap or live_setting("/etc/vconsole.conf", "KEYMAP", "us"))
+        if snap is not None:
+            restore_fallback(os.path.join(target, "boot/efi"), snap, os.path.join(target, "boot/pulsar/esp-fallback"))
         win = windows_entry(target, esp)
         fw = firmware_entry(a.disk, esp, target)
         ok = True

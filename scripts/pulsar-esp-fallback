@@ -1,0 +1,95 @@
+#!/usr/bin/python3
+"""Keep another system's fallback boot file on a shared EFI system partition.
+
+A PC uses EFI/BOOT/BOOTX64.EFI only when its list of boot entries is gone (a
+firmware reset, a BIOS update). On a disk Pulsar shares with Windows, that
+file is Windows' and stays Windows': the installer puts it back after
+installing (and saves a copy under /boot/pulsar/esp-fallback), and this,
+run after every bootloader update, puts it back again whenever bootupd has
+replaced it with Pulsar's shim -- which it does at each shim update, from
+its own records. If Windows has written a new one itself, that is Windows'
+own change: it becomes the saved copy and is left alone.
+
+    pulsar-esp-fallback check ESP_DIR SAVED_DIR SHIM...
+        ESP_DIR    the mounted ESP's root (holding EFI/)
+        SAVED_DIR  where the other system's copy is kept
+        SHIM...    Pulsar's own fallback loaders (the image's shim copies)
+    pulsar-esp-fallback boot
+        the same, for this machine: finds the ESP beside /boot, mounts it
+        if it isn't, and uses /boot/pulsar/esp-fallback and the image's shims
+
+Prints what it did: "restored", "adopted" (a new copy saved), or "kept".
+"""
+
+import glob
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+REL = "EFI/BOOT/BOOTX64.EFI"
+
+
+def digest(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def check(esp, saved_dir, shims):
+    live = os.path.join(esp, REL)
+    saved = os.path.join(saved_dir, "BOOTX64.EFI")
+    if not os.path.isfile(saved):
+        return "nothing saved"
+    ours = {digest(s) for s in shims if os.path.isfile(s)}
+    if not ours:
+        # without the image's own shims there is no telling ours from theirs
+        return "kept (no shim to compare with)"
+    if not os.path.isfile(live) or digest(live) in ours:
+        os.makedirs(os.path.dirname(live), exist_ok=True)
+        tmp = live + ".pulsar-tmp"
+        shutil.copyfile(saved, tmp)
+        os.replace(tmp, live)
+        return "restored"
+    if digest(live) != digest(saved):
+        tmp = saved + ".pulsar-tmp"
+        shutil.copyfile(live, tmp)
+        os.replace(tmp, saved)
+        return "adopted"
+    return "kept"
+
+
+def image_shims():
+    return glob.glob("/usr/lib/efi/shim/*/EFI/BOOT/BOOTX64.EFI")
+
+
+def boot():
+    saved_dir = "/boot/pulsar/esp-fallback"
+    if not os.path.isfile(os.path.join(saved_dir, "BOOTX64.EFI")):
+        return "nothing saved"
+    if os.path.isdir("/boot/efi/EFI"):
+        return check("/boot/efi", saved_dir, image_shims())
+    src = subprocess.run(["findmnt", "-no", "SOURCE", "/boot"], capture_output=True, text=True).stdout.strip()
+    disk = subprocess.run(["lsblk", "-no", "PKNAME", src], capture_output=True, text=True).stdout.strip()
+    parts = subprocess.run(["lsblk", "-lnpo", "PATH,PARTTYPE", f"/dev/{disk}"], capture_output=True, text=True).stdout
+    esp = next((p.split()[0] for p in parts.splitlines()
+                if p.split()[-1].lower() == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"), None)
+    if not esp:
+        return "no EFI system partition beside /boot"
+    mnt = tempfile.mkdtemp(prefix="pulsar-esp-")
+    subprocess.run(["mount", esp, mnt], check=True)
+    try:
+        return check(mnt, saved_dir, image_shims())
+    finally:
+        subprocess.run(["umount", mnt])
+        os.rmdir(mnt)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["check"] and len(sys.argv) >= 4:
+        print(check(sys.argv[2], sys.argv[3], sys.argv[4:]))
+    elif sys.argv[1:] == ["boot"]:
+        print(boot())
+    else:
+        sys.exit(__doc__)

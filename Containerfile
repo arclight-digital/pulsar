@@ -664,13 +664,15 @@ COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 COPY scripts/pulsar-agent-gate /usr/libexec/pulsar/pulsar-agent-gate
 COPY scripts/pulsar-mcp /usr/libexec/pulsar/pulsar-mcp
 COPY scripts/steam-gpu-watch.sh /usr/libexec/pulsar/steam-gpu-watch.sh
+COPY scripts/pulsar-esp-fallback /usr/libexec/pulsar/pulsar-esp-fallback
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/flatpak-defaults.sh \
       /usr/libexec/pulsar/gamemode-group.sh \
       /usr/libexec/pulsar/alive-timeout.sh \
       /usr/libexec/pulsar/pulsar-agent-gate \
       /usr/libexec/pulsar/pulsar-mcp \
-      /usr/libexec/pulsar/steam-gpu-watch.sh && \
+      /usr/libexec/pulsar/steam-gpu-watch.sh \
+      /usr/libexec/pulsar/pulsar-esp-fallback && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
       { echo "FATAL: flatpaks.list ships no apps; pulsar-flatpaks.service would fail on every boot forever"; exit 1; } && \
     mkdir -p /usr/share/pulsar && \
@@ -998,6 +1000,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \
     systemctl enable pulsar-flatpaks.service && \
+    systemctl enable pulsar-esp-fallback.service && \
     systemctl enable pulsar-gamemode-group.service && \
     systemctl enable pulsar-update-auto.timer && \
     systemctl --global enable podman-auto-update.timer && \
