@@ -1,0 +1,208 @@
+#!/usr/bin/python3
+"""Install Pulsar onto a disk: everything after the user said yes. Root only.
+
+    pulsar-install-system --mode erase|alongside --key-file FILE \\
+        --source-imgref containers-storage:IMG --target-imgref REGISTRY/IMG DISK
+
+  1. alongside: the disk's EFI system partition must have room for Pulsar's
+     boot files (checked before anything is written)
+  2. pulsar-install-disk lays out the disk (it refuses any plan but ours)
+  3. the root is unlocked with the passphrase in FILE and mounted, with
+     /boot and the ESP under it
+  4. bootc installs the image. Its bootupd would delete EVERY firmware boot
+     entry named like ours ("Fedora": a Fedora installed beside us lost
+     its entry) before adding one, so it runs where efivarfs is read-only,
+     which bootupd takes as "leave the firmware alone"
+  5. if Windows is on the ESP, GRUB gets an entry for it
+  6. the firmware gets a "Pulsar" entry, replacing only older "Pulsar"
+     entries on this same ESP
+  7. everything is unmounted and the root locked again, failed or not
+
+PULSAR_BOOTC_PREFIX, if set, runs bootc through a wrapper (the test bench
+runs it in the image with podman); the default is the live system's own.
+"""
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+DISK_TOOL = os.environ.get("PULSAR_INSTALL_DISK", os.path.join(HERE, "pulsar-install-disk"))
+ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+ESP_MIN_FREE = 32 * 2**20      # the install writes ~13.5 MiB; room for bootupd updates
+WINDOWS_LOADER = "EFI/Microsoft/Boot/bootmgfw.efi"
+LABEL = "Pulsar"
+MAPPER = "pulsar-install-root"
+SCRATCH = "/run/pulsar-install"      # mount points for the target
+
+
+class Failed(Exception):
+    pass
+
+
+def run(*cmd, **kw):
+    print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
+    r = subprocess.run(cmd, text=True, capture_output=True, **kw)
+    if r.returncode != 0:
+        raise Failed(f"{cmd[0]} exited {r.returncode}: {(r.stderr or r.stdout).strip()[-500:]}")
+    return r.stdout
+
+
+def partitions(disk):
+    # lsblk lists flat or as a tree depending on the columns asked for:
+    # take every device whose parent is this disk, whichever it gave
+    real = os.path.realpath(disk)
+    out = json.loads(run("lsblk", "-J", "-p", "-o", "PATH,PKNAME,PARTTYPE,PARTN,PARTUUID,UUID,FSTYPE", real))
+
+    def walk(devs):
+        for d in devs:
+            yield d
+            yield from walk(d.get("children", []))
+    return [d for d in walk(out["blockdevices"]) if d.get("pkname") == real and d.get("partn")]
+
+
+def esp_of(disk):
+    esps = [p for p in partitions(disk) if (p.get("parttype") or "").lower() == ESP_TYPE]
+    if len(esps) != 1:
+        raise Failed(f"expected one EFI system partition on {disk}, found {len(esps)}")
+    return esps[0]
+
+
+def preflight_alongside(disk, scratch):
+    esp = esp_of(disk)
+    mnt = os.path.join(scratch, "esp-check")
+    os.makedirs(mnt)
+    run("mount", "-o", "ro", esp["path"], mnt)
+    try:
+        st = os.statvfs(mnt)
+        free = st.f_bavail * st.f_frsize
+    finally:
+        run("umount", mnt)
+    if free < ESP_MIN_FREE:
+        raise Failed(f"the EFI system partition has {free // 2**20} MiB free; Pulsar needs "
+                     f"{ESP_MIN_FREE // 2**20} MiB beside the system already on it")
+
+
+def bootc_install(target, source, target_ref, kargs):
+    # bootc mounts efivarfs itself (read-write) when it finds the path empty
+    # and leaves it be when it is populated; bootupd skips the firmware when
+    # it is read-only. So: mount it here as bootc would, read-write (it is
+    # one superblock system-wide, and a read-only mount of it would turn the
+    # host's read-only too), then make this one mount read-only with a bind
+    # remount, which touches no other.
+    v = "/sys/firmware/efi/efivars"
+    body = (f"if [ -d /sys/firmware/efi ]; then "
+            f"{{ [ -n \"$(ls -A {v} 2>/dev/null)\" ] || mount -t efivarfs efivarfs {v}; }} && "
+            f"mount -o remount,bind,ro {v} && [ \"$(findmnt -no OPTIONS {v} | cut -d, -f1)\" = ro ] "
+            f"|| {{ echo 'cannot make efivarfs read-only: not installing' >&2; exit 1; }}; fi; "
+            'exec "$@"')
+    cmd = ["bootc", "install", "to-filesystem", "--source-imgref", source, "--target-imgref", target_ref]
+    for k in kargs:
+        cmd += ["--karg", k]
+    cmd.append(target)
+    prefix = os.environ.get("PULSAR_BOOTC_PREFIX")
+    if prefix:
+        # the wrapper (podman run --privileged IMG) gives bootc its own mount
+        # namespace already; the remount happens inside it
+        run(*shlex.split(prefix), "sh", "-c", body, "sh", *cmd)
+    else:
+        run("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd)
+
+
+def windows_entry(target, esp):
+    efi = os.path.join(target, "boot/efi")
+    if not os.path.isfile(os.path.join(efi, WINDOWS_LOADER)):
+        return False
+    with open(os.path.join(target, "boot/grub2/custom.cfg"), "a") as f:
+        f.write(f"""
+menuentry 'Windows' --class windows --class os {{
+\tinsmod part_gpt
+\tinsmod fat
+\tinsmod chain
+\tsearch --no-floppy --fs-uuid --set=root {esp['uuid']}
+\tchainloader /{WINDOWS_LOADER}
+}}
+""")
+    return True
+
+
+def firmware_entry(disk, esp, target):
+    if not os.path.isdir("/sys/firmware/efi/efivars"):
+        return "not booted via EFI: no firmware entry"
+    efi = os.path.join(target, "boot/efi/EFI")
+    vendors = [d for d in os.listdir(efi) if d != "BOOT" and os.path.isfile(os.path.join(efi, d, "shimx64.efi"))]
+    if len(vendors) != 1:
+        raise Failed(f"expected one shim on the ESP, found {vendors}")
+    partuuid = esp["partuuid"].lower()
+    for line in run("efibootmgr", "-v").splitlines():
+        m = re.match(r"Boot([0-9A-Fa-f]{4})\*?\s+(.*?)\s+HD\(\d+,GPT,([0-9a-fA-F-]+)", line)
+        if m and m.group(2) == LABEL and m.group(3).lower() == partuuid:
+            run("efibootmgr", "-b", m.group(1), "-B")
+    run("efibootmgr", "--create", "--disk", disk, "--part", str(esp["partn"]),
+        "--loader", f"\\EFI\\{vendors[0]}\\shimx64.efi", "--label", LABEL)
+    return f"firmware entry {LABEL} -> \\EFI\\{vendors[0]}\\shimx64.efi"
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="pulsar-install-system")
+    ap.add_argument("--mode", required=True, choices=["erase", "alongside"])
+    ap.add_argument("--key-file", required=True)
+    ap.add_argument("--source-imgref", required=True)
+    ap.add_argument("--target-imgref", required=True)
+    ap.add_argument("--karg", action="append", default=[])
+    ap.add_argument("disk")
+    a = ap.parse_args()
+    if os.geteuid() != 0:
+        ap.error("needs root")
+    # not /tmp: bootc copies itself there to enter SELinux's install_t, and
+    # a wrapper that shares /tmp for the target's sake breaks that
+    os.makedirs(SCRATCH, mode=0o700, exist_ok=True)
+    scratch = tempfile.mkdtemp(prefix="install-", dir=SCRATCH)
+    target = os.path.join(scratch, "target")
+    mounted, opened = [], False
+    try:
+        if a.mode == "alongside":
+            preflight_alongside(a.disk, scratch)
+        plan = json.loads(run(DISK_TOOL, "apply", "--mode", a.mode, "--key-file", a.key_file, a.disk))
+        run("udevadm", "settle")
+        # the partitions this install made, by the partition UUIDs repart
+        # reports: never guessed from labels or order, which another system
+        # on the disk could share
+        made = {p["type"]: p["uuid"].lower() for p in plan if p["activity"] == "create"}
+        by_uuid = {(p.get("partuuid") or "").lower(): p for p in partitions(a.disk)}
+        root, boot = by_uuid.get(made.get("root-x86-64")), by_uuid.get(made.get("xbootldr"))
+        if not (root and boot):
+            raise Failed(f"cannot find the partitions just made ({made}) on {a.disk}")
+        esp = esp_of(a.disk)
+        run("cryptsetup", "open", "--key-file", a.key_file, root["path"], MAPPER)
+        opened = True
+        os.makedirs(target)
+        for dev, sub in ((f"/dev/mapper/{MAPPER}", ""), (boot["path"], "boot"), (esp["path"], "boot/efi")):
+            path = os.path.join(target, sub)
+            os.makedirs(path, exist_ok=True)
+            run("mount", dev, path)
+            mounted.append(path)
+        bootc_install(target, a.source_imgref, a.target_imgref, [f"rd.luks.uuid={root['uuid']}"] + a.karg)
+        # bootc finalizes the root read-only; GRUB's custom.cfg lives on /boot
+        run("mount", "-o", "remount,rw", os.path.join(target, "boot"))
+        win = windows_entry(target, esp)
+        fw = firmware_entry(a.disk, esp, target)
+        print(json.dumps({"ok": True, "windows_entry": win, "firmware": fw}))
+        return 0
+    except Failed as e:
+        print(f"pulsar-install-system: {e}", file=sys.stderr)
+        return 1
+    finally:
+        for path in reversed(mounted):
+            subprocess.run(["umount", path])
+        if opened:
+            subprocess.run(["cryptsetup", "close", MAPPER])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
