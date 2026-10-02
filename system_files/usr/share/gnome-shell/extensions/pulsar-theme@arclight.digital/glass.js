@@ -52,7 +52,9 @@ import Mtk from 'gi://Mtk';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
+import * as AltTab from 'resource:///org/gnome/shell/ui/altTab.js';
 import * as AppDisplay from 'resource:///org/gnome/shell/ui/appDisplay.js';
+import * as CloseDialog from 'resource:///org/gnome/shell/ui/closeDialog.js';
 import * as Background from 'resource:///org/gnome/shell/ui/background.js';
 import * as Dash from 'resource:///org/gnome/shell/ui/dash.js';
 import * as IBusCandidatePopup from 'resource:///org/gnome/shell/ui/ibusCandidatePopup.js';
@@ -1400,7 +1402,9 @@ class PulsarGlassMirror extends St.Widget {
 // that moves and fades (a menu's BoxPointer, an OSD window, the banner
 // bin); opts.box() is the styled surface inside it, opts.source() the
 // light's stage position, opts.divider() the date menu's column,
-// opts.tone() 'warn' / 'alert' / null, opts.frame() a still ancestor to
+// opts.tone() 'warn' / 'alert' / null, opts.follow() the actor whose
+// fade and scale the glass copies when that isn't the host (a dialog that
+// animates its box, not its layout), opts.frame() a still ancestor to
 // measure from when one between it and the host animates, opts.still a
 // surface that shows without the power-on trace (a tooltip, shown on every
 // hover).
@@ -1411,7 +1415,8 @@ class Surface {
         this._opts = opts;
         const parent = host.get_parent();
 
-        this._under = new Mirror(host);
+        const follow = opts.follow?.() ?? host;
+        this._under = new Mirror(follow);
         this._under.connect('destroy', () => (this._under = null));
         this._backdrop = new St.Widget({width: 1, height: 1});
         this._blur = new LiveBlur({lens: SURFACE_LENS, levels: SURFACE_LEVELS, offset: SURFACE_OFFSET});
@@ -1419,7 +1424,7 @@ class Surface {
         this._under.add_child(this._backdrop);
         parent.insert_child_below(this._under, host);
 
-        this._over = new Mirror(host);
+        this._over = new Mirror(follow);
         this._over.connect('destroy', () => (this._over = null));
         this._lightActor = new St.Widget({width: 1, height: 1});
         this._light = new LightEffect();
@@ -1436,6 +1441,10 @@ class Surface {
             'notify::mapped', () => this._queue(),
             'destroy', () => owner.forget(this),
             this);
+        // a surface keyed by something other than its host (Alt+Tab's
+        // thumbnails) goes with that, not with the host that outlives it
+        if (opts.key && opts.key !== host)
+            opts.key.connectObject('destroy', () => owner.forget(this), this);
         this._rebox();
         this.sync();
         this._shown();
@@ -1443,6 +1452,10 @@ class Surface {
 
     get host() {
         return this._host;
+    }
+
+    get key() {
+        return this._opts.key ?? this._host;
     }
 
     // The styled surface can change under the same host (a new banner).
@@ -1670,6 +1683,8 @@ class Surface {
         this._later = 0;
         this._box?.disconnectObject(this);
         this._host.disconnectObject(this);
+        if (this._opts.key && this._opts.key !== this._host)
+            this._opts.key.disconnectObject(this);
         // At Shell exit the host's parent may have destroyed them already.
         for (const m of [this._under, this._over]) {
             m?.unbind();
@@ -2326,7 +2341,7 @@ export class Glass {
     constructor(settings, injections) {
         this._settings = settings;
         Views.watch();
-        this._surfaces = new Map();     // host -> Surface
+        this._surfaces = new Map();     // host (or opts.key) -> Surface
         this._panel = null;
         this._brackets = null;
         this._windows = new Map();      // window actor -> WindowGlass
@@ -2387,8 +2402,18 @@ export class Glass {
                 return ret;
             });
         after(SwitcherPopup.SwitcherPopup.prototype, 'show', this._trackSwitcher);
+        // Alt+Tab on an app with several windows opens a second list, the
+        // windows' thumbnails, made new each time and long after show().
+        // The sheet clears every .switcher-list, so without its own glass it
+        // was a bare row of previews.
+        after(AltTab.AppSwitcherPopup.prototype, '_createThumbnails', this._trackThumbnails);
         after(WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype, 'display', this._trackWorkspaces);
         after(ModalDialog.ModalDialog.prototype, 'open', this._trackDialog);
+        // "Not responding" is a Dialog of its own over the window, not a
+        // ModalDialog, but it carries .modal-dialog, which the sheet clears.
+        // (_initDialog, not vfunc_show: GJS reads a vfunc when the class is
+        // registered, so replacing one on the prototype is never called.)
+        after(CloseDialog.CloseDialog.prototype, '_initDialog', this._trackCloseDialog);
         after(AppDisplay.AppFolderDialog.prototype, 'popup', this._trackFolder);
         after(IBusCandidatePopup.CandidatePopup.prototype, 'open', this._trackCandidates);
         after(Dash.DashItemContainer.prototype, 'showLabel', this._trackDashLabel);
@@ -2667,10 +2692,11 @@ export class Glass {
 
     // Surfaces are made lazily, the first time each is shown with an effect on.
     _add(host, opts) {
-        if (!host || this._surfaces.has(host) || !(this.glass || this.lighting) || !host.get_parent())
+        const key = opts.key ?? host;
+        if (!host || this._surfaces.has(key) || !(this.glass || this.lighting) || !host.get_parent())
             return null;
         const s = new Surface(this, host, opts);
-        this._surfaces.set(host, s);
+        this._surfaces.set(key, s);
         return s;
     }
 
@@ -2722,6 +2748,17 @@ export class Glass {
             this._add(popup, {box: () => list, source: () => null, tone: () => this._battery});
     }
 
+    // The thumbnails list under Alt+Tab's apps. Its glass stands beside the
+    // popup, as the apps' list's does: inside it, the popup's allocate
+    // (which places only the lists it knows) would never place the mirrors.
+    // Keyed by the list, which comes and goes while the popup stays, and
+    // following it, since it fades in and out on its own.
+    _trackThumbnails(popup) {
+        const list = popup._thumbnails;
+        if (list)
+            this._add(popup, {key: list, box: () => list, follow: () => list, source: () => null, tone: () => this._battery});
+    }
+
     // The input method's candidates: a BoxPointer of its own, not a menu's,
     // so the menu hook never sees it. Lit from the text it follows.
     _trackCandidates(popup) {
@@ -2757,6 +2794,16 @@ export class Glass {
         const layout = dialog.dialogLayout;
         if (layout?._dialog)
             this._add(layout, {box: () => layout._dialog, source: () => null, tone: () => this._battery});
+    }
+
+    // The "not responding" dialog: a layout the size of the window, inside
+    // the window actor. It scales and fades its box, not the layout, so the
+    // glass copies the box (centered in the layout, so the pivots agree).
+    _trackCloseDialog(close) {
+        const layout = close._dialog;
+        const box = layout?._dialog;
+        if (box)
+            this._add(layout, {box: () => box, follow: () => box, source: () => null, tone: () => this._battery});
     }
 
     // An app folder, lit from the folder it opened from. The dialog is an
@@ -2989,7 +3036,7 @@ export class Glass {
 
     forget(surface) {
         surface.destroy();
-        this._surfaces.delete(surface.host);
+        this._surfaces.delete(surface.key);
     }
 
     _sync() {
