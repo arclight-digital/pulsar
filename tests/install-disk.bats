@@ -191,3 +191,45 @@ print(t["id"]); [print(p["uuid"]) for p in t["partitions"]]'; }
     [ "$(echo "$a" | wc -l)" -eq 5 ]
     [ -z "$(comm -12 <(echo "$a") <(echo "$b"))" ]
 }
+
+# pulsar-install-system's clean-up after a failed install, which needs no
+# root: it only edits the partition table
+remove_made() {
+    python3 - "$@" <<'PY'
+import importlib.machinery as M, importlib.util as U, sys
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+m.subprocess.run = (lambda real: lambda c, *a, **k: real(c, *a, **k) if c[0] != "udevadm" else None)(m.subprocess.run)
+print("\n".join(m.remove_made(sys.argv[2], set(sys.argv[3:]))))
+PY
+}
+
+@test "a failed alongside install takes back its partitions: Windows as it was, and a retry works" {
+    windows_disk "$T/w.img" 1G 2000000 300MiB
+    before=$(fingerprints "$T/w.img"; sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :')
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+    made=$(echo "$output" | python3 -c 'import json,sys
+print(" ".join(p["uuid"] for p in json.load(sys.stdin) if p["activity"] == "create"))')
+    [ "$(echo $made | wc -w)" -eq 2 ]
+    # (the install would now fail in bootc; this is its clean-up)
+    run --separate-stderr remove_made "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" "$T/w.img" $made
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | wc -l)" -eq 2 ]
+    [ "$(fingerprints "$T/w.img"; sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :')" = "$before" ]
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+}
+
+@test "clean-up removes only the partitions it was given, never another system's or an older Pulsar's" {
+    windows_disk "$T/w.img" 1G 2000000 300MiB
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+    before=$(sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :')
+    [ "$(echo "$before" | wc -l)" -eq 6 ]
+    # UUIDs that are on no partition of this disk: nothing goes
+    run --separate-stderr remove_made "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" "$T/w.img" \
+        00000000-0000-0000-0000-000000000001 "$(cat /proc/sys/kernel/random/uuid)"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(sfdisk -d "$T/w.img" | grep -E '^\S+[0-9] :')" = "$before" ]
+}

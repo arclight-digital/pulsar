@@ -39,3 +39,9 @@ that never unlocked.
 
 Not mounted on `/tmp` in the wrapper: bootc copies itself there to enter
 SELinux's install_t, and sharing the host's `/tmp` breaks that.
+
+After an install the target's "Pulsar" entry is first in the bench VM's
+own firmware, so the next bench boot starts Pulsar from the target (and
+waits at its passphrase prompt). Blank the target qcow2 before booting the
+bench again, or put the bench's entry back first with `efibootmgr -o`
+before shutting down.

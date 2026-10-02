@@ -148,6 +148,24 @@ def firmware_entry(disk, esp, target):
     return f"firmware entry {LABEL} -> \\EFI\\{vendors[0]}\\shimx64.efi"
 
 
+def remove_made(disk, made):
+    """Take back the partitions this install made, by the partition UUIDs
+    repart reported for them and nothing else: a failed install must leave
+    the disk as it found it (alongside) or blank (erase), never half-made,
+    since a retry refuses a disk where Pulsar's partitions already exist."""
+    if not made:
+        return []
+    table = json.loads(run("sfdisk", "-J", disk))["partitiontable"]
+    gone = []
+    for p in table.get("partitions", []):
+        if p.get("uuid", "").lower() in made:
+            n = re.search(r"(\d+)$", p["node"]).group(1)
+            run("sfdisk", "--delete", disk, n)
+            gone.append(p["uuid"].lower())
+    subprocess.run(["udevadm", "settle"])
+    return gone
+
+
 def main():
     ap = argparse.ArgumentParser(prog="pulsar-install-system")
     ap.add_argument("--mode", required=True, choices=["erase", "alongside"])
@@ -164,7 +182,7 @@ def main():
     os.makedirs(SCRATCH, mode=0o700, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="install-", dir=SCRATCH)
     target = os.path.join(scratch, "target")
-    mounted, opened = [], False
+    mounted, opened, made, ok = [], False, set(), False
     try:
         if a.mode == "alongside":
             preflight_alongside(a.disk, scratch)
@@ -173,11 +191,12 @@ def main():
         # the partitions this install made, by the partition UUIDs repart
         # reports: never guessed from labels or order, which another system
         # on the disk could share
-        made = {p["type"]: p["uuid"].lower() for p in plan if p["activity"] == "create"}
+        made_by_type = {p["type"]: p["uuid"].lower() for p in plan if p["activity"] == "create"}
+        made = set(made_by_type.values())
         by_uuid = {(p.get("partuuid") or "").lower(): p for p in partitions(a.disk)}
-        root, boot = by_uuid.get(made.get("root-x86-64")), by_uuid.get(made.get("xbootldr"))
+        root, boot = by_uuid.get(made_by_type.get("root-x86-64")), by_uuid.get(made_by_type.get("xbootldr"))
         if not (root and boot):
-            raise Failed(f"cannot find the partitions just made ({made}) on {a.disk}")
+            raise Failed(f"cannot find the partitions just made ({made_by_type}) on {a.disk}")
         esp = esp_of(a.disk)
         run("cryptsetup", "open", "--key-file", a.key_file, root["path"], MAPPER)
         opened = True
@@ -192,6 +211,7 @@ def main():
         run("mount", "-o", "remount,rw", os.path.join(target, "boot"))
         win = windows_entry(target, esp)
         fw = firmware_entry(a.disk, esp, target)
+        ok = True
         print(json.dumps({"ok": True, "windows_entry": win, "firmware": fw}))
         return 0
     except Failed as e:
@@ -202,6 +222,12 @@ def main():
             subprocess.run(["umount", path])
         if opened:
             subprocess.run(["cryptsetup", "close", MAPPER])
+        if not ok and made:
+            try:
+                gone = remove_made(a.disk, made)
+                print(f"pulsar-install-system: removed the {len(gone)} partitions this install made", file=sys.stderr)
+            except Failed as e:
+                print(f"pulsar-install-system: could not remove the partitions this install made: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
