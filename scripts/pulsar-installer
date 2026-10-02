@@ -184,6 +184,12 @@ def options(d):
     return {"alongside": along, "erase": erase}
 
 
+def install_fraction(copied):
+    """The bar during the copy, which is most of the install: from where the
+    copy starts (0.12) to where setting up startup begins (0.94)."""
+    return 0.12 + max(0.0, min(1.0, copied)) * (0.94 - 0.12)
+
+
 def passphrase_hint(a, b):
     """What to say under the two entries: nothing about a mismatch until
     the second one has been started."""
@@ -475,13 +481,10 @@ def main():
                 self.stage.set_label(text)
                 self.bar.set_fraction(frac)
                 self.in_install = st == "install"
+            elif "progress" in ev and getattr(self, "in_install", False):
+                self.bar.set_fraction(max(self.bar.get_fraction(), install_fraction(ev["progress"])))
             elif "log" in ev:
                 self.logline.set_label(ev["log"])
-                if getattr(self, "in_install", False):
-                    # bootc says nothing countable here; creep toward the
-                    # next stage so the bar never sits still or overshoots
-                    f = self.bar.get_fraction()
-                    self.bar.set_fraction(min(0.9, f + (0.9 - f) * 0.02))
 
         def _tick(self):
             s = int(time.monotonic() - self.started)

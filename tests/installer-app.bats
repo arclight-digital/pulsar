@@ -106,3 +106,7 @@ PY
     [ "$(py 'm.passphrase_hint("short", "")')" = "At least 8 characters" ]
     [ "$(py 'm.passphrase_hint("correct horse", "correct")')" = "The two don't match" ]
 }
+
+@test "the copy's progress fills the bar between its start and the boot setup" {
+    [ "$(py 'round(m.install_fraction(0), 2), round(m.install_fraction(0.5), 2), round(m.install_fraction(1), 2), round(m.install_fraction(7), 2)')" = "(0.12, 0.53, 0.94, 0.94)" ]
+}

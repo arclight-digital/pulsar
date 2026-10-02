@@ -38,6 +38,8 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 DISK_TOOL = os.environ.get("PULSAR_INSTALL_DISK", os.path.join(HERE, "pulsar-install-disk"))
@@ -57,15 +59,52 @@ def emit(**event):
     print(json.dumps(event), flush=True)
 
 
-def run_stream(*cmd):
-    """run(), with each output line passed on as a progress event."""
+UNITS = {"B": 1, "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
+
+
+def payload_bytes(line):
+    """The size bootc announces it will copy: "layers needed: 201 (7.8 GB)"."""
+    m = re.search(r"layers needed: \d+ \(([\d.]+) ?([KMGT]?B)\)", line)
+    return round(float(m.group(1)) * UNITS[m.group(2)]) if m else None
+
+
+def copied_fraction(used, base, expected):
+    """How far the copy has got: what has landed on the new root since it
+    started, over what bootc said it needs. The installed root measured
+    1.02x the announced size, so this tracks; it stays under 1 until bootc
+    itself says it is done."""
+    if not expected or used <= base:
+        return 0.0
+    return min(0.99, (used - base) / expected)
+
+
+def run_stream(*cmd, watch=None):
+    """run(), with each output line passed on as a progress event. watch,
+    a mounted path: while it runs, how much of the announced copy has landed
+    there, as {"progress": 0..1}."""
     print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
-    tail = []
+    tail, expected = [], [None]
+    if watch:
+        def used():
+            st = os.statvfs(watch)
+            return (st.f_blocks - st.f_bfree) * st.f_frsize
+        base = used()
+
+        def poll():
+            last = -1.0
+            while p.poll() is None:
+                f = copied_fraction(used(), base, expected[0])
+                if f - last >= 0.005:
+                    emit(progress=round(f, 3))
+                    last = f
+                time.sleep(1)
+        threading.Thread(target=poll, daemon=True).start()
     for line in p.stdout:
         line = line.rstrip()
         if line:
             emit(log=line)
+            expected[0] = expected[0] or payload_bytes(line)
             tail = (tail + [line])[-8:]
     if p.wait() != 0:
         raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:])
@@ -135,9 +174,9 @@ def bootc_install(target, source, target_ref, kargs):
     if prefix:
         # the wrapper (podman run --privileged IMG) gives bootc its own mount
         # namespace already; the remount happens inside it
-        run_stream(*shlex.split(prefix), "sh", "-c", body, "sh", *cmd)
+        run_stream(*shlex.split(prefix), "sh", "-c", body, "sh", *cmd, watch=target)
     else:
-        run_stream("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd)
+        run_stream("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd, watch=target)
 
 
 def live_setting(path, key, default):
