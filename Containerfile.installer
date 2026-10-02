@@ -17,6 +17,8 @@ FROM ${IMAGE}
 ARG PAYLOAD_SOURCE=containers-storage:ghcr.io/arclight-digital/pulsar:latest
 ARG PAYLOAD_TARGET=ghcr.io/arclight-digital/pulsar:latest
 ARG VARIANT=vanilla
+# the payload's unpacked size, for the install's progress bar (0: unknown)
+ARG PAYLOAD_SIZE=0
 
 RUN dnf5 install -y --setopt=install_weak_deps=False \
       dracut-live grub2-efi-x64-cdboot squashfs-tools xorriso isomd5sum && \
@@ -43,8 +45,8 @@ COPY scripts/pulsar-installer /usr/bin/pulsar-installer
 COPY system_files.installer/ /
 RUN chmod 0755 /usr/libexec/pulsar/pulsar-install-disk /usr/libexec/pulsar/pulsar-install-system \
       /usr/bin/pulsar-installer && \
-    printf '{"source": "%s", "target": "%s", "variant": "%s"}\n' \
-      "${PAYLOAD_SOURCE}" "${PAYLOAD_TARGET}" "${VARIANT}" > /usr/share/pulsar/installer/payload.json && \
+    printf '{"source": "%s", "target": "%s", "variant": "%s", "size": %s}\n' \
+      "${PAYLOAD_SOURCE}" "${PAYLOAD_TARGET}" "${VARIANT}" "${PAYLOAD_SIZE}" > /usr/share/pulsar/installer/payload.json && \
     python3 -m json.tool /usr/share/pulsar/installer/payload.json >/dev/null
 
 # The live session's one account: no password, logged in by GDM, past

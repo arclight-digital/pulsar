@@ -467,8 +467,9 @@ def main():
             page.set_can_pop(False)
             self.nav.push(page)
             self.tick = GLib.timeout_add(500, self._tick)
+            extra = ["--expected-bytes", str(self.payload["size"])] if self.payload.get("size") else []
             self.run(self.backend("--key-file", self.key_path, "--source-imgref", self.payload["source"],
-                                  "--target-imgref", self.payload["target"]), self.installed, self.progress)
+                                  "--target-imgref", self.payload["target"], *extra), self.installed, self.progress)
 
         STAGES = {"check": ("Checking the disk", 0.02), "disk": ("Partitioning and encrypting", 0.06),
                   "unlock": ("Unlocking the new disk", 0.10), "install": ("Copying Pulsar", 0.12),

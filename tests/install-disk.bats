@@ -304,7 +304,7 @@ PY
     run python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" <<'PY'
 import importlib.machinery as M, importlib.util as U, sys
 l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
-print(m.payload_bytes("layers already present: 0; layers needed: 201 (7.8 GB)"))
+print(m.payload_bytes("layers already present: 0; layers needed: 201 (7.8\u00a0GB)"))
 print(m.payload_bytes("layers already present: 3; layers needed: 12 (512 MB)"))
 print(m.payload_bytes("Fetching layer sha256:abc"))
 G = 10**9
@@ -312,6 +312,7 @@ print(m.copied_fraction(1 * G, 1 * G, 7.8 * G), m.copied_fraction(4.9 * G, 1 * G
       m.copied_fraction(20 * G, 1 * G, 7.8 * G), m.copied_fraction(3 * G, 1 * G, None))
 PY
     [ "$status" -eq 0 ]
+    # bootc's own line, with its no-break space: a plain space hid this
     [ "${lines[0]}" = "7800000000" ]
     [ "${lines[1]}" = "512000000" ]
     [ "${lines[2]}" = "None" ]

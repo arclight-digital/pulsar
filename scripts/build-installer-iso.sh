@@ -78,7 +78,8 @@ podman image exists "$PAYLOAD" || podman pull "$PAYLOAD"
 podman image exists "$IMAGE" || podman pull "$IMAGE"
 podman build --pull=never -t localhost/pulsar-installer:build -f "$ctx/Containerfile.installer" \
   --build-arg IMAGE="$IMAGE" --build-arg PAYLOAD_SOURCE="containers-storage:$PAYLOAD" \
-  --build-arg PAYLOAD_TARGET="$TARGET" --build-arg VARIANT="$VARIANT" "$ctx"
+  --build-arg PAYLOAD_TARGET="$TARGET" --build-arg VARIANT="$VARIANT" \
+  --build-arg PAYLOAD_SIZE="$(podman image inspect --format '{{.Size}}' "$PAYLOAD")" "$ctx"
 
 mkdir -p "$OUT"
 image-builder build --bootc-ref localhost/pulsar-installer:build \

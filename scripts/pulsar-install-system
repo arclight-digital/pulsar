@@ -64,7 +64,8 @@ UNITS = {"B": 1, "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
 
 def payload_bytes(line):
     """The size bootc announces it will copy: "layers needed: 201 (7.8 GB)"."""
-    m = re.search(r"layers needed: \d+ \(([\d.]+) ?([KMGT]?B)\)", line)
+    # bootc puts a no-break space (U+00A0) between number and unit
+    m = re.search(r"layers needed: \d+ \(([\d.]+)[\s\u00a0]*([KMGT]?B)\)", line)
     return round(float(m.group(1)) * UNITS[m.group(2)]) if m else None
 
 
@@ -78,13 +79,13 @@ def copied_fraction(used, base, expected):
     return min(0.99, (used - base) / expected)
 
 
-def run_stream(*cmd, watch=None):
+def run_stream(*cmd, watch=None, expected_bytes=None):
     """run(), with each output line passed on as a progress event. watch,
     a mounted path: while it runs, how much of the announced copy has landed
     there, as {"progress": 0..1}."""
     print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
-    tail, expected = [], [None]
+    tail, expected = [], [expected_bytes]
     if watch:
         def used():
             st = os.statvfs(watch)
@@ -104,7 +105,11 @@ def run_stream(*cmd, watch=None):
         line = line.rstrip()
         if line:
             emit(log=line)
-            expected[0] = expected[0] or payload_bytes(line)
+            # the larger of what bootc announces (compressed, from some
+            # sources: 3.3 GB for an 8 GB install) and what the ISO measured
+            announced = payload_bytes(line)
+            if announced:
+                expected[0] = max(announced, expected[0] or 0)
             tail = (tail + [line])[-8:]
     if p.wait() != 0:
         raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:])
@@ -153,7 +158,7 @@ def preflight_alongside(disk, scratch):
                      f"{ESP_MIN_FREE // 2**20} MiB beside the system already on it")
 
 
-def bootc_install(target, source, target_ref, kargs):
+def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
     # bootc mounts efivarfs itself (read-write) when it finds the path empty
     # and leaves it be when it is populated; bootupd skips the firmware when
     # it is read-only. So: mount it here as bootc would, read-write (it is
@@ -174,9 +179,10 @@ def bootc_install(target, source, target_ref, kargs):
     if prefix:
         # the wrapper (podman run --privileged IMG) gives bootc its own mount
         # namespace already; the remount happens inside it
-        run_stream(*shlex.split(prefix), "sh", "-c", body, "sh", *cmd, watch=target)
+        run_stream(*shlex.split(prefix), "sh", "-c", body, "sh", *cmd, watch=target, expected_bytes=expected_bytes)
     else:
-        run_stream("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd, watch=target)
+        run_stream("unshare", "--mount", "--propagation", "private", "sh", "-c", body, "sh", *cmd, watch=target,
+                   expected_bytes=expected_bytes)
 
 
 def live_setting(path, key, default):
@@ -309,6 +315,7 @@ def main():
     ap.add_argument("--source-imgref")
     ap.add_argument("--target-imgref")
     ap.add_argument("--karg", action="append", default=[])
+    ap.add_argument("--expected-bytes", type=int, help="the payload's unpacked size, for progress")
     ap.add_argument("--lang", help="the installed system's LANG (default: the live system's)")
     ap.add_argument("--keymap", help="its console keymap (default: the live system's)")
     ap.add_argument("disk")
@@ -359,7 +366,7 @@ def main():
         # comes from Anaconda's kickstart, not the image; without them the
         # prompt sat in the boot log's text
         bootc_install(target, a.source_imgref, a.target_imgref,
-                      [f"rd.luks.uuid={root['uuid']}", "rhgb", "quiet"] + a.karg)
+                      [f"rd.luks.uuid={root['uuid']}", "rhgb", "quiet"] + a.karg, a.expected_bytes)
         # bootc finalizes the root read-only; GRUB's custom.cfg lives on /boot
         emit(stage="boot")
         run("mount", "-o", "remount,rw", os.path.join(target, "boot"))
