@@ -64,6 +64,9 @@ seed_decoy() {
 @test "only the half that drifted is rewritten" {
     "$SCRIPT"
     pub_inode=$(stat -c %i "$PUB")
+    # A new file, as akmods-keygen writes one: the script leaves the key
+    # 0400, which only root could write into in place.
+    rm -f "$PRIV"
     printf 'decoy private key from akmods-keygen\n' > "$PRIV"
     run "$SCRIPT"
     [ "$status" -eq 0 ]
