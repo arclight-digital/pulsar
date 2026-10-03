@@ -1650,14 +1650,15 @@ def overview_glass():
     eval_js(f"{find}.meta_window.move_resize_frame(false, 40, 120, {int(w * 0.24)}, {int(h * 0.45)}); 1")
     time.sleep(2.5)
 
-    def mean(png, rect):
-        """Mean R and G over the middle third of rect: away from text and edges."""
+    def mean(png, rect, fx=(1 / 3, 2 / 3)):
+        """Mean R and G over the middle third of rect, away from text and
+        edges; fx, the part of its width (default the middle third)."""
         img = GdkPixbuf.Pixbuf.new_from_file(str(png))
         x, y, rw, rh = (int(v) for v in rect)
         px, n, stride = img.get_pixels(), img.get_n_channels(), img.get_rowstride()
         r = g = c = 0
         for yy in range(y + rh // 3, y + 2 * rh // 3, 6):
-            for xx in range(x + rw // 3, x + 2 * rw // 3, 6):
+            for xx in range(x + int(rw * fx[0]), x + int(rw * fx[1]), 6):
                 o = yy * stride + xx * n
                 r += px[o]; g += px[o + 1]; c += 1
         return round(r / c, 1), round(g / c, 1)
@@ -1669,13 +1670,23 @@ def overview_glass():
     eval_js("Main.overview.show(); 1")
     wait_for("Main.overview.visible && !Main.overview.animationInProgress", secs=10)
     time.sleep(2.5)
-    prev, why = eval_json(f"(() => {{ const src = {find}; let hit = null; "
-                          # the big preview: the largest clone (the workspace thumbnail's is tiny)
-                          "const walk = a => { if (a instanceof imports.gi.Clutter.Clone && a.source === src && "
-                          "(!hit || a.get_transformed_size()[0] > hit.get_transformed_size()[0])) hit = a; "
-                          "a.get_children().forEach(walk); }; walk(Main.layoutManager.overviewGroup); "
-                          "if (!hit) return JSON.stringify(null); const [x, y] = hit.get_transformed_position(); "
-                          "const [w, h] = hit.get_transformed_size(); return JSON.stringify([x, y, w, h]); })()")
+    def preview():
+        """The big preview's place on the screen: the largest clone (the
+        workspace thumbnail's is tiny)."""
+        return eval_json(f"(() => {{ const src = {find}; let hit = null; "
+                         "const walk = a => { if (a instanceof imports.gi.Clutter.Clone && a.source === src && "
+                         "(!hit || a.get_transformed_size()[0] > hit.get_transformed_size()[0])) hit = a; "
+                         "a.get_children().forEach(walk); }; walk(Main.layoutManager.overviewGroup); "
+                         "if (!hit) return JSON.stringify(null); const [x, y] = hit.get_transformed_position(); "
+                         "const [w, h] = hit.get_transformed_size(); return JSON.stringify([x, y, w, h]); })()")
+
+    def overview(show):
+        eval_js(f"Main.overview.{'show' if show else 'hide'}(); 1")
+        wait_for("Main.overview.visible && !Main.overview.animationInProgress" if show else "!Main.overview.visible",
+                 secs=10)
+        time.sleep(2.5 if show else 1.5)
+
+    prev, why = preview()
     add("the window has a preview in the overview", bool(prev), f"{prev or why}")
     if prev:
         ov = mean(screenshot("overview-glass-overview"), prev)
@@ -1683,7 +1694,30 @@ def overview_glass():
         add("the preview sits over the green band", w * 0.3 < centre < w * 0.7, f"preview {prev}")
         add("in the overview the preview's glass shows what is beneath the preview, not the red it left",
             ov[1] > ov[0] + 8, f"R,G = {ov}")
-    eval_js("Main.overview.hide(); 1")
+    overview(False)
+    # A window shrunk to under half its size: its preview's glass is blurred
+    # afresh, not the big window's old blur squeezed into it (it was taken
+    # for the workspace thumbnail, by its size against the big preview's).
+    # Big, its preview runs out over the red sides; small, it sits wholly on
+    # the green, so a squeezed old blur shows red at the preview's sides.
+    eval_js(f"{find}.meta_window.move_resize_frame(false, 40, 80, {int(w * 0.8)}, {int(h * 0.8)}); 1")
+    time.sleep(2)
+    overview(True)
+    big = preview()[0]
+    overview(False)
+    eval_js(f"{find}.meta_window.move_resize_frame(false, 40, 120, {int(w * 0.2)}, {int(h * 0.25)}); 1")
+    time.sleep(2)
+    overview(True)
+    small, why = preview()
+    if big and small:
+        shot = screenshot("overview-glass-shrunk")
+        sides = [mean(shot, small, fx) for fx in ((0.08, 0.2), (0.8, 0.92))]
+        add("the preview is under half the size it had", small[2] < big[2] / 2, f"{big[2]:.0f} then {small[2]:.0f}")
+        add("a shrunk window's preview is frosted afresh, green out to its sides",
+            all(g > r + 8 for r, g in sides), f"R,G at its sides = {sides}")
+    else:
+        add("the shrunk window has a preview in the overview", False, f"{small or why}")
+    overview(False)
     kill_apps()
     stop_shell()
     bad = shell_log_problems("overview-glass")

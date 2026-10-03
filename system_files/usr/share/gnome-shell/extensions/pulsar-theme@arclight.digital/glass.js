@@ -732,6 +732,14 @@ class PulsarLiveBlur extends Clutter.Effect {
         this.queue_repaint();
     }
 
+    // the big preview's kept blur: the larger of the two
+    _bigPreview() {
+        const ps = this._previews;
+        if (!ps)
+            return null;
+        return (ps[1].key[2] || 0) > (ps[0].key[2] || 0) ? ps[1] : ps[0];
+    }
+
     vfunc_modify_paint_volume(volume) {
         // The actors this draws on are empty: their volume is their own
         // box, at their origin. Set outright, from one kept point.
@@ -801,7 +809,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (!actor) {
             this._states.clear();
             this._last = null;
-            this._preview = null;
+            this._previews = null;
         }
         super.vfunc_set_actor(actor);
     }
@@ -824,7 +832,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         // blur.
         const clone = inClonePaint(actor);
         if (!Views.get(fb) && (clone || this._last?.result)) {
-            const s = clone && this._preview?.result ? this._preview : this._last;
+            const s = clone && this._bigPreview()?.result ? this._bigPreview() : this._last;
             if (s?.result)
                 this._draw(fb, actor, x0, y0, w, h, s);
             return;
@@ -849,14 +857,18 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (clone) {
             if (!onView)
                 return;
-            s = this._preview ??= {copy: null, result: null, key: [NaN, NaN, NaN, NaN], hw: 0, hh: 0};
-            // The workspace thumbnail shows the big preview's blur rather
-            // than redo it: two previews blurring into one kept copy would
-            // each find it moved, and blur whole, every frame.
-            if (s.result && r.w < s.key[2] / 2) {
-                this._draw(fb, actor, x0, y0, w, h, s);
-                return;
-            }
+            // The big preview and the workspace thumbnail each keep their
+            // own copy: blurring both into one, each would find it moved and
+            // blur it whole every frame. Each takes the one already its size,
+            // else the one the other did not paint with last. (Telling them
+            // apart by size against the big one's last size, a window shrunk
+            // to under half had its preview taken for the thumbnail, and it
+            // showed the big window's old blur squeezed into it, for good.)
+            const ps = this._previews ??= [0, 1].map(() =>
+                ({copy: null, result: null, key: [NaN, NaN, NaN, NaN], hw: 0, hh: 0, used: 0}));
+            s = ps.find(q => q.key[2] === r.w && q.key[3] === r.h) ??
+                (ps[0].used <= ps[1].used ? ps[0] : ps[1]);
+            s.used = this._previewTick = (this._previewTick ?? 0) + 1;
         } else if (onView) {
             if (this._gen !== Views.gen) {
                 this._states.clear();
@@ -953,8 +965,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         // overview: its next paint copies all of it again
         if (onView && !clone) {
             this._last = s;
-            if (this._preview)
-                this._preview.key[0] = NaN;
+            for (const q of this._previews ?? [])
+                q.key[0] = NaN;
         }
         this._draw(fb, actor, x0, y0, w, h, s);
     }
