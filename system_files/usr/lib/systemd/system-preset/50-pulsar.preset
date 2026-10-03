@@ -15,5 +15,6 @@ enable greenboot-healthcheck.service
 enable pulsar-flatpaks.service
 enable pulsar-esp-fallback.service
 enable pulsar-gamemode-group.service
+enable pulsar-steam-grants.service
 enable pulsar-update-auto.timer
 disable NetworkManager-wait-online.service

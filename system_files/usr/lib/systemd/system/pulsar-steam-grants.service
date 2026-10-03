@@ -1,0 +1,13 @@
+# Grants Flatpak Steam the image's gg, ggm and gamescale, every boot. The
+# script says why it is a merged system override and not a shipped file.
+[Unit]
+Description=Let Flatpak Steam run gg, ggm and gamescale from the image
+ConditionPathExists=/usr/bin/flatpak
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/steam-grants.sh
+
+[Install]
+WantedBy=multi-user.target

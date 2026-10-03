@@ -431,17 +431,17 @@ RUN for attempt in 1 2 3; do \
 # gamescale.sh, with extension/metadata.json under it. That is not a spare
 # copy for its own sake:
 #
-# A Flatpak launcher can never reach /usr/bin/gamescale. Flatpak reserves
-# /usr for the runtime and refuses to bind the host's over it ("Path /usr is
-# reserved by Flatpak"), so a sandbox-visible copy under $HOME is not a
-# preference, it is the only arrangement that works. Granting a launcher
-# therefore always means running the installer.
+# A Flatpak launcher cannot bind the host's /usr/bin (Flatpak reserves /usr
+# for the runtime), but with host-os:ro it sees the host's /usr at
+# /run/host/usr. Steam gets that from pulsar-steam-grants.service, with
+# /usr/lib/pulsar/sandbox-bin (below) on its PATH, so Steam runs THIS copy and
+# needs no install. gamescale 2.0.3 hands the host the /usr path when it
+# starts its watchdog from there.
 #
-# Staged here, that install runs OFFLINE against these pinned, hash-verified
-# files instead of curling main. So the ~/.local copy is a projection of the
-# image's copy rather than an independently downloaded second version, and
-# `pulsar setup gamescale` can be a thin wrapper over upstream's own logic
-# rather than a reimplementation of its flatpak grants that drifts.
+# Other launchers still go through upstream's installer, which copies into
+# ~/.local/bin. Staged here, it runs OFFLINE against these pinned,
+# hash-verified files instead of curling main, and `pulsar setup gamescale`
+# stays a thin wrapper over upstream's own logic.
 # ---------------------------------------------------------------------------
 #
 # Every fetch goes through get(), which is curl with retries. github.com and
@@ -449,7 +449,7 @@ RUN for attempt in 1 2 3; do \
 # seven round trips here -- seven chances for one blip to cost the build. The
 # sha256sum block below is unchanged and still decides what is acceptable, so
 # retrying can only affect whether bytes arrive, never which bytes count.
-ARG GAMESCALE_VERSION=v2.0.2
+ARG GAMESCALE_VERSION=v2.0.3
 ARG GAMESCALE_UUID=gamescale@arclight.digital
 RUN set -eux; \
     REL="https://github.com/arclight-digital/gamescale/releases/download/${GAMESCALE_VERSION}"; \
@@ -466,10 +466,10 @@ RUN set -eux; \
     get "${RAW}/icons/gamescale-symbolic.svg" "${SRC}/extension/icons/gamescale-symbolic.svg"; \
     get "${RAW}/icons/gamescale.svg"          "${SRC}/extension/icons/gamescale.svg"; \
     ( cd "${SRC}" && printf '%s\n' \
-      "165fc54c623ba3b39c4128b21a877f3870df3487c7414f7de083ed0fd2c5f597  gamescale.sh" \
+      "80bd6411ef9b0f6e05f18e89339476da2cc93660f73bebeecc10e536bedaa096  gamescale.sh" \
       "f1e0e12089d3b6d94f39b321ff7fcae8663623c63f8d4c406f5ec93d07e7bd6f  install.sh" \
       "81487974e5d143f6833b9d95fa78c7a1181e7d1eb963cd451f030a4c527f9a7f  extension/extension.js" \
-      "b0a56f889360a350ab316a7cc7e382ae8c9877ca31d1ebac2c669d369cf3ddc4  extension/metadata.json" \
+      "1f00a677e1639913cc898c5cf9440c47a60ea73f26c8f15a443601a22f720c7c  extension/metadata.json" \
       "7c41ae899869994c5056c2ed6e0ce939c46333e90fe355f26cf7e3e580f79e27  extension/stylesheet.css" \
       "57e345929be538ed1542c5c7b1d7a25b9c8551d3c5de193f4883416ec00ba708  extension/icons/gamescale-symbolic.svg" \
       "ddea876638fca8e25dfd4508385a881e529de9b1c0f4db65585e26aaacdca206  extension/icons/gamescale.svg" \
@@ -497,12 +497,13 @@ RUN set -eux; \
 # gamescale (gg -x %command%); ggm is gg -m, the MangoHud overlay. The scripts
 # say why the order and the flag parsing are what they are.
 #
-# /usr/bin is for native launchers. A Flatpak launcher cannot see it (see
-# above), so `pulsar setup gamescale` copies these two into ~/.local/bin
-# beside the gamescale it installs there, from THESE files -- they are the
-# one source, not a second staged copy. Inside the Steam sandbox gamemoderun
-# is the Flatpak runtime's own, which reaches the host's gamemoded through
-# the portal; nothing here has to provide it.
+# Flatpak Steam reaches these through /usr/lib/pulsar/sandbox-bin: relative
+# links to /usr/bin, which resolve inside the sandbox too, at /run/host/usr
+# (see gamescale above). Only these three, so the grant puts nothing else
+# from the host on Steam's PATH. Other Flatpak launchers get copies in
+# ~/.local/bin from `pulsar setup gamescale`, made from THESE files. Inside
+# the sandbox gamemoderun is the Flatpak runtime's own, which reaches the
+# host's gamemoded through the portal; nothing here has to provide it.
 #
 # No Fedora package ships /usr/bin/gg or /usr/bin/ggm today. If one ever
 # does, this would silently replace it, so the build stops instead.
@@ -515,7 +516,13 @@ RUN set -eu; \
       fi; \
     done; \
     chmod 0755 /usr/bin/gg /usr/bin/ggm; \
-    bash -n /usr/bin/gg; bash -n /usr/bin/ggm
+    bash -n /usr/bin/gg; bash -n /usr/bin/ggm; \
+    install -d -m 0755 /usr/lib/pulsar/sandbox-bin; \
+    for w in gg ggm gamescale; do \
+      ln -sfn "../../../bin/${w}" "/usr/lib/pulsar/sandbox-bin/${w}"; \
+      test -x "/usr/lib/pulsar/sandbox-bin/${w}" || \
+        { echo "FATAL: sandbox-bin/${w} does not reach /usr/bin/${w}; Flatpak Steam would not find it"; exit 1; }; \
+    done
 
 # No GUI apps are layered here. Apps are Flatpaks; this image is the OS.
 #
@@ -664,6 +671,7 @@ COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 COPY scripts/pulsar-agent-gate /usr/libexec/pulsar/pulsar-agent-gate
 COPY scripts/pulsar-mcp /usr/libexec/pulsar/pulsar-mcp
 COPY scripts/steam-gpu-watch.sh /usr/libexec/pulsar/steam-gpu-watch.sh
+COPY scripts/steam-grants.sh /usr/libexec/pulsar/steam-grants.sh
 COPY scripts/pulsar-esp-fallback /usr/libexec/pulsar/pulsar-esp-fallback
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/flatpak-defaults.sh \
@@ -672,6 +680,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/pulsar-agent-gate \
       /usr/libexec/pulsar/pulsar-mcp \
       /usr/libexec/pulsar/steam-gpu-watch.sh \
+      /usr/libexec/pulsar/steam-grants.sh \
       /usr/libexec/pulsar/pulsar-esp-fallback && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
       { echo "FATAL: flatpaks.list ships no apps; pulsar-flatpaks.service would fail on every boot forever"; exit 1; } && \
@@ -1002,6 +1011,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl enable pulsar-flatpaks.service && \
     systemctl enable pulsar-esp-fallback.service && \
     systemctl enable pulsar-gamemode-group.service && \
+    systemctl enable pulsar-steam-grants.service && \
     systemctl enable pulsar-update-auto.timer && \
     systemctl --global enable podman-auto-update.timer && \
     systemctl --global enable gamescale-reconcile.service && \
@@ -1014,7 +1024,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-welcome.service && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service \
-             pulsar-gamemode-group.service pulsar-update-auto.timer; do \
+             pulsar-gamemode-group.service pulsar-steam-grants.service pulsar-update-auto.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \

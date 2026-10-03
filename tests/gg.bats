@@ -1,6 +1,8 @@
 #!/usr/bin/env bats
 # Tests for scripts/gg and scripts/ggm, the Steam launch options, and for the
-# part of `pulsar setup gamescale` that puts them in ~/.local/bin.
+# part of `pulsar setup gamescale` that puts them in ~/.local/bin for
+# launchers other than Steam, and for the image grant that makes Steam need
+# none.
 #
 # Two things are pinned.
 #
@@ -149,9 +151,9 @@ EOF
 
 @test "setup gamescale: installs gg and ggm beside gamescale" {
     setup_env
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
-    [ "$(cat "$INSTALLER_LOG")" = "--platform steam" ]
+    [ "$(cat "$INSTALLER_LOG")" = "--platform faugus" ]
     cmp "${GG_DIR}/gg" "${LB}/gg"
     cmp "${GG_DIR}/ggm" "${LB}/ggm"
     [ -x "${LB}/gg" ] && [ -x "${LB}/ggm" ]
@@ -164,7 +166,7 @@ EOF
     printf '#!/bin/sh\n# mine\nexec gamescale -x "$@"\n' > "${LB}/gg"
     chmod 0700 "${LB}/gg"
     cp "${LB}/gg" "${BATS_TEST_TMPDIR}/mine"
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     cmp "${BATS_TEST_TMPDIR}/mine" "${LB}/gg"
     [ "$(stat -c %a "${LB}/gg")" = 700 ]
@@ -178,7 +180,7 @@ EOF
     mkdir -p "$LB"
     cp "${GG_DIR}/gg" "${BATS_TEST_TMPDIR}/elsewhere"
     ln -s "${BATS_TEST_TMPDIR}/elsewhere" "${LB}/gg"
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     [ -L "${LB}/gg" ]
     [ "$(readlink "${LB}/gg")" = "${BATS_TEST_TMPDIR}/elsewhere" ]
@@ -188,11 +190,11 @@ EOF
     setup_env
     mkdir -p "$LB"
     cp "${GG_DIR}/gg" "${LB}/gg"
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     [[ "$output" == *"${LB}/gg is current"* ]]
     [[ "$output" != *"alone"* ]]
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     cmp "${GG_DIR}/gg" "${LB}/gg"
     cmp "${GG_DIR}/ggm" "${LB}/ggm"
@@ -200,22 +202,22 @@ EOF
 
 @test "setup gamescale: the copy it installed is updated when the image's changes" {
     setup_env
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     printf '# fixed upstream\n' >> "${PULSAR_LAUNCH_WRAPPERS}/gg"
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     cmp "${PULSAR_LAUNCH_WRAPPERS}/gg" "${LB}/gg"
 }
 
 @test "setup gamescale: a copy edited after install is the user's now" {
     setup_env
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     printf '# my tweak\n' >> "${LB}/gg"
     cp "${LB}/gg" "${BATS_TEST_TMPDIR}/mine"
     printf '# fixed upstream\n' >> "${PULSAR_LAUNCH_WRAPPERS}/gg"
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     cmp "${BATS_TEST_TMPDIR}/mine" "${LB}/gg"
     [[ "$output" == *"left ${LB}/gg alone"* ]]
@@ -223,7 +225,7 @@ EOF
 
 @test "setup gamescale: a failed install puts nothing in ~/.local/bin" {
     setup_env
-    INSTALLER_EXIT=1 run "$PULSAR" setup gamescale --platform steam
+    INSTALLER_EXIT=1 run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -ne 0 ]
     [ ! -e "${LB}/gg" ]
     [ ! -e "${LB}/ggm" ]
@@ -231,7 +233,7 @@ EOF
 
 @test "setup gamescale: --dry-run and --help write nothing" {
     setup_env
-    run "$PULSAR" setup gamescale --dry-run --platform steam
+    run "$PULSAR" setup gamescale --dry-run --platform faugus
     [ "$status" -eq 0 ]
     [[ "$output" == *"would install ${LB}/gg"* ]]
     [ ! -e "${LB}/gg" ]
@@ -243,7 +245,7 @@ EOF
 
 @test "setup gamescale: GAMESCALE_BINDIR moves gg with gamescale" {
     setup_env
-    GAMESCALE_BINDIR="${HOME}/games/bin" run "$PULSAR" setup gamescale --platform steam
+    GAMESCALE_BINDIR="${HOME}/games/bin" run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     cmp "${GG_DIR}/gg" "${HOME}/games/bin/gg"
     [ ! -e "${LB}/gg" ]
@@ -251,7 +253,7 @@ EOF
 
 @test "setup gamescale --uninstall: removes its own copies, never the user's" {
     setup_env
-    run "$PULSAR" setup gamescale --platform steam
+    run "$PULSAR" setup gamescale --platform faugus
     [ "$status" -eq 0 ]
     printf '#!/bin/sh\n# mine\n' > "${LB}/gg"
     run "$PULSAR" setup gamescale --uninstall
@@ -259,4 +261,125 @@ EOF
     [ ! -e "${LB}/ggm" ]
     [ "$(sed -n 2p "${LB}/gg")" = "# mine" ]
     [[ "$output" == *"left ${LB}/gg"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Steam needs no setup: pulsar-steam-grants.service shows it the image's copies
+# through host-os. What setup does for Steam is move an older home setup over.
+# ---------------------------------------------------------------------------
+
+steam_env() {
+    setup_env
+    export FLATPAK_LOG="${BATS_TEST_TMPDIR}/flatpak"
+    cat > "${BIN}/flatpak" <<'EOF2'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FLATPAK_LOG"
+EOF2
+    chmod +x "${BIN}/flatpak"
+    export PULSAR_GAMESCALE_SYSTEM="${BATS_TEST_TMPDIR}/image/gamescale"
+    printf '#!/bin/sh\n# the image gamescale\n' > "$PULSAR_GAMESCALE_SYSTEM"
+    OV="${HOME}/.local/share/flatpak/overrides/com.valvesoftware.Steam"
+}
+
+# The PATH the grant sets and the PATH setup migrates to must be one PATH.
+image_path() {
+    sed -n 's/.*--env=PATH=\([^ ]*\).*/\1/p' "${GG_DIR}/steam-grants.sh"
+}
+
+@test "steam-grants: merges host-os, gamescale's grants and sandbox-bin into a system override" {
+    export FLATPAK_LOG="${BATS_TEST_TMPDIR}/flatpak"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$FLATPAK_LOG"\n' > "${BIN}/flatpak"
+    chmod +x "${BIN}/flatpak"
+    run "${GG_DIR}/steam-grants.sh"
+    [ "$status" -eq 0 ]
+    want='override
+--system
+--filesystem=host-os:ro
+--filesystem=~/.local/state/gamescale:create
+--talk-name=org.freedesktop.Flatpak
+--env=PATH=/app/bin:/app/utils/bin:/usr/bin:/run/host/usr/lib/pulsar/sandbox-bin
+com.valvesoftware.Steam'
+    [ "$(cat "$FLATPAK_LOG")" = "$want" ]
+}
+
+@test "steam-grants: setup migrates to the same PATH the grant sets" {
+    grep -qx "STEAM_SANDBOX_PATH=$(image_path)" "$PULSAR"
+}
+
+@test "steam-grants: the unit runs the script the image installs, every boot" {
+    local unit="${BATS_TEST_DIRNAME}/../system_files/usr/lib/systemd/system/pulsar-steam-grants.service"
+    grep -qx 'ExecStart=/usr/libexec/pulsar/steam-grants.sh' "$unit"
+    ! grep -q '^ConditionPathExists=!' "$unit"
+    grep -q 'COPY scripts/steam-grants.sh /usr/libexec/pulsar/steam-grants.sh' "${BATS_TEST_DIRNAME}/../Containerfile"
+    grep -qx 'enable pulsar-steam-grants.service' "${BATS_TEST_DIRNAME}/../system_files/usr/lib/systemd/system-preset/50-pulsar.preset"
+}
+
+@test "setup gamescale: Steam alone installs nothing" {
+    steam_env
+    run "$PULSAR" setup gamescale
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"nothing to install"* ]]
+    [[ "$output" == *"gg %command%"* ]]
+    [ ! -e "$INSTALLER_LOG" ]
+    [ ! -e "${LB}/gg" ] && [ ! -e "${LB}/gamescale" ]
+    [ ! -e "$FLATPAK_LOG" ]
+    run "$PULSAR" setup gamescale --platform steam
+    [ "$status" -eq 0 ]
+    [ ! -e "$INSTALLER_LOG" ]
+}
+
+@test "setup gamescale: an old Steam setup moves to the image copies" {
+    steam_env
+    run "$PULSAR" setup gamescale --platform faugus
+    [ "$status" -eq 0 ]
+    cp "$PULSAR_GAMESCALE_SYSTEM" "${LB}/gamescale"
+    mkdir -p "${OV%/*}"
+    printf '[Environment]\nPATH=/app/bin:/app/utils/bin:/usr/bin:%s\n' "$LB" > "$OV"
+    rm -f "$INSTALLER_LOG"
+    run "$PULSAR" setup gamescale
+    [ "$status" -eq 0 ]
+    [ "$(cat "$FLATPAK_LOG")" = "override --user --env=PATH=$(image_path) com.valvesoftware.Steam" ]
+    [ ! -e "${LB}/gg" ] && [ ! -e "${LB}/ggm" ] && [ ! -e "${LB}/gamescale" ]
+    [ ! -e "$INSTALLER_LOG" ]
+}
+
+@test "setup gamescale: Steam's migration leaves the user's own files" {
+    steam_env
+    mkdir -p "$LB"
+    printf '#!/bin/sh\n# mine\n' > "${LB}/gg"
+    printf '#!/bin/sh\n# an older gamescale\n' > "${LB}/gamescale"
+    run "$PULSAR" setup gamescale
+    [ "$status" -eq 0 ]
+    [ "$(sed -n 2p "${LB}/gg")" = "# mine" ]
+    [ "$(sed -n 2p "${LB}/gamescale")" = "# an older gamescale" ]
+    [[ "$output" == *"left ${LB}/gamescale"* ]]
+}
+
+@test "setup gamescale: an override already on the image PATH is not rewritten" {
+    steam_env
+    mkdir -p "${OV%/*}"
+    printf '[Environment]\nPATH=%s\n' "$(image_path)" > "$OV"
+    run "$PULSAR" setup gamescale
+    [ "$status" -eq 0 ]
+    [ ! -e "$FLATPAK_LOG" ]
+}
+
+@test "setup gamescale: Steam with another launcher grants only the other, and keeps gg" {
+    steam_env
+    run "$PULSAR" setup gamescale --platform steam faugus
+    [ "$status" -eq 0 ]
+    [ "$(cat "$INSTALLER_LOG")" = "--platform faugus" ]
+    cmp "${GG_DIR}/gg" "${LB}/gg"
+}
+
+@test "setup gamescale: --dry-run changes nothing for Steam" {
+    steam_env
+    run "$PULSAR" setup gamescale --platform faugus
+    mkdir -p "${OV%/*}"
+    printf '[Environment]\nPATH=/usr/bin:%s\n' "$LB" > "$OV"
+    run "$PULSAR" setup gamescale --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"would point the PATH"* ]]
+    [ -e "${LB}/gg" ]
+    [ ! -e "$FLATPAK_LOG" ]
 }

@@ -128,12 +128,12 @@ wrong resolution and look blurry.
 [gamescale](https://github.com/arclight-digital/gamescale) sets the display
 to 100% while a game runs and puts your scaling back when it quits, even if
 it crashes. The image ships a pinned, hash-verified release with an
-indicator in the top bar. Games from native
-launchers work with it as installed. For Flatpak launchers such as Steam,
-install a copy into your home folder:
+indicator in the top bar. It works as installed with native launchers and
+with the Steam Flatpak, which the image gives read-only access to its copy.
+Other Flatpak launchers need a copy in your home folder:
 
 ```bash
-pulsar setup gamescale --platform steam
+pulsar setup gamescale --platform faugus    # or heroic, bottles, lutris
 ```
 
 `gamescale --version` shows which copy is running.
@@ -149,10 +149,14 @@ ggm %command%
 ```
 
 Flags before `%command%` go to gamescale, so `gg -x %command%` works too.
-Both are in the image, and `pulsar setup gamescale --platform steam` also
-copies them into `~/.local/bin`, where the Steam Flatpak can reach them. If
-you already have your own `gg` or `ggm` there, setup leaves it alone and
-says so.
+Both are in the image and work in the Steam Flatpak with no setup. For other
+Flatpak launchers, `pulsar setup gamescale --platform <name>` copies them into
+`~/.local/bin` beside gamescale. If you already have your own `gg` or `ggm`
+there, setup leaves it alone and says so.
+
+If you set up Steam with `pulsar setup gamescale` before, run it again with
+no arguments. It points Steam at the image's copies and removes the old
+copies from your home folder.
 
 ### Scheduler
 

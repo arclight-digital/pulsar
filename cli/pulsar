@@ -3375,7 +3375,8 @@ SETUP_HELP='usage: pulsar setup <recipe>
   devbox      create the default distrobox
   gamemode    enroll accounts in the gamemode group, for renice (root)
   quadlet     install the quadlet template and enable auto-update
-  gamescale   grant Flatpak launchers, from the staged copy, with gg and ggm (its own flags pass through)'
+  gamescale   grant Flatpak launchers other than Steam, with gg and ggm (its own flags pass through);
+              Steam needs nothing: the image grants it, and this moves an older home setup over'
 
 # gg and ggm, the Steam launch options, go beside the gamescale that
 # `setup gamescale` just put in ~/.local/bin. A Flatpak launcher's sandbox
@@ -3465,6 +3466,53 @@ setup_launch_wrappers() {
     fi
 }
 
+# Steam's sandbox PATH as pulsar-steam-grants.service sets it. Kept equal to
+# scripts/steam-grants.sh; tests/gg.bats checks the two agree.
+STEAM_SANDBOX_PATH=/app/bin:/app/utils/bin:/usr/bin:/run/host/usr/lib/pulsar/sandbox-bin
+
+# Flatpak Steam runs the image's gg, ggm and gamescale (steam-grants.sh says
+# how), so for Steam there is nothing to install. What is left is a home the
+# old recipe set up: its user override's PATH ends in ~/.local/bin and beats
+# the image's, so Steam keeps running the copies there, which never update.
+# This points that PATH at the image's copies and removes the copies Pulsar
+# can prove it made, unless another launcher granted in the same run needs
+# them. Anything else in ~/.local/bin is left, and named.
+setup_steam_builtin() {
+    local dry=$1 keep_home=$2 app=com.valvesoftware.Steam
+    local ov=${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/${app}
+    local bindir=${GAMESCALE_BINDIR:-$HOME/.local/bin}
+    local gs_src=${PULSAR_GAMESCALE_SYSTEM:-/usr/bin/gamescale}
+    printf 'Steam: gg, ggm and gamescale come with the image; nothing to install\n'
+    if [ -r "$ov" ] && grep -q '^PATH=' "$ov" && ! grep -qx "PATH=${STEAM_SANDBOX_PATH}" "$ov"; then
+        if [ "$dry" = 1 ]; then
+            printf 'would point the PATH in your Steam override at the image copies\n'
+        else
+            need flatpak
+            flatpak override --user --env=PATH="${STEAM_SANDBOX_PATH}" "$app"
+            printf 'pointed the PATH in your Steam override at the image copies\n'
+        fi
+    fi
+    # Another launcher granted in the same run needs the home copies.
+    [ "$keep_home" = 1 ] && return 0
+    if [ "$dry" = 1 ]; then
+        setup_launch_wrappers --uninstall --dry-run
+    else
+        setup_launch_wrappers --uninstall
+    fi
+    local dst="${bindir}/gamescale"
+    if [ -f "$dst" ] && [ ! -L "$dst" ] && cmp -s "$gs_src" "$dst"; then
+        if [ "$dry" = 1 ]; then
+            printf 'would remove %s\n' "$dst"
+        else
+            rm -f "$dst"
+            printf 'removed %s\n' "$dst"
+        fi
+    elif [ -e "$dst" ] || [ -L "$dst" ]; then
+        printf 'left %s: it differs from the image copy; remove it if Pulsar put it there\n' "$dst"
+    fi
+    printf 'Steam launch options:  gg %%command%%   (ggm %%command%% adds the MangoHud overlay)\n'
+}
+
 cmd_setup() {
     local recipe=${1:-}
     shift || true
@@ -3538,10 +3586,47 @@ cmd_setup() {
         # grants here would drift from upstream the moment they change one.
         local src=${PULSAR_GAMESCALE_INSTALLER:-/usr/share/pulsar/gamescale/install.sh}
         [ -x "$src" ] || die "gamescale is not staged in this image (${src})"
-        printf 'running the staged gamescale installer (offline, pinned)\n'
-        # set -e: a failed install stops here, before gg lands beside nothing
-        "$src" "$@"
-        setup_launch_wrappers "$@"
+        # Steam comes out of the platform list (the image grants it) and the
+        # rest goes to the installer. --help, --uninstall and `all` pass
+        # through untouched: they are upstream's to interpret.
+        local a in_plat=0 saw_plat=0 steam=0 dry=0 raw=0
+        local -a pass=() plats=() rest=()
+        for a in "$@"; do
+            case "$a" in
+                -h|--help|-u|--uninstall) raw=1 ;;
+                -n|--dry-run) dry=1 ;;
+            esac
+            if [ "$a" = --platform ]; then
+                in_plat=1; saw_plat=1; continue
+            fi
+            if [ "$in_plat" = 1 ] && [ "${a#-}" = "$a" ]; then
+                plats+=("$a"); continue
+            fi
+            in_plat=0; pass+=("$a")
+        done
+        [ "$saw_plat" = 1 ] || plats=(steam)
+        for a in ${plats[@]+"${plats[@]}"}; do
+            case "$a" in
+                steam|com.valvesoftware.Steam) steam=1 ;;
+                all) raw=1 ;;
+                *) rest+=("$a") ;;
+            esac
+        done
+        if [ "$raw" = 1 ]; then
+            printf 'running the staged gamescale installer (offline, pinned)\n'
+            "$src" "$@"
+            setup_launch_wrappers "$@"
+            return
+        fi
+        if [ ${#rest[@]} -gt 0 ]; then
+            printf 'running the staged gamescale installer (offline, pinned)\n'
+            # set -e: a failed install stops here, before gg lands beside nothing
+            "$src" ${pass[@]+"${pass[@]}"} --platform "${rest[@]}"
+            setup_launch_wrappers ${pass[@]+"${pass[@]}"}
+        fi
+        if [ "$steam" = 1 ]; then
+            setup_steam_builtin "$dry" "$(( ${#rest[@]} > 0 ))"
+        fi
         ;;
     *) die "unknown recipe: ${recipe} (see: pulsar setup --help)" ;;
     esac
