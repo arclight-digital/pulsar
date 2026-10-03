@@ -1,5 +1,5 @@
 // The extension's page in the Extensions app: its effects. The theme picker
-// shows the same keys (EFFECTS in pulsar-theme-picker).
+// shows the same keys (EFFECTS in pulsar-settings).
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';

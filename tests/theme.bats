@@ -152,7 +152,7 @@ key = ET.parse(sys.argv[1]).find(f".//key[@name='{sys.argv[2]}']")
 assert key is not None and key.get("type") == "b" and key.findtext("default").strip() == "true", sys.argv[2]
 PY
         grep -q "'${k}'" "${ext}/prefs.js"
-        grep -q "\"${k}\"" "${REPO}/scripts/pulsar-theme-picker"
+        grep -q "\"${k}\"" "${REPO}/scripts/pulsar-settings"
     done
     # glass off while gaming (off by default) and in Power Saver (on), on
     # both screens with the same words
@@ -164,19 +164,19 @@ key = ET.parse(sys.argv[1]).find(f".//key[@name='{sys.argv[2]}']")
 assert key is not None and key.get("type") == "b" and key.findtext("default").strip() == sys.argv[3], sys.argv[2]
 PY
         grep -q "'${k}'" "${ext}/prefs.js"
-        grep -q "\"${k}\"" "${REPO}/scripts/pulsar-theme-picker"
+        grep -q "\"${k}\"" "${REPO}/scripts/pulsar-settings"
         grep -q "'${k}'" "${ext}/glass.js"
     done
     for words in 'Disable glass when gaming' 'While a game is running' 'Disable glass in Power Saver' \
                  'While the power mode is Power Saver'; do
         grep -qF "'${words}'" "${ext}/prefs.js"
-        grep -qF "\"${words}\"" "${REPO}/scripts/pulsar-theme-picker"
+        grep -qF "\"${words}\"" "${REPO}/scripts/pulsar-settings"
     done
     # the tint slider: a 0..1 double, on both screens
     grep -q '<key name="glass-tint" type="d">' "$xml"
     grep -q '<range min="0.0" max="1.0"/>' "$xml"
     grep -q "'glass-tint'" "${ext}/prefs.js"
-    grep -q '"glass-tint"' "${REPO}/scripts/pulsar-theme-picker"
+    grep -q '"glass-tint"' "${REPO}/scripts/pulsar-settings"
     # the classes glass.js toggles are the ones the Shell sheet keys off
     for c in pulsar-glass pulsar-lit; do
         grep -q "'${c}'" "${ext}/glass.js"

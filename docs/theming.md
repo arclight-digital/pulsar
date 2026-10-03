@@ -176,9 +176,9 @@ sheets (regenerate with `scripts/render-theme-wallpapers.py --sheet`).
 ## Glass and light
 
 Shell extension effects, all on by default, each a switch in the Extensions
-app and under Effects in the theme picker
-(`org.gnome.shell.extensions.pulsar-theme`), where Reset restores the
-defaults. They add material and light only; GNOME's layout, radii, type and
+app and on the Appearance page of Pulsar Settings (the gear in the theme
+picker opens it; `org.gnome.shell.extensions.pulsar-theme`), where Reset
+restores the defaults. They add material and light only; GNOME's layout, radii, type and
 timing are unchanged.
 
 | Key | What it does |

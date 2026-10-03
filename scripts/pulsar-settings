@@ -1,0 +1,401 @@
+#!/usr/bin/python3
+"""pulsar-settings -- Pulsar's own settings: what GNOME Settings has no room for.
+
+GNOME Settings takes no panels from outside its own build, so Pulsar's live
+here. Stock libadwaita: a sidebar of pages, rows of switches and buttons.
+Everything it shows or does goes through the same `pulsar` CLI and GSettings
+keys a terminal would; it holds no state of its own. What needs root goes
+through pkexec, which asks for the password like any other system change.
+
+`pulsar-settings [appearance | updates]` opens on that page; a second launch
+raises the open window and turns to the page asked for.
+"""
+import datetime
+import json
+import os
+import pathlib
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import pulsar_theme_engine  # noqa: E402
+
+pt = pulsar_theme_engine.load(HERE / "pulsar-theme")
+
+# The CLI. From a checkout, the checkout's own.
+PULSAR = os.environ.get("PULSAR_CLI") or (
+    str(HERE.parent / "cli" / "pulsar") if (HERE.parent / "cli" / "pulsar").exists() else "/usr/bin/pulsar")
+PICKER = str(HERE / "pulsar-theme-picker")
+FX_SCHEMA = "org.gnome.shell.extensions.pulsar-theme"
+
+# The Shell extension's effects (its prefs.js shows the same): key, title,
+# subtitle, the key it needs on.
+EFFECTS = (
+    ("glass", "Glass", "Menus, the top bar, OSDs and banners are translucent over a blur of what is behind them", None),
+    ("window-glass", "Glass windows", "App windows are a little translucent too; apps opened afterwards pick it up", "glass"),
+    ("lighting", "Lighting", "Menus catch light from the button that opened them; the edge warms when the battery is low", None),
+    ("power-on", "Power-on", "The edge traces out from the light as a menu opens", "lighting"),
+    ("glow", "Glow", "What is filled with the accent glows softly; apps opened afterwards pick it up", None),
+    ("focus-brackets", "Focus brackets", "Corner brackets lock onto the control the keyboard is on", None),
+    ("glass-off-gaming", "Disable glass when gaming", "While a game is running", None),
+    ("glass-off-power-saver", "Disable glass in Power Saver", "While the power mode is Power Saver", None),
+)
+
+PAGES = (("appearance", "Appearance", "applications-graphics-symbolic"),
+         ("updates", "Updates", "software-update-available-symbolic"))
+
+
+def run(argv, done, *data):
+    """argv in the background; done(ok, output, *data) on the main loop."""
+    try:
+        proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
+    except GLib.Error as e:
+        done(False, e.message, *data)
+        return
+
+    def finished(p, res):
+        try:
+            _ok, out, _err = p.communicate_utf8_finish(res)
+        except GLib.Error as e:
+            out = e.message
+        done(p.get_successful(), out or "", *data)
+    proc.communicate_utf8_async(None, None, finished)
+
+
+def parse(text):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+def day(ts):
+    """A timestamp as a date a person reads: "October 3"."""
+    try:
+        d = datetime.datetime.fromtimestamp(int(ts))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+    return f"{d:%B} {d.day}"
+
+
+def button(text, handler, *classes):
+    b = Gtk.Button(label=text, valign=Gtk.Align.CENTER, css_classes=list(classes))
+    b.connect("clicked", handler)
+    return b
+
+
+class Settings(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Pulsar Settings", default_width=900, default_height=680,
+                         width_request=360, height_request=294)
+        self.split = Adw.NavigationSplitView()
+        self.sidebar = Gtk.ListBox(css_classes=["navigation-sidebar"])
+        self.sidebar.connect("row-selected", self._selected)
+        self.contents = {}
+        for slug, title, icon in PAGES:
+            row = Adw.ActionRow(title=title)
+            row.add_prefix(Gtk.Image(icon_name=icon))
+            row.slug = slug
+            self.sidebar.append(row)
+        side = Adw.ToolbarView(content=Gtk.ScrolledWindow(child=self.sidebar,
+                                                          hscrollbar_policy=Gtk.PolicyType.NEVER))
+        side.add_top_bar(Adw.HeaderBar())
+        self.split.set_sidebar(Adw.NavigationPage(title="Pulsar Settings", child=side))
+        self.content = Adw.NavigationPage(title="")
+        self.split.set_content(self.content)
+        self.set_content(self.split)
+
+        bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 560sp"))
+        bp.add_setter(self.split, "collapsed", True)
+        self.add_breakpoint(bp)
+
+        self.pages = {}
+        for slug, page in (("appearance", self.appearance()), ("updates", self.updates())):
+            tv = Adw.ToolbarView(content=page)
+            tv.add_top_bar(Adw.HeaderBar())
+            self.pages[slug] = tv
+
+    def show_page(self, slug):
+        for i, (s, *_r) in enumerate(PAGES):
+            if s == slug:
+                self.sidebar.select_row(self.sidebar.get_row_at_index(i))
+                return True
+        return False
+
+    def _selected(self, _box, row):
+        if row is None:
+            return
+        title = next(t for s, t, _i in PAGES if s == row.slug)
+        self.content.set_title(title)
+        self.content.set_child(self.pages[row.slug])
+        self.split.set_show_content(True)
+        if row.slug == "updates":
+            self.refresh_updates()
+
+    # ------------------------------------------------------- appearance ----
+
+    def appearance(self):
+        page = Adw.PreferencesPage()
+        themes = Adw.PreferencesGroup()
+        self.theme_row = Adw.ActionRow(title="Theme", activatable=True,
+                                       tooltip_text="Opens Themes, where a click recolors the whole desktop")
+        self.theme_row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+        self.theme_row.connect("activated", lambda *_: self._open_picker())
+        self._theme_subtitle()
+        # back from the picker with a new theme: show it
+        self.connect("notify::is-active", lambda *_: self.is_active() and self._theme_subtitle())
+        themes.add(self.theme_row)
+        page.add(themes)
+
+        if not Gio.SettingsSchemaSource.get_default().lookup(FX_SCHEMA, True):
+            return page
+        self.fx = Gio.Settings(schema_id=FX_SCHEMA)
+        fx = Adw.PreferencesGroup(title="Effects", description="High contrast turns them all off.")
+        fx.set_header_suffix(self._reset_button())
+        for key, title, subtitle, needs in EFFECTS:
+            row = Adw.SwitchRow(title=title, subtitle=subtitle)
+            self.fx.bind(key, row, "active", Gio.SettingsBindFlags.DEFAULT)
+            if needs:
+                self.fx.bind(needs, row, "sensitive", Gio.SettingsBindFlags.GET)
+            fx.add(row)
+            if key == "glass":
+                fx.add(self._tint_row())
+        page.add(fx)
+        return page
+
+    def _theme_subtitle(self):
+        cur = pt.current_state().get("theme")
+        name = next((th.name for slug, th in pt.ordered_themes() if th is not None and slug == cur), None)
+        self.theme_row.set_subtitle(name or "Stock GNOME")
+
+    def _open_picker(self):
+        try:
+            Gio.Subprocess.new([PICKER], Gio.SubprocessFlags.NONE)
+        except GLib.Error as e:
+            self.alert("Could not open Themes", e.message)
+
+    def _reset_button(self):
+        """Every effect and the tint back to the defaults; only live while
+        something differs from them."""
+        s = self.fx
+        keys = s.props.settings_schema.list_keys()
+        b = Gtk.Button(label="Reset", tooltip_text="Put every effect and the tint back to the defaults",
+                       css_classes=["flat"], valign=Gtk.Align.CENTER)
+        b.connect("clicked", lambda *_: [s.reset(k) for k in keys])
+        changed = lambda *_: b.set_sensitive(any(s.get_user_value(k) is not None for k in keys))
+        s.connect("changed", changed)
+        changed()
+        return b
+
+    def _tint_row(self):
+        """Glass tint: clear to fully tinted."""
+        row = Adw.ActionRow(title="Glass tint", subtitle="From clear to fully tinted")
+        scale = Gtk.Scale(adjustment=Gtk.Adjustment(lower=0, upper=1, step_increment=0.05, page_increment=0.1),
+                          draw_value=False, hexpand=True, width_request=160, valign=Gtk.Align.CENTER)
+        self.fx.bind("glass-tint", scale.get_adjustment(), "value", Gio.SettingsBindFlags.DEFAULT)
+        self.fx.bind("glass", row, "sensitive", Gio.SettingsBindFlags.GET)
+        row.add_suffix(scale)
+        return row
+
+    # ---------------------------------------------------------- updates ----
+
+    def updates(self):
+        page = Adw.PreferencesPage()
+
+        system = Adw.PreferencesGroup(title="This computer")
+        self.release_row = Adw.ActionRow(title="Pulsar", subtitle_selectable=True)
+        self.image_row = Adw.ActionRow(title="System image", subtitle_selectable=True)
+        system.add(self.release_row)
+        system.add(self.image_row)
+        page.add(system)
+
+        upd = Adw.PreferencesGroup(title="Updates")
+        self.update_row = Adw.ActionRow(title="Checking for updates")
+        self.update_slot = Gtk.Box(valign=Gtk.Align.CENTER)
+        self.update_row.add_suffix(self.update_slot)
+        upd.add(self.update_row)
+        self.auto_row = Adw.ActionRow(
+            title="Automatic downloads",
+            subtitle="New images download in the background on AC power and unmetered networks. "
+                     "Nothing restarts by itself.")
+        self.auto_state = Gtk.Label(css_classes=["dim-label"], valign=Gtk.Align.CENTER)
+        self.auto_row.add_suffix(self.auto_state)
+        upd.add(self.auto_row)
+        page.add(upd)
+
+        back = Adw.PreferencesGroup(
+            title="Going back",
+            description="Your files, apps and their data stay as they are. System-wide settings changed since "
+                        "the previous image, such as newly saved Wi-Fi networks, go back to how they were.")
+        self.prev_row = Adw.ActionRow(title="Previous image")
+        self.rollback_button = button("Roll Back…", lambda *_: self._confirm_rollback())
+        self.prev_row.add_suffix(self.rollback_button)
+        back.add(self.prev_row)
+        self.pin_row = Adw.SwitchRow(
+            title="Keep this image",
+            subtitle="Clean-up after updates never removes a kept image, so you can always start it again")
+        self._pin_handler = self.pin_row.connect("notify::active", self._pin_toggled)
+        back.add(self.pin_row)
+        page.add(back)
+        return page
+
+    def refresh_updates(self):
+        run([PULSAR, "manifest", "--json"], self._manifest)
+        run([PULSAR, "status", "--json"], self._status)
+        run(["systemctl", "is-enabled", "pulsar-update-auto.timer"], self._auto)
+        self.check_updates()
+
+    def _manifest(self, _ok, out):
+        m = parse(out) or {}
+        self.release_row.set_subtitle(m.get("release") or "Unknown release")
+        built = m.get("built", "")
+        try:
+            d = datetime.datetime.fromisoformat(built.replace("Z", "+00:00")).astimezone()
+            built = f"built {d:%B} {d.day}"
+        except ValueError:
+            built = ""
+        self.image_row.set_subtitle(" · ".join(x for x in (m.get("version"), built) if x) or "Unknown")
+
+    def _status(self, _ok, out):
+        deps = (parse(out) or {}).get("deployments") or []
+        booted = next((d for d in deps if d.get("booted")), None)
+        prev = next((d for d in deps if not d.get("booted") and not d.get("staged")), None)
+        # The first deployment is the one the next start boots.
+        rolled = bool(deps) and deps[0] is prev
+        if prev is None:
+            self.prev_row.set_subtitle("There is no previous image on this computer yet")
+            self.rollback_button.set_visible(False)
+        elif rolled:
+            self.prev_row.set_subtitle(f"{prev.get('version', '?')} starts at the next restart")
+            self.rollback_button.set_visible(False)
+        else:
+            when = day(prev.get("timestamp"))
+            self.prev_row.set_subtitle(f"{prev.get('version', '?')}" + (f" · built {when}" if when else ""))
+            self.rollback_button.set_visible(True)
+        self.prev = prev
+        self.pin_row.handler_block(self._pin_handler)
+        self.pin_row.set_active(bool(booted and booted.get("pinned")))
+        self.pin_row.handler_unblock(self._pin_handler)
+        self.pin_row.set_sensitive(booted is not None)
+
+    def _auto(self, _ok, out):
+        self.auto_state.set_label("On" if out.strip() == "enabled" else "Off")
+
+    def _slot(self, widget):
+        while (c := self.update_slot.get_first_child()) is not None:
+            self.update_slot.remove(c)
+        if widget:
+            self.update_slot.append(widget)
+
+    def check_updates(self):
+        self.update_row.set_title("Checking for updates")
+        self.update_row.set_subtitle("")
+        self._slot(Adw.Spinner())
+        run([PULSAR, "update", "--check", "--json"], self._checked)
+
+    def _checked(self, _ok, out):
+        # exit 10 means an update is out; the JSON says it either way
+        r = parse(out.strip().splitlines()[-1] if out.strip() else "") or {}
+        s = r.get("status")
+        if s == "current":
+            self.update_row.set_title("Up to date")
+            self.update_row.set_subtitle(f"{r.get('booted', '?')} is the newest image")
+            self._slot(button("Check Again", lambda *_: self.check_updates(), "flat"))
+        elif s == "available":
+            self.update_row.set_title("Update available")
+            self.update_row.set_subtitle(f"{r.get('latest', '?')} is out. Downloading it now leaves this session "
+                                         "as it is; the new image starts at the next restart.")
+            self._slot(button("Download", lambda *_: self._download(), "suggested-action"))
+        elif s == "staged":
+            self.update_row.set_title("Restart to update")
+            self.update_row.set_subtitle(f"{r.get('latest', '?')} is downloaded and starts at the next restart")
+            self._slot(button("Restart…", lambda *_: self._restart()))
+        else:
+            self.update_row.set_title("Could not check for updates")
+            self.update_row.set_subtitle(out.strip().splitlines()[-1][:200] if out.strip() else "")
+            self._slot(button("Try Again", lambda *_: self.check_updates(), "flat"))
+
+    def _download(self):
+        self.update_row.set_title("Downloading the update")
+        self.update_row.set_subtitle("This can take a few minutes. You can close this window.")
+        self._slot(Adw.Spinner())
+        # the same unit as the update notification's button (see its polkit rule)
+        run(["systemctl", "start", "pulsar-update-stage.service"], self._downloaded)
+
+    def _downloaded(self, ok, out):
+        if not ok:
+            self.alert("Could not download the update",
+                       (out.strip()[-600:] or "") + "\n\nSee why: journalctl -u pulsar-update-stage")
+        self.refresh_updates()
+
+    def _restart(self):
+        # GNOME's own restart dialog; the user confirms there
+        try:
+            Gio.Subprocess.new(["gnome-session-quit", "--reboot"], Gio.SubprocessFlags.NONE)
+        except GLib.Error as e:
+            self.alert("Could not restart", e.message)
+
+    def _confirm_rollback(self):
+        version = (self.prev or {}).get("version", "the previous image")
+        d = Adw.AlertDialog(heading=f"Roll back to {version}?",
+                            body=f"The next time this computer starts, it starts {version}. Nothing restarts now. "
+                                 "Your files, apps and their data stay as they are. System-wide settings changed "
+                                 "since that image, such as newly saved Wi-Fi networks, go back to how they were.")
+        d.add_response("cancel", "Cancel")
+        d.add_response("rollback", "Roll Back")
+        d.set_response_appearance("rollback", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("cancel")
+        d.connect("response", lambda _d, r: r == "rollback" and self._rollback())
+        d.present(self)
+
+    def _rollback(self):
+        self.rollback_button.set_sensitive(False)
+        run(["pkexec", PULSAR, "rollback"], self._rolled_back)
+
+    def _rolled_back(self, ok, out):
+        self.rollback_button.set_sensitive(True)
+        # 126: the password prompt was dismissed, which is an answer, not an error
+        if not ok and "dismissed" not in out.lower() and "not authorized" not in out.lower():
+            self.alert("Could not roll back", out.strip()[-600:])
+        run([PULSAR, "status", "--json"], self._status)
+
+    def _pin_toggled(self, row, _p):
+        row.set_sensitive(False)
+        run(["pkexec", PULSAR, "pin", "on" if row.get_active() else "off"], self._pinned)
+
+    def _pinned(self, ok, out):
+        self.pin_row.set_sensitive(True)
+        if not ok and "dismissed" not in out.lower() and "not authorized" not in out.lower():
+            self.alert("Could not change whether this image is kept", out.strip()[-600:])
+        # read it back either way: a dismissed prompt puts the switch back
+        run([PULSAR, "status", "--json"], self._status)
+
+    def alert(self, heading, body):
+        d = Adw.AlertDialog(heading=heading, body=body)
+        d.add_response("close", "Close")
+        d.present(self)
+
+
+def main(argv):
+    app = Adw.Application(application_id="digital.arclight.Pulsar.Settings",
+                          flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+
+    def command_line(a, cl):
+        args = cl.get_arguments()[1:]
+        w = a.get_active_window() or Settings(a)
+        if not (args and w.show_page(args[0])) and w.sidebar.get_selected_row() is None:
+            w.show_page(PAGES[0][0])
+        w.present()
+        return 0
+    app.connect("command-line", command_line)
+    return app.run(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

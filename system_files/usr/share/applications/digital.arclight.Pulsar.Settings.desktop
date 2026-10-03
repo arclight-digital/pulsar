@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pulsar Settings
+Comment=Glass and lighting effects, system updates and rollback
+Keywords=pulsar;settings;effects;glass;lighting;update;rollback;pin;image;
+Exec=/usr/libexec/pulsar/pulsar-settings
+Icon=org.gnome.Settings
+Categories=Settings;GTK;
+StartupNotify=true
+X-GNOME-UsesNotifications=false

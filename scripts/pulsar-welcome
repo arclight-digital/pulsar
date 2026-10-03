@@ -328,9 +328,20 @@ class Welcome(Adw.ApplicationWindow):
         start = Gtk.Button(label="Start", css_classes=["suggested-action", "wl-start"], halign=Gtk.Align.CENTER)
         start.connect("clicked", lambda *_: self.close())
         self.start = start
+        settings = Gtk.Button(label="Open Pulsar Settings", css_classes=["flat", "wl-pill"],
+                              halign=Gtk.Align.CENTER, tooltip_text="Effects, updates and rollback")
+        settings.connect("clicked", lambda *_: self._settings())
         return page(check, label("You're set.", ["wl-display"]),
                     label("Welcome to Pulsar reopens from the app grid whenever you want this tour again.",
-                          ["wl-lede"]), spacer(18), start, width=560)
+                          ["wl-lede"]), spacer(18), start, settings, width=560)
+
+    def _settings(self):
+        try:
+            Gio.Subprocess.new([str(HERE / "pulsar-settings")], Gio.SubprocessFlags.NONE)
+        except GLib.Error as e:
+            print(f"pulsar-welcome: could not open Pulsar Settings: {e.message}", file=sys.stderr)
+            return
+        self.close()
 
     # ------------------------------------------------------- navigation ----
 

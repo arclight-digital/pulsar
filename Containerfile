@@ -764,9 +764,9 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # adw-gtk3 is what lets GTK3 apps take the palette at all: stock Adwaita GTK3
 # reads different colour names and no light/dark pairing.
 # ---------------------------------------------------------------------------
-COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py scripts/pulsar-welcome /usr/libexec/pulsar/
+COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py scripts/pulsar-welcome scripts/pulsar-settings /usr/libexec/pulsar/
 RUN set -eu; \
-    chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker /usr/libexec/pulsar/pulsar-welcome; \
+    chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker /usr/libexec/pulsar/pulsar-welcome /usr/libexec/pulsar/pulsar-settings; \
     free_kb=$(df --output=avail -k / | tail -1); \
     [ "${free_kb}" -gt 1048576 ] || \
       { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
@@ -839,13 +839,14 @@ RUN set -eu; \
     glib-compile-schemas --targetdir=/tmp/schemas /usr/share/glib-2.0/schemas && \
     ext=$(HOME=/tmp GSETTINGS_SCHEMA_DIR=/tmp/schemas gsettings get org.gnome.shell enabled-extensions) && \
     fx=$(HOME=/tmp GSETTINGS_SCHEMA_DIR=/tmp/schemas gsettings get org.gnome.shell.extensions.pulsar-theme glass) || \
-      { echo "FATAL: the pulsar-theme extension's settings schema does not compile; its prefs and the picker's Effects would crash"; exit 1; }; \
+      { echo "FATAL: the pulsar-theme extension's settings schema does not compile; its prefs and Pulsar Settings' effects would crash"; exit 1; }; \
     rm -rf /tmp/schemas; \
     for u in gamescale@arclight.digital pulsar-theme@arclight.digital; do \
       case "${ext}" in *"'${u}'"*) ;; *) echo "FATAL: ${u} is not in the default enabled-extensions (${ext})"; exit 1 ;; esac; \
     done; \
     desktop-file-validate /usr/share/applications/digital.arclight.Pulsar.ThemePicker.desktop; \
     desktop-file-validate /usr/share/applications/digital.arclight.Pulsar.Welcome.desktop; \
+    desktop-file-validate /usr/share/applications/digital.arclight.Pulsar.Settings.desktop; \
     echo "theme engine: $(/usr/libexec/pulsar/pulsar-theme list | wc -l) themes, audit clean, extension declares Shell ${SHELL_MAJOR}"
 
 # ---------------------------------------------------------------------------
