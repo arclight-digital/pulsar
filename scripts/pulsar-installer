@@ -3,7 +3,8 @@
 
 Pick a disk, choose to install beside what is on it or to erase it (a
 deliberate second step), set the passphrase that unlocks the disk at every
-start, and watch it install. An empty disk skips the "how" page: there is
+start (or turn encryption off: it is on unless someone does), and watch it
+install. An empty disk skips the "how" page: there is
 one way. The work is pulsar-install-system's, run with pkexec; this app only
 asks, shows, and waits. Nothing is written to any disk before the last
 page's button, which says "Erase and Install" whenever it deletes anything,
@@ -336,6 +337,49 @@ def passphrase_problem(a, b):
     return None
 
 
+# Encryption is on unless turned off on the passphrase page. Every word the
+# app says about it comes from here, so no page can say one thing while the
+# backend does the other.
+UNENCRYPTED = "Anyone who has this computer or its disk can read the files on it."
+
+
+def passphrase_heading(encrypt):
+    """The passphrase page's title and the sentence under it."""
+    if encrypt:
+        return ("Choose a passphrase",
+                "You'll type it every time Pulsar starts. If you forget it, your files can't be recovered.")
+    return "Install without encryption", UNENCRYPTED
+
+
+def encryption_summary(encrypt):
+    """The review page's Encryption row."""
+    return ("On. Your passphrase unlocks the disk at every start." if encrypt
+            else f"Off. {UNENCRYPTED}")
+
+
+def stages(encrypt):
+    """What the installing page says at each backend stage, and where the
+    bar goes. Without encryption there is no "unlock" stage."""
+    st = [("check", "Checking the disk", 0.02),
+          ("disk", "Partitioning and encrypting the disk" if encrypt else "Partitioning the disk", 0.06),
+          ("unlock", "Unlocking the new partition", 0.10),
+          ("install", "Copying Pulsar to the disk", 0.12),
+          ("boot", "Setting up startup", 0.94)]
+    return {k: (text, frac) for k, text, frac in st if encrypt or k != "unlock"}
+
+
+def first_start(encrypt):
+    """The done page's note on what happens when Pulsar first starts."""
+    return ("When Pulsar starts, type your passphrase to unlock the disk, then create your account."
+            if encrypt else "When Pulsar starts, create your account.")
+
+
+def secret_args(key_path):
+    """How the backend is told about encryption: the passphrase's file, or
+    --no-encrypt when there is none. Never neither: the backend refuses."""
+    return ["--key-file", key_path] if key_path else ["--no-encrypt"]
+
+
 # --------------------------------------------------------------- app ----
 
 def main():
@@ -437,6 +481,7 @@ def main():
                 self.payload = None
             self.disk = None
             self.mode = None
+            self.encrypt = True
             self.started = None
             # while the backend is writing, closing the window would stop the
             # install partway: the close button is hidden and a close asked
@@ -562,6 +607,11 @@ def main():
                 back=back_button(self.nav), nxt=go)
 
         def passphrase_page(self):
+            self.encrypt = True
+            switch = Adw.SwitchRow(title="Encrypt the disk", subtitle="Recommended", active=True)
+            self.encrypt_row = switch
+            choice = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+            choice.append(switch)
             a = Adw.PasswordEntryRow(title="Passphrase")
             b = Adw.PasswordEntryRow(title="Confirm passphrase")
             group = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
@@ -581,21 +631,26 @@ def main():
                         "Pulsar's startup screen uses the same layout.", ["in-note"])
             nxt = Gtk.Button(label="Next", css_classes=["suggested-action", "in-pill"], sensitive=False)
 
+            title, lede = (label(t, [c]) for t, c in zip(passphrase_heading(True), ("in-title", "in-lede")))
+
             def check(*_):
+                self.encrypt = switch.get_active()
+                title.set_label(passphrase_heading(self.encrypt)[0])
+                lede.set_label(passphrase_heading(self.encrypt)[1])
+                for w in (group, hint, kbd):
+                    w.set_visible(self.encrypt)
                 ta, tb = a.get_text(), b.get_text()
-                nxt.set_sensitive(passphrase_problem(ta, tb) is None)
+                nxt.set_sensitive(not self.encrypt or passphrase_problem(ta, tb) is None)
                 hint.set_label(passphrase_hint(ta, tb))
                 (b.add_css_class if tb and ta != tb and len(ta) >= 8 else b.remove_css_class)("error")
             a.connect("changed", check)
             b.connect("changed", check)
+            switch.connect("notify::active", check)
             a.connect("entry-activated", lambda *_: b.grab_focus())
             b.connect("entry-activated", lambda *_: nxt.get_sensitive() and nxt.emit("clicked"))
-            nxt.connect("clicked", lambda *_: self.plan(a.get_text()))
+            nxt.connect("clicked", lambda *_: self.plan(a.get_text() if self.encrypt else None))
             page = nav_page("Passphrase", "passphrase", column(
-                label("Choose a passphrase", ["in-title"]),
-                label("You'll type it every time Pulsar starts. If you forget it, your files can't be recovered.",
-                      ["in-lede"]),
-                group, hint, kbd), back=back_button(self.nav), nxt=nxt)
+                title, lede, choice, group, hint, kbd), back=back_button(self.nav), nxt=nxt)
             page.connect("shown", lambda *_: a.grab_focus())
             return page
 
@@ -611,7 +666,7 @@ def main():
             # planned() pops this page itself: a Back here would pop the one under it
             page.set_can_pop(False)
             self.nav.push(page)
-            self.run(self.backend("--plan-only"), self.planned)
+            self.run(self.backend("--plan-only", *([] if self.encrypt else ["--no-encrypt"])), self.planned)
 
         def planned(self, events, code):
             self.nav.pop()
@@ -636,7 +691,7 @@ def main():
             rows = [("Disk", f"{d['name']}\n{identity(d)} · {d['path']}"),
                     ("What happens", what),
                     ("Space for Pulsar", human(root["raw_size"]) if root else "Decided by the disk's free space"),
-                    ("Encryption", "On. Your passphrase unlocks the disk at every start.")]
+                    ("Encryption", encryption_summary(self.encrypt))]
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             for k, v in rows:
                 r = Adw.ActionRow(title=k, subtitle=v, subtitle_selectable=True, css_classes=["property"])
@@ -652,9 +707,11 @@ def main():
                             back=back_button(self.nav), nxt=go)
 
         def install(self):
-            fd, self.key_path = tempfile.mkstemp(prefix="pulsar-key-", dir=os.environ.get("XDG_RUNTIME_DIR"))
-            os.write(fd, self.passphrase.encode())
-            os.close(fd)
+            self.key_path = None
+            if self.encrypt:
+                fd, self.key_path = tempfile.mkstemp(prefix="pulsar-key-", dir=os.environ.get("XDG_RUNTIME_DIR"))
+                os.write(fd, self.passphrase.encode())
+                os.close(fd)
             self.passphrase = None
             self.started = time.monotonic()
             self.installing = True
@@ -676,12 +733,8 @@ def main():
             extra += ["--keymap", self.keymap, "--xkb-layout", self.layout]
             if self.variant:
                 extra += ["--xkb-variant", self.variant]
-            self.run(self.backend("--key-file", self.key_path, "--source-imgref", self.payload["source"],
+            self.run(self.backend(*secret_args(self.key_path), "--source-imgref", self.payload["source"],
                                   "--target-imgref", self.payload["target"], *extra), self.installed, self.progress)
-
-        STAGES = {"check": ("Checking the disk", 0.02), "disk": ("Partitioning and encrypting the disk", 0.06),
-                  "unlock": ("Unlocking the new partition", 0.10), "install": ("Copying Pulsar to the disk", 0.12),
-                  "boot": ("Setting up startup", 0.94)}
 
         def glide(self, to):
             """The bar moves to `to` over a moment, never back: each step
@@ -701,8 +754,8 @@ def main():
 
         def progress(self, ev):
             st = ev.get("stage")
-            if st in self.STAGES:
-                text, frac = self.STAGES[st]
+            if st in stages(self.encrypt):
+                text, frac = stages(self.encrypt)[st]
                 self.stage.set_label(text)
                 self.glide(frac)
                 self.in_install = st == "install"
@@ -718,10 +771,11 @@ def main():
         def installed(self, events, code):
             GLib.source_remove(self.tick)
             self.installing = False
-            try:
-                os.unlink(self.key_path)
-            except OSError:
-                pass
+            if self.key_path:
+                try:
+                    os.unlink(self.key_path)
+                except OSError:
+                    pass
             done = next((e for e in events if e.get("stage") == "done"), None)
             if code == 0 and done:
                 self.nav.push(self.done_page(int(time.monotonic() - self.started), done))
@@ -740,8 +794,7 @@ def main():
             page = nav_page("Done", "done", column(
                 mark(120), label("Pulsar is installed", ["in-display"]),
                 label("Restart the computer. When the screen goes dark, remove the USB stick.", ["in-lede"]),
-                label("When Pulsar starts, type your passphrase to unlock the disk, then create your account.",
-                      ["in-note"]),
+                label(first_start(self.encrypt), ["in-note"]),
                 *extra, Gtk.Box(height_request=8), restart))
             page.set_can_pop(False)
             page.connect("shown", lambda *_: restart.grab_focus())
@@ -804,23 +857,27 @@ def main():
         d = next((x for x in found if x["holds"] == "Windows" and options(x)["alongside"][0]), found[0])
         plan = [{"type": "root-x86-64", "raw_size": d["free"] - 2 * GiB}]
 
-        def summary(mode):
+        def summary(mode, encrypt=True):
             win.mode = mode
-            win.passphrase = "x" * 8
+            win.encrypt = encrypt
+            win.passphrase = "x" * 8 if encrypt else None
             win.nav.push(win.summary_page(plan))
         steps = [("welcome", lambda: None),
                  ("disks", lambda: win.nav.push(win.disk_page())),
                  ("method", lambda: win.pick_disk(d)),
                  ("erase", lambda: (setattr(win, "mode", "erase"), win.nav.push(win.erase_page()))),
                  ("passphrase", lambda: win.nav.push(win.passphrase_page())),
-                 ("summary-erase", lambda: summary("erase")),
+                 ("passphrase-off", lambda: win.encrypt_row.set_active(False)),
+                 ("summary-erase-off", lambda: summary("erase", encrypt=False)),
+                 ("done-off", lambda: win.nav.push(win.done_page(187, {"windows_entry": False}))),
+                 ("summary-erase", lambda: (win.nav.replace([win.welcome]), summary("erase"))),
                  ("summary", lambda: (win.nav.pop(), summary("alongside"))),
                  ("installing", lambda: win.install()),
                  ("done", lambda: win.nav.push(win.done_page(187, {"windows_entry": True}))),
                  ("failed", lambda: win.nav.push(win.failed_page(
                      "bootc exited 1: error: Installing to filesystem: no space left on device", restored=True)))]
         # the pages whose mark rises in: shot once it has
-        slow = {"welcome": 1400, "done": 1400, "installing": 4000}
+        slow = {"welcome": 1400, "done": 1400, "done-off": 1400, "installing": 4000}
 
         def save(name, n):
             w, h = win.get_width(), win.get_height()

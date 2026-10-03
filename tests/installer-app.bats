@@ -169,3 +169,47 @@ PY
     [ "$(py 'm.elapsed(0)')" = "Time so far: 0:00" ]
     [ "$(py 'm.elapsed(754)')" = "Time so far: 12:34" ]
 }
+
+@test "encryption off: every page says so, and the backend is told --no-encrypt" {
+    [ "$(py 'm.passphrase_heading(False)[0]')" = "Install without encryption" ]
+    [ "$(py 'm.passphrase_heading(False)[1]')" = "Anyone who has this computer or its disk can read the files on it." ]
+    [ "$(py 'm.encryption_summary(False)')" = "Off. Anyone who has this computer or its disk can read the files on it." ]
+    [ "$(py 'm.stages(False)["disk"][0]')" = "Partitioning the disk" ]
+    [ "$(py '"unlock" in m.stages(False)')" = "False" ]
+    [ "$(py 'm.first_start(False)')" = "When Pulsar starts, create your account." ]
+    [ "$(py 'm.secret_args(None)')" = "['--no-encrypt']" ]
+}
+
+@test "encryption on: the passphrase, the unlock stage and the unlock prompt" {
+    [ "$(py 'm.passphrase_heading(True)[0]')" = "Choose a passphrase" ]
+    [ "$(py 'm.encryption_summary(True)')" = "On. Your passphrase unlocks the disk at every start." ]
+    [ "$(py 'm.stages(True)["disk"][0]')" = "Partitioning and encrypting the disk" ]
+    [ "$(py 'm.stages(True)["unlock"][0]')" = "Unlocking the new partition" ]
+    [[ "$(py 'm.first_start(True)')" == *"type your passphrase to unlock the disk"* ]]
+    [ "$(py 'm.secret_args("/run/user/1000/k")')" = "['--key-file', '/run/user/1000/k']" ]
+}
+
+@test "the bar moves forward through the stages either way" {
+    for e in True False; do
+        run py "[f for _, f in m.stages($e).values()] == sorted(f for _, f in m.stages($e).values())"
+        [ "$output" = "True" ]
+    done
+}
+
+@test "encryption copy: no exclamation marks, American spelling" {
+    run py 'm.passphrase_heading(True) + m.passphrase_heading(False) + (m.encryption_summary(True), m.encryption_summary(False), m.first_start(True), m.first_start(False))'
+    [[ "$output" != *"!"* ]]
+    [[ "$output" != *"isation"* ]]
+}
+
+@test "the encryption switch starts on, and the app starts encrypted" {
+    grep -q 'Adw.SwitchRow(title="Encrypt the disk", subtitle="Recommended", active=True)' "$APP"
+    grep -q 'self.encrypt = True' "$APP"
+}
+
+@test "the fake backend skips the unlock stage when told --no-encrypt" {
+    local fake="${BATS_TEST_DIRNAME}/fixtures/installer/fake-backend"
+    run timeout 3 "$fake" --mode erase --no-encrypt /dev/x
+    [[ "$output" != *unlock* ]]
+    [[ "$output" == *'"disk"'* ]]
+}
