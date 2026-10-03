@@ -84,6 +84,11 @@ const BRIGHTNESS = 1.06;
 // The blurred copy reaches this far past a surface on every side, so the
 // blur has real pixels to draw on at the edge, and the shadow has room.
 const BLUR_PAD = 64;
+// How far past its own edge a surface's blur reads what is beside it, in
+// logical pixels: about the blur's width, so a bright neighbor glows in at
+// the edge the way it does through frosted glass, instead of the edge
+// pixels repeating outward. Within both pads (BLUR_PAD, WINDOW_PAD).
+const EDGE_SAMPLE = 24;
 // The shadow floating glass (menus, Quick Settings, OSDs, banners, dialogs,
 // the dash) casts: soft and ambient, from no direction -- 2px down, fading
 // over 22px, in the theme's own deep ground (deepShadow()), at alpha
@@ -727,6 +732,14 @@ class PulsarLiveBlur extends Clutter.Effect {
         this.queue_repaint();
     }
 
+    // the big preview's kept blur: the larger of the two
+    _bigPreview() {
+        const ps = this._previews;
+        if (!ps)
+            return null;
+        return (ps[1].key[2] || 0) > (ps[0].key[2] || 0) ? ps[1] : ps[0];
+    }
+
     vfunc_modify_paint_volume(volume) {
         // The actors this draws on are empty: their volume is their own
         // box, at their origin. Set outright, from one kept point.
@@ -796,7 +809,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (!actor) {
             this._states.clear();
             this._last = null;
-            this._preview = null;
+            this._previews = null;
         }
         super.vfunc_set_actor(actor);
     }
@@ -819,7 +832,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         // blur.
         const clone = inClonePaint(actor);
         if (!Views.get(fb) && (clone || this._last?.result)) {
-            const s = clone && this._preview?.result ? this._preview : this._last;
+            const s = clone && this._bigPreview()?.result ? this._bigPreview() : this._last;
             if (s?.result)
                 this._draw(fb, actor, x0, y0, w, h, s);
             return;
@@ -844,14 +857,18 @@ class PulsarLiveBlur extends Clutter.Effect {
         if (clone) {
             if (!onView)
                 return;
-            s = this._preview ??= {copy: null, result: null, key: [NaN, NaN, NaN, NaN], hw: 0, hh: 0};
-            // The workspace thumbnail shows the big preview's blur rather
-            // than redo it: two previews blurring into one kept copy would
-            // each find it moved, and blur whole, every frame.
-            if (s.result && r.w < s.key[2] / 2) {
-                this._draw(fb, actor, x0, y0, w, h, s);
-                return;
-            }
+            // The big preview and the workspace thumbnail each keep their
+            // own copy: blurring both into one, each would find it moved and
+            // blur it whole every frame. Each takes the one already its size,
+            // else the one the other did not paint with last. (Telling them
+            // apart by size against the big one's last size, a window shrunk
+            // to under half had its preview taken for the thumbnail, and it
+            // showed the big window's old blur squeezed into it, for good.)
+            const ps = this._previews ??= [0, 1].map(() =>
+                ({copy: null, result: null, key: [NaN, NaN, NaN, NaN], hw: 0, hh: 0, used: 0}));
+            s = ps.find(q => q.key[2] === r.w && q.key[3] === r.h) ??
+                (ps[0].used <= ps[1].used ? ps[0] : ps[1]);
+            s.used = this._previewTick = (this._previewTick ?? 0) + 1;
         } else if (onView) {
             if (this._gen !== Views.gen) {
                 this._states.clear();
@@ -930,25 +947,26 @@ class PulsarLiveBlur extends Clutter.Effect {
         }
         s.hw = hw;
         s.hh = hh;
-        // What the blur may read: the surface's own shape, on screen, in the
-        // copy's half-size texels. Past its edge are its neighbors (another
-        // window's bright header, or one stacked above whose pixels are last
-        // frame's), which smeared in as a strip along the edge; like CSS's
-        // backdrop-filter, the edge is repeated there instead.
+        // What the blur may read, in the copy's half-size texels: the
+        // surface's own shape and EDGE_SAMPLE beyond it, on screen, so what
+        // is beside the surface bleeds in at its edge as through frosted
+        // glass. (Clamped to the shape alone, the edge pixels repeated
+        // outward and the edge looked unstable as anything beside it moved.)
         const sp = this._shape, fw = fb.get_width(), fh = fb.get_height();
         const kx = r.w / w / 2, ky = r.h / h / 2;
+        const m = EDGE_SAMPLE;
         const bx = s.box ??= [0, 0, 0, 0];
-        bx[0] = Math.max((sp[0] - x0) * kx, (Math.max(r.x, 0) - r.x) / 2);
-        bx[1] = Math.max((sp[1] - y0) * ky, (Math.max(r.y, 0) - r.y) / 2);
-        bx[2] = Math.min((sp[0] + sp[2] - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2);
-        bx[3] = Math.min((sp[1] + sp[3] - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2);
+        bx[0] = Math.max((sp[0] - m - x0) * kx, (Math.max(r.x, 0) - r.x) / 2, 0);
+        bx[1] = Math.max((sp[1] - m - y0) * ky, (Math.max(r.y, 0) - r.y) / 2, 0);
+        bx[2] = Math.min((sp[0] + sp[2] + m - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2, r.w / 2);
+        bx[3] = Math.min((sp[1] + sp[3] + m - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2, r.h / 2);
         this._blur(s, r.scale);
         // what is beneath the preview may change anywhere before the next
         // overview: its next paint copies all of it again
         if (onView && !clone) {
             this._last = s;
-            if (this._preview)
-                this._preview.key[0] = NaN;
+            for (const q of this._previews ?? [])
+                q.key[0] = NaN;
         }
         this._draw(fb, actor, x0, y0, w, h, s);
     }
@@ -2915,14 +2933,24 @@ export class Glass {
     }
 
     // The overview's search entry, in the controls beside the dash, and like
-    // the dash placed after their layout. Nothing opened it: lit along its
-    // whole top edge.
+    // the dash placed after their layout. Lit top center (Nick, 2026-10-02:
+    // not along its whole top edge), from a point just above its middle.
     _trackSearch() {
         const entry = Main.overview.searchEntry;
         const bin = entry?.get_parent();
         if (!bin?.get_parent())
             return;
-        this._add(bin, {box: () => entry, source: () => null, tone: () => this._battery});
+        this._add(bin, {
+            box: () => entry,
+            source: () => {
+                if (!entry.has_allocation())
+                    return null;
+                const [ex, ey] = entry.get_transformed_position();
+                const [ew] = entry.get_transformed_size();
+                return [ex + ew / 2, ey - 1];
+            },
+            tone: () => this._battery,
+        });
     }
 
     // A dash icon's name, over the icon: lit from below, like the dash. A
