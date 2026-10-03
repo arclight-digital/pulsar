@@ -57,4 +57,6 @@ ID, `digital.arclight.Pulsar.ThemePicker` (scalable and symbolic, in
 content-credentials metadata stripped; the copies here keep it. The engine's
 notifications use the symbolic one. `pulsar-welcome.svg` and
 `pulsar-welcome-symbolic.svg` are the welcome app's, shipped the same way as
-`digital.arclight.Pulsar.Welcome`.
+`digital.arclight.Pulsar.Welcome`. `pulsar-settings.svg` is Pulsar Settings'
+(`digital.arclight.Pulsar.Settings`, scalable only: it sends no
+notifications, so it has no symbolic one yet).
