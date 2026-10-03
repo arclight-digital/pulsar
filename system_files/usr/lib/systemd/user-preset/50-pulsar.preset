@@ -8,6 +8,7 @@ enable pulsar-update-check.timer
 enable pulsar-gl-check.path
 enable pulsar-crash-watch.path
 enable pulsar-steam-gpu-watch.service
+enable pulsar-steam-gl-profile.service
 enable pulsar-theme-init.service
 enable pulsar-theme-notice.service
 enable pulsar-welcome.service

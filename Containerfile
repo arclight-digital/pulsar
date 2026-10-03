@@ -957,6 +957,11 @@ RUN set -eu; \
 # repainting; the watcher restarts that one process when it sees the stall
 # (see scripts/steam-gpu-watch.sh). On the vanilla image it never starts.
 #
+# pulsar-steam-gl-profile.service is --global for the same reason: it puts an
+# NVIDIA profile in the user's Steam that turns GL vsync off for the client's
+# own window (steamwebhelper) only, whose swaps otherwise block on Xwayland
+# for tens of ms. Header of the unit has the numbers. Vanilla: never starts.
+#
 # pulsar-theme-init.service and pulsar-theme-notice.service are --global
 # because theming is per account: init themes each account once on its first
 # login (and leaves a customised one alone), notice tells that account what
@@ -1019,6 +1024,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-gl-check.path && \
     systemctl --global enable pulsar-crash-watch.path && \
     systemctl --global enable pulsar-steam-gpu-watch.service && \
+    systemctl --global enable pulsar-steam-gl-profile.service && \
     systemctl --global enable pulsar-theme-init.service && \
     systemctl --global enable pulsar-theme-notice.service && \
     systemctl --global enable pulsar-welcome.service && \
@@ -1030,7 +1036,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
              pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
-             pulsar-welcome.service; do \
+             pulsar-welcome.service pulsar-steam-gl-profile.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

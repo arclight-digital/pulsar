@@ -62,7 +62,7 @@ RUN systemctl disable bootloader-update.service greenboot-healthcheck.service \
       greenboot-set-rollback-trigger.service pulsar-flatpaks.service flatpak-add-fedora-repos.service \
       pulsar-update-auto.timer rpm-ostree-countme.timer fstrim.timer \
       sysstat.service sysstat-collect.timer sysstat-rotate.timer sysstat-summary.timer && \
-    systemctl --global disable pulsar-crash-watch.path pulsar-gl-check.path pulsar-steam-gpu-watch.service \
+    systemctl --global disable pulsar-crash-watch.path pulsar-gl-check.path pulsar-steam-gpu-watch.service pulsar-steam-gl-profile.service \
       pulsar-theme-notice.service pulsar-welcome.service podman-auto-update.timer pulsar-update-check.timer \
       grub-boot-success.timer gamescale-reconcile.service && \
     systemctl enable var-tmp.mount && \

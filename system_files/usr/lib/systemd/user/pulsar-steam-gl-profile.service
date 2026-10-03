@@ -1,0 +1,29 @@
+[Unit]
+# Turns off the NVIDIA GL driver's vsync for steamwebhelper, the process that
+# draws the Steam client's own window, and nothing else Steam runs.
+#
+# With vsync on, its SwapBuffers through GLX on Xwayland blocks until the
+# compositor hands the last buffer back: on cherenkov (2026-10-03, 615.71.09,
+# 240 Hz) 20-30 ms routinely and up to 838 ms, so the screen went 80-130 ms
+# without a new Steam frame and the client stuttered on every scroll. With it
+# off the swap takes 0.2 ms and the window updates at the panel's 240 Hz;
+# Chromium already paces its frames to the display itself, so nothing tears.
+#
+# The rule matches the process name, so games keep their own vsync: an
+# __GL_SYNC_TO_VBLANK=0 on the Flatpak would reach every OpenGL game Steam
+# starts. The profile goes in Steam's own ~/.nv
+# (~/.var/app/com.valvesoftware.Steam/.nv inside the sandbox), the only
+# profile directory the sandboxed driver reads that we can write; it is
+# copied on every login so an image update reaches it.
+#
+# Opt out: systemctl --user mask pulsar-steam-gl-profile.service, then delete
+# ~/.var/app/com.valvesoftware.Steam/.nv/nvidia-application-profiles-rc.d/50-pulsar-steam-client
+Description=NVIDIA GL profile for the Steam client window
+ConditionPathExists=/sys/module/nvidia
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/install -D -m 0644 /usr/share/pulsar/nvidia/steam-client-profile.json %h/.var/app/com.valvesoftware.Steam/.nv/nvidia-application-profiles-rc.d/50-pulsar-steam-client
+
+[Install]
+WantedBy=default.target

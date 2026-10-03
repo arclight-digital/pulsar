@@ -1,0 +1,8 @@
+{
+  "rules": [
+    { "pattern": { "feature": "procname", "matches": "steamwebhelper" }, "profile": "Pulsar: Steam client UI" }
+  ],
+  "profiles": [
+    { "name": "Pulsar: Steam client UI", "settings": [ { "key": "GLSyncToVblank", "value": false } ] }
+  ]
+}
