@@ -1,0 +1,10 @@
+# What scripts/root-check.sh runs check.sh in: Fedora with every tool the
+# checks use, installed once instead of on every run (that install was half
+# of each run). The nightly does not use it; it runs check.sh on the build
+# host itself.
+FROM registry.fedoraproject.org/fedora:44
+RUN dnf5 install -y --setopt=install_weak_deps=False \
+      bats parallel jq python3 git findutils util-linux procps-ng diffutils openssl \
+      ShellCheck libxml2 systemd-repart cryptsetup btrfs-progs dosfstools e2fsprogs && \
+    dnf5 clean all && \
+    git config --system --add safe.directory /opt/pulsar

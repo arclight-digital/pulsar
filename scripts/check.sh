@@ -49,6 +49,7 @@ shellcheck \
   scripts/nightly.sh \
   scripts/publish.sh \
   scripts/rechunk-selftest.sh \
+  scripts/root-check.sh \
   scripts/rpm-sbom.sh \
   scripts/sbom-changelog.sh \
   scripts/sign-file-oracle \
@@ -111,7 +112,10 @@ done < <(find system_files system_files.nvidia assets \
 echo "xmllint: ${n} file(s) well-formed"
 
 say "bats"
-bats tests/
+# in parallel where GNU parallel is (one job per core): about 40 s, not 4 min
+jobs=()
+command -v parallel >/dev/null && jobs=(--jobs "$(nproc)")
+bats "${jobs[@]}" tests/
 
 # The installer's disk tests (Windows' partitions untouched, the root
 # encrypted, a failed install taken back) skip where systemd-repart,

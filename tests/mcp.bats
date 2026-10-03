@@ -78,7 +78,10 @@ init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
     run timeout 30 python3 - "$MCP" <<'PY'
 import os, pty, select, signal, subprocess, sys, time
 m, s = pty.openpty()
-p = subprocess.Popen(["python3", sys.argv[1]], stdin=s, stdout=s, stderr=s)
+# Ctrl-C as a terminal has it: a parallel test run starts tests with SIGINT
+# ignored, as a shell does background jobs, and the child would inherit that
+p = subprocess.Popen(["python3", sys.argv[1]], stdin=s, stdout=s, stderr=s,
+                     preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
 os.close(s)
 out, end = b"", time.time() + 20
 def drain(until):
