@@ -80,6 +80,10 @@ stage() {
     echo org.freedesktop.Platform.Compat.i386 > "$FLATPAK_STATE"
     stage 615.71.09
     run "$SCRIPT"
+    # Shown only if this fails: it failed once on the build host (2026-10-03)
+    # and nowhere else, with nothing to say whether GL32 or 615 went missing.
+    printf 'script said:\n%s\nflatpak list:\n' "$output"; cat "$FLATPAK_STATE"
+    echo "installed:"; cat "$FLATPAK_LOG"
     [ "$status" -eq 0 ]
     grep -qx org.freedesktop.Platform.GL32.nvidia-615-71-09 "$FLATPAK_LOG"
     grep -qx org.freedesktop.Platform.GL32.nvidia-610-57-04 "$FLATPAK_LOG"
