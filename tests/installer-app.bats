@@ -75,8 +75,8 @@ PY
 }
 
 @test "passphrase: 8 characters and typed the same twice" {
-    [ "$(py 'm.passphrase_problem("short", "short")')" = "At least 8 characters" ]
-    [ "$(py 'm.passphrase_problem("correct horse", "correct hors")')" = "The two don't match" ]
+    [ "$(py 'm.passphrase_problem("short", "short")')" = "Use at least 8 characters" ]
+    [ "$(py 'm.passphrase_problem("correct horse", "correct hors")')" = "The passphrases don't match" ]
     [ "$(py 'm.passphrase_problem("correct horse", "correct horse")')" = "None" ]
 }
 
@@ -103,8 +103,8 @@ PY
 
 @test "the passphrase hint waits for the second entry before saying they differ" {
     [ "$(py 'm.passphrase_hint("correct horse", "")')" = "" ]
-    [ "$(py 'm.passphrase_hint("short", "")')" = "At least 8 characters" ]
-    [ "$(py 'm.passphrase_hint("correct horse", "correct")')" = "The two don't match" ]
+    [ "$(py 'm.passphrase_hint("short", "")')" = "Use at least 8 characters" ]
+    [ "$(py 'm.passphrase_hint("correct horse", "correct")')" = "The passphrases don't match" ]
 }
 
 @test "the copy's progress fills the bar between its start and the boot setup" {
@@ -128,4 +128,44 @@ PY
     [ "$(py 'm.install_destroys("erase", D["/dev/sdb"])')" = "False" ]
     [ "$(py 'm.install_destroys("erase", D["/dev/nvme1n1"])')" = "True" ]
     [ "$(py 'm.install_destroys("alongside", D["/dev/nvme1n1"])')" = "False" ]
+}
+
+@test "the last button says it erases whenever it deletes something" {
+    [ "$(py 'm.install_button("erase", D["/dev/nvme1n1"])')" = "Erase and Install" ]
+    [ "$(py 'm.install_button("erase", D["/dev/sdb"])')" = "Install" ]
+    [ "$(py 'm.install_button("alongside", D["/dev/nvme1n1"])')" = "Install" ]
+}
+
+@test "an empty disk skips the page asking how: erasing nothing is the one way" {
+    [ "$(py 'm.skips_method(D["/dev/sdb"])')" = "True" ]
+    [ "$(py 'm.skips_method(D["/dev/nvme1n1"])')" = "False" ]
+}
+
+@test "each disk is described by size, what is on it, and USB" {
+    [ "$(py 'm.identity(D["/dev/nvme1n1"])')" = "1.0 TB · Windows" ]
+    [ "$(py 'm.identity(D["/dev/sdb"])')" = "256 GB · Empty" ]
+    # a data disk is named by its partitions' names
+    [ "$(py 'm.identity(D["/dev/sde"])')" = "2.0 TB · Files (Games)" ]
+}
+
+@test "two drives of the same model never read the same" {
+    run py '[d["name"] for d in m.tell_apart([
+        {"name": "Samsung SSD", "serial": "S6B0NX0R123456A", "path": "/dev/nvme0n1"},
+        {"name": "Samsung SSD", "serial": "", "path": "/dev/nvme1n1"},
+        {"name": "Crucial MX500", "serial": "2203E5F1", "path": "/dev/sda"}])]'
+    [ "$output" = "['Samsung SSD (serial ending 456A)', 'Samsung SSD (/dev/nvme1n1)', 'Crucial MX500']" ]
+    # lsblk is asked for the serial
+    [[ "$(py 'm.LSBLK_COLS')" == *",SERIAL,"* ]]
+}
+
+@test "after a failure the page says what state the disk is in, by mode" {
+    [ "$(py 'm.failure_state("erase", True, planning=True)')" = "Nothing on the disk was changed." ]
+    [ "$(py 'm.failure_state("erase", True)')" = "The disk is as it was before you pressed Install." ]
+    [[ "$(py 'm.failure_state("alongside", False)')" == *"Everything that was on the disk before is untouched."* ]]
+    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, but Pulsar is not fully on it." ]
+}
+
+@test "elapsed time reads as minutes and seconds" {
+    [ "$(py 'm.elapsed(0)')" = "Time so far: 0:00" ]
+    [ "$(py 'm.elapsed(754)')" = "Time so far: 12:34" ]
 }
