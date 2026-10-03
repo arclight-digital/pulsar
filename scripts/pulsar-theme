@@ -451,9 +451,16 @@ class Variant:
         # BACKDROP_SVG makes the blur opaque first.
         sheet = "dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet"
         alert = "dialog-host > dialog.alert sheet"
+        # A fullscreen window has no blur behind it (the extension drops it,
+        # so a game or a video keeps direct scanout), and its translucent
+        # grounds showed what was behind it sharp: solid while fullscreen.
+        full = "".join(f"  --{v}-color: {self.p[k].hex};\n" for v, k in (
+            ("window-bg", "window"), ("view-bg", "view"), ("headerbar-bg", "headerbar"),
+            ("headerbar-backdrop", "window"), ("sidebar-bg", "sidebar"), ("sidebar-backdrop", "window")))
         if g:
             c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['window'].hex};\n}}\n"
-                                 f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n")
+                                 f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
+                                 f"window.fullscreen {{\n{full}}}\n")
             c["sheet_glass"] = "".join(
                 f"{sel} {{\n  background-color: alpha({self.p[k].hex}, {pa});\n"
                 f"  backdrop-filter: blur(20px) url(\"{BACKDROP_SVG}#opaque\");\n}}\n"

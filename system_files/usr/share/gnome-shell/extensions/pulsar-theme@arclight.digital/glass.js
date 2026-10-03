@@ -2043,6 +2043,12 @@ const GLASSY = new WeakSet();
 
 const GLASS_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY];
 
+// Whether each process, by pid, has GTK 4 loaded (null: its maps could not
+// be read), read once per process: see WindowGlass.wanted(). An entry goes
+// with the process's last window (Glass._watchGeometry), since its pid may
+// be the next process's.
+const GTK4 = new Map();
+
 // The live blur inside one window actor, under its surfaces, cut to the
 // window's frame and corners. Only GTK apps get one: they are the ones the
 // engine's gtk.css makes translucent (anything else paints opaque over it,
@@ -2131,21 +2137,43 @@ class WindowGlass {
         this._cull.recull();
     }
 
-    // A GTK app's own windows carry its application id. A libadwaita dialog
-    // presented without a parent floats in a window of its own that has
-    // none, and painted with the same translucent ground it showed the app
-    // behind it sharp: a window of the same process as one that has an id
-    // is that app's too.
-    // `gtkPids` gives the processes with such a window, made once for a
-    // whole pass over the windows, not once per window.
+    // gtk.css is GTK 4's, so a window gets glass if its process has GTK 4
+    // loaded: an app's own windows, a libadwaita dialog floating with no
+    // parent, and the helpers that are no GtkApplication and carry no
+    // application id at all (the portal's file chooser and "Open With",
+    // the VPN password prompt). A GTK 3 app is opaque, and gets none.
+    // A process whose maps cannot be read is judged the old way: a window
+    // with an application id is a GTK app's, and so is any window of the
+    // same process. `gtkPids` gives the processes with such a window, made
+    // once for a whole pass over the windows, not once per window.
     static wanted(actor, gtkPids = WindowGlass.gtkPids) {
         const w = actor?.meta_window;
         if (!w || !GLASS_TYPES.includes(w.get_window_type()))
             return false;
+        const pid = w.get_pid();
+        const gtk4 = WindowGlass.gtk4(pid);
+        if (gtk4 !== null)
+            return gtk4;
         if (w.get_gtk_application_id?.())
             return true;
-        const pid = w.get_pid();
         return pid > 0 && gtkPids().has(pid);
+    }
+
+    // Read once per process: a GTK 4 app loads GTK before it opens a window.
+    // A Flatpak app's pid is the host's, and its maps name the runtime's
+    // copy of the library, which matches all the same.
+    static gtk4(pid) {
+        if (!(pid > 0))
+            return null;
+        if (!GTK4.has(pid)) {
+            let found = null;
+            try {
+                const [, maps] = GLib.file_get_contents(`/proc/${pid}/maps`);
+                found = new TextDecoder().decode(maps).includes('/libgtk-4.so');
+            } catch {}
+            GTK4.set(pid, found);
+        }
+        return GTK4.get(pid);
     }
 
     static gtkPids() {
@@ -2624,14 +2652,26 @@ export class Glass {
             return;
         this._games.add(win);
         const cover = () => this._coverSoon();
+        // An application id (or a class) set after the window was shown
+        // came too late for the one look window-created takes.
+        const track = () => {
+            this._trackWindow(win.get_compositor_private());
+            this._trackPopup(win);
+        };
         win.connectObject(
             'position-changed', cover,
             'size-changed', cover,
             'notify::fullscreen', cover,
             'notify::minimized', cover,
+            'notify::gtk-application-id', track,
+            'notify::wm-class', track,
             'unmanaged', () => {
                 win.disconnectObject(this);
                 this._games.delete(win);
+                // the process's last window: its pid is free for another
+                const pid = win.get_pid();
+                if (!global.display.list_all_windows().some(o => o !== win && o.get_pid() === pid))
+                    GTK4.delete(pid);
                 cover();
             },
             this);
@@ -2691,9 +2731,14 @@ export class Glass {
     }
 
     get _allowed() {
+        return this._session && !this._a11y.get_boolean('high-contrast');
+    }
+
+    // The user's own session, not locked: high contrast aside, which takes
+    // glass away but not from windows that opened translucent (_sync).
+    get _session() {
         return !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter &&
-            Main.sessionMode.currentMode === 'user' &&
-            !this._a11y.get_boolean('high-contrast');
+            Main.sessionMode.currentMode === 'user';
     }
 
     // Glass and light off for now, as if switched off, without touching the
@@ -2841,7 +2886,10 @@ export class Glass {
     // the window actor. It scales and fades its box, not the layout, so the
     // glass copies the box (centered in the layout, so the pivots agree).
     _trackCloseDialog(close) {
-        const layout = close._dialog;
+        this._trackCloseLayout(close._dialog);
+    }
+
+    _trackCloseLayout(layout) {
         const box = layout?._dialog;
         if (box)
             this._add(layout, {box: () => box, follow: () => box, source: () => null, tone: () => this._battery});
@@ -3043,7 +3091,9 @@ export class Glass {
     // A popover over a glass window, uncull()ed for as long as it is open.
     _trackPopup(win) {
         const actor = win.get_compositor_private();
-        if (!actor || !POPUP_TYPES.includes(win.get_window_type()) || !this._windows.size)
+        // (asked again when its id or class changes: once is enough)
+        if (!actor || !POPUP_TYPES.includes(win.get_window_type()) || !this._windows.size ||
+            this._windows.has(actor) || this._popups?.has(actor))
             return;
         // over a glass window (or a popup of one): glass of its own
         const parent = win.get_transient_for()?.get_compositor_private();
@@ -3071,7 +3121,7 @@ export class Glass {
 
     // `glassy`: one that opened translucent, kept whatever the switch says
     _trackWindow(actor, glassy = false, gtkPids = undefined) {
-        if (!(this.windows || (glassy && this._allowed)) || !actor || this._windows.has(actor) ||
+        if (!(this.windows || (glassy && this._session)) || !actor || this._windows.has(actor) ||
             !WindowGlass.wanted(actor, gtkPids))
             return;
         this._windows.set(actor, new WindowGlass(this, actor));
@@ -3135,17 +3185,34 @@ export class Glass {
             // and .pulsar-glass would leave it with no background at all.
             if (Main.messageTray?._banner)
                 this._trackBanner();
+            // Dialogs already open, which no hook saw open: one left open
+            // across a lock (polkit's hides while locked and shows again at
+            // unlock) comes back to a new Glass, and the sheet has cleared
+            // its .modal-dialog; so does glass switched on under one.
+            for (const d of Main.layoutManager.modalDialogGroup.get_children()) {
+                if (d instanceof ModalDialog.ModalDialog &&
+                    (d.state === ModalDialog.State.OPENED || d.state === ModalDialog.State.OPENING))
+                    this._trackDialog(d);
+            }
+            // and "not responding", inside its window's actor
+            for (const a of global.get_window_actors()) {
+                for (const c of a.get_children()) {
+                    if (c._dialog?.has_style_class_name?.('close-dialog'))
+                        this._trackCloseLayout(c);
+                }
+            }
         }
         // the GTK apps' processes, found once for all the windows, if asked
         let pids = null;
         const gtkPids = () => (pids ??= WindowGlass.gtkPids());
         if (this.windows)
             global.get_window_actors().forEach(a => this._trackWindow(a, false, gtkPids));
-        else if (!this._allowed)
+        else if (!this._session)
             [...this._windows.keys()].forEach(a => this.forgetWindow(a));
         else
-            // switched off: the translucent ones keep their blur (back after
-            // a lock too); the rest go
+            // switched off, or high contrast on: the translucent ones keep
+            // their blur (back after a lock too), since GTK never reads
+            // gtk.css again; the rest go
             global.get_window_actors().forEach(a => this._glassy.has(a)
                 ? this._trackWindow(a, true, gtkPids) : this.forgetWindow(a));
 
@@ -3189,6 +3256,9 @@ export class Glass {
         global.display.disconnectObject(this);
         for (const a of [...this._windows.keys()])
             this.forgetWindow(a);
+        // nothing sees windows close while this is off (a lock): their
+        // pids may be other processes' by the next Glass
+        GTK4.clear();
         for (const [a, cull] of this._popups ?? []) {
             a.disconnectObject(this);
             cull.recull();

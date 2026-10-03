@@ -1082,6 +1082,8 @@ print("" if d is None else d)' "$1" "$2"; }
     # every GTK: the in-window sheet solid, inside each variant's block
     grep -q '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css"
     grep -q '^toast { background-color: #[0-9a-f]*; color: #[0-9a-f]*; }$' "$css"
+    # fullscreen has no blur behind it: its grounds solid
+    grep -A1 '^window.fullscreen {$' "$css" | grep -q -- '^  --window-bg-color: #[0-9a-f]*;$'
     # GTK 4.22: glass, in top-level blocks only a GTK that knows reduced motion keeps
     [ "$(grep -c '^@media (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: no-preference), (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: reduce) {$' "$css")" -eq 2 ]
     [ "$(grep -c 'backdrop-filter: blur(20px) url("pulsar-backdrop.svg#opaque");' "$css")" -eq 6 ]
