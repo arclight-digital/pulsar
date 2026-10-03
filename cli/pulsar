@@ -707,11 +707,11 @@ check_cli() {
 }
 
 check_disk() {
-    local root=/sysroot
+    local root=/sysroot df=${PULSAR_DF:-df}
     [ -d "$root" ] || root=/
     local pct avail
-    pct=$(df --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc '0-9') || true
-    avail=$(df -h --output=avail "$root" 2>/dev/null | tail -1 | tr -d ' ') || true
+    pct=$("$df" --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc '0-9') || true
+    avail=$("$df" -h --output=avail "$root" 2>/dev/null | tail -1 | tr -d ' ') || true
     [ -n "$pct" ] || { record disk warn "could not read disk usage for ${root}"; return; }
     # A bootc system needs room to stage a whole new image. Under ~10GB free
     # an upgrade starts failing in ways that look like network errors.

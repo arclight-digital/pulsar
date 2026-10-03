@@ -28,12 +28,43 @@ setup() {
   "attestation": "gh attestation verify oci://ghcr.io/x --owner y"
 }
 JSON
+    # doctor's disk check reads this, not the disk the tests happen to run on:
+    # a nearly full build host would otherwise fail every test that expects a
+    # clean `doctor` exit, with errors about gamemode or mangohud.
+    stub_df 50 "100G"
+}
+
+# stub_df <percent used> <free>: what doctor's disk check sees.
+stub_df() {
+    export PULSAR_DF="${BATS_TEST_TMPDIR}/df"
+    cat > "$PULSAR_DF" <<EOF
+#!/bin/sh
+case "\$*" in
+    *pcent*) printf 'Use%%\n %s%%\n' "$1" ;;
+    *avail*) printf 'Avail\n %s\n' "$2" ;;
+esac
+EOF
+    chmod +x "$PULSAR_DF"
 }
 
 
 # bats-core has no fail(); bats-assert does, and this suite does not load it.
 # Prints why and fails the test.
 fail() { printf '%s\n' "$*" >&2; return 1; }
+
+@test "doctor: a disk 90% full fails, 80% warns, less is ok" {
+    stub_df 91 "88G"
+    run "$PULSAR" doctor --json
+    [ "$status" -eq 1 ]
+    disk=$(jq -r '.checks[] | select(.id=="disk") | .status + " " + .summary' <<<"$output")
+    [[ "$disk" == "fail "*" is 91% full (88G free)" ]]
+    stub_df 85 "140G"
+    run "$PULSAR" doctor --json
+    [ "$(jq -r '.checks[] | select(.id=="disk") | .status' <<<"$output")" = warn ]
+    stub_df 77 "214G"
+    run "$PULSAR" doctor --json
+    [ "$(jq -r '.checks[] | select(.id=="disk") | .status' <<<"$output")" = ok ]
+}
 
 @test "runs and reports a version" {
     run "$PULSAR" --version
