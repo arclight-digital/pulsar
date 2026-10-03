@@ -90,8 +90,10 @@ build tonight:`, the builder records `"skipped": true` in its sentinel, and
 buildd serves it on `/v1/status`; the hero and both changelog sections then
 gain one sentence. A success with an empty version is never read as a skip.
 
-Weekly installer ISOs (one per variant, x86_64, 5–6 GB, the stock Silverblue
-Anaconda installer landing directly in Pulsar) are built from the published
+Weekly installer ISOs (one per variant, x86_64, about 4 GB: Pulsar's own live
+installer since 2026-10-04, which boots the image itself and installs it with
+`bootc install`; the Anaconda ISO before that, still buildable with
+`PULSAR_ISO_KIND=anaconda`) are built from the published
 image and uploaded to an R2 bucket behind lighthouse.arclight.digital
 (`/pulsar/iso/`). The `-latest` filenames are stable keys rewritten weekly;
 dated originals stay untouched. Each ISO ships `.sha256`, `.sha256.sig` and

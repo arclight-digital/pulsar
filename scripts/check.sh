@@ -34,6 +34,7 @@ shellcheck \
   cli/pulsar \
   scripts/akmods-cert.sh \
   scripts/alive-timeout.sh \
+  scripts/build-installer-iso.sh \
   scripts/build-iso.sh \
   scripts/build.sh \
   scripts/check-scx-btf.sh \

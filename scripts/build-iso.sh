@@ -9,7 +9,21 @@
 #   sudo ./scripts/build-iso.sh --variant vanilla --image ghcr.io/arclight-digital/pulsar
 #   sudo ./scripts/build-iso.sh --variant nvidia --image ... --push --keyless
 #
+# Two installers can come out of it, and everything after the build step --
+# naming, checksum, sidecar, signature, Rekor, upload, -latest -- is the same
+# code for both, so the files people download keep their names and their
+# verify instructions whichever one is inside:
+#
+#   installer  Pulsar's own live installer (Containerfile.installer, built by
+#              scripts/build-installer-iso.sh with image-builder). The default
+#              since 2026-10-04. Nothing on it installs until a person picks a
+#              disk and confirms: no kickstart, no unattended path.
+#   anaconda   bootc-image-builder's Anaconda ISO with iso-config.toml, the
+#              weekly until then. Kept as the fallback: --kind anaconda, or
+#              PULSAR_ISO_KIND=anaconda in the environment.
+#
 # Options:
+#   --kind K            installer | anaconda  (default: $PULSAR_ISO_KIND, else installer)
 #   --variant V         vanilla | nvidia                    (required)
 #   --image NAME        registry image to build from        (required)
 #   --tag TAG           tag to resolve                      (default: latest)
@@ -32,6 +46,11 @@
 # the ISO was building" stops being a possible state, and the sidecar records
 # exactly which image the installer installs.
 #
+# The installer kind tags that digest locally as ${IMAGE}:${TAG} and builds
+# from the tag: image-builder embeds the payload under the name it is given,
+# and the live installer installs it by that name, which is the shape the VM
+# runs proved. The local tag is the resolved digest, so nothing can move it.
+#
 # The digest must NOT follow the image onto the machine, though. bib's own
 # %post runs `bootc switch` onto the exact ref it was given, so every ISO
 # before 2026-09-25 installed a system whose origin was
@@ -40,6 +59,8 @@
 # The installer therefore gets a second %post (iso-config.toml) that points
 # the origin back at ${IMAGE}:${TRACK}, filled in here -- --track rather than
 # --tag, because an ISO built from an older tag should still follow latest.
+# The live installer gets the same ref as its --target, which it writes into
+# payload.json and hands to `bootc install --target-imgref`.
 #
 # The version comes from the image's org.opencontainers.image.version label
 # (stamped by build.sh), so the ISO inherits the collision-proof
@@ -72,6 +93,7 @@ BIB="${BIB:-quay.io/centos-bootc/bootc-image-builder@sha256:2b52843ea2bfda73b0a0
 # picks, so an ISO install lands on the same layout as a stock one.
 ROOTFS="${ROOTFS:-btrfs}"
 
+KIND="${PULSAR_ISO_KIND:-installer}"
 VARIANT=""
 IMAGE=""
 TAG=latest
@@ -90,6 +112,7 @@ KEYLESS=no
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --kind)              KIND="${2:?}"; shift ;;
     --variant)           VARIANT="${2:?}"; shift ;;
     --image)             IMAGE="${2:?}"; shift ;;
     --tag)               TAG="${2:?}"; shift ;;
@@ -100,12 +123,16 @@ while [ $# -gt 0 ]; do
     --signer-token-file) SIGNER_TOKEN_FILE="${2:?}"; shift ;;
     --signer-ca-file)    SIGNER_CA_FILE="${2:?}"; shift ;;
     --keyless)           KEYLESS=yes ;;
-    -h|--help)           sed -n '2,57p' "$0"; exit 0 ;;
+    -h|--help)           sed -n '2,/^set -euo/{/^set -euo/!p}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
+case "${KIND}" in
+  installer|anaconda) ;;
+  *) echo "--kind (or PULSAR_ISO_KIND) must be installer or anaconda, not '${KIND}'" >&2; exit 2 ;;
+esac
 case "${VARIANT}" in
   vanilla) ARTIFACT=pulsar ;;
   nvidia)  ARTIFACT=pulsar-nvidia ;;
@@ -115,7 +142,7 @@ esac
 case "${TRACK}" in
   *[@:/]*|"") echo "--track takes a bare tag, not a reference: ${TRACK}" >&2; exit 2 ;;
 esac
-[ "$(id -u)" = 0 ] || { echo "run as root: bib needs the rootful store" >&2; exit 2; }
+[ "$(id -u)" = 0 ] || { echo "run as root: bib and image-builder need the rootful store" >&2; exit 2; }
 
 if [ "${KEYLESS}" = no ] && { [ -z "${SIGNER_URL}" ] || [ -z "${SIGNER_TOKEN_FILE}" ]; }; then
   echo "no signer configured: pass --signer-url/--signer-token-file, or --keyless" >&2
@@ -123,9 +150,16 @@ if [ "${KEYLESS}" = no ] && { [ -z "${SIGNER_URL}" ] || [ -z "${SIGNER_TOKEN_FIL
   exit 2
 fi
 
-for tool in podman skopeo jq sha256sum cosign curl basenc; do
+tools=(podman skopeo jq sha256sum cosign curl basenc)
+[ "${KIND}" = installer ] && tools+=(image-builder python3)
+for tool in "${tools[@]}"; do
   command -v "${tool}" >/dev/null || { echo "missing: ${tool}" >&2; exit 2; }
 done
+INSTALLER_BUILD="${REPO}/scripts/build-installer-iso.sh"
+if [ "${KIND}" = installer ] && [ ! -x "${INSTALLER_BUILD}" ]; then
+  echo "missing ${INSTALLER_BUILD}: cannot build the live installer" >&2
+  exit 2
+fi
 
 PUBKEY="${REPO}/keys/cosign.pub"
 if [ "${KEYLESS}" = no ] && [ ! -r "${PUBKEY}" ]; then
@@ -137,9 +171,10 @@ fi
 # signer arguments are. Without a config, bib writes a kickstart that runs
 # `clearpart --all` and `autopart` against every disk the installer can see --
 # see iso-config.toml for the whole story. A missing file has to stop the build
-# here rather than quietly produce that ISO a second time.
+# here rather than quietly produce that ISO a second time. Anaconda only: the
+# live installer has no kickstart to supply.
 ISO_CONFIG="${REPO}/iso-config.toml"
-if [ ! -r "${ISO_CONFIG}" ]; then
+if [ "${KIND}" = anaconda ] && [ ! -r "${ISO_CONFIG}" ]; then
   echo "missing ${ISO_CONFIG}: without it bib builds an installer that" >&2
   echo "erases every attached disk without asking. refusing to build." >&2
   exit 2
@@ -172,59 +207,84 @@ if [ -z "${VERSION}" ]; then
   echo "an ISO with no version cannot be named; build.sh stamps this on push" >&2
   exit 1
 fi
-say "building ${ARTIFACT} ISO for ${VERSION} (${DIGEST})"
+# run-iso.sh on the build host reads the version back out of this line
+# ('ISO for <version>') for its sentinel. Keep that shape.
+say "building ${ARTIFACT} ISO for ${VERSION} (${DIGEST}, ${KIND})"
 
 podman pull --retry 5 "${IMAGE}@${DIGEST}"
 
-# Fill in the ref the installed system follows (see the header). Checked for
-# the exact command rather than just for the placeholder going away: a config
-# edited so the line no longer exists would pass that check and ship the
-# digest-pinned installs again, and there is no symptom until the first update
-# that never comes.
+# The ref the installed system follows (see the header), for both kinds.
 TRACK_REF="${IMAGE}:${TRACK}"
-RENDERED_CONFIG="${WORK}/iso-config.toml"
-sed "s|@PULSAR_TRACK_IMGREF@|${TRACK_REF}|g" "${ISO_CONFIG}" > "${RENDERED_CONFIG}"
-if grep -q '@PULSAR_TRACK_IMGREF@' "${RENDERED_CONFIG}" || \
-   ! grep -qxF "bootc switch --mutate-in-place --transport registry ${TRACK_REF}" "${RENDERED_CONFIG}"; then
-  echo "iso-config.toml no longer carries the %post that points installs at ${TRACK_REF}" >&2
-  echo "without it every install stays on ${DIGEST} and never updates. refusing to build." >&2
-  exit 1
-fi
-say "installed systems will track ${TRACK_REF}"
 
 # ---------------------------------------------------------------------------
-# bootc-image-builder
-#
-# --privileged and the unconfined label are what upstream documents: the
-# builder makes loopback devices and mounts filesystems to lay the ISO out,
-# none of which works from a confined container. The storage mount is
-# read-WRITE and has to be: bib runs a nested podman against this graphroot;
-# mounted :ro it dies on `mkdir .../l: read-only file system` before it does
-# any work. /store and /rpmmd are mounted for space, not correctness -- left
-# unmounted they land in the container's overlay on the root disk.
-#
-# The config lands at /config.toml because bib picks its decoder off the file
-# EXTENSION -- mounted under any other name it is parsed as JSON and the build
-# dies on the first line. It is passed explicitly rather than relying on bib's
-# "/config.json will be used if present" fallback, so that a mount that failed
-# to land is a bib error about a missing file rather than a silent return to
-# the unattended kickstart.
+# The build step: one function per kind, each leaving one .iso under
+# ${WORK}/iso. Everything after it is shared.
 # ---------------------------------------------------------------------------
-say "running bootc-image-builder"
-podman run --rm --privileged \
-  --security-opt label=type:unconfined_t \
-  -v "${WORK}/iso:/output" \
-  -v "${RENDERED_CONFIG}:/config.toml:ro" \
-  -v /var/lib/containers/storage:/var/lib/containers/storage \
-  -v "${WORK}/store:/store" \
-  -v "${WORK}/rpmmd:/rpmmd" \
-  "${BIB}" \
-    build \
-    --type anaconda-iso \
-    --config /config.toml \
-    --rootfs "${ROOTFS}" \
-    --progress verbose \
-    "${IMAGE}@${DIGEST}"
+
+# bootc-image-builder's Anaconda ISO, with iso-config.toml as its kickstart.
+build_anaconda() {
+  # Fill in the ref the installed system follows. Checked for the exact
+  # command rather than just for the placeholder going away: a config edited
+  # so the line no longer exists would pass that check and ship the
+  # digest-pinned installs again, and there is no symptom until the first
+  # update that never comes.
+  local rendered="${WORK}/iso-config.toml"
+  sed "s|@PULSAR_TRACK_IMGREF@|${TRACK_REF}|g" "${ISO_CONFIG}" > "${rendered}"
+  if grep -q '@PULSAR_TRACK_IMGREF@' "${rendered}" || \
+     ! grep -qxF "bootc switch --mutate-in-place --transport registry ${TRACK_REF}" "${rendered}"; then
+    echo "iso-config.toml no longer carries the %post that points installs at ${TRACK_REF}" >&2
+    echo "without it every install stays on ${DIGEST} and never updates. refusing to build." >&2
+    exit 1
+  fi
+  say "installed systems will track ${TRACK_REF}"
+
+  # --privileged and the unconfined label are what upstream documents: the
+  # builder makes loopback devices and mounts filesystems to lay the ISO out,
+  # none of which works from a confined container. The storage mount is
+  # read-WRITE and has to be: bib runs a nested podman against this graphroot;
+  # mounted :ro it dies on `mkdir .../l: read-only file system` before it does
+  # any work. /store and /rpmmd are mounted for space, not correctness -- left
+  # unmounted they land in the container's overlay on the root disk.
+  #
+  # The config lands at /config.toml because bib picks its decoder off the
+  # file EXTENSION -- mounted under any other name it is parsed as JSON and the
+  # build dies on the first line. It is passed explicitly rather than relying
+  # on bib's "/config.json will be used if present" fallback, so that a mount
+  # that failed to land is a bib error about a missing file rather than a
+  # silent return to the unattended kickstart.
+  say "running bootc-image-builder"
+  podman run --rm --privileged \
+    --security-opt label=type:unconfined_t \
+    -v "${WORK}/iso:/output" \
+    -v "${rendered}:/config.toml:ro" \
+    -v /var/lib/containers/storage:/var/lib/containers/storage \
+    -v "${WORK}/store:/store" \
+    -v "${WORK}/rpmmd:/rpmmd" \
+    "${BIB}" \
+      build \
+      --type anaconda-iso \
+      --config /config.toml \
+      --rootfs "${ROOTFS}" \
+      --progress verbose \
+      "${IMAGE}@${DIGEST}"
+}
+
+# Pulsar's live installer. build-installer-iso.sh reads both of its refs from
+# local storage and pulls only what is missing, so tagging the resolved digest
+# first makes ${IMAGE}:${TAG} mean that digest for the whole build: the live
+# system is built FROM it and the same image is embedded as the payload.
+# --target is what installs follow, as for Anaconda.
+build_installer() {
+  podman tag "${IMAGE}@${DIGEST}" "${IMAGE}:${TAG}"
+  say "running build-installer-iso.sh; installed systems will track ${TRACK_REF}"
+  "${INSTALLER_BUILD}" \
+    --variant "${VARIANT}" \
+    --image "${IMAGE}:${TAG}" \
+    --target "${TRACK_REF}" \
+    --out "${WORK}/iso"
+}
+
+"build_${KIND}"
 
 src="$(find "${WORK}/iso" -name '*.iso' | head -1)"
 [ -n "${src}" ] || { echo "no ISO was produced" >&2; exit 1; }
@@ -254,8 +314,10 @@ jq -n \
   --arg tracks "${TRACK_REF}" \
   --arg built "$(date -u -Iseconds)" \
   --arg iso_sha256 "${ISO_SHA256}" \
+  --arg installer "${KIND}" \
   '{variant: $variant, version: $version, image: $image, digest: $digest,
-    tracks: $tracks, built: $built, iso_sha256: $iso_sha256}' > "${NAME}.json"
+    tracks: $tracks, built: $built, iso_sha256: $iso_sha256,
+    installer: $installer}' > "${NAME}.json"
 
 # ---------------------------------------------------------------------------
 # Rekor

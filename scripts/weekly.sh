@@ -29,6 +29,15 @@
 #   R2_BUCKET, R2_ACCOUNT_ID      where ISOs are published
 #   R2_CREDENTIALS_FILE           file setting AWS_ACCESS_KEY_ID/SECRET
 #   PULSAR_CHANNEL                scheduled | manual. REQUIRED -- see below.
+#   PULSAR_ISO_KIND               installer (default): Pulsar's own live
+#                                 installer. anaconda: the bib Anaconda ISO,
+#                                 kept as the fallback. Same names, same
+#                                 signatures, same upload either way.
+#
+# The live installer is built by image-builder, which the ISO droplet's
+# cloud-init does not install (it predates it). This installs it from Fedora's
+# repos when it is missing, before anything is built -- the droplet is root
+# and thrown away afterwards, the same footing run-iso.sh installs awscli on.
 #
 # A MANUAL ISO RUN BUILDS AND PUBLISHES NOTHING, and the reason is sharper than
 # the nightly's. build-iso.sh names its artifacts from the version label on the
@@ -63,6 +72,9 @@ cd "${REPO}"
 IMAGE="${IMAGE:?IMAGE is not set}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:?IMAGE_NVIDIA is not set}"
 WORK="${PULSAR_ISO_WORK:-/var/tmp/pulsar-iso}"
+# image-builder's osbuild store: its default --cache, which build-installer-iso.sh
+# leaves alone. Overridable only so the tests never touch the real one.
+IB_STORE="${PULSAR_IMAGE_BUILDER_STORE:-/var/cache/image-builder/store}"
 
 # Same table as nightly.sh, and refusing for the same reason: publishing an ISO
 # is signing something, and nothing here may guess whether this run is entitled
@@ -88,6 +100,20 @@ echo "building from $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 # cannot pass its own checks is not a state this allows.
 "${REPO}/scripts/check.sh"
 
+KIND="${PULSAR_ISO_KIND:-installer}"
+case "${KIND}" in
+  installer|anaconda) ;;
+  *) echo "PULSAR_ISO_KIND=${KIND} is not installer or anaconda" >&2; exit 2 ;;
+esac
+echo "building the ${KIND} ISO for both variants"
+
+if [ "${KIND}" = installer ] && ! command -v image-builder >/dev/null; then
+  echo "image-builder is not installed; installing it from Fedora's repos"
+  dnf install -y image-builder
+  command -v image-builder >/dev/null \
+    || { echo "image-builder still missing after dnf install" >&2; exit 2; }
+fi
+
 for variant in vanilla nvidia; do
   case "${variant}" in
     vanilla) image="${IMAGE}" ;;
@@ -95,6 +121,7 @@ for variant in vanilla nvidia; do
   esac
 
   iso_args=(
+    --kind "${KIND}"
     --variant "${variant}"
     --image "${image}"
     --work "${WORK}"
@@ -114,9 +141,13 @@ for variant in vanilla nvidia; do
   # osbuild store are the two multi-GB items, and neither is reusable across
   # variants. --all because a digest-pull leaves no tag for rmi to name; it
   # also drops the bib image, whose re-pull is noise next to the ~10GB OS
-  # image either way.
+  # image either way. The live installer adds two more: its own built image
+  # (localhost/pulsar-installer:build, which the prune takes too) and
+  # image-builder's osbuild store, which lives at image-builder's default
+  # cache path rather than under ${WORK}.
   podman image prune --all --force >/dev/null || true
   rm -rf "${WORK}/iso" "${WORK}/store"
+  if [ "${KIND}" = installer ]; then rm -rf "${IB_STORE}"; fi
 done
 
 elapsed=$(( $(date -u +%s) - started ))

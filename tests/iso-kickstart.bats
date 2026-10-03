@@ -25,6 +25,11 @@
 #
 # The harness is stubs on PATH, the idiom build-tags.bats and
 # nightly-base-gate.bats use: no podman, no skopeo, no registry, no ISO.
+#
+# Since 2026-10-04 the weekly builds Pulsar's own live installer instead
+# (iso-installer.bats). Anaconda stays behind --kind anaconda as the fallback,
+# and these tests pin that path, so falling back cannot bring the erasing ISO
+# back with it.
 
 bats_require_minimum_version 1.5.0
 
@@ -100,7 +105,7 @@ EOF
 
 build() {
   run -0 "${ISO}" \
-    --variant vanilla \
+    --kind anaconda --variant vanilla \
     --image ghcr.io/arclight-digital/pulsar \
     --work "${WORK}" \
     --keyless
@@ -155,7 +160,7 @@ build() {
   cp "${ISO}" "${fake}/scripts/build-iso.sh"
 
   run "${fake}/scripts/build-iso.sh" \
-    --variant vanilla \
+    --kind anaconda --variant vanilla \
     --image ghcr.io/arclight-digital/pulsar \
     --work "${WORK}" \
     --keyless
@@ -194,14 +199,14 @@ build() {
 }
 
 @test "--track changes what installs follow, not what the ISO installs" {
-  run -0 "${ISO}" --variant vanilla --image ghcr.io/arclight-digital/pulsar \
+  run -0 "${ISO}" --kind anaconda --variant vanilla --image ghcr.io/arclight-digital/pulsar \
     --work "${WORK}" --keyless --track testing
   grep -Fxq -- 'bootc switch --mutate-in-place --transport registry ghcr.io/arclight-digital/pulsar:testing' "${WORK}/iso-config.toml"
   grep -Fxq -- "ghcr.io/arclight-digital/pulsar@${DIGEST}" "${ARGV}"
 }
 
 @test "--track refuses a reference, which would pin installs all over again" {
-  run -2 "${ISO}" --variant vanilla --image ghcr.io/arclight-digital/pulsar \
+  run -2 "${ISO}" --kind anaconda --variant vanilla --image ghcr.io/arclight-digital/pulsar \
     --work "${WORK}" --keyless --track "latest@${DIGEST}"
   [[ "$output" == *"bare tag"* ]]
   [ ! -e "${ARGV}" ]
