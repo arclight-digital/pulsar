@@ -1,12 +1,16 @@
 #!/usr/bin/python3
 """Lay out a disk for Pulsar: the one step of an install that can destroy data.
 
-    pulsar-install-disk plan  --mode erase|alongside DISK
+    pulsar-install-disk plan  --mode erase|alongside [--no-encrypt] DISK
     pulsar-install-disk apply --mode erase|alongside --key-file FILE DISK
+    pulsar-install-disk apply --mode erase|alongside --no-encrypt DISK
 
 Both run systemd-repart from the layouts in /usr/share/pulsar/installer/repart:
-an EFI system partition, a 2G /boot, and a LUKS2 btrfs root unlocked by the
-passphrase in FILE.
+an EFI system partition, a 2G /boot, and a btrfs root. With --key-file the
+root is LUKS2, unlocked by the passphrase in FILE; with --no-encrypt it is
+plain btrfs (the same layout with the root's Encrypt= line taken out). `apply`
+needs exactly one of the two: there is no default, so an unencrypted install
+is only ever one somebody asked for.
 
   erase      everything on DISK goes. The plan must create exactly those three
              partitions and nothing else.
@@ -24,8 +28,10 @@ prints the plan as JSON; exit 2 means refused, with the reason on stderr.
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 LAYOUTS = os.environ.get("PULSAR_INSTALLER_LAYOUTS", "/usr/share/pulsar/installer/repart")
 OURS = {"esp", "xbootldr", "root-x86-64"}
@@ -36,10 +42,35 @@ class Refused(Exception):
     pass
 
 
-def repart(mode, disk, key_file, dry_run):
+ROOT_CONF = "30-root.conf"
+ENCRYPT_LINE = "Encrypt=key-file"
+
+
+def definitions(mode, encrypt, scratch):
+    """The layout directory repart reads. Encrypted: the shipped one, which
+    must encrypt its root. Not: a copy in scratch whose root has its one
+    Encrypt= line removed, checked to have none left."""
+    shipped = os.path.join(LAYOUTS, mode)
+    lines = open(os.path.join(shipped, ROOT_CONF)).read().splitlines(keepends=True)
+    enc = [l for l in lines if l.strip().startswith("Encrypt=")]
+    if [l.strip() for l in enc] != [ENCRYPT_LINE]:
+        raise Refused(f"{mode}/{ROOT_CONF} should have exactly one {ENCRYPT_LINE} line, has {enc}")
+    if encrypt:
+        return shipped
+    plain = os.path.join(scratch, mode)
+    shutil.copytree(shipped, plain)
+    with open(os.path.join(plain, ROOT_CONF), "w") as f:
+        f.writelines(l for l in lines if not l.strip().startswith("Encrypt="))
+    for name in os.listdir(plain):
+        if any(l.strip().startswith("Encrypt=") for l in open(os.path.join(plain, name))):
+            raise Refused(f"the unencrypted layout still encrypts {name}")
+    return plain
+
+
+def repart(mode, defs, disk, key_file, dry_run):
     cmd = [
         "systemd-repart",
-        f"--definitions={os.path.join(LAYOUTS, mode)}",
+        f"--definitions={defs}",
         f"--empty={'force' if mode == 'erase' else 'refuse'}",
         f"--dry-run={'yes' if dry_run else 'no'}",
         "--json=short",
@@ -82,16 +113,20 @@ def main():
     ap = argparse.ArgumentParser(prog="pulsar-install-disk")
     ap.add_argument("action", choices=["plan", "apply"])
     ap.add_argument("--mode", required=True, choices=sorted(CREATED))
-    ap.add_argument("--key-file")
+    secret = ap.add_mutually_exclusive_group()
+    secret.add_argument("--key-file", help="encrypt the root with the passphrase in FILE")
+    secret.add_argument("--no-encrypt", action="store_true", help="a plain, unencrypted root")
     ap.add_argument("disk")
     a = ap.parse_args()
-    if a.action == "apply" and not a.key_file:
-        ap.error("apply needs --key-file: the root is always encrypted")
+    if a.action == "apply" and not (a.key_file or a.no_encrypt):
+        ap.error("apply needs --key-file (encrypted) or --no-encrypt: there is no default")
     try:
-        plan = repart(a.mode, a.disk, a.key_file, dry_run=True)
-        check(a.mode, plan)
-        if a.action == "apply":
-            plan = repart(a.mode, a.disk, a.key_file, dry_run=False)
+        with tempfile.TemporaryDirectory(prefix="pulsar-layouts-") as scratch:
+            defs = definitions(a.mode, not a.no_encrypt, scratch)
+            plan = repart(a.mode, defs, a.disk, a.key_file, dry_run=True)
+            check(a.mode, plan)
+            if a.action == "apply":
+                plan = repart(a.mode, defs, a.disk, a.key_file, dry_run=False)
     except Refused as e:
         print(f"pulsar-install-disk: refused: {e}", file=sys.stderr)
         return 2

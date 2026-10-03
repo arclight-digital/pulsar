@@ -4,7 +4,9 @@
 case " $* " in
 *" --plan-only "*) echo '{"stage": "check"}'; echo '{"stage": "plan", "plan": [{"type": "root-x86-64", "raw_size": 460000000000, "activity": "create"}]}'; exit 0 ;;
 esac
-for s in check disk unlock; do echo "{\"stage\": \"$s\"}"; sleep 0.2; done
+stages="check disk unlock"
+case " $* " in *" --no-encrypt "*) stages="check disk" ;; esac
+for s in $stages; do echo "{\"stage\": \"$s\"}"; sleep 0.2; done
 echo '{"stage": "install"}'
 echo '{"log": "Installing image: docker://ghcr.io/arclight-digital/pulsar:latest"}'
 sleep 1; echo '{"log": "Fetching layer sha256:4f2c0e1b (412 MB)"}'

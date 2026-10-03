@@ -75,8 +75,8 @@ PY
 }
 
 @test "passphrase: 8 characters and typed the same twice" {
-    [ "$(py 'm.passphrase_problem("short", "short")')" = "At least 8 characters" ]
-    [ "$(py 'm.passphrase_problem("correct horse", "correct hors")')" = "The two don't match" ]
+    [ "$(py 'm.passphrase_problem("short", "short")')" = "Use at least 8 characters" ]
+    [ "$(py 'm.passphrase_problem("correct horse", "correct hors")')" = "The passphrases don't match" ]
     [ "$(py 'm.passphrase_problem("correct horse", "correct horse")')" = "None" ]
 }
 
@@ -103,8 +103,8 @@ PY
 
 @test "the passphrase hint waits for the second entry before saying they differ" {
     [ "$(py 'm.passphrase_hint("correct horse", "")')" = "" ]
-    [ "$(py 'm.passphrase_hint("short", "")')" = "At least 8 characters" ]
-    [ "$(py 'm.passphrase_hint("correct horse", "correct")')" = "The two don't match" ]
+    [ "$(py 'm.passphrase_hint("short", "")')" = "Use at least 8 characters" ]
+    [ "$(py 'm.passphrase_hint("correct horse", "correct")')" = "The passphrases don't match" ]
 }
 
 @test "the copy's progress fills the bar between its start and the boot setup" {
@@ -128,4 +128,88 @@ PY
     [ "$(py 'm.install_destroys("erase", D["/dev/sdb"])')" = "False" ]
     [ "$(py 'm.install_destroys("erase", D["/dev/nvme1n1"])')" = "True" ]
     [ "$(py 'm.install_destroys("alongside", D["/dev/nvme1n1"])')" = "False" ]
+}
+
+@test "the last button says it erases whenever it deletes something" {
+    [ "$(py 'm.install_button("erase", D["/dev/nvme1n1"])')" = "Erase and Install" ]
+    [ "$(py 'm.install_button("erase", D["/dev/sdb"])')" = "Install" ]
+    [ "$(py 'm.install_button("alongside", D["/dev/nvme1n1"])')" = "Install" ]
+}
+
+@test "an empty disk skips the page asking how: erasing nothing is the one way" {
+    [ "$(py 'm.skips_method(D["/dev/sdb"])')" = "True" ]
+    [ "$(py 'm.skips_method(D["/dev/nvme1n1"])')" = "False" ]
+}
+
+@test "each disk is described by size, what is on it, and USB" {
+    [ "$(py 'm.identity(D["/dev/nvme1n1"])')" = "1.0 TB · Windows" ]
+    [ "$(py 'm.identity(D["/dev/sdb"])')" = "256 GB · Empty" ]
+    # a data disk is named by its partitions' names
+    [ "$(py 'm.identity(D["/dev/sde"])')" = "2.0 TB · Files (Games)" ]
+}
+
+@test "two drives of the same model never read the same" {
+    run py '[d["name"] for d in m.tell_apart([
+        {"name": "Samsung SSD", "serial": "S6B0NX0R123456A", "path": "/dev/nvme0n1"},
+        {"name": "Samsung SSD", "serial": "", "path": "/dev/nvme1n1"},
+        {"name": "Crucial MX500", "serial": "2203E5F1", "path": "/dev/sda"}])]'
+    [ "$output" = "['Samsung SSD (serial ending 456A)', 'Samsung SSD (/dev/nvme1n1)', 'Crucial MX500']" ]
+    # lsblk is asked for the serial
+    [[ "$(py 'm.LSBLK_COLS')" == *",SERIAL,"* ]]
+}
+
+@test "after a failure the page says what state the disk is in, by mode" {
+    [ "$(py 'm.failure_state("erase", True, planning=True)')" = "Nothing on the disk was changed." ]
+    [ "$(py 'm.failure_state("erase", True)')" = "The disk is as it was before you pressed Install." ]
+    [[ "$(py 'm.failure_state("alongside", False)')" == *"Everything that was on the disk before is untouched."* ]]
+    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, but Pulsar is not fully on it." ]
+}
+
+@test "elapsed time reads as minutes and seconds" {
+    [ "$(py 'm.elapsed(0)')" = "Time so far: 0:00" ]
+    [ "$(py 'm.elapsed(754)')" = "Time so far: 12:34" ]
+}
+
+@test "encryption off: every page says so, and the backend is told --no-encrypt" {
+    [ "$(py 'm.passphrase_heading(False)[0]')" = "Install without encryption" ]
+    [ "$(py 'm.passphrase_heading(False)[1]')" = "Anyone who has this computer or its disk can read the files on it." ]
+    [ "$(py 'm.encryption_summary(False)')" = "Off. Anyone who has this computer or its disk can read the files on it." ]
+    [ "$(py 'm.stages(False)["disk"][0]')" = "Partitioning the disk" ]
+    [ "$(py '"unlock" in m.stages(False)')" = "False" ]
+    [ "$(py 'm.first_start(False)')" = "When Pulsar starts, create your account." ]
+    [ "$(py 'm.secret_args(None)')" = "['--no-encrypt']" ]
+}
+
+@test "encryption on: the passphrase, the unlock stage and the unlock prompt" {
+    [ "$(py 'm.passphrase_heading(True)[0]')" = "Choose a passphrase" ]
+    [ "$(py 'm.encryption_summary(True)')" = "On. Your passphrase unlocks the disk at every start." ]
+    [ "$(py 'm.stages(True)["disk"][0]')" = "Partitioning and encrypting the disk" ]
+    [ "$(py 'm.stages(True)["unlock"][0]')" = "Unlocking the new partition" ]
+    [[ "$(py 'm.first_start(True)')" == *"type your passphrase to unlock the disk"* ]]
+    [ "$(py 'm.secret_args("/run/user/1000/k")')" = "['--key-file', '/run/user/1000/k']" ]
+}
+
+@test "the bar moves forward through the stages either way" {
+    for e in True False; do
+        run py "[f for _, f in m.stages($e).values()] == sorted(f for _, f in m.stages($e).values())"
+        [ "$output" = "True" ]
+    done
+}
+
+@test "encryption copy: no exclamation marks, American spelling" {
+    run py 'm.passphrase_heading(True) + m.passphrase_heading(False) + (m.encryption_summary(True), m.encryption_summary(False), m.first_start(True), m.first_start(False))'
+    [[ "$output" != *"!"* ]]
+    [[ "$output" != *"isation"* ]]
+}
+
+@test "the encryption switch starts on, and the app starts encrypted" {
+    grep -q 'Adw.SwitchRow(title="Encrypt the disk", subtitle="Recommended", active=True)' "$APP"
+    grep -q 'self.encrypt = True' "$APP"
+}
+
+@test "the fake backend skips the unlock stage when told --no-encrypt" {
+    local fake="${BATS_TEST_DIRNAME}/fixtures/installer/fake-backend"
+    run timeout 3 "$fake" --mode erase --no-encrypt /dev/x
+    [[ "$output" != *unlock* ]]
+    [[ "$output" == *'"disk"'* ]]
 }

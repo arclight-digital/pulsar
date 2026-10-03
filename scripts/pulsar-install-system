@@ -1,14 +1,15 @@
 #!/usr/bin/python3
 """Install Pulsar onto a disk: everything after the user said yes. Root only.
 
-    pulsar-install-system --mode erase|alongside --key-file FILE \\
+    pulsar-install-system --mode erase|alongside --key-file FILE | --no-encrypt \\
         --source-imgref containers-storage:IMG --target-imgref REGISTRY/IMG DISK
 
   1. alongside: the disk's EFI system partition must have room for Pulsar's
      boot files (checked before anything is written)
   2. pulsar-install-disk lays out the disk (it refuses any plan but ours)
-  3. the root is unlocked with the passphrase in FILE and mounted, with
-     /boot and the ESP under it
+  3. the root is unlocked with the passphrase in FILE (unless --no-encrypt:
+     then it is plain btrfs, and there is nothing to unlock) and mounted,
+     with /boot and the ESP under it
   4. bootc installs the image. Its bootupd would delete EVERY firmware boot
      entry named like ours ("Fedora": a Fedora installed beside us lost
      its entry) before adding one, so it runs where efivarfs is read-only,
@@ -20,11 +21,12 @@
 
 Progress goes to stdout as one JSON object per line, for the installer app:
 {"stage": "check" | "disk" | "unlock" | "install" | "boot"} as each step
-starts, {"log": "..."} for each line bootc prints, then {"stage": "done",
-...} or {"stage": "failed", "error": ..., "restored": true|false} (whether
-the partitions this install made were taken back). --plan-only prints
+starts ("unlock" only when encrypted), {"log": "..."} for each line bootc
+prints, then {"stage": "done", ...} or {"stage": "failed", "error": ...,
+"restored": true|false} (whether the partitions this install made were
+taken back). --plan-only prints
 {"stage": "plan", "plan": [...]} (pulsar-install-disk's dry run) and
-writes nothing; it needs no key.
+writes nothing; it needs no key (--no-encrypt plans the unencrypted layout).
 
 PULSAR_BOOTC_PREFIX, if set, runs bootc through a wrapper (the test bench
 runs it in the image with podman); the default is the live system's own.
@@ -186,11 +188,14 @@ def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
 
 
 def boot_kargs(luks_uuid, keymap, extra=()):
-    """The installed system's kernel arguments: the root to unlock; rhgb
-    quiet for the graphical boot and passphrase prompt (Silverblue's come
-    from Anaconda's kickstart, not the image); the console keymap, so the
-    passphrase typed in the installer's layout unlocks in the same one."""
-    return [f"rd.luks.uuid={luks_uuid}", "rhgb", "quiet", f"rd.vconsole.keymap={keymap}", *extra]
+    """The installed system's kernel arguments: the root to unlock, if it is
+    encrypted (luks_uuid None: it is not, and bootc's own root=UUID= of the
+    btrfs is all it needs); rhgb quiet for the graphical boot and passphrase
+    prompt (Silverblue's come from Anaconda's kickstart, not the image); the
+    console keymap, so the passphrase typed in the installer's layout
+    unlocks in the same one."""
+    unlock = [f"rd.luks.uuid={luks_uuid}"] if luks_uuid else []
+    return [*unlock, "rhgb", "quiet", f"rd.vconsole.keymap={keymap}", *extra]
 
 
 def live_setting(path, key, default):
@@ -324,7 +329,9 @@ def main():
     ap = argparse.ArgumentParser(prog="pulsar-install-system")
     ap.add_argument("--mode", required=True, choices=["erase", "alongside"])
     ap.add_argument("--plan-only", action="store_true", help="print the disk plan; write nothing")
-    ap.add_argument("--key-file")
+    secret = ap.add_mutually_exclusive_group()
+    secret.add_argument("--key-file", help="encrypt the root with the passphrase in FILE")
+    secret.add_argument("--no-encrypt", action="store_true", help="a plain, unencrypted root")
     ap.add_argument("--source-imgref")
     ap.add_argument("--target-imgref")
     ap.add_argument("--karg", action="append", default=[])
@@ -337,8 +344,10 @@ def main():
     a = ap.parse_args()
     if os.geteuid() != 0:
         ap.error("needs root")
-    if not a.plan_only and not (a.key_file and a.source_imgref and a.target_imgref):
-        ap.error("installing needs --key-file, --source-imgref and --target-imgref")
+    if not a.plan_only and not ((a.key_file or a.no_encrypt) and a.source_imgref and a.target_imgref):
+        ap.error("installing needs --key-file (or --no-encrypt), --source-imgref and --target-imgref")
+    # what pulsar-install-disk is told: never neither, so it can't default
+    plain = ["--no-encrypt"] if a.no_encrypt else []
     # not /tmp: bootc copies itself there to enter SELinux's install_t, and
     # a wrapper that shares /tmp for the target's sake breaks that
     os.makedirs(SCRATCH, mode=0o700, exist_ok=True)
@@ -351,10 +360,10 @@ def main():
             preflight_alongside(a.disk, scratch)
         if a.plan_only:
             ok = True
-            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, a.disk)))
+            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, a.disk)))
             return 0
         emit(stage="disk")
-        plan = json.loads(run(DISK_TOOL, "apply", "--mode", a.mode, "--key-file", a.key_file, a.disk))
+        plan = json.loads(run(DISK_TOOL, "apply", "--mode", a.mode, *(plain or ["--key-file", a.key_file]), a.disk))
         run("udevadm", "settle")
         # the partitions this install made, by the partition UUIDs repart
         # reports: never guessed from labels or order, which another system
@@ -366,11 +375,20 @@ def main():
         if not (root and boot):
             raise Failed(f"cannot find the partitions just made ({made_by_type}) on {a.disk}")
         esp = esp_of(a.disk)
-        emit(stage="unlock")
-        run("cryptsetup", "open", "--key-file", a.key_file, root["path"], MAPPER)
-        opened = True
+        # the root is what was asked for: never plain when encryption was
+        # chosen (an unknown type, udev not caught up, is left to cryptsetup)
+        want = "btrfs" if a.no_encrypt else "crypto_LUKS"
+        if root.get("fstype") and root["fstype"] != want:
+            raise Failed(f"the new root is {root['fstype']}, expected {want}")
+        if a.no_encrypt:
+            root_dev = root["path"]
+        else:
+            emit(stage="unlock")
+            run("cryptsetup", "open", "--key-file", a.key_file, root["path"], MAPPER)
+            opened = True
+            root_dev = f"/dev/mapper/{MAPPER}"
         os.makedirs(target)
-        for dev, sub in ((f"/dev/mapper/{MAPPER}", ""), (boot["path"], "boot"), (esp["path"], "boot/efi")):
+        for dev, sub in ((root_dev, ""), (boot["path"], "boot"), (esp["path"], "boot/efi")):
             path = os.path.join(target, sub)
             os.makedirs(path, exist_ok=True)
             run("mount", dev, path)
@@ -385,7 +403,7 @@ def main():
         # comes from Anaconda's kickstart, not the image; without them the
         # prompt sat in the boot log's text
         bootc_install(target, a.source_imgref, a.target_imgref,
-                      boot_kargs(root["uuid"], keymap, a.karg), a.expected_bytes)
+                      boot_kargs(None if a.no_encrypt else root["uuid"], keymap, a.karg), a.expected_bytes)
         # bootc finalizes the root read-only; GRUB's custom.cfg lives on /boot
         emit(stage="boot")
         run("mount", "-o", "remount,rw", os.path.join(target, "boot"))
