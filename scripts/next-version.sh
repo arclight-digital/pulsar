@@ -94,8 +94,9 @@ prefix="${FEDORA_VERSION}.${day}"
 # did not answer", and those two need opposite outcomes.
 if tags="$(oras repo tags "${IMAGE}" 2>&1)"; then
   :
-elif printf '%s' "${tags}" \
-     | grep -qiE 'NAME_UNKNOWN|repository name not known|repository not found'; then
+# (a here-string: `printf | grep -q` under pipefail can SIGPIPE printf after
+# the match and read as "no match"; see flatpak-defaults.sh)
+elif grep -qiE 'NAME_UNKNOWN|repository name not known|repository not found' <<<"${tags}"; then
   echo "${IMAGE}: no such repository yet -- treating this as its first build" >&2
   tags=""
 else

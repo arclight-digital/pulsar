@@ -39,7 +39,9 @@ B="${A}/brand"
 S="${REPO}/system_files/usr/share"
 
 command -v magick >/dev/null || { echo "needs ImageMagick 7 (magick)" >&2; exit 1; }
-magick -list format | grep -qi 'SVG.*RSVG' || {
+# grep's status alone: in a pipe, magick dying of SIGPIPE once grep -q has
+# matched would read, under pipefail, as no librsvg
+grep -qi 'SVG.*RSVG' < <(magick -list format) || {
     echo "needs an ImageMagick built against librsvg -- its own MSVG renderer" >&2
     echo "ignores <filter>, which silently drops the marks' glow" >&2; exit 1; }
 for f in svg/pulsar-mark-small.svg svg/pulsar-tile-small.svg \

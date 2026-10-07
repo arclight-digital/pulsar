@@ -85,12 +85,15 @@ if [ ${#versions[@]} -eq 0 ]; then
 fi
 
 installed=$(flatpak list --system --runtime --columns=application 2>/dev/null || true)
-has() { printf '%s\n' "$installed" | grep -Fxq -- "$1"; }
+# Here-strings, not `printf | grep -q`: grep -q exits on its first match, and
+# under pipefail a printf still writing the lines after it dies of SIGPIPE,
+# which reads as "not installed" (see flatpak-defaults.sh).
+has() { grep -Fxq -- "$1" <<<"$installed"; }
 
 kinds=(GL)
 # Compat.i386 is how a 32-bit-capable app (Steam) pulls in the i386 runtime.
 # Without one, GL32 is ~100MB nothing can load.
-if printf '%s\n' "$installed" | grep -q '\.Compat\.i386$'; then
+if grep -q '\.Compat\.i386$' <<<"$installed"; then
     kinds+=(GL32)
 fi
 
@@ -143,7 +146,7 @@ for ref in "${wanted[@]}"; do
     # flatpak translates its messages.
     if out=$(LC_ALL=C flatpak install --system --noninteractive "$REMOTE" "$ref" 2>&1); then
         log "installed ${ref}"
-    elif printf '%s' "$out" | grep -qiE 'nothing matches|no remote refs found'; then
+    elif grep -qiE 'nothing matches|no remote refs found' <<<"$out"; then
         log "${ref} is not on ${REMOTE} yet; a later flatpak update will bring it"
     else
         printf '%s\n' "$out" >&2

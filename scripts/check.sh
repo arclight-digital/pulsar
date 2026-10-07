@@ -98,6 +98,20 @@ say "shellcheck the greenboot checks"
 shellcheck system_files/usr/lib/greenboot/check/*/*.sh
 echo "greenboot checks: clean"
 
+# Under pipefail, `printf '%s\n' "$x" | grep -q` can answer "no" when the
+# answer is yes: grep -q exits on its first match, bash's printf writes a line
+# at a time, and a printf still writing dies of SIGPIPE, which pipefail
+# reports. It takes printf being preempted mid-list, which is why it failed
+# one nightly (2026-10-07) and not every one. Text already in a variable is
+# searched with a here-string; this keeps it that way.
+say "no printf or echo piped into grep -q"
+if git grep -nE '^[^#]*(printf|echo)[^|]*\|[[:space:]]*grep[[:space:]]([^|]*[[:space:]])?-[a-zA-Z]*q' -- \
+     cli scripts system_files; then
+  echo "FAIL: search the text with a here-string instead: grep -q ... <<<\"\$x\"" >&2
+  exit 1
+fi
+echo "printf into grep -q: none"
+
 # A malformed XML file fails SILENTLY at the consumer. A stray double hyphen
 # inside a comment in pulsar.xml made gnome-control-center drop the file
 # whole, so the Appearance panel showed no Pulsar wallpapers while all eight

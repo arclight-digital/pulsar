@@ -16,6 +16,11 @@
 # the container image and nothing else, so on a system with layered packages it
 # is the wrong tool. See cmd_update.
 set -euo pipefail
+# Under pipefail, `printf '%s\n' "$x" | grep -q ...` can answer "no" when the
+# answer is yes: grep -q exits on its first match, bash's printf writes a line
+# at a time, and a printf still writing dies of SIGPIPE, which pipefail
+# reports. So text already in a variable is searched with a here-string,
+# `grep -q ... <<<"$x"`, which bash writes in full before grep starts.
 
 # A systemd system service, a timer or cron starts this with no HOME at all,
 # and under set -u the first path built from it kills the script before
@@ -270,7 +275,7 @@ check_mangohud() {
     # THE ROT THIS CHECK EXISTS FOR. An extension is only visible to apps on
     # the matching runtime, so when the launcher moves branch and the pin does
     # not, the overlay stops appearing and nothing anywhere logs a reason.
-    if ! printf '%s' ",${installed}," | grep -q ",${used},"; then
+    if ! grep -q ",${used}," <<<",${installed},"; then
         record mangohud warn "MangoHud layer is ${installed}, but Steam runs on ${used}" \
                "the overlay is invisible to Flatpak games; repin flatpaks.list to //${used}"
         return
@@ -435,14 +440,14 @@ flatpak_gl_scan() {
 
     local runtimes gl32_installed=0 need_gl32=0
     runtimes=$(flatpak list --runtime --columns=application 2>/dev/null) || true
-    if ! printf '%s\n' "$runtimes" | grep -Fxq "org.freedesktop.Platform.GL.${ext}"; then
+    if ! grep -Fxq "org.freedesktop.Platform.GL.${ext}" <<<"$runtimes"; then
         FGL_STATUS=missing; return 0
     fi
     # GL32 lands in its own transaction after GL, ~100MB later. An app that
     # needs it before then is waiting on an install, not on a restart, and
     # telling the user to restart it got them a second Steam with the same
     # problem.
-    printf '%s\n' "$runtimes" | grep -Fxq "org.freedesktop.Platform.GL32.${ext}" && gl32_installed=1
+    grep -Fxq "org.freedesktop.Platform.GL32.${ext}" <<<"$runtimes" && gl32_installed=1
 
     local run=${PULSAR_FLATPAK_RUN:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/.flatpak}
     local -a roots
@@ -473,9 +478,9 @@ flatpak_gl_scan() {
         exts=$(sed -n 's/^\(runtime\|app\)-extensions=//p' "$info" | tr ';' '\n')
         # Only apps on a runtime with the GL extension point: freedesktop,
         # and GNOME and KDE, which reuse it.
-        printf '%s\n' "$exts" | grep -q '^org\.freedesktop\.Platform\.GL\.default=' || continue
+        grep -q '^org\.freedesktop\.Platform\.GL\.default=' <<<"$exts" || continue
         if gl_live GL; then
-            printf '%s\n' "$exts" | grep -q '^org\.freedesktop\.Platform\.GL32\.default=' || continue
+            grep -q '^org\.freedesktop\.Platform\.GL32\.default=' <<<"$exts" || continue
             gl_live GL32 && continue
             [ "$gl32_installed" = 1 ] || { need_gl32=1; continue; }
         fi
@@ -575,7 +580,7 @@ check_flathub() {
     opts=$(flatpak remotes --columns=name,options 2>/dev/null | awk '$1=="flathub"{ $1=""; print }') || true
     if [ -z "$opts" ]; then
         record flathub warn "flathub remote is not configured"
-    elif printf '%s' "$opts" | grep -q filter; then
+    elif grep -q filter <<<"$opts"; then
         # Fedora ships a filtered flathub; the whole point of the shipped
         # remotes.d file is that this system does not.
         record flathub warn "flathub is FILTERED" "most applications will be hidden"
@@ -2449,7 +2454,7 @@ sandbox_hook_hints() {
         | awk '{ print $1 }' | sort -u | while IFS= read -r cmd; do
             bin=$(command -v "$cmd" 2>/dev/null) || continue
             case "$bin" in "$HOME"/*) ;; *) continue ;; esac
-            printf '%s\n' "$allows" | grep -qxF "$bin" && continue
+            grep -qxF "$bin" <<<"$allows" && continue
             printf 'note: your claude hooks run %s (%s), which the sandbox cannot see: pulsar agent sandbox allow %s\n' \
                 "$cmd" "$bin" "$bin" >&2
         done
@@ -4705,7 +4710,7 @@ checkpoint_restore() {
         rm -f "$list"
         printf '/etc: nothing changed or deleted since %s\n' "${dir##*/}"
     fi
-    if printf '%s\n' "$changes" | grep -q '^added'; then
+    if grep -q '^added' <<<"$changes"; then
         printf 'added since the checkpoint, left in place (delete by hand if unwanted):\n'
         printf '%s\n' "$changes" | awk -F'\t' '$1 == "added" { sub(/^\.\//, "/etc/", $2); print "  " $2 }'
     fi
@@ -4713,16 +4718,16 @@ checkpoint_restore() {
     checkpoint_restore_home "$dir"
 
     local dep; dep=$(checkpoint_deployment_state "$dir")
-    if printf '%s\n' "$dep" | grep -q '^staged'; then
+    if grep -q '^staged' <<<"$dep"; then
         # The one OS-side undo that needs no reboot and cannot lose anything
         # the checkpoint had: the staged deployment was made after it.
         rpm-ostree cleanup --pending >/dev/null 2>&1 \
             && printf 'discarded the deployment staged since the checkpoint\n' \
             || printf 'could not discard the staged deployment; run: sudo rpm-ostree cleanup --pending\n'
     fi
-    if printf '%s\n' "$dep" | grep -q '^booted'; then
+    if grep -q '^booted' <<<"$dep"; then
         printf 'the system has BOOTED a newer deployment since; to go back: sudo pulsar rollback, then reboot\n'
-    elif printf '%s\n' "$dep" | grep -q '^gone'; then
+    elif grep -q '^gone' <<<"$dep"; then
         printf "the checkpoint's deployment is gone; only /etc could be restored\n"
     fi
     printf 'services read /etc when they start: restart what changed, or reboot\n'
@@ -4754,7 +4759,7 @@ checkpoint_restore_home() {
         rm -rf "$t"
         printf '%s: no settings changed or deleted since %s\n' "$hdir" "${dir##*/}"
     fi
-    if printf '%s\n' "$changes" | grep -q '^added'; then
+    if grep -q '^added' <<<"$changes"; then
         printf 'added to %s since the checkpoint, left in place:\n' "$hdir"
         printf '%s\n' "$changes" | awk -F'\t' '$1 == "added" { sub(/^\.\//, "~/", $2); print "  " $2 }'
     fi

@@ -574,7 +574,9 @@ assert_content() {
     echo "either way, but fix the check, not the build." >&2
     exit 1
   fi
-  if ! printf '%s' "${osr}" | grep -q "^VERSION=\"${VERSION}\""; then
+  # a here-string: `printf | grep -q` under pipefail can SIGPIPE printf
+  # after the match and read as a mismatch (see flatpak-defaults.sh)
+  if ! grep -q "^VERSION=\"${VERSION}\"" <<<"${osr}"; then
     echo "chunked ${name} holds $(printf '%s' "${osr}" | grep '^VERSION=' || echo '<none>')," >&2
     echo "not ${VERSION} -- the rechunk did not read this build" >&2
     exit 1
@@ -599,8 +601,7 @@ version_tag_is_free() {
     echo "${ref} already exists in the registry" >&2
     return 1
   fi
-  printf '%s' "${probe}" \
-    | grep -qiE 'manifest unknown|MANIFEST_UNKNOWN|NAME_UNKNOWN|repository name not known' \
+  grep -qiE 'manifest unknown|MANIFEST_UNKNOWN|NAME_UNKNOWN|repository name not known' <<<"${probe}" \
     && return 0
   echo "could not tell whether ${ref} exists:" >&2
   printf '%s\n' "${probe}" >&2

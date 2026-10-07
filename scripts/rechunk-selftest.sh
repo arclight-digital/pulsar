@@ -250,7 +250,9 @@ echo "chunked into ${layers:-?} layers"
 
 found=no
 for blob in "${WORK}/proof/blobs/sha256/"*; do
-  if tar -tf "${blob}" 2>/dev/null | grep -q 'usr/lib/pulsar-selftest-unowned'; then
+  # grep's status alone: in a pipe, tar dying of SIGPIPE once grep -q has
+  # matched would read, under pipefail, as the marker missing
+  if grep -q 'usr/lib/pulsar-selftest-unowned' < <(tar -tf "${blob}" 2>/dev/null); then
     found=yes; break
   fi
 done
