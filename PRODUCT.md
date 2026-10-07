@@ -55,22 +55,26 @@ fork, and exact about what is and is not protected or signed.
 
 ## Operating Context
 
-Site source lives in `site/` of the arclight-digital/pulsar monorepo, as an
-Astro project. `site/stage-assets.mjs` (run by `npm run stage`, which `dev`
-and `build` both depend on) copies the brand assets from `assets/` into
-`site/public/assets`; the wallpaper shader is imported straight from
-`assets/shaders/pulsar.frag` and compiled into the bundle. Built and deployed
-by Cloudflare Workers git integration on push to main (root dir `site`, build
-`npm run build`, output `dist`) to the assets-only `pulsar-site` Worker.
-Local preview: `cd site && npm run dev`. The OS image build is a separate
-workflow and must never be triggered by site edits.
+Site source lives in its own repo, arclight-digital/pulsar-site (since
+2026-09-28; before that it was `site/` in this repo), as an Astro project.
+What it takes from this repo (brand marks, fonts, the wallpaper shaders and
+their looks, `docs/*.md`) is named in its `upstream.list`, and
+scripts/publish.sh copies those files into its `upstream/` with each
+published nightly, so the site never shows a file a night early.
+`stage-assets.mjs` (run by `npm run stage`, which `dev` and `build` both
+depend on) copies the brand assets into `public/assets`; the wallpaper
+shader is compiled into the bundle. Every push to its main is built and
+deployed by Cloudflare's git integration (build `npm run build`, output
+`dist`) to the assets-only `pulsar-site` Worker. Local preview: `npm run
+dev` in that repo. The OS image build is separate and is never triggered
+by site edits.
 
-The nightly on the build host commits `site/src/data/changelog.json` and
-`site/src/data/manifest.json` (scripts/publish.sh); Astro renders the
+The nightly on the build host commits pulsar-site's
+`src/data/changelog.json` and `src/data/manifest.json` (scripts/publish.sh); Astro renders the
 changelog, the manifest card and the hero's build chip from them at build
 time. Those two files are the only thing that hookup writes — never edit
 them by hand, and never render them anywhere else. The changelog section
-renders a derived digest of the diff (`site/src/data/digest.ts`, rules run
+renders a derived digest of the diff (`src/data/digest.ts`, rules run
 at build time, deterministic); `/changelog.json` still serves the raw diff
 untouched. A build somebody started by hand defines nothing: only the
 scheduled nightly publishes.
@@ -108,7 +112,7 @@ beside the ISOs and committed as `keys/cosign.pub`.
   declarative shadow DOM at build time and hydrated on the client, the way
   arcui.dev itself does. This relaxes the earlier zero-client-framework rule
   (user decision, 2026-09-12): the Lit runtime ships. The page must still
-  render complete without JavaScript; `site/src/scripts/` keeps the shader,
+  render complete without JavaScript; `src/scripts/` keeps the shader,
   the theme state, the spin easter egg, and the beacon fetch, which is the
   only thing that touches the network.
 - Global CSS is the design system only (`src/styles/`: tokens, base, the
@@ -125,12 +129,12 @@ beside the ISOs and committed as `keys/cosign.pub`.
   Nothing about it is hand-maintained.
 - Domain (moved 2026-09-26): the site lives at getpulsar.dev, attached to
   the Worker in the Cloudflare dashboard; pulsar.arclight.digital 301s to it.
-  `SITE` in site/src/data/site.ts (which `astro.config.mjs` imports) is the
+  `SITE` in src/data/site.ts (which `astro.config.mjs` imports) is the
   one place it is written, for canonical, og:url and the sitemap. The GitHub Pages
   deployment is retired. URLs on the page stay relative anyway. The LLC site
   is arclight.build.
 - URLs and registry names the page repeats are declared once in
-  `site/src/data/site.ts` (repo, both image refs, beacon, ISO base and
+  `src/data/site.ts` (repo, both image refs, beacon, ISO base and
   filenames, cosign public key).
 - Target hardware (product truth, from the README): an Intel Core Ultra 9
   275HX (8 P-cores + 16 E-cores, no SMT), an RTX 5080 Max-Q (Blackwell

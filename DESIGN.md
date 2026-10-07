@@ -221,7 +221,7 @@ Vertical rhythm is ARC's default-density scale: 4 / 8 / 16 / 24 / 40 / 64 / 96 /
 
 ## Elevation & Depth
 
-Luminous, not lifted. There are no drop shadows anywhere in site/; depth comes from ARC's glow tokens on accent colour and from the tonal surface ramp (ink → surface → card → elevated). Rest state is flat; glow appears on hover, on the live dot, and on the one accent-lifted element in a group.
+Luminous, not lifted. There are no drop shadows anywhere on the site; depth comes from ARC's glow tokens on accent colour and from the tonal surface ramp (ink → surface → card → elevated). Rest state is flat; glow appears on hover, on the live dot, and on the one accent-lifted element in a group.
 
 ### Shadow Vocabulary
 - **Text lift** (`text-shadow: var(--glow-xs)`, `0 0 6px rgba(accent, .42)`): the target version, the major-bump package name, the gamescale answer, footer and file links on hover.

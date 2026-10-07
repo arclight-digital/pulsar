@@ -206,7 +206,7 @@ echo "Plymouth watermark        <- in-os/watermark.png"
 supplied "${B}/in-os/watermark.png" "${S}/plymouth/themes/pulsar/watermark.png"
 
 # (The site's marks are the package's svg/ files, staged directly by
-# site/stage-assets.mjs; nothing to generate.)
+# pulsar-site's stage-assets.mjs; nothing to generate.)
 
 # ---------------------------------------------------------------------------
 # Fonts

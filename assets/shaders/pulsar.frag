@@ -127,7 +127,7 @@ float starLayer(vec2 uv, float scale, float density, float size, float tw) {
 
 // ---- luminescence helpers ------------------------------------------------
 // Kept cheap on purpose: this file also runs live, per frame, in WebGL1 as the
-// site's hero sky (site/src/scripts/sky.ts), phones included. The extra field
+// site's hero sky (pulsar-site's src/scripts/sky.ts), phones included. The extra field
 // is a 3-octave fbm, the lattice is one hash lookup per cell, no loops beyond
 // fbm's, GLSL ES 1.0 only.
 float fbm3(vec2 p) {

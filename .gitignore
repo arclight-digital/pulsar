@@ -10,8 +10,6 @@ cosign.key
 .preview/
 system_files/usr/share/backgrounds/pulsar/*.png
 scripts/__pycache__/
-# The site's own build output, caches and staged assets are ignored by
-# site/.gitignore, beside the project they belong to.
 # Theme wallpapers, rendered by scripts/render-theme-wallpapers.py on the
 # builder and converted to JPEG XL inside the Containerfile.
 system_files/usr/share/pulsar/themes/*/backgrounds/
