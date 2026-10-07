@@ -142,7 +142,13 @@ refresh() {
   snapshot="$(flatpak list --system --columns=application,branch 2>/dev/null \
                 | awk 'NF { print $1; if ($2 != "") print $1 "//" $2 }' || true)"
 }
-present() { printf '%s\n' "${snapshot}" | grep -Fxq -- "$1"; }
+# A here-string, NOT `printf ... | grep -q`. grep -q exits on its first match;
+# bash's printf writes a line at a time, so a printf still writing the lines
+# after it dies of SIGPIPE, and pipefail reads that 141 as "not present". It
+# needs printf preempted mid-list, so it was rare -- until the 2026-10-07
+# nightly reported an installed app missing. A here-string is written in full
+# before grep starts, so there is nothing left to cut off.
+present() { grep -Fxq -- "$1" <<<"${snapshot}"; }
 
 refresh
 for i in "${!apps[@]}"; do

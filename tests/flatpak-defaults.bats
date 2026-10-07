@@ -158,6 +158,22 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     [[ "$output" == *"fedora"* ]]
 }
 
+# The 2026-10-07 nightly failed the first test above with every app installed.
+# The presence check piped the list into `grep -q`, which exits on its first
+# match; bash's printf writes a line at a time, so when printf was preempted
+# partway down the list, its next line hit a closed pipe, SIGPIPE killed it,
+# and pipefail turned "found" into "missing". On four lines that takes unlucky
+# scheduling. On a list longer than a pipe holds it happens every time, which
+# is what makes this test fail on that code, not just sometimes.
+@test "REGRESSION: an app at the top of a long installed list is found, every time" {
+    stub_flatpak "com.github.wwmm.easyeffects:fedora"
+    printf 'org.example.Filler%d flathub\n' {1..50000} >> "$FLATPAK_STATE"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"com.github.wwmm.easyeffects is already installed"* ]]
+    [ -f "$STAMP" ]
+}
+
 @test "a genuinely uninstallable app costs that app and not the set" {
     FLATPAK_FAIL_APP=com.example.One
     stub_flatpak
