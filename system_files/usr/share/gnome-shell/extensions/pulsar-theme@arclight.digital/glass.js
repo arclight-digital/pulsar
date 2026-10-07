@@ -59,6 +59,7 @@ import * as Background from 'resource:///org/gnome/shell/ui/background.js';
 import * as Dash from 'resource:///org/gnome/shell/ui/dash.js';
 import * as IBusCandidatePopup from 'resource:///org/gnome/shell/ui/ibusCandidatePopup.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as MessageList from 'resource:///org/gnome/shell/ui/messageList.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
@@ -1402,6 +1403,194 @@ function luminance(c) {
     return (0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue) / 255;
 }
 
+// A notification group in the date menu stacks its cards while collapsed:
+// all of each one behind the newest, 10px lower and 6px narrower a side,
+// painted underneath. The stock cards are opaque, so only a sliver of each
+// shows. On glass they are a faint lift, and every card behind read through
+// the one over it, text and all -- and so did the group's header (its name
+// and the collapse button), under them all as the group opens and closes.
+// Each card in a group, and its header, is therefore drawn offscreen and
+// cut wherever the cards over it lie -- the same rounded shape,
+// antialiased against their edge -- while anything covers it at all:
+// collapsed, and opening or closing. Otherwise, and with glass off, it
+// paints as it would have.
+const STACK_CUT = 'pulsar-stack-cut';
+// the cards over one that are cut out of it: the newest, and the nearest
+const STACK_SLOTS = 8;
+const STACK_DECL = `
+uniform sampler2D tex;
+uniform vec4 map;
+uniform float px;
+uniform vec4 rects[${STACK_SLOTS}];
+uniform float radii[${STACK_SLOTS}];
+float sd(vec2 p, vec2 b, float r) {
+  vec2 q = abs(p) - b + r;
+  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+`;
+const STACK_CODE = `
+vec2 uv = cogl_tex_coord_in[0].xy;
+vec2 p = map.xy + uv * map.zw;
+float cover = 0.0;
+for (int i = 0; i < ${STACK_SLOTS}; i++) {
+  vec2 b = (rects[i].zw - rects[i].xy) * 0.5;
+  cover = max(cover, clamp(0.5 - sd(p - rects[i].xy - b, b, radii[i]) * px, 0.0, 1.0));
+}
+cogl_color_out = texture2D(tex, uv) * cogl_color_in * (1.0 - cover);
+`;
+
+const StackCut = GObject.registerClass(
+class PulsarStackCut extends Shell.GLSLEffect {
+    constructor() {
+        super();
+        this._loc = {};
+        for (const u of ['map', 'px', 'rects', 'radii'])
+            this._loc[u] = this.get_uniform_location(u);
+        this._rects = new Array(4 * STACK_SLOTS).fill(0);
+        this._radii = new Array(STACK_SLOTS).fill(0);
+        this._card = [0, 0, 0, 0];
+        this._other = [0, 0, 0, 0];
+    }
+
+    // once per class: each instance copies it
+    vfunc_build_pipeline() {
+        this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT, STACK_DECL, STACK_CODE, true);
+    }
+
+    // Drawn afresh every paint: a texture kept from a frame it was cut
+    // would come back stale on a later one it was not.
+    vfunc_paint(node, paintContext, flags) {
+        super.vfunc_paint(node, paintContext, flags | Clutter.EffectPaintFlags.ACTOR_DIRTY);
+    }
+
+    // offscreen only while a card lies over this one
+    vfunc_pre_paint(node, paintContext) {
+        return this._lay() > 0 && super.vfunc_pre_paint(node, paintContext);
+    }
+
+    vfunc_paint_target(node, paintContext) {
+        const card = this.actor;
+        const s = card.get_resource_scale();
+        const tex = this.get_texture();
+        const [ox, oy] = offscreenOrigin(card, tex, s);
+        this.set_uniform_float(this._loc.map, 4, [ox, oy, tex.get_width() / s, tex.get_height() / s]);
+        this.set_uniform_float(this._loc.px, 1, [s]);
+        this.set_uniform_float(this._loc.rects, 4, this._rects);
+        this.set_uniform_float(this._loc.radii, 1, this._radii);
+        super.vfunc_paint_target(node, paintContext);
+    }
+
+    // The cards over this one, in its own units, into the uniforms; how
+    // many of them touch it.
+    _lay() {
+        const card = this.actor;
+        // a message in its bin, or the header on its own
+        let bin = card?.get_parent(), group = bin?.get_parent();
+        if (bin instanceof MessageList.NotificationMessageGroup)
+            [bin, group] = [card, bin];
+        if (!(group instanceof MessageList.NotificationMessageGroup) ||
+            !Main.layoutManager.uiGroup.has_style_class_name('pulsar-glass'))
+            return 0;
+        // the group paints its children last to first: the first is on top
+        const kids = group.get_children();
+        const over = kids.slice(0, kids.indexOf(bin))
+            .filter(c => c.visible && c.child instanceof MessageList.Message);
+        if (over.length > STACK_SLOTS)
+            over.splice(1, over.length - STACK_SLOTS);
+        const [cx, cy, csx, csy] = inGroup(card, this._card);
+        // (coming in from nothing: nothing to cut yet)
+        if (csx < 0.01 || csy < 0.01)
+            return 0;
+        const w = card.width, h = card.height;
+        let n = 0;
+        for (let i = 0; i < STACK_SLOTS; i++) {
+            const r = this._rects;
+            if (i >= over.length) {
+                r[4 * i] = r[4 * i + 1] = r[4 * i + 2] = r[4 * i + 3] = -1e4;
+                this._radii[i] = 0;
+                continue;
+            }
+            // what it paints: inside its border (stock's is transparent, so
+            // the 1px ring past its edge shows what is beneath)
+            const other = over[i].child;
+            const node = other.get_theme_node();
+            const bl = node.get_border_width(St.Side.LEFT), bt = node.get_border_width(St.Side.TOP);
+            const br = node.get_border_width(St.Side.RIGHT), bb = node.get_border_width(St.Side.BOTTOM);
+            const [ax, ay, asx, asy] = inGroup(other, this._other);
+            const x1 = (ax + bl * asx - cx) / csx, y1 = (ay + bt * asy - cy) / csy;
+            const x2 = (ax + (other.width - br) * asx - cx) / csx, y2 = (ay + (other.height - bb) * asy - cy) / csy;
+            [r[4 * i], r[4 * i + 1], r[4 * i + 2], r[4 * i + 3]] = [x1, y1, x2, y2];
+            const radius = Math.max(node.get_border_radius(St.Corner.BOTTOMLEFT) - Math.max(bl, bb), 0) * asx / csx;
+            this._radii[i] = Math.min(radius, (x2 - x1) / 2, (y2 - y1) / 2);
+            if (x1 < w && x2 > 0 && y1 < h && y2 > 0)
+                n++;
+        }
+        return n;
+    }
+});
+
+// A message's corner in its group and its scale there: its bin eases it
+// in and out about the bin's middle (ScaleLayout). The header is the
+// group's own child. Plain numbers, no boxed values (see the note above),
+// into `out`.
+function inGroup(message, out) {
+    const bin = message.get_parent();
+    if (bin instanceof MessageList.NotificationMessageGroup) {
+        [out[0], out[1], out[2], out[3]] = [message.x + message.translation_x, message.y + message.translation_y, 1, 1];
+        return out;
+    }
+    const sx = bin.scale_x, sy = bin.scale_y;
+    out[0] = bin.x + bin.translation_x + bin.width * (1 - sx) / 2 + message.x * sx;
+    out[1] = bin.y + bin.translation_y + bin.height * (1 - sy) / 2 + message.y * sy;
+    out[2] = sx;
+    out[3] = sy;
+    return out;
+}
+
+// Where an offscreen effect's texture starts in its actor, in the actor's
+// units. Clutter (clutter-offscreen-effect.c, pre_paint) takes the paint
+// volume, rounds it out (_clutter_actor_box_enlarge_for_effects: the width
+// to whole units plus 3, the far edge up past 0.75) and keeps the near
+// corner. A card's paint volume is its allocation, which a texture of the
+// size that gives confirms without asking for the volume, a boxed value.
+function offscreenOrigin(actor, tex, scale) {
+    const edge = (a1, a2) => Math.ceil(a2 + 0.75) - Math.trunc(a2 - a1 + 0.5) - 3;
+    const w = actor.width, h = actor.height;
+    if (tex.get_width() === Math.ceil((Math.trunc(w + 0.5) + 3) * scale) &&
+        tex.get_height() === Math.ceil((Math.trunc(h + 0.5) + 3) * scale))
+        return [edge(0, w), edge(0, h)];
+    const pv = actor.get_paint_volume();
+    if (!pv)
+        return [edge(0, w), edge(0, h)];
+    const o = pv.get_origin();
+    return [edge(o.x, o.x + pv.get_width()), edge(o.y, o.y + pv.get_height())];
+}
+
+// Every message in a notification group, and its header, carries a
+// StackCut (idle until a card lies over it).
+function cutStack(group) {
+    for (const a of stacked(group)) {
+        if (!a.get_effect(STACK_CUT))
+            a.add_effect_with_name(STACK_CUT, new StackCut());
+    }
+}
+
+function uncutStacks() {
+    for (const g of messageGroups()) {
+        for (const a of stacked(g))
+            a.remove_effect_by_name(STACK_CUT);
+    }
+}
+
+function stacked(group) {
+    return [...group._notificationToMessage?.values() ?? [], group._headerBox].filter(a => a);
+}
+
+function messageGroups() {
+    const view = Main.panel.statusArea.dateMenu?._messageList?._messageView;
+    return (view?.messages ?? []).filter(m => m instanceof MessageList.NotificationMessageGroup);
+}
+
 // A kept origin, for the transforms a layout reads (see the note on boxed
 // values above): never written to.
 const ZERO = new Graphene.Point3D();
@@ -2485,6 +2674,11 @@ export class Glass {
         after(CloseDialog.CloseDialog.prototype, '_initDialog', this._trackCloseDialog);
         after(AppDisplay.AppFolderDialog.prototype, 'popup', this._trackFolder);
         after(IBusCandidatePopup.CandidatePopup.prototype, 'open', this._trackCandidates);
+        // A notification group's stacked cards, each cut where the cards
+        // over it lie (StackCut): every one as it is added, and those already
+        // in the date menu.
+        after(MessageList.NotificationMessageGroup.prototype, '_addNotification', cutStack);
+        messageGroups().forEach(cutStack);
         after(Dash.DashItemContainer.prototype, 'showLabel', this._trackDashLabel);
         // The overview's controls lay out only the children they know; the
         // dash's mirrors (_trackDash) stand where they were put.
@@ -3247,6 +3441,7 @@ export class Glass {
         for (const s of [...this._surfaces.values()])
             this.forget(s);
         this._unwrapFolders();
+        uncutStacks();
         this._panel?.destroy();
         this._panel = null;
         this._ground?.destroy();

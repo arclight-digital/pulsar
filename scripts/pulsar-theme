@@ -386,12 +386,16 @@ class Variant:
         c["mode"] = self.mode
         # The glass's inner cards: a faint lift of the text color on dark, a
         # frosted white on light (the Shell sheet's .pulsar-glass block).
+        # A collapsed notification group's cards behind the newest step
+        # fainter with depth (second, then lower), as stock's step darker.
         if self.mode == "dark":
-            c["glass_card"] = f"rgba({self.p['foreground'].rgb}, 0.045)"
-            c["glass_card_hover"] = f"rgba({self.p['foreground'].rgb}, 0.09)"
+            card = lambda a: f"rgba({self.p['foreground'].rgb}, {a})"
+            c["glass_card"], c["glass_card_hover"] = card(0.045), card(0.09)
+            c["glass_card_second"], c["glass_card_lower"] = card(0.027), card(0.016)
         else:
-            c["glass_card"] = "rgba(255, 255, 255, 0.62)"
-            c["glass_card_hover"] = "rgba(255, 255, 255, 0.82)"
+            card = lambda a: f"rgba(255, 255, 255, {a})"
+            c["glass_card"], c["glass_card_hover"] = card(0.62), card(0.82)
+            c["glass_card_second"], c["glass_card_lower"] = card(0.37), card(0.22)
         # The top bar's glass: the deep ground on dark; on light the ground
         # itself, lifted toward white (the deep one reads as flat grey there).
         c["glass_alpha"] = self.glass_alpha

@@ -1302,6 +1302,13 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
   background-color: {{glass_card}}; box-shadow: inset 0 0 0 1px rgba({{blue_rgb}}, 0.1); }
 .pulsar-glass .calendar:hover, .pulsar-glass .events-button:hover, .pulsar-glass .world-clocks-button:hover,
 .pulsar-glass .weather-button:hover, .pulsar-glass .message:hover { background-color: {{glass_card_hover}}; }
+/* A collapsed notification group's cards behind the newest: a step fainter
+   at each depth, as stock steps them darker (glass.js cuts each to the
+   sliver that shows). */
+.pulsar-glass .message:second-in-stack {
+  background-color: {{glass_card_second}}; box-shadow: inset 0 0 0 1px rgba({{blue_rgb}}, 0.07); }
+.pulsar-glass .message:lower-in-stack {
+  background-color: {{glass_card_lower}}; box-shadow: inset 0 0 0 1px rgba({{blue_rgb}}, 0.05); }
 /* The top bar over its blurred wallpaper. The overview's own transparent
    bar is restated, or this rule would win on order. */
 .pulsar-glass #panel { background-color: {{glass_panel}}; }
