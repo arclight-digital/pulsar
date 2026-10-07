@@ -3477,6 +3477,18 @@ STEAM_SANDBOX_PATH=/app/bin:/app/utils/bin:/usr/bin:/run/host/usr/lib/pulsar/san
 # This points that PATH at the image's copies and removes the copies Pulsar
 # can prove it made, unless another launcher granted in the same run needs
 # them. Anything else in ~/.local/bin is left, and named.
+# Whether Flatpak Steam is running: a live pid in one of its instance
+# directories (those of an app that exited can linger).
+steam_running() {
+    local d pid
+    for d in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/.flatpak/*/; do
+        grep -qx 'name=com.valvesoftware.Steam' "${d}info" 2>/dev/null || continue
+        pid=$(cat "${d}pid" 2>/dev/null) || continue
+        [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
+    done
+    return 1
+}
+
 setup_steam_builtin() {
     local dry=$1 keep_home=$2 app=com.valvesoftware.Steam
     local ov=${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/${app}
@@ -3494,6 +3506,16 @@ setup_steam_builtin() {
     fi
     # Another launcher granted in the same run needs the home copies.
     [ "$keep_home" = 1 ] && return 0
+    # A running Steam read its PATH when it started, and still finds gg in
+    # ~/.local/bin: taking the copies away now would make every launch exit
+    # at once ("gg: command not found") until it restarts.
+    if [ "$dry" = 0 ] && steam_running; then
+        printf 'Steam is open and still uses the copies in %s. Quit Steam (Steam menu > Exit) and open it again;
+' "$bindir"
+        printf 'it uses the image copies from then on. Run pulsar setup gamescale again afterwards to remove the old copies.
+'
+        return 0
+    fi
     if [ "$dry" = 1 ]; then
         setup_launch_wrappers --uninstall --dry-run
     else

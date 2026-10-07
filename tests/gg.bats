@@ -279,6 +279,8 @@ EOF2
     export PULSAR_GAMESCALE_SYSTEM="${BATS_TEST_TMPDIR}/image/gamescale"
     printf '#!/bin/sh\n# the image gamescale\n' > "$PULSAR_GAMESCALE_SYSTEM"
     OV="${HOME}/.local/share/flatpak/overrides/com.valvesoftware.Steam"
+    # no Steam running unless a test says so, whatever the host's is doing
+    export XDG_RUNTIME_DIR="${BATS_TEST_TMPDIR}/run"
 }
 
 # The PATH the grant sets and the PATH setup migrates to must be one PATH.
@@ -341,6 +343,28 @@ com.valvesoftware.Steam'
     [ "$(cat "$FLATPAK_LOG")" = "override --user --env=PATH=$(image_path) com.valvesoftware.Steam" ]
     [ ! -e "${LB}/gg" ] && [ ! -e "${LB}/ggm" ] && [ ! -e "${LB}/gamescale" ]
     [ ! -e "$INSTALLER_LOG" ]
+}
+
+@test "setup gamescale: a running Steam keeps its old copies until it restarts" {
+    steam_env
+    run "$PULSAR" setup gamescale --platform faugus
+    [ "$status" -eq 0 ]
+    mkdir -p "${OV%/*}"
+    printf '[Environment]\nPATH=/app/bin:/app/utils/bin:/usr/bin:%s\n' "$LB" > "$OV"
+    # an instance directory for Steam, alive (this shell), and a stale one
+    mkdir -p "${XDG_RUNTIME_DIR}/.flatpak/1" "${XDG_RUNTIME_DIR}/.flatpak/2"
+    printf '[Application]\nname=com.valvesoftware.Steam\n' > "${XDG_RUNTIME_DIR}/.flatpak/1/info"
+    echo $$ > "${XDG_RUNTIME_DIR}/.flatpak/1/pid"
+    run "$PULSAR" setup gamescale
+    [ "$status" -eq 0 ]
+    [ "$(cat "$FLATPAK_LOG")" = "override --user --env=PATH=$(image_path) com.valvesoftware.Steam" ]
+    [ -e "${LB}/gg" ] && [ -e "${LB}/ggm" ]
+    [[ "$output" == *"Quit Steam (Steam menu > Exit) and open it again"* ]]
+    # once Steam has exited (its pid gone), the same run removes them
+    echo 999999999 > "${XDG_RUNTIME_DIR}/.flatpak/1/pid"
+    run "$PULSAR" setup gamescale
+    [ "$status" -eq 0 ]
+    [ ! -e "${LB}/gg" ] && [ ! -e "${LB}/ggm" ]
 }
 
 @test "setup gamescale: Steam's migration leaves the user's own files" {
