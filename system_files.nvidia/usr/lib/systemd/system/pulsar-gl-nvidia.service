@@ -1,7 +1,9 @@
 # Installs org.freedesktop.Platform.GL(32).nvidia-<version> for the running
 # driver and for the staged update's driver, so a Flatpak app never starts
-# without the GPU driver it needs. The whole story is in the script's
-# header.
+# without the GPU driver it needs. It also masks them, so no `flatpak update`
+# swaps one under a running app, and puts in flathub's newer builds of the
+# running driver's itself, only when no app holds them. The whole story is in
+# the script's header.
 #
 # Started two ways: at boot (the [Install] below) and by
 # pulsar-gl-nvidia.path whenever a deployment is staged. The staging trigger
