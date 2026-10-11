@@ -132,6 +132,22 @@ jobs=()
 command -v parallel >/dev/null && jobs=(--jobs "$(nproc)")
 bats "${jobs[@]}" tests/
 
+# The build host runs this as root, and a test of a user session skips as
+# root: agent add refuses root, and a refusal only a normal user meets can't
+# be seen by one who isn't. That was 59 tests skipping every night, the
+# whole agent sandbox among them, guarding nothing. So as root the suite
+# runs again as nobody, in a clean environment with a home of its own.
+if [ "$(id -u)" -eq 0 ]; then
+  say "bats, as a normal user"
+  user_home=$(mktemp -d)
+  trap 'rm -rf "$user_home"' EXIT
+  chown 65534:65534 "$user_home"
+  setpriv --reuid=65534 --regid=65534 --clear-groups \
+    env -i HOME="$user_home" TMPDIR="$user_home" PATH="$PATH" LANG="${LANG:-C.UTF-8}" \
+      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+    bats "${jobs[@]}" tests/
+fi
+
 # The installer's disk tests (Windows' partitions untouched, the root
 # encrypted, a failed install taken back) skip where systemd-repart,
 # cryptsetup and the mkfs tools are missing -- which a bare build host may
