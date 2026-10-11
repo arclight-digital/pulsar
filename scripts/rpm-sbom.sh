@@ -87,7 +87,7 @@ printf '%s\n' "$pkgs" \
                  + .version + "-" + .release)
         })' \
   | jq --arg ns "https://pulsar.arclight.digital/spdx/${digest}" \
-       --arg created "${SOURCE_DATE_EPOCH:+}${SOURCE_DATE_EPOCH:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+       --arg created "$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date -u +%s)}" +%Y-%m-%dT%H:%M:%SZ)" \
        --arg ref "$REF" \
        --arg digest "$digest" '
       {
