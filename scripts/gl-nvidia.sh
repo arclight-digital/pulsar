@@ -154,9 +154,12 @@ holders() {
         name=$(sed -n 's/^name=//p' "$info" | head -1)
         case "$names" in *" ${name##*.} "*) ;; *) names+="${name##*.} " ;; esac
     done
-    [ "$names" != " " ] || return 1
-    names=${names# }
-    printf '%s\n' "${names% }"
+    local -a apps
+    read -ra apps <<< "$names"
+    [ "${#apps[@]}" -gt 0 ] || return 1
+    # Instance ids are random, so the glob finds the apps in a random order:
+    # name them in a fixed one.
+    printf '%s\n' "${apps[@]}" | LC_ALL=C sort | paste -sd' '
 }
 
 # A newer flathub build of extension $1 (same driver): downloaded now, and

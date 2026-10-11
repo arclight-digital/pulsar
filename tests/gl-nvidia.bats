@@ -213,9 +213,13 @@ stage() {
     [ "$status" -eq 0 ]
 }
 
-# A running instance of app $1 (pid $2) that mounted extension $3.
+# A running instance of app $1 (pid $2) that mounted extension $3. Real
+# instance ids are random; these count up, so the order the script finds
+# them in is the order they were made, and a test can pin what it does
+# with that order instead of passing on a coin flip.
 instance() {
-    local dir="${PULSAR_RUN_ROOT}/1000/.flatpak/${RANDOM}${RANDOM}"
+    INSTANCES=$((${INSTANCES:-0} + 1))
+    local dir="${PULSAR_RUN_ROOT}/1000/.flatpak/${INSTANCES}"
     mkdir -p "$dir"
     printf '[Application]\nname=%s\n\n[Instance]\nruntime-extensions=org.freedesktop.Platform.GL.default=aaa;%s=c0\n' \
         "$1" "$3" > "${dir}/info"
@@ -266,7 +270,8 @@ dead_pid() {
     instance com.discordapp.Discord $$ org.freedesktop.Platform.GL.nvidia-610-57-04
     run "$SCRIPT"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Steam, Discord use the current one"* ]]
+    # found Steam first, named in a fixed order
+    [[ "$output" == *"Discord, Steam use the current one"* ]]
     grep -qx pull:org.freedesktop.Platform.GL.nvidia-610-57-04 "$FLATPAK_LOG"
     run grep deploy: "$FLATPAK_LOG"
     [ "$status" -ne 0 ]
