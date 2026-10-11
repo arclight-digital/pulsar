@@ -37,6 +37,11 @@
 # nobody can explain.
 set -euo pipefail
 
+# Overridable so the tests can reach the running and image modes without the
+# host's kernel.
+KERNEL_BTF=${PULSAR_KERNEL_BTF:-/sys/kernel/btf/vmlinux}
+MODULES_DIR=${PULSAR_MODULES_DIR:-/usr/lib/modules}
+
 MODE=running
 DUMP=""
 while [ $# -gt 0 ]; do
@@ -64,15 +69,15 @@ case "$MODE" in
         cp "$DUMP" "${work}/dump.txt"
         ;;
     running)
-        [ -r /sys/kernel/btf/vmlinux ] || die "/sys/kernel/btf/vmlinux is not readable"
+        [ -r "$KERNEL_BTF" ] || die "${KERNEL_BTF} is not readable"
         command -v bpftool >/dev/null || die "bpftool is not installed"
-        bpftool btf dump file /sys/kernel/btf/vmlinux format raw > "${work}/dump.txt" \
+        bpftool btf dump file "$KERNEL_BTF" format raw > "${work}/dump.txt" \
             || die "bpftool could not dump the running kernel's BTF"
         ;;
     image)
         command -v bpftool >/dev/null || die "bpftool is not installed"
-        vmlinuz=$(find /usr/lib/modules -name vmlinuz -type f 2>/dev/null | sort | head -1)
-        [ -n "$vmlinuz" ] || die "no /usr/lib/modules/*/vmlinuz found"
+        vmlinuz=$(find "$MODULES_DIR" -name vmlinuz -type f 2>/dev/null | sort | head -1)
+        [ -n "$vmlinuz" ] || die "no ${MODULES_DIR}/*/vmlinuz found"
         echo "kernel image: ${vmlinuz}"
         # vmlinuz is a compressed bzImage; BTF lives in the ELF inside it.
         python3 - "$vmlinuz" "${work}/vmlinux" <<'PY' || die "could not extract vmlinux from ${vmlinuz}"

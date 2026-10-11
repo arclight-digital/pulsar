@@ -158,3 +158,123 @@ EOF
         --dump "${BATS_TEST_TMPDIR}/none.txt"
     [ "$status" -ne 0 ]
 }
+
+@test "BTF gate: an empty dump is 'cannot determine', not 'no sched_ext here'" {
+    # Exit 1 would make the build skip the scheduler on the strength of a
+    # bpftool run that produced nothing.
+    : > "${BATS_TEST_TMPDIR}/empty.txt"
+    run bash "${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh" --dump "${BATS_TEST_TMPDIR}/empty.txt"
+    [ "$status" -eq 2 ]
+}
+
+# The running and image modes, which ask bpftool. The build runs --image.
+
+GATE="${BATS_TEST_DIRNAME}/../scripts/check-scx-btf.sh"
+
+# bpftool as the real one (7.2.8 host) answers `btf dump file F format raw`:
+# the dump for a raw BTF file (magic 9f eb, as /sys/kernel/btf/vmlinux opens)
+# or an ELF; "No such file or directory", exit 254, for a missing file; and
+# "Unknown error 4001", exit 95, for anything else.
+stub_bpftool() {
+    export BTF_DUMP="${BATS_TEST_DIRNAME}/fixtures/btf-clean.txt"
+    cat > "${STUB}/bpftool" <<'EOF'
+#!/bin/sh
+[ "$1 $2 $3 $5 $6" = "btf dump file format raw" ] || exit 64
+f=$4
+[ -r "$f" ] || { echo "Error: failed to load BTF from $f: No such file or directory" >&2; exit 254; }
+case "$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')" in
+    9feb*|7f454c46) cat "$BTF_DUMP" ;;
+    *) echo "libbpf: failed to get EHDR from $f" >&2
+       echo "Error: failed to load BTF from $f: Unknown error 4001" >&2
+       exit 95 ;;
+esac
+EOF
+    chmod +x "${STUB}/bpftool"
+    export PULSAR_KERNEL_BTF="${BATS_TEST_TMPDIR}/btf-vmlinux"
+    printf '\237\353\001\000' > "$PULSAR_KERNEL_BTF"
+    export PULSAR_MODULES_DIR="${BATS_TEST_TMPDIR}/modules"
+    mkdir -p "$PULSAR_MODULES_DIR"
+}
+
+# A bzImage-shaped kernel: the "MZ" and "HdrS" a real vmlinuz opens with,
+# then a compressed ELF further in. Fedora's 7.2.8 vmlinuz carries zstd at
+# offset 21196; gzip stands in because every builder has it, and the script
+# scans for both. The ELF only has to be the size of a kernel.
+fake_vmlinuz() {
+    mkdir -p "${1%/*}"
+    {
+        printf 'MZ'; head -c 512 /dev/zero; printf 'HdrS'; head -c 1024 /dev/zero
+        { printf '\177ELF'; head -c 11000000 /dev/zero; } | gzip -n -1
+    } > "$1"
+}
+
+# A PATH of only these commands, so a test can take one away whatever the
+# host has installed.
+only_path() {
+    local d="${BATS_TEST_TMPDIR}/only" c
+    mkdir -p "$d"
+    for c in "$@"; do ln -sf "$(command -v "$c")" "$d/$c"; done
+    echo "$d"
+}
+
+@test "BTF gate: with no argument it judges the running kernel's BTF" {
+    stub_bpftool
+    run bash "$GATE"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"0 carrying"* ]]
+    BTF_DUMP="${BATS_TEST_DIRNAME}/fixtures/btf-malformed.txt" run bash "$GATE"
+    [ "$status" -eq 1 ]
+}
+
+@test "BTF gate: an unreadable running BTF is 'cannot determine', and names the file" {
+    stub_bpftool
+    PULSAR_KERNEL_BTF="${BATS_TEST_TMPDIR}/missing" run bash "$GATE"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"${BATS_TEST_TMPDIR}/missing is not readable"* ]]
+}
+
+@test "BTF gate: no bpftool is 'cannot determine', and says so" {
+    stub_bpftool
+    run env PATH="$(only_path mktemp rm python3)" "$BASH" "$GATE"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"bpftool is not installed"* ]]
+}
+
+@test "BTF gate --image: the kernel image's own BTF is judged" {
+    stub_bpftool
+    fake_vmlinuz "${PULSAR_MODULES_DIR}/7.2.8-200.fc44.x86_64/vmlinuz"
+    run bash "$GATE" --image
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"0 carrying"* ]]
+}
+
+@test "BTF gate --image: no kernel image is 'cannot determine', and says so" {
+    stub_bpftool
+    run bash "$GATE" --image
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"no ${PULSAR_MODULES_DIR}/*/vmlinuz found"* ]]
+}
+
+@test "BTF gate --image: no bpftool says so, not that the kernel lacks BTF" {
+    stub_bpftool
+    run env PATH="$(only_path mktemp rm python3 find sort head)" "$BASH" "$GATE" --image
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"bpftool is not installed"* ]]
+}
+
+@test "BTF gate: no python3 is 'cannot determine' with a reason, not a bare 127" {
+    run env PATH="$(only_path mktemp rm cp)" "$BASH" "$GATE" --dump "${BATS_TEST_DIRNAME}/fixtures/btf-clean.txt"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"python3 is required"* ]]
+}
+
+@test "BTF gate: a run leaves nothing behind in TMPDIR" {
+    # The extracted vmlinux and its dump live there, tens of MB a run (the
+    # dump alone is 15MB on 7.2.8).
+    stub_bpftool
+    fake_vmlinuz "${PULSAR_MODULES_DIR}/7.2.8-200.fc44.x86_64/vmlinuz"
+    mkdir -p "${BATS_TEST_TMPDIR}/tmp"
+    TMPDIR="${BATS_TEST_TMPDIR}/tmp" run bash "$GATE" --image
+    [ "$status" -eq 0 ]
+    [ -z "$(ls -A "${BATS_TEST_TMPDIR}/tmp")" ]
+}
