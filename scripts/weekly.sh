@@ -61,7 +61,7 @@ set -euo pipefail
 # build-iso.sh publishes through expands ~ for its config and cache.
 # Derived, not assumed -- see the nightly for the full story.
 if [ -z "${HOME:-}" ]; then
-  HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+  HOME="$(getent passwd "$(id -u)" | cut -d: -f6 || true)"
   [ -n "${HOME}" ] || { echo "no \$HOME and no passwd entry for uid $(id -u)" >&2; exit 2; }
   export HOME
 fi

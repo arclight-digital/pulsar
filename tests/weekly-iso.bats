@@ -69,3 +69,80 @@ EOF
   [ "$(grep -c -- '^build-iso --kind installer ' "${LOG}")" = 2 ]
   ! grep -q -- '--push' "${LOG}"
 }
+
+@test "each variant is handed its own image, the work dir and the signer" {
+  mkdir -p "${PULSAR_IMAGE_BUILDER_STORE}"
+  run -0 "${FAKE}/scripts/weekly.sh"
+  local tail="--work ${PULSAR_ISO_WORK} --signer-url https://signer.invalid --signer-token-file /dev/null --signer-ca-file /dev/null --push"
+  [ "$(grep '^build-iso' "${LOG}")" = "build-iso --kind installer --variant vanilla --image ghcr.io/arclight-digital/pulsar ${tail}
+build-iso --kind installer --variant nvidia --image ghcr.io/arclight-digital/pulsar-nvidia ${tail}" ]
+}
+
+@test "the disk is reclaimed after each variant, before the next one builds" {
+  # The ISO droplet holds one variant's image, osbuild store and ISO at a
+  # time, not two. build-iso.sh here notes what the last variant left behind.
+  cat > "${FAKE}/scripts/build-iso.sh" <<STUB
+#!/usr/bin/env bash
+echo "build-iso \$*" >> "${LOG}"
+for d in iso store; do [ ! -e "${PULSAR_ISO_WORK}/\${d}" ] || echo "left behind: \${d}" >> "${LOG}"; done
+mkdir -p "${PULSAR_ISO_WORK}/iso" "${PULSAR_ISO_WORK}/store"
+STUB
+  run -0 "${FAKE}/scripts/weekly.sh"
+  [ "$(grep -E '^(build-iso|podman|left behind)' "${LOG}" | sed -E 's/^(build-iso).*--variant ([a-z]+).*/\1 \2/')" = "build-iso vanilla
+podman image prune --all --force
+build-iso nvidia
+podman image prune --all --force" ]
+  [ ! -e "${PULSAR_ISO_WORK}/iso" ]
+  [ ! -e "${PULSAR_ISO_WORK}/store" ]
+}
+
+@test "the week names the commit it builds, wherever it was started from" {
+  cd "${BATS_TEST_TMPDIR}"
+  run -0 "${FAKE}/scripts/weekly.sh"
+  grep -qx "building from $(git -C "${FAKE}" rev-parse --short HEAD): fixture" <<<"$output"
+}
+
+@test "IMAGE and IMAGE_NVIDIA are required before anything runs" {
+  unset IMAGE_NVIDIA
+  run --separate-stderr "${FAKE}/scripts/weekly.sh"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"IMAGE_NVIDIA is not set"* ]]
+  unset IMAGE
+  run --separate-stderr "${FAKE}/scripts/weekly.sh"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"IMAGE is not set"* ]]
+  [ ! -e "${LOG}" ]
+}
+
+@test "an unset or unknown channel builds nothing, and says what to set" {
+  # Publishing an ISO is signing something; nothing may guess whether this
+  # run is entitled to sign over what is already published.
+  unset PULSAR_CHANNEL
+  run --separate-stderr "${FAKE}/scripts/weekly.sh"
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"set PULSAR_CHANNEL=scheduled|manual in /etc/pulsar/build.env."* ]]
+  PULSAR_CHANNEL=weekly run --separate-stderr "${FAKE}/scripts/weekly.sh"
+  [ "$status" -eq 2 ]
+  [ "$stderr" = "PULSAR_CHANNEL=weekly is not scheduled or manual" ]
+  [ ! -e "${LOG}" ]
+}
+
+@test "with no \$HOME the week takes it from the passwd entry, and hands it on" {
+  # cloud-init sets none, and the aws CLI build-iso.sh publishes through
+  # expands ~ for its config.
+  printf '#!/usr/bin/env bash\necho "build-iso HOME=${HOME:-<unset>}" >> "%s"\n' "${LOG}" \
+    > "${FAKE}/scripts/build-iso.sh"
+  run --separate-stderr env -u HOME "${FAKE}/scripts/weekly.sh"
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+  [ "$(grep -c "^build-iso HOME=$(getent passwd "$(id -u)" | cut -d: -f6)\$" "${LOG}")" = 2 ]
+}
+
+@test "with no \$HOME and no passwd entry the week stops, and says why" {
+  # getent for a key it does not have: nothing, and exit 2. Under pipefail
+  # that exit used to end the run on the assignment, before the message.
+  printf '#!/usr/bin/env bash\nexit 2\n' > "${BIN}/getent"; chmod +x "${BIN}/getent"
+  run --separate-stderr env -u HOME "${FAKE}/scripts/weekly.sh"
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"no \$HOME and no passwd entry for uid $(id -u)"* ]]
+  [ ! -e "${LOG}" ]
+}
