@@ -55,6 +55,7 @@ stub_flatpak() {
     # FAIL_APP is the app the stub should refuse outright, standing in for an
     # app that is simply unavailable rather than one that collides.
     export FLATPAK_FAIL_APP="${FLATPAK_FAIL_APP:-}"
+    export FLATPAK_PHANTOM_APP="${FLATPAK_PHANTOM_APP:-}"
 
     # The bus. `fedora` is an OCI remote, and the real flatpak can only install
     # from one over a session bus -- so the stub refuses a `fedora` install,
@@ -86,8 +87,10 @@ EOF
 #!/bin/sh
 set -e
 if [ "$1" = list ]; then
-    # Mirrors the real `flatpak list --columns=application,branch`: every ref
-    # answers to its bare id and, when it carries one, to id//branch.
+    # Prints what the real `flatpak list --system --columns=application,branch`
+    # prints (checked on cherenkov with od -c): the id, a tab, the branch, one
+    # ref a line. Turning that into "id" and "id//branch" is the script's job,
+    # so the stub must not do it for it.
     #
     # It also HONOURS --app, which is the whole point. The real flag hides
     # runtime extensions, and a stub that ignored it would let the --app bug
@@ -96,14 +99,15 @@ if [ "$1" = list ]; then
     for a in "$@"; do [ "$a" = "--app" ] && only_apps=1; done
     awk -v only_apps="$only_apps" '
         NF {
-            id=$1; sub(/\/\/.*/,"",id)
+            id=$1; branch="stable"
+            if (id ~ /\/\//) { branch=id; sub(/.*\/\//,"",branch); sub(/\/\/.*/,"",id) }
             is_runtime = (id ~ /^org\.(freedesktop|kde)\.(Platform|Sdk)/)
             if (only_apps && is_runtime) next
-            print id
-            if (id != $1) print $1
+            print id "\t" branch
         }' "$FLATPAK_STATE"
     exit 0
 fi
+echo "$*" >> "${BATS_TEST_TMPDIR}/install.calls"
 # install: the application id is the last argument, the remote the one
 # before it -- `flatpak install --system ... <remote> <app>`
 prev=; app=
@@ -117,6 +121,8 @@ if [ -n "$FLATPAK_FAIL_APP" ] && [ "$app" = "$FLATPAK_FAIL_APP" ]; then
     echo "error: ${app} not found in remote ${remote}" >&2
     exit 1
 fi
+# PHANTOM_APP exits 0 and installs nothing: an exit status is not presence.
+[ "$app" = "${FLATPAK_PHANTOM_APP:-}" ] && exit 0
 origin=$(awk -v a="$app" '$1 == a {print $2}' "$FLATPAK_STATE")
 if [ -n "$origin" ] && [ "$origin" != "$remote" ]; then
     echo "error: ${app}/x86_64/stable is already installed from remote ${origin}" >&2
@@ -158,6 +164,17 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     [[ "$output" == *"fedora"* ]]
 }
 
+@test "an app already present is never handed to flatpak install" {
+    # Not even from its own remote: --or-update would update it on every
+    # `pulsar setup apps`, and from another remote it is the collision.
+    stub_flatpak "com.github.wwmm.easyeffects:fedora" "com.example.One:flathub"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run grep -E 'easyeffects|com\.example\.One' "${BATS_TEST_TMPDIR}/install.calls"
+    [ "$status" -ne 0 ]
+    grep -q ' flathub com.example.Two$' "${BATS_TEST_TMPDIR}/install.calls"
+}
+
 # The 2026-10-07 nightly failed the first test above with every app installed.
 # The presence check piped the list into `grep -q`, which exits on its first
 # match; bash's printf writes a line at a time, so when printf was preempted
@@ -190,6 +207,18 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     run "$SCRIPT"
     [ "$status" -ne 0 ]
     [[ "$output" == *"still missing"* ]]
+    [ ! -f "$STAMP" ]
+}
+
+@test "an install that exits 0 but leaves the app missing is named as missing" {
+    # The case the presence check exists for. Only the summary names this
+    # app: the install line claims it went in.
+    FLATPAK_PHANTOM_APP=com.example.Two
+    stub_flatpak
+    run "$SCRIPT"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"1 of 4 apps are still missing"* ]]
+    printf '%s\n' "${lines[@]}" | grep -qx '  com.example.Two'
     [ ! -f "$STAMP" ]
 }
 
@@ -247,6 +276,14 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     run "$SCRIPT"
     [ "$status" -ne 0 ]
     [[ "$output" == *"lists no apps"* ]]
+    [ ! -f "$STAMP" ]
+}
+
+@test "a missing list says it is missing, not that it is empty" {
+    stub_flatpak
+    PULSAR_FLATPAKS_LIST="${BATS_TEST_TMPDIR}/no-such.list" run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no list at ${BATS_TEST_TMPDIR}/no-such.list"* ]]
     [ ! -f "$STAMP" ]
 }
 
@@ -308,6 +345,16 @@ installed() { awk '{print $1}' "$FLATPAK_STATE"; }
     [[ "$output" != *"Cannot autolaunch"* ]]
     [[ "$output" == *"installed org.example.FromFedora from fedora"* ]]
     [ -f "$STAMP" ]
+}
+
+@test "without dbus-run-session it stops and says why, rather than half-installing" {
+    # A PATH of bash alone, so the check fails whatever the host has.
+    mkdir -p "${BATS_TEST_TMPDIR}/bare"
+    ln -s "$(command -v bash)" "${BATS_TEST_TMPDIR}/bare/bash"
+    run env PATH="${BATS_TEST_TMPDIR}/bare" "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dbus-run-session is missing"* ]]
+    [ ! -f "$STAMP" ]
 }
 
 @test "the private bus is used even when the caller already has one" {
