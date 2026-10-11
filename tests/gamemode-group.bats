@@ -90,6 +90,8 @@ if [ -n "$USERMOD_FAIL_USER" ] && [ "$user" = "$USERMOD_FAIL_USER" ]; then
     echo "usermod: refusing $user" >&2
     exit 1
 fi
+# NOOP_USER: exits 0 and changes nothing, as usermod did on 2026-09-18.
+[ "$user" = "$USERMOD_NOOP_USER" ] && exit 0
 if ! grep -q "^gamemode:" "$PULSAR_ETC_GROUP"; then
     echo "add '$user' to shadow group 'gamemode'"
     exit 0
@@ -97,7 +99,7 @@ fi
 echo "$user" >> "$GROUP_DB"
 exit 0
 EOF
-    export USERMOD_FAIL_USER=""
+    export USERMOD_FAIL_USER="" USERMOD_NOOP_USER=""
     chmod +x "${STUB}/getent" "${STUB}/id" "${STUB}/usermod"
     export PATH
 }
@@ -169,6 +171,33 @@ EOF
     grep -qx proto "$GROUP_DB"
     [[ "$output" == *"still not in gamemode"* ]]
     [[ "$output" == *ada* ]]
+    [ ! -f "$STAMP" ]
+}
+
+@test "an account usermod reports enrolled but is not, is named as still missing" {
+    # usermod exits 0 whether or not membership changed. Only the check
+    # afterwards names this account; the loop above it says "enrolled".
+    printf 'proto:1000:/bin/bash\n' > "$PASSWD_DB"
+    printf 'ada:1001:/bin/zsh\n'   >> "$PASSWD_DB"
+    export USERMOD_NOOP_USER=ada
+    run "$SCRIPT"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"1 of 2 accounts are still not in gamemode"* ]]
+    printf '%s\n' "${lines[@]}" | grep -qx '  ada'
+    [ ! -f "$STAMP" ]
+}
+
+@test "an /etc/group it cannot write stops the run before any usermod" {
+    # Every usermod after a failed copy is the silent gshadow no-op again,
+    # reported as "enrolled". A directory that does not exist fails the
+    # write for root too.
+    printf 'proto:1000:/bin/bash\n' > "$PASSWD_DB"
+    export PULSAR_ETC_GROUP="${BATS_TEST_TMPDIR}/no-such-dir/group"
+    run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"could not write gamemode into ${PULSAR_ETC_GROUP}"* ]]
+    [[ "$output" != *"enrolled"* ]]
+    [ ! -s "$GROUP_DB" ]
     [ ! -f "$STAMP" ]
 }
 

@@ -8,8 +8,8 @@
 # appeared, the user went through it exactly as designed, it reported
 # success, and the driver stayed rejected. The decisions pinned here: the
 # real cert lands at that path on a fresh host, a decoy already there is
-# replaced (both halves), a correct file is left alone, and a missing MOK.der
-# is a loud failure that touches nothing.
+# replaced (both halves), a correct file is left alone, and a missing or empty
+# MOK.der is a loud failure that touches nothing.
 
 setup() {
     SCRIPT="${BATS_TEST_DIRNAME}/../scripts/akmods-cert.sh"
@@ -72,6 +72,18 @@ seed_decoy() {
     [ "$status" -eq 0 ]
     [ "$(stat -c %i "$PUB")" = "$pub_inode" ]
     grep -q '^placeholder:' "$PRIV"
+}
+
+@test "an empty MOK.der fails loudly and touches nothing" {
+    # Copied through, an empty file would replace the decoy with a cert that
+    # matches nothing, and the run would report success.
+    seed_decoy
+    : > "$PULSAR_MOK"
+    run "$SCRIPT"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *FATAL* ]]
+    grep -q decoy "$PUB"
+    grep -q decoy "$PRIV"
 }
 
 @test "a missing MOK.der fails loudly and touches nothing" {

@@ -129,6 +129,24 @@ value() { cat "$GS_VALUE"; }
     [ "$status" -eq 2 ]
     run "$SCRIPT"
     [ "$status" -eq 2 ]
+    # the one way someone undoing a leaked hold by hand learns the verbs
+    [[ "$output" == *"usage: alive-timeout.sh hold|release"* ]]
+}
+
+@test "without dconf, hold saves what gsettings says and still disables the check" {
+    # The builder has no dconf, and the script keeps the old behaviour there.
+    # A PATH without it, whatever the host has: the gsettings stub and the
+    # few commands the script and the stub use.
+    local bare="${BATS_TEST_TMPDIR}/bare" c
+    mkdir -p "$bare"
+    ln -s "${STUB}/gsettings" "$bare/gsettings"
+    for c in bash cat mkdir rm; do ln -s "$(command -v "$c")" "$bare/$c"; done
+    run env PATH="$bare" "$SCRIPT" hold
+    [ "$status" -eq 0 ]
+    [ "$(value)" = "uint32 0" ]
+    [ "$(cat "$STATE")" = "uint32 8000" ]
+    run env PATH="$bare" "$SCRIPT" release
+    [ "$(value)" = "uint32 8000" ]
 }
 
 @test "the gamemode hooks name the script this file tests" {

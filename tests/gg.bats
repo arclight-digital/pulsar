@@ -103,6 +103,14 @@ expect_argv() {
     expect_argv gamemoderun /games/game -x -s 2
 }
 
+@test "gg: a value flag with nothing after it ends the flags instead of hanging" {
+    # `shift 2` with one argument left fails and shifts nothing, so without
+    # the count check the parser spins on -s forever and nothing ever starts.
+    run timeout 10 gg -s
+    [ "$status" -eq 0 ]
+    expect_argv gamemoderun -s
+}
+
 @test "ggm: is gg with the MangoHud flag" {
     run ggm /games/game
     [ "$status" -eq 0 ]
