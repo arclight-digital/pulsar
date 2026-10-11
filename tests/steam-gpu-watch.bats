@@ -9,7 +9,9 @@
 # Pinned here: only the GPU process is touched (the steamwebhelper that owns
 # VizCompositorTh, not the browser process that also maps NVIDIA GL); only a
 # wait that makes no progress counts, so a busy frame loop that waits in the
-# same place is left alone; and a GPU process that is merely idle is too.
+# same place is left alone; a GPU process that is merely idle is too; and
+# another Chromium app's GPU process (Discord, a browser), which owns a
+# VizCompositorTh just the same, is never Steam's however stuck it looks.
 # Chromium treats every kill as a crash and falls back to software after a
 # few, so a false positive is not harmless.
 
@@ -60,6 +62,15 @@ alive() { kill -0 "$VICTIM" 2>/dev/null; }
 
 @test "the browser process is never the target, even when it waits there" {
     fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout 50 Chrome_ChildIOT
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    alive
+}
+
+@test "another Chromium app's GPU process is never the target, however stuck" {
+    fake_proc "$VICTIM" Discord drm_syncobj_array_wait_timeout.constprop.0 50 \
+        Chrome_ChildIOT VizCompositorTh
     run "$SCRIPT"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
