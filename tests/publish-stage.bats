@@ -91,7 +91,8 @@ publish() {
   [ "$status" -eq 0 ] || { echo "$stderr"; false; }
   [ "$(git -C "${SITE}" rev-parse main)" != "${MAIN_BEFORE}" ]
   ! git -C "${SITE}" rev-parse -q --verify "refs/heads/release/${VERSION}" >/dev/null
-  grep -q 's3://pulsar-artifacts/pulsar/sbom/vanilla-latest.spdx.json' "${CALLS}"
+  # an upload, from the stage: the baseline download names the same key
+  grep -q '^aws s3 cp /.* s3://pulsar-artifacts/pulsar/sbom/vanilla-latest.spdx.json ' "${CALLS}"
 }
 
 @test "--stage and --no-promote together are refused" {
