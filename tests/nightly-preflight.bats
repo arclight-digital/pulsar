@@ -89,8 +89,27 @@ preflight() {
   preflight
   [ "$status" -eq 0 ]
   [[ "$output" == *"signer: not configured here"* ]]
+  [[ "$output" == *"ghcr.io token: no REGISTRY_AUTH_FILE login here; not checked"* ]]
   [[ "$output" == *"site commit token: not configured here"* ]]
   [ ! -s "${CURL_LOG}" ]
+}
+
+@test "the site token is checked against the site's repo, by the name GitHub's API knows" {
+  # PULSAR_SITE_REPO is a clone URL; api.github.com/repos/<owner>/<repo>.git
+  # is not a repository.
+  git_token
+  preflight
+  [ "$status" -eq 0 ]
+  grep -qx 'https://api.github.com/repos/arclight-digital/pulsar-site Authorization: token sekrit-git' "${CURL_LOG}"
+}
+
+@test "a token with no expiry is usable, and not a warning" {
+  # fine-grained tokens can be issued without one; GitHub then sends no header
+  git_token
+  GH_EXPIRY= preflight
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"site commit token: usable, no expiry"* ]]
+  [[ "$stderr" != *"WARNING"* ]]
 }
 
 @test "everything usable passes" {

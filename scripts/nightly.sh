@@ -89,7 +89,7 @@ set -euo pipefail
 # 2026-08-07. Derived from the passwd entry rather than assumed to be /root:
 # the directory exists, only the variable is missing.
 if [ -z "${HOME:-}" ]; then
-  HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+  HOME="$(getent passwd "$(id -u)" | cut -d: -f6 || true)"
   [ -n "${HOME}" ] || { echo "no \$HOME and no passwd entry for uid $(id -u)" >&2; exit 2; }
   export HOME
 fi

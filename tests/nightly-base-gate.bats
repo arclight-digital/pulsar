@@ -235,6 +235,25 @@ check() {
   [ "$status" -eq 3 ]
 }
 
+@test "with no BASE_IMAGE set, the base asked about is the one build.sh builds on" {
+  unset BASE_IMAGE
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}"
+  check
+  [ "$status" -eq 3 ]
+  grep -qx 'docker://quay.io/fedora-ostree-desktops/silverblue:44' "${REFS}"
+}
+
+@test "an empty answer for the base tag is no answer, and builds" {
+  # A registry that answers 200 with no body. Hashing nothing yields a digest
+  # like any other, and the input hash looked up by it must not get a vote.
+  : > "${MANIFEST}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  check
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"could not resolve"* ]]
+}
+
 @test "a label carrying the index digest is still a match" {
   # Not what build.sh writes today. If it ever does -- another podman, another
   # way of reading it back -- the gate must not start shipping nightly zeros
@@ -463,6 +482,20 @@ refuse() {
   [[ "$output" == *"would skip"* ]]
 }
 
+@test "an unset channel says where to set it" {
+  unset PULSAR_CHANNEL
+  refuse --base-check
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"set PULSAR_CHANNEL=scheduled|manual in /etc/pulsar/build.env."* ]]
+}
+
+@test "a channel that is neither scheduled nor manual is named and refused" {
+  export PULSAR_CHANNEL=nightly
+  refuse --base-check
+  [ "$status" -eq 2 ]
+  [ "$stderr" = "PULSAR_CHANNEL=nightly is not scheduled or manual" ]
+}
+
 @test "no argument at all is not an error" {
   # Where the nightly itself lives. It must reach the channel guard rather
   # than the argument one -- asserted through PULSAR_CHANNEL being unset,
@@ -496,6 +529,10 @@ make_tree() {
   cp "${NIGHTLY}" "${TREE}/scripts/nightly.sh"
   printf '#!/usr/bin/env bash\nexit 0\n' > "${TREE}/scripts/check.sh"
   chmod +x "${TREE}/scripts/nightly.sh" "${TREE}/scripts/check.sh"
+  # A skipped night names the published digest; oras answers it here rather
+  # than over the network. (A sha256 and a newline, as `oras resolve` prints.)
+  printf '#!/usr/bin/env bash\necho %s\n' "${AMD64_NOW}" > "${BIN}/oras"
+  chmod +x "${BIN}/oras"
   echo one > "${TREE}/system_files/motd"
   echo one > "${TREE}/site/index.html"
   git -C "${TREE}" init -q
@@ -527,6 +564,21 @@ night() {
   # And no version: a skip that printed one would be recorded as a build, and
   # run-build.sh trusts the version over the skip line when both are present.
   [[ "$output" != *"this build is "* ]]
+}
+
+@test "a skipped night still pings the healthcheck, and says it built nothing" {
+  # The dead-man's switch watches the timer. A night that ran and correctly
+  # built nothing must not look like a night that never ran.
+  make_tree
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  local pings="${BATS_TEST_TMPDIR}/pings"
+  printf '#!/usr/bin/env bash\necho "$*" >> "%s"\n' "${pings}" > "${BIN}/curl"
+  chmod +x "${BIN}/curl"
+  PULSAR_HEALTHCHECK_URL=https://hc.example/x night
+  [ "$status" -eq 0 ]
+  grep -q '^no build tonight: ' <<<"$output"
+  grep -qE -- '--data-binary no build in [0-9]+s: base, repo and add-ons unchanged https://hc.example/x$' "${pings}"
 }
 
 # ---------------------------------------------------------------------------
@@ -604,6 +656,24 @@ tree_check() {
   tree_commit "site: package changelog"
   tree_check
   [ "$status" -eq 3 ]
+  [[ "$output" == *"no image input changed"* ]]
+}
+
+@test "paths the image never sees are not a reason to build" {
+  # Design notes and previews, docs, tests and the ISO's own config change
+  # all the time and ship in no image.
+  make_tree
+  write_index "${AMD64_NOW}" "${ARM64_NOW}"
+  stub_skopeo "${AMD64_NOW}" "${INPUT_NOW}" "${INPUT_NOW}"
+  mkdir -p "${TREE}/.impeccable" "${TREE}/.preview" "${TREE}/docs" "${TREE}/tests"
+  echo note > "${TREE}/.impeccable/notes"
+  echo '<p>' > "${TREE}/.preview/index.html"
+  echo doc > "${TREE}/docs/guide.md"
+  echo '@test' > "${TREE}/tests/x.bats"
+  echo '[iso]' > "${TREE}/iso-config.toml"
+  tree_commit "everything but the image"
+  tree_check
+  [ "$status" -eq 3 ] || { echo "$output"; false; }
   [[ "$output" == *"no image input changed"* ]]
 }
 
