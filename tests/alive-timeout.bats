@@ -134,7 +134,7 @@ value() { cat "$GS_VALUE"; }
 }
 
 @test "without dconf, hold saves what gsettings says and still disables the check" {
-    # The builder has no dconf, and the script keeps the old behaviour there.
+    # The builder has no dconf, and the script keeps the old behavior there.
     # A PATH without it, whatever the host has: the gsettings stub and the
     # few commands the script and the stub use.
     local bare="${BATS_TEST_TMPDIR}/bare" c
