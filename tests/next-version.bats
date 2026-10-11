@@ -110,6 +110,33 @@ mixed_tags() {
   [[ ! "$output" =~ ^44\. ]]
 }
 
+@test "a failed lookup shows what the registry said, for the person who has to fix it" {
+  stub_oras 'Error: unexpected status: 500 Internal Server Error' 1
+  nv ghcr.io/example/pulsar
+  [ "$status" -eq 3 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"refusing to guess"* ]]
+  [[ "$stderr" == *"Error: unexpected status: 500 Internal Server Error"* ]]
+}
+
+@test "no image is a usage error, and prints no version" {
+  stub_oras "$(mixed_tags)"
+  nv
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"usage: next-version.sh [--fedora N] [--channel scheduled|manual] <image>"* ]]
+}
+
+@test "with no oras it stops as a config error, not as a failed lookup" {
+  local sandbox="${BATS_TEST_TMPDIR}/sandbox"
+  mkdir -p "${sandbox}"
+  ln -sf "$(command -v bash)" "${sandbox}/bash"
+  run --separate-stderr env PATH="${sandbox}" "${NV}" ghcr.io/example/pulsar
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
+  [ "$stderr" = "missing: oras" ]
+}
+
 @test "a repository that does not exist yet is the one narrow exception" {
   stub_oras 'Error: ghcr.io/example/pulsar: NAME_UNKNOWN: repository not found' 1
   nv ghcr.io/example/pulsar
