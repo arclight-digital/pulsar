@@ -41,11 +41,11 @@ setup() {
 
   # The query exactly as the script writes it: single-quoted, so rpm and not
   # the shell turns these \t and \n into bytes.
-  export QF='%{NAME}\t%{EPOCH}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{LICENSE}\n'
+  export WANT_QF='%{NAME}\t%{EPOCH}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{LICENSE}\n'
   cat > "${BIN}/rpm" <<'EOF'
 #!/usr/bin/env bash
 echo "rpm $*" >> "${CALLS}"
-[ "$1 $2 $3" = "-qa --qf ${QF}" ] || { echo "rpm stub: unexpected query: $*" >&2; exit 1; }
+[ "$1 $2 $3" = "-qa --qf ${WANT_QF}" ] || { echo "rpm stub: unexpected query: $*" >&2; exit 1; }
 cat "${RPMDB}"
 EOF
   # `podman image inspect REF --format '{{.Digest}}'` prints the digest and a
