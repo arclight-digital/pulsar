@@ -34,7 +34,9 @@ fake_proc() {
     mkdir -p "$PULSAR_PROC/$pid/task/$pid"
     echo "$comm" > "$PULSAR_PROC/$pid/comm"
     echo "$comm" > "$PULSAR_PROC/$pid/task/$pid/comm"
-    echo "$wchan" > "$PULSAR_PROC/$pid/task/$pid/wchan"
+    # The kernel writes wchan with no trailing newline. An echo here hid a
+    # watcher that read it as empty and never fired on real hardware.
+    printf '%s' "$wchan" > "$PULSAR_PROC/$pid/task/$pid/wchan"
     printf 'Name:\t%s\nvoluntary_ctxt_switches:\t%s\nnonvoluntary_ctxt_switches:\t7\n' \
         "$comm" "$sw" > "$PULSAR_PROC/$pid/task/$pid/status"
     for t in "$@"; do

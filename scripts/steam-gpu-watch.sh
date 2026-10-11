@@ -50,7 +50,9 @@ MAX_LOOPS=${PULSAR_STEAM_WATCH_LOOPS:-0}
 log() { echo "steam-gpu-watch: $*"; }
 
 # Builtins only below: this samples every second for the whole session.
-read_line() { local _l; IFS= read -r _l 2>/dev/null < "$1" || return 1; printf -v "$2" '%s' "$_l"; }
+# /proc/PID/wchan has no trailing newline, so read fails at EOF with the
+# value already read; only an empty read is a failure.
+read_line() { local _l=""; IFS= read -r _l 2>/dev/null < "$1" || [ -n "$_l" ] || return 1; printf -v "$2" '%s' "$_l"; }
 
 is_gpu_process() {
     local pid=$1 comm t
