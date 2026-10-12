@@ -57,7 +57,10 @@
 # One argument, optional: --base-check answers the anything_moved() question and
 # exits without building anything. 0 it would build, 3 it would skip.
 # --preflight checks the credentials a build will need (see preflight()) and
-# exits: 0 usable, 1 not. Anything
+# exits: 0 usable, 1 not. --check runs the night up to and including check.sh
+# and stops there, building nothing: the build host's way to run the suite on
+# a builder before a commit reaches main (infra's spawn-builder.sh --kind
+# check). Anything
 # else is refused with 2 rather than ignored -- a swallowed --manual builds and
 # publishes as scheduled, which is the one outcome this script is written to
 # prevent.
@@ -679,7 +682,7 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 case "${1:-}" in
-  ""|--base-check|--preflight) ;;
+  ""|--base-check|--preflight|--check) ;;
   --manual|--scheduled|--channel*)
     # The flag a person reaches for, named here because reaching for it is
     # reasonable and the answer is one line away.
@@ -689,7 +692,7 @@ case "${1:-}" in
     exit 2 ;;
   *)
     echo "unknown argument: ${1}" >&2
-    echo "nightly.sh takes --base-check, --preflight, or no argument at all." >&2
+    echo "nightly.sh takes --base-check, --preflight, --check, or no argument at all." >&2
     exit 2 ;;
 esac
 
@@ -735,6 +738,14 @@ fi
 # the same evening rather than a latent surprise. Forty seconds against an
 # hour-long build.
 "${REPO}/scripts/check.sh"
+
+# The night up to here, on the machine the night runs on, and no further. Four
+# nightlies in a row (2026-10-11/12) failed on tests that passed at a desk and
+# in a container; the suite's answer that counts is the builder's.
+if [ "${1:-}" = --check ]; then
+  echo "check: passed; --check builds nothing"
+  exit 0
+fi
 
 preflight || { echo "preflight failed: fix the credential above; nothing was built" >&2; exit 1; }
 

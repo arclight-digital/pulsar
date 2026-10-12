@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# main moves only to a commit that passed check.sh on a real builder.
+#
+# scripts/builder-check.sh records each pass in the common git dir. The
+# nightly runs the suite on a builder, and four nights in a row (2026-10-11/12)
+# failed on tests that had passed at a desk and in a container -- so passing
+# there is not the bar. Enabled per clone with:
+#
+#   git config core.hooksPath scripts/hooks
+#
+# `git push --no-verify` skips it; that is a decision to ship a commit nothing
+# has run on the builder, and the nightly is where it will be found out.
+set -euo pipefail
+record="$(git rev-parse --git-common-dir)/builder-checks"
+zero=0000000000000000000000000000000000000000
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ "${remote_ref}" = refs/heads/main ] || continue
+  [ "${local_sha}" != "${zero}" ] || continue
+  if ! grep -q "^${local_sha} passed " "${record}" 2>/dev/null; then
+    echo "pre-push: ${local_sha:0:12} has not passed on a builder; main stays where it is." >&2
+    echo "          scripts/builder-check.sh ${local_sha:0:12}" >&2
+    exit 1
+  fi
+done

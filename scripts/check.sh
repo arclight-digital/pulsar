@@ -37,6 +37,8 @@ shellcheck \
   scripts/build-installer-iso.sh \
   scripts/build-iso.sh \
   scripts/build.sh \
+  scripts/builder-check.sh \
+  scripts/hooks/pre-push \
   scripts/check-scx-btf.sh \
   scripts/check.sh \
   scripts/diff-chunk-metadata.sh \

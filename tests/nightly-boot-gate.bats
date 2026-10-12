@@ -124,6 +124,34 @@ not_called() {
   [[ "$output" != *"this build is"* ]]
 }
 
+# --check is how the build host runs the suite on a builder before a commit
+# reaches main. Everything after check.sh is the night's to do, not the
+# check's: a check that went on would take a number, build and publish.
+record_next_version() {
+  printf '#!/usr/bin/env bash\necho next-version >> "%s"\necho %s\n' "${CALLS}" "${VERSION}" \
+    > "${TREE}/scripts/next-version.sh"
+}
+
+@test "--check runs check.sh and nothing after it" {
+  record_next_version
+  echo sekrit-signer > "${PULSAR_SIGNER_TOKEN_FILE}"
+  PULSAR_HEALTHCHECK_URL=https://hc.example/x run --separate-stderr "${TREE}/scripts/nightly.sh" --check
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+  called '^check'
+  # no preflight (which would dial the signer), no number, no build, no ping
+  not_called '^(curl|next-version|build |publish )'
+  [ "$(tail -1 <<<"$output")" = "check: passed; --check builds nothing" ]
+}
+
+@test "--check fails when check.sh does, and still goes no further" {
+  record_next_version
+  FAIL_CHECK=1 run --separate-stderr "${TREE}/scripts/nightly.sh" --check
+  [ "$status" -ne 0 ]
+  called '^check'
+  not_called '^(curl|next-version|build |publish )'
+  [[ "$output" != *"check: passed"* ]]
+}
+
 @test "a credential that fails the preflight builds nothing and takes no number" {
   # The signer, configured and not answering: the nvidia build would have
   # died on it twenty-five minutes in, after the vanilla half was pushed.
