@@ -48,6 +48,9 @@ setup() {
   # inherits them: PULSAR_CHANNEL=manual alone would make every assertion below
   # pass for the wrong reason, since a manual build is not gated at all.
   for v in "${!PULSAR_@}"; do unset "${v}"; done
+  # And the registry login it exports: with it, the preflight reads the real
+  # ghcr token and checks it through whatever curl the test put on PATH.
+  unset REGISTRY_AUTH_FILE
 
   NIGHTLY="${BATS_TEST_DIRNAME}/../scripts/nightly.sh"
   BIN="${BATS_TEST_TMPDIR}/bin"

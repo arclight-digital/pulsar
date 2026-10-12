@@ -60,6 +60,9 @@ set -euo pipefail
 
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
 CHANNEL="${PULSAR_CHANNEL:-scheduled}"
+# The image is the argument and nothing else: nightly.sh exports its own
+# IMAGE, so one inherited from the environment answered for a missing argument.
+IMAGE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fedora) FEDORA_VERSION="${2:?}"; shift ;;

@@ -130,22 +130,39 @@ say "bats"
 # in parallel where GNU parallel is (one job per core): about 40 s, not 4 min
 jobs=()
 command -v parallel >/dev/null && jobs=(--jobs "$(nproc)")
-bats "${jobs[@]}" tests/
+
+# The suite never sees the caller's environment. On the build host this runs
+# inside nightly.sh, which has by then exported IMAGE, the registry login
+# (REGISTRY_AUTH_FILE) and build.env's PULSAR_*; at a desk none of them are
+# set, and a desk's own HOME has a git credential helper in it. So a test could
+# pass at every desk and fail every night: on 2026-10-12 next-version.sh took
+# the night's IMAGE for its missing argument, and the preflight checked the
+# real ghcr token through a test's stub curl. Tests clearing the names they
+# knew about missed each new one. Here every pass gets the same few variables
+# and a fresh home, wherever it runs.
+homes=()
+trap 'rm -rf "${homes[@]}"' EXIT
+# $@: what to run bats under (setpriv), if anything
+suite() {
+  local home
+  home=$(mktemp -d)
+  homes+=("$home")
+  # run under setpriv, it is nobody's home
+  [ "$#" -eq 0 ] || chown 65534:65534 "$home"
+  "$@" env -i HOME="$home" TMPDIR="$home" PATH="$PATH" LANG="${LANG:-C.UTF-8}" \
+      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+    bats "${jobs[@]}" tests/
+}
+suite
 
 # The build host runs this as root, and a test of a user session skips as
 # root: agent add refuses root, and a refusal only a normal user meets can't
 # be seen by one who isn't. That was 59 tests skipping every night, the
 # whole agent sandbox among them, guarding nothing. So as root the suite
-# runs again as nobody, in a clean environment with a home of its own.
+# runs again as nobody.
 if [ "$(id -u)" -eq 0 ]; then
   say "bats, as a normal user"
-  user_home=$(mktemp -d)
-  trap 'rm -rf "$user_home"' EXIT
-  chown 65534:65534 "$user_home"
-  setpriv --reuid=65534 --regid=65534 --clear-groups \
-    env -i HOME="$user_home" TMPDIR="$user_home" PATH="$PATH" LANG="${LANG:-C.UTF-8}" \
-      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
-    bats "${jobs[@]}" tests/
+  suite setpriv --reuid=65534 --regid=65534 --clear-groups
 fi
 
 # The installer's disk tests (Windows' partitions untouched, the root

@@ -121,7 +121,9 @@ mixed_tags() {
 
 @test "no image is a usage error, and prints no version" {
   stub_oras "$(mixed_tags)"
-  nv
+  # Set the way nightly.sh sets it, which is where this ran on 2026-10-12 and
+  # printed a version for an image nobody named.
+  IMAGE=ghcr.io/example/pulsar nv
   [ "$status" -ne 0 ]
   [ -z "$output" ]
   [[ "$stderr" == *"usage: next-version.sh [--fedora N] [--channel scheduled|manual] <image>"* ]]
