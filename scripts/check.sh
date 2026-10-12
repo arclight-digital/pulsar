@@ -144,10 +144,16 @@ command -v parallel >/dev/null && jobs=(--jobs "$(nproc)")
 # and a fresh home, wherever it runs.
 homes=()
 trap 'rm -rf "${homes[@]}"' EXIT
+# On disk, in /var/tmp, never in /tmp: the builder's /tmp is tmpfs, 7.7 GB of
+# its 16 GB of RAM, and the installer's disk tests alone write about 8 GB of
+# images in parallel (with no loop devices, every block of each encrypted
+# image is written). On 2026-10-12 the second pass filled it, GNU parallel
+# could not write its buffers ("Is the disk full?"), and the run ended after
+# 208 of 785 tests -- passing at every desk, whose /tmp is a disk.
 # $@: what to run bats under (setpriv), if anything
 suite() {
   local home
-  home=$(mktemp -d)
+  home=$(mktemp -d -p /var/tmp)
   homes+=("$home")
   # run under setpriv, it is nobody's home
   [ "$#" -eq 0 ] || chown 65534:65534 "$home"
