@@ -81,6 +81,33 @@ podman build --pull=never -t localhost/pulsar-installer:build -f "$ctx/Container
   --build-arg PAYLOAD_TARGET="$TARGET" --build-arg VARIANT="$VARIANT" \
   --build-arg PAYLOAD_SIZE="$(podman image inspect --format '{{.Size}}' "$PAYLOAD")" "$ctx"
 
+# osbuild relabels the live tree from the tree's own file_contexts, but the
+# kernel accepts only labels whose types the HOST's loaded policy defines. The
+# image carries add-on policy modules (flatpak-selinux, swtpm-selinux, ...)
+# that a stock Fedora host lacks, and setfiles dies on the first such label
+# with "Invalid argument" after the image is built. That was the 2026-10-18
+# weekly: a Pulsar workstation has the same modules as the image, so only the
+# bare builder hit it. So: the packages that ship a module in the image
+# must be on the host. Installed only when asked (PULSAR_ISO_INSTALL_POLICY=1,
+# which the throwaway weekly builder sets); anywhere else, named and refused.
+policy_pkgs=$(podman run --rm --pull=never --entrypoint /bin/sh localhost/pulsar-installer:build -c \
+  'find /usr/share/selinux/packages -type f -print0 | xargs -0r rpm -qf --qf "%{NAME}\n"' | sort -u)
+missing=()
+for pkg in $policy_pkgs; do
+  rpm -q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+done
+if [ ${#missing[@]} -gt 0 ]; then
+  if [ "${PULSAR_ISO_INSTALL_POLICY:-}" = 1 ]; then
+    echo "installing the image's SELinux policy modules on this host: ${missing[*]}"
+    dnf install -y "${missing[@]}"
+  else
+    echo "this host's SELinux policy lacks modules the image ships: ${missing[*]}" >&2
+    echo "osbuild cannot label the live tree without them. install them" >&2
+    echo "(dnf install ${missing[*]}), or set PULSAR_ISO_INSTALL_POLICY=1" >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "$OUT"
 image-builder build --bootc-ref localhost/pulsar-installer:build \
   --bootc-installer-payload-ref "$PAYLOAD" --bootc-default-fs btrfs \

@@ -159,3 +159,73 @@ build() { # extra args...
   ! grep -rqiE 'kickstart|inst\.ks|clearpart|autopart' \
       "${REAL}/system_files.installer" "${REAL}/Containerfile.installer" "${REAL}/scripts/build-installer-iso.sh"
 }
+
+# ---------------------------------------------------------------------------
+# The host must know every SELinux type the image labels with. osbuild relabels
+# the live tree on the host, and the 2026-10-18 weekly died in setfiles on
+# flatpak_helper_exec_t and swtpm_exec_t: add-on modules the image ships and a
+# stock Fedora builder lacks. These run the real build-installer-iso.sh with
+# podman, rpm, dnf, skopeo and image-builder stubbed.
+# ---------------------------------------------------------------------------
+
+policy_setup() {
+  # The image ships modules from these three; the host has only the first.
+  cat > "${BIN}/podman" <<EOF
+#!/usr/bin/env bash
+printf 'podman %s\n' "\$*" >> "${LOG}"
+case "\$1" in
+  run) printf 'container-selinux\nflatpak-selinux\nswtpm-selinux\n' ;;
+  image) [ "\$2" = inspect ] && echo 1000 ;;
+esac
+exit 0
+EOF
+  cat > "${BIN}/rpm" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = -q ] && [ "\$2" = container-selinux ]
+EOF
+  cat > "${BIN}/dnf" <<EOF
+#!/usr/bin/env bash
+printf 'dnf %s\n' "\$*" >> "${LOG}"
+EOF
+  cat > "${BIN}/image-builder" <<EOF
+#!/usr/bin/env bash
+printf 'image-builder %s\n' "\$*" >> "${LOG}"
+while [ \$# -gt 0 ]; do [ "\$1" = --output-dir ] && touch "\$2/out.iso"; shift; done
+EOF
+  chmod +x "${BIN}"/*
+}
+
+installer_build() { # expected status
+  run "-$1" "${REAL}/scripts/build-installer-iso.sh" --out "${BATS_TEST_TMPDIR}/out"
+}
+
+@test "a host missing the image's policy modules is refused before image-builder, and told which" {
+  policy_setup
+  installer_build 1
+  [[ "${output}" == *"lacks modules the image ships: flatpak-selinux swtpm-selinux"* ]]
+  [[ "${output}" != *"container-selinux"* ]]
+  ! grep -q '^image-builder' "${LOG}"
+  ! grep -q '^dnf' "${LOG}"
+}
+
+@test "PULSAR_ISO_INSTALL_POLICY=1 installs exactly the missing modules, then builds" {
+  policy_setup
+  PULSAR_ISO_INSTALL_POLICY=1 installer_build 0
+  grep -Fxq "dnf install -y flatpak-selinux swtpm-selinux" "${LOG}"
+  [ "$(grep -n '^dnf' "${LOG}" | cut -d: -f1)" -lt "$(grep -n '^image-builder' "${LOG}" | cut -d: -f1)" ]
+  [ -f "${BATS_TEST_TMPDIR}/out/pulsar-vanilla-installer-${VERSION}.iso" ]
+}
+
+@test "the module list is read from the installer image, not the base" {
+  policy_setup
+  installer_build 1
+  grep -q '^podman run --rm --pull=never .* localhost/pulsar-installer:build ' "${LOG}"
+}
+
+@test "a host with every module builds without installing anything" {
+  policy_setup
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${BIN}/rpm"
+  installer_build 0
+  ! grep -q '^dnf' "${LOG}"
+  grep -q '^image-builder build ' "${LOG}"
+}

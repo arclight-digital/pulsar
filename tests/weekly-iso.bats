@@ -146,3 +146,10 @@ podman image prune --all --force" ]
   [[ "$stderr" == *"no \$HOME and no passwd entry for uid $(id -u)"* ]]
   [ ! -e "${LOG}" ]
 }
+
+@test "the weekly lets the installer build put the image's policy modules on its builder" {
+  printf '#!/usr/bin/env bash\necho "build-iso policy=${PULSAR_ISO_INSTALL_POLICY:-}" >> "%s"\n' "${LOG}" \
+    > "${FAKE}/scripts/build-iso.sh"
+  run -0 "${FAKE}/scripts/weekly.sh"
+  [ "$(grep -c '^build-iso policy=1$' "${LOG}")" -eq 2 ]
+}
