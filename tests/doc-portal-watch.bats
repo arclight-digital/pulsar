@@ -11,10 +11,14 @@
 # mount and an unanswered GetMountPoint each restart it, by SIGKILL and then
 # a start, never a plain stop (TERM is ignored while deadlocked); its stacks
 # are saved before the kill; and the apps that were running are named, since
-# they keep a dead view of the mount until reopened.
+# they keep a dead view of the mount until reopened. They are closed and
+# started again only when the notification's button is clicked, never by
+# the watcher itself.
 #
-# systemctl, gdbus, flatpak, notify-send and eu-stack are stubs; timeout is
-# the real one, so the hang test times out for real.
+# systemctl, systemd-run, gdbus, flatpak, gio, notify-send and eu-stack are
+# stubs; timeout is the real one, so the hang test times out for real.
+# systemd-run runs the transient unit's command in place, so the button's
+# side is the real script too.
 
 bats_require_minimum_version 1.5.0
 
@@ -28,7 +32,15 @@ setup() {
     export XDG_STATE_HOME="${BATS_TEST_TMPDIR}/state"
     export PULSAR_MOUNTINFO="${BATS_TEST_TMPDIR}/mountinfo"
     export PULSAR_DOC_PORTAL_TIMEOUT=1
-    export ACTIVE=0 HANG=0 RESTART_RC=0 APPS=""
+    export ACTIVE=0 HANG=0 RESTART_RC=0 ANSWER="" PULSAR_DOC_PORTAL_POLL=0
+    # The running Flatpak apps, one per line; flatpak kill takes its app out.
+    export APPS="${BATS_TEST_TMPDIR}/apps"
+    : > "$APPS"
+    # Steam and Discord have launchers; NautilusPreviewer, a helper, does not.
+    export PULSAR_FLATPAK_EXPORTS="${BATS_TEST_TMPDIR}/exports"
+    mkdir -p "$PULSAR_FLATPAK_EXPORTS"
+    touch "$PULSAR_FLATPAK_EXPORTS/com.valvesoftware.Steam.desktop" \
+          "$PULSAR_FLATPAK_EXPORTS/com.discordapp.Discord.desktop"
     # The portal's line, as /proc/self/mountinfo shows it.
     printf '36 25 0:50 / %s/doc rw,nosuid,nodev,relatime - fuse.portal portal rw,user_id=1000\n' \
         "$XDG_RUNTIME_DIR" > "$PULSAR_MOUNTINFO"
@@ -50,11 +62,29 @@ echo "(b'${XDG_RUNTIME_DIR}/doc',)"
 EOF
     cat > "${BIN}/flatpak" <<EOF
 #!/usr/bin/env bash
-[ -n "\${APPS}" ] && printf '%s\n' \${APPS}
+case "\$1" in
+  ps) cat "\${APPS}" ;;
+  kill) echo "flatpak kill \$2" >> "${LOG}"
+        [ "\${STUBBORN:-}" = 1 ] && exit 0
+        grep -vx "\$2" "\${APPS}" > "\${APPS}.new"; mv "\${APPS}.new" "\${APPS}" ;;
+esac
 EOF
     cat > "${BIN}/notify-send" <<EOF
 #!/usr/bin/env bash
 printf 'notify-send %s\n' "\$*" >> "${LOG}"
+[ -n "\${ANSWER}" ] && echo "\${ANSWER}"
+exit 0
+EOF
+    cat > "${BIN}/systemd-run" <<EOF
+#!/usr/bin/env bash
+echo "systemd-run \$*" >> "${LOG}"
+while [ "\$1" != -- ]; do shift; done
+shift
+exec "\$@"
+EOF
+    cat > "${BIN}/gio" <<EOF
+#!/usr/bin/env bash
+echo "gio \$*" >> "${LOG}"
 EOF
     cat > "${BIN}/eu-stack" <<EOF
 #!/usr/bin/env bash
@@ -107,13 +137,53 @@ EOF
     [[ "$output" == *"its stacks are in ${f}"* ]]
 }
 
-@test "the apps running across the restart are named, once each, by their short names" {
-    APPS="com.valvesoftware.Steam com.discordapp.Discord com.discordapp.Discord" HANG=1 run -0 "$SCRIPT"
-    grep -Fxq 'notify-send --app-name=Pulsar --icon=dialog-warning Opening files was stuck, and is fixed now Reopen Discord, Steam to open or save files in them again.' "$LOG"
+@test "the apps open across the restart are named once each, and offered a button" {
+    printf '%s\n' com.valvesoftware.Steam com.discordapp.Discord com.discordapp.Discord > "$APPS"
+    HANG=1 run -0 "$SCRIPT"
+    # In a unit of its own, which does not take the apps it starts with it.
+    grep -q '^systemd-run --user --collect --quiet -p KillMode=process --unit=pulsar-doc-portal-reopen-[0-9]* -- .*doc-portal-watch.sh --offer com.discordapp.Discord com.valvesoftware.Steam$' "$LOG"
+    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Reopen them Opening files was stuck, and is fixed now Discord, Steam can't open or save files until they're reopened." "$LOG"
+}
+
+@test "without a click nothing is closed or started" {
+    printf '%s\n' com.valvesoftware.Steam com.discordapp.Discord > "$APPS"
+    HANG=1 run -0 "$SCRIPT"
+    grep -q '^notify-send' "$LOG"
+    ! grep -q '^flatpak kill' "$LOG" || false
+    ! grep -q '^gio' "$LOG"
+}
+
+@test "the button closes each app and starts it again, each one gone before it starts" {
+    printf '%s\n' com.valvesoftware.Steam com.discordapp.Discord > "$APPS"
+    SECONDS=0
+    # A real poll interval: an app that has closed is not waited on further.
+    PULSAR_DOC_PORTAL_POLL=1 ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    [ "$SECONDS" -lt 8 ]
+    grep -Fxq 'flatpak kill com.valvesoftware.Steam' "$LOG"
+    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/com.valvesoftware.Steam.desktop" "$LOG"
+    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/com.discordapp.Discord.desktop" "$LOG"
+    [ "$(grep -n '^flatpak kill com.valvesoftware.Steam' "$LOG" | cut -d: -f1)" -lt \
+      "$(grep -n '^gio launch .*Steam' "$LOG" | cut -d: -f1)" ]
+}
+
+@test "a helper with no launcher is closed and not started" {
+    printf '%s\n' org.gnome.NautilusPreviewer > "$APPS"
+    ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    grep -Fxq 'flatpak kill org.gnome.NautilusPreviewer' "$LOG"
+    ! grep -q '^gio' "$LOG"
+}
+
+@test "an app that will not close is not started again into its old sandbox" {
+    printf '%s\n' com.valvesoftware.Steam > "$APPS"
+    STUBBORN=1 ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    grep -Fxq 'flatpak kill com.valvesoftware.Steam' "$LOG"
+    [[ "$output" == *"com.valvesoftware.Steam did not close; not starting it again"* ]]
+    ! grep -q '^gio' "$LOG"
 }
 
 @test "with no app running there is nothing to reopen and no notification" {
     HANG=1 run -0 "$SCRIPT"
+    ! grep -q '^systemd-run' "$LOG" || false
     ! grep -q '^notify-send' "$LOG"
 }
 
