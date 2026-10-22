@@ -55,7 +55,7 @@ EOF
 
 @test "PULSAR_ISO_KIND=anaconda is the fallback, and installs nothing" {
   PULSAR_ISO_KIND=anaconda run -0 "${FAKE}/scripts/weekly.sh"
-  ! grep -q '^dnf' "${LOG}"
+  ! grep -q '^dnf' "${LOG}" || false
   [ "$(grep -c -- '^build-iso --kind anaconda ' "${LOG}")" = 2 ]
 }
 

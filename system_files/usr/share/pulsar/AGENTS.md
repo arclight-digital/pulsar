@@ -143,7 +143,7 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
 |---|---|
 | System | `pulsar-flatpaks.service` (default Flatpaks, first online boot), `pulsar-gamemode-group.service`, `scx.service` (scheduler), `greenboot-healthcheck.service`, `pulsar-update-auto.timer`, `pulsar-update-stage.service` (the Update button), `pulsar-esp-fallback.service`, `pulsar-steam-grants.service` (Steam's sandbox grants) |
 | System, nvidia image | `pulsar-gl-nvidia.service` (Flatpak GL driver), `nvidia-cdi-refresh.service`, `pulsar-gpu-containers.service`, `pulsar-akmods-cert.service` |
-| User | `pulsar-update-check.timer` (update notification), `pulsar-gl-check.path`, `pulsar-crash-watch.path`, `pulsar-steam-gpu-watch.service`, `gamescale-reconcile.service`, `pulsar-theme-init.service`, `podman-auto-update.timer` |
+| User | `pulsar-update-check.timer` (update notification), `pulsar-gl-check.path`, `pulsar-crash-watch.path`, `pulsar-steam-gpu-watch.service`, `pulsar-doc-portal-watch.timer` (restarts a hung document portal), `gamescale-reconcile.service`, `pulsar-theme-init.service`, `podman-auto-update.timer` |
 
 ## Skills
 

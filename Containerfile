@@ -671,6 +671,7 @@ COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 COPY scripts/pulsar-agent-gate /usr/libexec/pulsar/pulsar-agent-gate
 COPY scripts/pulsar-mcp /usr/libexec/pulsar/pulsar-mcp
 COPY scripts/steam-gpu-watch.sh /usr/libexec/pulsar/steam-gpu-watch.sh
+COPY scripts/doc-portal-watch.sh /usr/libexec/pulsar/doc-portal-watch.sh
 COPY scripts/steam-grants.sh /usr/libexec/pulsar/steam-grants.sh
 COPY scripts/pulsar-esp-fallback /usr/libexec/pulsar/pulsar-esp-fallback
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
@@ -680,6 +681,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/pulsar-agent-gate \
       /usr/libexec/pulsar/pulsar-mcp \
       /usr/libexec/pulsar/steam-gpu-watch.sh \
+      /usr/libexec/pulsar/doc-portal-watch.sh \
       /usr/libexec/pulsar/steam-grants.sh \
       /usr/libexec/pulsar/pulsar-esp-fallback && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
@@ -958,6 +960,11 @@ RUN set -eu; \
 # repainting; the watcher restarts that one process when it sees the stall
 # (see scripts/steam-gpu-watch.sh). On the vanilla image it never starts.
 #
+# pulsar-doc-portal-watch.timer is --global because the document portal is
+# per session. Once a minute it checks that the user's portal answers, and
+# restarts it when its mount is gone or it has deadlocked, which hangs every
+# Flatpak app handed a file (see scripts/doc-portal-watch.sh).
+#
 # pulsar-steam-gl-profile.service is --global for the same reason: it puts an
 # NVIDIA profile in the user's Steam that turns GL vsync off for the client's
 # own window (steamwebhelper) only, whose swaps otherwise block on Xwayland
@@ -1025,6 +1032,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-gl-check.path && \
     systemctl --global enable pulsar-crash-watch.path && \
     systemctl --global enable pulsar-steam-gpu-watch.service && \
+    systemctl --global enable pulsar-doc-portal-watch.timer && \
     systemctl --global enable pulsar-steam-gl-profile.service && \
     systemctl --global enable pulsar-theme-init.service && \
     systemctl --global enable pulsar-theme-notice.service && \
@@ -1037,7 +1045,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
              pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
-             pulsar-welcome.service pulsar-steam-gl-profile.service; do \
+             pulsar-welcome.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

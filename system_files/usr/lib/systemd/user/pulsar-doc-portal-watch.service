@@ -1,0 +1,12 @@
+[Unit]
+# Restarts xdg-document-portal when its mount is gone or it stops answering,
+# which leaves every Flatpak app that is handed a file hung. See the header of
+# /usr/libexec/pulsar/doc-portal-watch.sh for both faults.
+Description=Restart the document portal when it stops answering
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/doc-portal-watch.sh
+# The probe's 15 s, a 30 s stack capture, and the restart.
+TimeoutStartSec=2min
+Nice=10

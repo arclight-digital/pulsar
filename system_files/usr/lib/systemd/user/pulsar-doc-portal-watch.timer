@@ -1,0 +1,12 @@
+[Unit]
+Description=Check once a minute that the document portal answers
+
+[Timer]
+# A hung portal hangs whatever app was just handed a file, so the wait for a
+# fix is this interval. One D-Bus call a minute costs nothing.
+OnStartupSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

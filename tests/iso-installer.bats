@@ -76,7 +76,7 @@ build() { # extra args...
 @test "the live installer is the default, and bib never runs" {
   build --variant vanilla
   grep -q '^installer ' "${LOG}"
-  ! grep -q '^podman run' "${LOG}"
+  ! grep -q '^podman run' "${LOG}" || false
   [[ "${output}" == *"ISO for ${VERSION} (${DIGEST}, installer)"* ]]
 }
 
@@ -115,7 +115,7 @@ build() { # extra args...
 @test "PULSAR_ISO_KIND=anaconda falls back to bib, and the installer never runs" {
   PULSAR_ISO_KIND=anaconda build --variant vanilla
   grep -q '^podman run .*--type anaconda-iso' "${LOG}"
-  ! grep -q '^installer ' "${LOG}"
+  ! grep -q '^installer ' "${LOG}" || false
   [ -f "${WORK}/iso/pulsar-${VERSION}-x86_64.iso" ]
   [ "$(jq -r .installer "${WORK}/iso/pulsar-${VERSION}-x86_64.iso.json")" = anaconda ]
 }
@@ -204,7 +204,7 @@ installer_build() { # expected status
   installer_build 1
   [[ "${output}" == *"lacks modules the image ships: flatpak-selinux swtpm-selinux"* ]]
   [[ "${output}" != *"container-selinux"* ]]
-  ! grep -q '^image-builder' "${LOG}"
+  ! grep -q '^image-builder' "${LOG}" || false
   ! grep -q '^dnf' "${LOG}"
 }
 
@@ -226,6 +226,6 @@ installer_build() { # expected status
   policy_setup
   printf '#!/usr/bin/env bash\nexit 0\n' > "${BIN}/rpm"
   installer_build 0
-  ! grep -q '^dnf' "${LOG}"
+  ! grep -q '^dnf' "${LOG}" || false
   grep -q '^image-builder build ' "${LOG}"
 }
