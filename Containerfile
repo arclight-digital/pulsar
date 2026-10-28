@@ -433,9 +433,9 @@ RUN for attempt in 1 2 3; do \
 #
 # A Flatpak launcher cannot bind the host's /usr/bin (Flatpak reserves /usr
 # for the runtime), but with host-os:ro it sees the host's /usr at
-# /run/host/usr. Steam gets that from pulsar-steam-grants.service, with
-# /usr/lib/pulsar/sandbox-bin (below) on its PATH, so Steam runs THIS copy and
-# needs no install. gamescale 2.0.3 hands the host the /usr path when it
+# /run/host/usr. Steam and Faugus get that from pulsar-steam-grants.service,
+# with /usr/lib/pulsar/sandbox-bin (below) on their PATH, so they run THIS
+# copy and need no install. gamescale 2.0.3 hands the host the /usr path when it
 # starts its watchdog from there.
 #
 # Other launchers still go through upstream's installer, which copies into
@@ -497,10 +497,10 @@ RUN set -eux; \
 # gamescale (gg -x %command%); ggm is gg -m, the MangoHud overlay. The scripts
 # say why the order and the flag parsing are what they are.
 #
-# Flatpak Steam reaches these through /usr/lib/pulsar/sandbox-bin: relative
-# links to /usr/bin, which resolve inside the sandbox too, at /run/host/usr
-# (see gamescale above). Only these three, so the grant puts nothing else
-# from the host on Steam's PATH. Other Flatpak launchers get copies in
+# Flatpak Steam and Faugus reach these through /usr/lib/pulsar/sandbox-bin:
+# relative links to /usr/bin, which resolve inside the sandbox too, at
+# /run/host/usr (see gamescale above). Only these three, so the grant puts
+# nothing else from the host on their PATH. Other Flatpak launchers get copies in
 # ~/.local/bin from `pulsar setup gamescale`, made from THESE files. Inside
 # the sandbox gamemoderun is the Flatpak runtime's own, which reaches the
 # host's gamemoded through the portal; nothing here has to provide it.

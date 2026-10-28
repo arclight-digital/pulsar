@@ -3380,8 +3380,8 @@ SETUP_HELP='usage: pulsar setup <recipe>
   devbox      create the default distrobox
   gamemode    enroll accounts in the gamemode group, for renice (root)
   quadlet     install the quadlet template and enable auto-update
-  gamescale   grant Flatpak launchers other than Steam, with gg and ggm (its own flags pass through);
-              Steam needs nothing: the image grants it, and this moves an older home setup over'
+  gamescale   grant Flatpak launchers other than Steam and Faugus, with gg and ggm (its own flags pass through);
+              Steam and Faugus need nothing: the image grants them, and this moves an older home setup over'
 
 # gg and ggm, the Steam launch options, go beside the gamescale that
 # `setup gamescale` just put in ~/.local/bin. A Flatpak launcher's sandbox
@@ -3471,73 +3471,112 @@ setup_launch_wrappers() {
     fi
 }
 
-# Steam's sandbox PATH as pulsar-steam-grants.service sets it. Kept equal to
-# scripts/steam-grants.sh; tests/gg.bats checks the two agree.
+# The sandbox PATHs pulsar-steam-grants.service sets. Kept equal to
+# scripts/steam-grants.sh; tests/gg.bats checks they agree.
 STEAM_SANDBOX_PATH=/app/bin:/app/utils/bin:/usr/bin:/run/host/usr/lib/pulsar/sandbox-bin
+FAUGUS_SANDBOX_PATH=/app/bin:/app/utils/bin:/usr/bin:/usr/lib/extensions/vulkan/MangoHud/bin:/usr/lib/extensions/vulkan/gamescope/bin:/usr/lib/extensions/vulkan/OBSVkCapture/bin:/run/host/usr/lib/pulsar/sandbox-bin
 
-# Flatpak Steam runs the image's gg, ggm and gamescale (steam-grants.sh says
-# how), so for Steam there is nothing to install. What is left is a home the
-# old recipe set up: its user override's PATH ends in ~/.local/bin and beats
-# the image's, so Steam keeps running the copies there, which never update.
-# This points that PATH at the image's copies and removes the copies Pulsar
-# can prove it made, unless another launcher granted in the same run needs
+# Flatpak Steam and Faugus run the image's gg, ggm and gamescale
+# (steam-grants.sh says how), so for them there is nothing to install. What
+# is left is a home the old recipe set up: its user override's PATH ends in
+# ~/.local/bin and beats the image's, so the app keeps running the copies
+# there, which never update. This points that PATH at the image's copies and
+# removes the copies Pulsar can prove it made, unless something still runs
 # them. Anything else in ~/.local/bin is left, and named.
-# Whether Flatpak Steam is running: a live pid in one of its instance
+#
+# Whether a Flatpak app is running: a live pid in one of its instance
 # directories (those of an app that exited can linger).
-steam_running() {
-    local d pid
+flatpak_app_running() {
+    local app=$1 d pid
     for d in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/.flatpak/*/; do
-        grep -qx 'name=com.valvesoftware.Steam' "${d}info" 2>/dev/null || continue
+        grep -qx "name=${app}" "${d}info" 2>/dev/null || continue
         pid=$(cat "${d}pid" 2>/dev/null) || continue
         [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
     done
     return 1
 }
 
-setup_steam_builtin() {
-    local dry=$1 keep_home=$2 app=com.valvesoftware.Steam
-    local ov=${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/${app}
+# Whether a user override's PATH includes the directory.
+override_path_has() {
+    local p
+    p=$(sed -n 's/^PATH=//p' "$1" 2>/dev/null) || return 1
+    case ":${p}:" in *":${2}:"*) return 0 ;; esac
+    return 1
+}
+
+# setup_builtin DRY KEEP_HOME NAME... -- NAME is steam or faugus
+setup_builtin() {
+    local dry=$1 keep_home=$2
+    shift 2
+    local ovdir=${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides
     local bindir=${GAMESCALE_BINDIR:-$HOME/.local/bin}
     local gs_src=${PULSAR_GAMESCALE_SYSTEM:-/usr/bin/gamescale}
-    printf 'Steam: gg, ggm and gamescale come with the image; nothing to install\n'
-    if [ -r "$ov" ] && grep -q '^PATH=' "$ov" && ! grep -qx "PATH=${STEAM_SANDBOX_PATH}" "$ov"; then
-        if [ "$dry" = 1 ]; then
-            printf 'would point the PATH in your Steam override at the image copies\n'
-        else
-            need flatpak
-            flatpak override --user --env=PATH="${STEAM_SANDBOX_PATH}" "$app"
-            printf 'pointed the PATH in your Steam override at the image copies\n'
+    local name app path label quit ov f
+    local moved=" " running=0 stuck=()
+    for name in "$@"; do
+        case "$name" in
+            steam) app=com.valvesoftware.Steam path=$STEAM_SANDBOX_PATH label=Steam
+                   quit='Quit Steam (Steam menu > Exit)' ;;
+            faugus) app=io.github.Faugus.faugus-launcher path=$FAUGUS_SANDBOX_PATH label=Faugus
+                    quit='Quit Faugus and any game it started' ;;
+        esac
+        printf '%s: gg, ggm and gamescale come with the image; nothing to install\n' "$label"
+        ov=${ovdir}/${app}
+        if [ -r "$ov" ] && grep -q '^PATH=' "$ov" && ! grep -qx "PATH=${path}" "$ov"; then
+            if [ "$dry" = 1 ]; then
+                printf 'would point the PATH in your %s override at the image copies\n' "$label"
+            else
+                need flatpak
+                flatpak override --user --env=PATH="${path}" "$app"
+                printf 'pointed the PATH in your %s override at the image copies\n' "$label"
+            fi
+            moved+="${app} "
         fi
-    fi
+        # A running app read its PATH when it started, and still finds gg in
+        # ~/.local/bin: taking the copies away now would make every launch
+        # exit at once ("gg: command not found") until it restarts.
+        if [ "$keep_home" = 0 ] && [ "$dry" = 0 ] && flatpak_app_running "$app"; then
+            printf '%s is open and still uses the copies in %s. %s and open it again;\n' "$label" "$bindir" "$quit"
+            printf 'it uses the image copies from then on. Run pulsar setup gamescale again afterwards to remove the old copies.\n'
+            running=1
+        fi
+    done
     # Another launcher granted in the same run needs the home copies.
-    [ "$keep_home" = 1 ] && return 0
-    # A running Steam read its PATH when it started, and still finds gg in
-    # ~/.local/bin: taking the copies away now would make every launch exit
-    # at once ("gg: command not found") until it restarts.
-    if [ "$dry" = 0 ] && steam_running; then
-        printf 'Steam is open and still uses the copies in %s. Quit Steam (Steam menu > Exit) and open it again;
-' "$bindir"
-        printf 'it uses the image copies from then on. Run pulsar setup gamescale again afterwards to remove the old copies.
-'
-        return 0
-    fi
-    if [ "$dry" = 1 ]; then
-        setup_launch_wrappers --uninstall --dry-run
-    else
-        setup_launch_wrappers --uninstall
-    fi
-    local dst="${bindir}/gamescale"
-    if [ -f "$dst" ] && [ ! -L "$dst" ] && cmp -s "$gs_src" "$dst"; then
-        if [ "$dry" = 1 ]; then
-            printf 'would remove %s\n' "$dst"
+    if [ "$keep_home" = 0 ] && [ "$running" = 0 ]; then
+        # So does any app whose override this run did not move off them:
+        # removing the copies under it is how Faugus lost gamescale.
+        for f in "$ovdir"/*; do
+            [ -f "$f" ] || continue
+            case "$moved" in *" ${f##*/} "*) continue ;; esac
+            override_path_has "$f" "$bindir" && stuck+=("${f##*/}")
+        done
+        if [ ${#stuck[@]} -gt 0 ]; then
+            printf 'left the copies in %s: %s still runs them from there\n' "$bindir" "${stuck[*]}"
         else
-            rm -f "$dst"
-            printf 'removed %s\n' "$dst"
+            if [ "$dry" = 1 ]; then
+                setup_launch_wrappers --uninstall --dry-run
+            else
+                setup_launch_wrappers --uninstall
+            fi
+            local dst="${bindir}/gamescale"
+            if [ -f "$dst" ] && [ ! -L "$dst" ] && cmp -s "$gs_src" "$dst"; then
+                if [ "$dry" = 1 ]; then
+                    printf 'would remove %s\n' "$dst"
+                else
+                    rm -f "$dst"
+                    printf 'removed %s\n' "$dst"
+                fi
+            elif [ -e "$dst" ] || [ -L "$dst" ]; then
+                printf 'left %s: it differs from the image copy; remove it if Pulsar put it there\n' "$dst"
+            fi
         fi
-    elif [ -e "$dst" ] || [ -L "$dst" ]; then
-        printf 'left %s: it differs from the image copy; remove it if Pulsar put it there\n' "$dst"
     fi
-    printf 'Steam launch options:  gg %%command%%   (ggm %%command%% adds the MangoHud overlay)\n'
+    for name in "$@"; do
+        case "$name" in
+            steam) printf 'Steam launch options:  gg %%command%%   (ggm %%command%% adds the MangoHud overlay)\n' ;;
+            faugus) printf 'Faugus launch arguments:  gg   (ggm adds the MangoHud overlay)\n' ;;
+        esac
+    done
 }
 
 cmd_setup() {
@@ -3613,11 +3652,11 @@ cmd_setup() {
         # grants here would drift from upstream the moment they change one.
         local src=${PULSAR_GAMESCALE_INSTALLER:-/usr/share/pulsar/gamescale/install.sh}
         [ -x "$src" ] || die "gamescale is not staged in this image (${src})"
-        # Steam comes out of the platform list (the image grants it) and the
-        # rest goes to the installer. --help, --uninstall and `all` pass
-        # through untouched: they are upstream's to interpret.
-        local a in_plat=0 saw_plat=0 steam=0 dry=0 raw=0
-        local -a pass=() plats=() rest=()
+        # Steam and Faugus come out of the platform list (the image grants
+        # them) and the rest goes to the installer. --help, --uninstall and
+        # `all` pass through untouched: they are upstream's to interpret.
+        local a in_plat=0 saw_plat=0 dry=0 raw=0
+        local -a pass=() plats=() rest=() builtin=()
         for a in "$@"; do
             case "$a" in
                 -h|--help|-u|--uninstall) raw=1 ;;
@@ -3634,7 +3673,8 @@ cmd_setup() {
         [ "$saw_plat" = 1 ] || plats=(steam)
         for a in ${plats[@]+"${plats[@]}"}; do
             case "$a" in
-                steam|com.valvesoftware.Steam) steam=1 ;;
+                steam|com.valvesoftware.Steam) builtin+=(steam) ;;
+                faugus|io.github.Faugus.faugus-launcher) builtin+=(faugus) ;;
                 all) raw=1 ;;
                 *) rest+=("$a") ;;
             esac
@@ -3651,8 +3691,8 @@ cmd_setup() {
             "$src" ${pass[@]+"${pass[@]}"} --platform "${rest[@]}"
             setup_launch_wrappers ${pass[@]+"${pass[@]}"}
         fi
-        if [ "$steam" = 1 ]; then
-            setup_steam_builtin "$dry" "$(( ${#rest[@]} > 0 ))"
+        if [ ${#builtin[@]} -gt 0 ]; then
+            setup_builtin "$dry" "$(( ${#rest[@]} > 0 ))" "${builtin[@]}"
         fi
         ;;
     *) die "unknown recipe: ${recipe} (see: pulsar setup --help)" ;;

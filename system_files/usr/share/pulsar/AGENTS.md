@@ -48,16 +48,18 @@ works there.
 
 ## Gaming
 
-- Flatpak Steam can't see `/usr/bin`. `pulsar-steam-grants.service` (every
-  boot) gives it the image's `gg`, `ggm` and `gamescale` at
-  `/run/host/usr/lib/pulsar/sandbox-bin`, so the launch options
-  `gg %command%`, `ggm %command%` and `gamescale %command%` need no setup.
-  Don't copy them into `~/.local/bin`: copies there never update.
-- A launch that exits at once means Steam can't find the command. Check with
-  `flatpak run --command=sh com.valvesoftware.Steam -c 'command -v gg'`. A
-  `PATH=` in the user override
-  (`~/.local/share/flatpak/overrides/com.valvesoftware.Steam`) beats the
-  system one; `pulsar setup gamescale` repoints it.
+- Flatpak Steam and Faugus can't see `/usr/bin`.
+  `pulsar-steam-grants.service` (every boot) gives both the image's `gg`,
+  `ggm` and `gamescale` at `/run/host/usr/lib/pulsar/sandbox-bin`, so the
+  Steam launch options `gg %command%`, `ggm %command%` and
+  `gamescale %command%`, and `gg` or `gamescale` in a Faugus game's launch
+  arguments, need no setup. Don't copy them into `~/.local/bin`: copies
+  there never update.
+- A Steam launch that exits at once, or a Faugus splash that never closes,
+  means the app can't find the command. Check with
+  `flatpak run --command=sh <app id> -c 'command -v gg'`. A `PATH=` in the
+  user override (`~/.local/share/flatpak/overrides/<app id>`) beats the
+  system one; `pulsar setup gamescale --platform steam faugus` repoints it.
 - Other Flatpak launchers: `pulsar setup gamescale --platform <name>`.
 
 ## Sandboxed agents (`PULSAR_SANDBOX=1`)
@@ -141,7 +143,7 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
 
 | Pulsar units | |
 |---|---|
-| System | `pulsar-flatpaks.service` (default Flatpaks, first online boot), `pulsar-gamemode-group.service`, `scx.service` (scheduler), `greenboot-healthcheck.service`, `pulsar-update-auto.timer`, `pulsar-update-stage.service` (the Update button), `pulsar-esp-fallback.service`, `pulsar-steam-grants.service` (Steam's sandbox grants) |
+| System | `pulsar-flatpaks.service` (default Flatpaks, first online boot), `pulsar-gamemode-group.service`, `scx.service` (scheduler), `greenboot-healthcheck.service`, `pulsar-update-auto.timer`, `pulsar-update-stage.service` (the Update button), `pulsar-esp-fallback.service`, `pulsar-steam-grants.service` (Steam's and Faugus's sandbox grants) |
 | System, nvidia image | `pulsar-gl-nvidia.service` (Flatpak GL driver), `nvidia-cdi-refresh.service`, `pulsar-gpu-containers.service`, `pulsar-akmods-cert.service` |
 | User | `pulsar-update-check.timer` (update notification), `pulsar-gl-check.path`, `pulsar-crash-watch.path`, `pulsar-steam-gpu-watch.service`, `pulsar-doc-portal-watch.timer` (restarts a hung document portal), `gamescale-reconcile.service`, `pulsar-theme-init.service`, `podman-auto-update.timer` |
 
