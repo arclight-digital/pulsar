@@ -112,4 +112,62 @@ for file in "$@"; do
     done < "$file"
 done
 
+# ---------------------------------------------------------------------------
+# A build-time tool is never installed and removed again in one RUN.
+#
+# dnf5 installs a package's dependencies at their newest version, and that
+# upgrades whatever the base already has at an older one. dnf5 remove takes
+# the package and its new dependencies back out, never the upgrades. So
+# installing glib2-devel for one step pulled libmount-devel at util-linux
+# 2.41.6, upgraded the base's util-linux 2.41.5 under the image, and failed
+# the 44.20261029.0 nightly. Nothing about the install line shows it: it
+# happens only on the nights Fedora's updates are ahead of the base.
+#
+# A tool a step needs only while it runs is downloaded at the image's own
+# version and unpacked into scratch (dnf5 download, rpm2cpio | cpio), so the
+# package set cannot move. See the login and wallpaper steps in Containerfile.
+# ---------------------------------------------------------------------------
+dnf_names() {
+    # dnf_names <verb> <body>: the package names a body hands to `dnf5 <verb>`,
+    # one per line, flags dropped, quotes stripped.
+    grep -oE "dnf5 $1( [^;&|]*)?" <<<"$2" | cut -d' ' -f3- | tr ' ' '\n' |
+        tr -d "\"'" | grep -vE '^(-|$)' || true
+}
+
+for file in "$@"; do
+    [ -f "$file" ] || continue
+    acc=""
+    start=0
+    lineno=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        case "$line" in '#'*) [ -n "$acc" ] && continue ;; esac
+        [ -z "$acc" ] && start=$lineno
+        if [ "${line%\\}" != "$line" ]; then acc="${acc}${line%\\}"; continue; fi
+        acc="${acc}${line}"
+        case "$acc" in
+            [Rr][Uu][Nn]\ *|[Rr][Uu][Nn]$'\t'*)
+                installed=$(dnf_names install "$acc")
+                while IFS= read -r removed; do
+                    [ -n "$removed" ] || continue
+                    # glib2-devel-${glib} installs what `remove glib2-devel` takes out
+                    while IFS= read -r spec; do
+                        case "$spec" in
+                            "$removed"|"$removed"-[0-9]*|"$removed"-\$*)
+                                echo "FAIL ${file}:${start}: RUN installs ${removed} and removes it again" >&2
+                                echo "      Removing it never undoes the upgrades its dependencies made to the" >&2
+                                echo "      base. Download it at the image's version and unpack the tool into" >&2
+                                echo "      scratch instead (dnf5 download, rpm2cpio | cpio): see the login step." >&2
+                                status=1
+                                break
+                                ;;
+                        esac
+                    done <<<"$installed"
+                done < <(dnf_names remove "$acc")
+                ;;
+        esac
+        acc=""
+    done < "$file"
+done
+
 exit "$status"

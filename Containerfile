@@ -748,7 +748,10 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # by silently doing nothing.
 #
 # Wallpapers: scripts/build.sh renders them as PNG on the builder (there is no
-# GL stack in here), cjxl converts them at quality 99 and the PNGs go. q99 is
+# GL stack in here), cjxl converts them at quality 99 and the PNGs go. cjxl
+# is downloaded with libjxl-utils at the image's own libjxl version and
+# unpacked into scratch, never installed, so the package set cannot move
+# under it (the login step below says why). q99 is
 # about 1.2 MB against a 3.7 MB PNG. Measured on Phosphor's Nebula: q97 (0.65 MB)
 # kept only ~60% of the grain in the dark gradients, and that grain is also
 # the dither, so they banded again on screen; q99 keeps ~90%, and the shaders
@@ -772,7 +775,16 @@ RUN set -eu; \
     free_kb=$(df --output=avail -k / | tail -1); \
     [ "${free_kb}" -gt 1048576 ] || \
       { echo "FATAL: ${free_kb}KB free on /; a full disk is not a mirror" >&2; exit 1; }; \
-    dnf5 install -y adw-gtk3-theme libjxl-utils; \
+    dnf5 install -y adw-gtk3-theme; \
+    before="$(rpm -qa | sort)"; \
+    jxl="$(rpm -q --qf '%{VERSION}-%{RELEASE}' libjxl.x86_64)"; \
+    jw="$(mktemp -d)"; \
+    mkdir "${jw}/rpm" "${jw}/tools"; \
+    dnf5 download -y --enablerepo=updates-archive --destdir="${jw}/rpm" "libjxl-utils-${jxl}.x86_64"; \
+    ( cd "${jw}/tools" && rpm2cpio "${jw}/rpm/libjxl-utils-${jxl}.x86_64.rpm" | cpio -idm --quiet ./usr/bin/cjxl ); \
+    PATH="${jw}/tools/usr/bin:${PATH}"; \
+    cjxl --version >/dev/null || \
+      { echo "FATAL: cjxl from libjxl-utils-${jxl} does not run against the image's libjxl"; exit 1; }; \
     n=0; \
     for png in /usr/share/pulsar/themes/*/backgrounds/*.png; do \
       [ -e "${png}" ] || continue; \
@@ -790,7 +802,9 @@ RUN set -eu; \
       ln -s "$(basename "${png%.png}.jxl")" "${png}"; \
       b=$((b + 1)); \
     done; \
-    dnf5 remove -y libjxl-utils; \
+    rm -rf "${jw}"; \
+    [ "$(rpm -qa | sort)" = "${before}" ] || \
+      { echo "FATAL: converting the wallpapers changed the package set:"; diff <(echo "${before}") <(rpm -qa | sort); exit 1; }; \
     for v in dark light; do \
       ln -sfn "pulsar-nebula-${v}.jxl" "/usr/share/backgrounds/pulsar/pulsar-silk-${v}.png"; \
       for d in /usr/share/pulsar/themes/*/backgrounds; do \
@@ -858,17 +872,26 @@ RUN set -eu; \
 # login and lock rules and swaps only their colors for the Pulsar theme's
 # dark palette, and the result is appended to both of stock's sheets inside
 # gnome-shell-theme.gresource. Structure stays GNOME's. After every package
-# change, so the resource is the Shell that ships. glib2-devel (the resource
-# compiler) is here for this step only, and the package set must come out
-# exactly as it went in.
+# change, so the resource is the Shell that ships. The resource tools,
+# gresource and glib-compile-resources, live in glib2-devel. It is downloaded,
+# never installed: installing it pulled libmount-devel and friends at the
+# newest util-linux, which upgraded the base's util-linux under the image
+# (44.20261029.0). The two tools are unpacked into this step's scratch and run
+# against the image's own glib2, at the same version.
 # ---------------------------------------------------------------------------
 COPY scripts/pulsar-login-css /tmp/pulsar-login-css
 RUN set -eu; \
     res=/usr/share/gnome-shell/gnome-shell-theme.gresource; \
     before="$(rpm -qa | sort)"; \
     glib="$(rpm -q --qf '%{VERSION}-%{RELEASE}' glib2.x86_64)"; \
-    dnf5 install -y --enablerepo=updates-archive "glib2-devel-${glib}"; \
     w="$(mktemp -d)"; \
+    mkdir "${w}/rpm" "${w}/tools"; \
+    dnf5 download -y --enablerepo=updates-archive --destdir="${w}/rpm" "glib2-devel-${glib}.x86_64"; \
+    ( cd "${w}/tools" && rpm2cpio "${w}/rpm/glib2-devel-${glib}.x86_64.rpm" | \
+        cpio -idm --quiet ./usr/bin/gresource ./usr/bin/glib-compile-resources ); \
+    PATH="${w}/tools/usr/bin:${PATH}"; \
+    gresource help >/dev/null && glib-compile-resources --version >/dev/null || \
+      { echo "FATAL: the resource tools from glib2-devel-${glib} do not run against the image's glib2"; exit 1; }; \
     for f in $(gresource list "${res}"); do \
       mkdir -p "${w}$(dirname "${f}")"; \
       gresource extract "${res}" "${f}" > "${w}${f}"; \
@@ -890,9 +913,8 @@ RUN set -eu; \
     gresource extract "${res}" /org/gnome/shell/theme/gnome-shell-dark.css | grep -q 'pulsar-login-css' || \
       { echo "FATAL: the rebuilt theme resource does not carry the login colors"; exit 1; }; \
     rules="$(grep -c '{' "${w}/login.css")"; \
-    dnf5 remove -y glib2-devel; \
     [ "$(rpm -qa | sort)" = "${before}" ] || \
-      { echo "FATAL: glib2-devel left packages behind:"; diff <(echo "${before}") <(rpm -qa | sort); exit 1; }; \
+      { echo "FATAL: the login step changed the package set:"; diff <(echo "${before}") <(rpm -qa | sort); exit 1; }; \
     rm -rf "${w}" /tmp/pulsar-login-css; \
     echo "login screen: ${rules} of stock's login and lock rules in Pulsar's colors"
 
