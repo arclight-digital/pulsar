@@ -9,3 +9,19 @@ kernel_args:
   - "rhgb"
 grub2:
   timeout: 3
+  # The boot menu, in place of image-builder's own. Its entries are named
+  # from os-release's NAME and VERSION_ID, which stays Fedora's 44, so the
+  # menu read "Install Pulsar 44"; and its Troubleshooting submenu offered
+  # "Rescue a Pulsar system", an Anaconda option this installer doesn't have.
+  # ${kernelpath}, ${root} (the kernel_args above) and ${initrdpath} are
+  # filled in by osbuild's grub2.iso stages.
+  entries:
+    - name: "Install Pulsar"
+      linux: "${kernelpath} ${root}"
+      initrd: "${initrdpath}"
+    - name: "Check the installer for errors, then install Pulsar"
+      linux: "${kernelpath} ${root} rd.live.check"
+      initrd: "${initrdpath}"
+    - name: "Install Pulsar in basic graphics mode"
+      linux: "${kernelpath} ${root} nomodeset"
+      initrd: "${initrdpath}"

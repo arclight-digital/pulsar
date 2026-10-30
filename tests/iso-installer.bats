@@ -160,6 +160,18 @@ build() { # extra args...
       "${REAL}/system_files.installer" "${REAL}/Containerfile.installer" "${REAL}/scripts/build-installer-iso.sh"
 }
 
+@test "the ISO's boot menu is Pulsar's: no Fedora version, nothing it can't do, each entry boots the live system" {
+  local yaml="${REAL}/system_files.installer/usr/lib/image-builder/bootc/iso.yaml"
+  # image-builder's own menu said "Install Pulsar 44" (os-release's
+  # VERSION_ID, which is Fedora's) and offered Anaconda's rescue mode
+  [ "$(grep -cE '^    - name: ' "${yaml}")" -eq 3 ]
+  grep -Fxq '    - name: "Install Pulsar"' "${yaml}"
+  grep -E '^    - name: ' "${yaml}" | grep -qE '[0-9]|[Rr]escue' && false
+  # every entry boots the live kernel with the live arguments, plus its own
+  [ "$(grep -cE '^      linux: "\$\{kernelpath\} \$\{root\}' "${yaml}")" -eq 3 ]
+  [ "$(grep -cE '^      initrd: "\$\{initrdpath\}"$' "${yaml}")" -eq 3 ]
+}
+
 # ---------------------------------------------------------------------------
 # The host must know every SELinux type the image labels with. osbuild relabels
 # the live tree on the host, and the 2026-10-18 weekly died in setfiles on
