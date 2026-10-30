@@ -22,7 +22,7 @@
 Progress goes to stdout as one JSON object per line, for the installer app:
 {"stage": "check" | "disk" | "unlock" | "install" | "boot"} as each step
 starts ("unlock" only when encrypted), {"log": "..."} for each line bootc
-prints, then {"stage": "done", ...} or {"stage": "failed", "error": ...,
+and the disk tool print, then {"stage": "done", ...} or {"stage": "failed", "error": ...,
 "restored": true|false} (whether the partitions this install made were
 taken back). --plan-only prints
 {"stage": "plan", "plan": [...]} (pulsar-install-disk's dry run) and
@@ -115,6 +115,27 @@ def run_stream(*cmd, watch=None, expected_bytes=None):
             tail = (tail + [line])[-8:]
     if p.wait() != 0:
         raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:])
+
+
+def run_logged(*cmd):
+    """run() for a command that logs as it works (the disk tool): each line
+    of its stderr is passed on as {"log": ...} the moment it is printed, so
+    a slow step shows which part of it is slow. Returns its stdout."""
+    print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
+    p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out = []
+    reader = threading.Thread(target=lambda: out.append(p.stdout.read()), daemon=True)
+    reader.start()
+    tail = []
+    for line in p.stderr:
+        line = line.rstrip()
+        if line:
+            emit(log=line)
+            tail = (tail + [line])[-8:]
+    reader.join()
+    if p.wait() != 0:
+        raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:])
+    return out[0] if out else ""
 
 
 def run(*cmd, **kw):
@@ -363,7 +384,8 @@ def main():
             emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, a.disk)))
             return 0
         emit(stage="disk")
-        plan = json.loads(run(DISK_TOOL, "apply", "--mode", a.mode, *(plain or ["--key-file", a.key_file]), a.disk))
+        plan = json.loads(run_logged(DISK_TOOL, "apply", "--mode", a.mode, *(plain or ["--key-file", a.key_file]),
+                                     a.disk))
         run("udevadm", "settle")
         # the partitions this install made, by the partition UUIDs repart
         # reports: never guessed from labels or order, which another system

@@ -15,6 +15,8 @@ For tests and screenshots, each outside piece can be swapped:
   PULSAR_INSTALL_SYSTEM       the backend (default /usr/libexec/pulsar/...)
   PULSAR_INSTALLER_PKEXEC     how to run it as root ("" to run it directly)
   PULSAR_INSTALLER_PAYLOAD    payload.json (source and target image refs)
+  PULSAR_INSTALLER_LOG        where the install's log goes (default
+                              ~/pulsar-install.log)
 and `--shots DIR` walks every page with the disks it was given, saving each
 as DIR/NN-name.png, then quits (with a fake backend: for screenshots).
 """
@@ -34,6 +36,10 @@ BACKEND = os.environ.get("PULSAR_INSTALL_SYSTEM", "/usr/libexec/pulsar/pulsar-in
 PKEXEC = shlex.split(os.environ.get("PULSAR_INSTALLER_PKEXEC", "pkexec"))
 PAYLOAD = pathlib.Path(os.environ.get("PULSAR_INSTALLER_PAYLOAD", "/usr/share/pulsar/installer/payload.json"))
 LIVE_LABEL = "PULSAR-INSTALL"
+# Every line the backend prints, with the seconds since the app started it:
+# the live session has no root to read the journal with, so this is what
+# says which step stalled or failed. Gone at restart, like the session.
+LOG = pathlib.Path(os.environ.get("PULSAR_INSTALLER_LOG", pathlib.Path.home() / "pulsar-install.log"))
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"), HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
 
 GiB = 2**30
@@ -116,6 +122,12 @@ def install_button(mode, d):
     return "Erase and Install" if install_destroys(mode, d) else "Install"
 
 
+def erase_warning(d):
+    """The ready page's red panel: what an erase deletes, by name."""
+    what = f"Everything on it, including {d['holds']}," if d["holds"] in ("Windows", "Linux") else "Everything on it"
+    return f"{what} is deleted when you press Erase and Install. It can't be recovered."
+
+
 def needs_erase_confirm(d):
     """An empty disk has nothing to lose: no page asking to erase it."""
     return not d["empty"]
@@ -176,6 +188,10 @@ def elapsed(secs):
 def describe(disk):
     """What a person would want to know about one disk before choosing it."""
     parts = disk.get("children", [])
+    # a filesystem made on the whole disk, with no partition table: no
+    # partitions, and nothing like an empty disk. It is what is on it.
+    if not parts and disk.get("fstype"):
+        parts = [dict(disk, start=0)]
     fs = {(p.get("fstype") or "") for p in parts}
     ptypes = {(p.get("parttype") or "").lower() for p in parts}
     labels = {(p.get("label") or "") for p in parts}
@@ -191,7 +207,7 @@ def describe(disk):
         "linux": bool(fs & LINUX_FS),
         "esp": ESP in ptypes,
         "empty": not parts,
-        "free": (free_gaps(disk) or [0])[0],
+        "free": 0 if disk.get("fstype") else (free_gaps(disk) or [0])[0],
         "live": LIVE_LABEL in labels or (disk.get("label") or "") == LIVE_LABEL or any(
             "/run/initramfs/live" in (p.get("mountpoints") or []) for p in parts),
         "partitions": [{"size": p["size"], "what": part_name(p),
@@ -236,8 +252,9 @@ def options(d):
     if d["size"] < NEEDS_ERASE:
         erase = (False, f"Pulsar needs at least {human(NEEDS_ERASE)}")
     else:
-        erase = (True, f"Everything on this disk is deleted: {d['holds']} included." if not d["empty"]
-                 else "The disk is empty.")
+        erase = (True, ("Deletes everything on this disk, including " + d["holds"] + "."
+                        if d["holds"] in ("Windows", "Linux") else "Deletes everything on this disk.")
+                 if not d["empty"] else "The disk is empty.")
     if d["empty"]:
         along = (False, "There is nothing on this disk to keep")
     elif d["bitlocker"]:
@@ -364,7 +381,7 @@ def stages(encrypt):
           ("disk", "Partitioning and encrypting the disk" if encrypt else "Partitioning the disk", 0.06),
           ("unlock", "Unlocking the new partition", 0.10),
           ("install", "Copying Pulsar to the disk", 0.12),
-          ("boot", "Setting up startup", 0.94)]
+          ("boot", "Making the computer start Pulsar", 0.94)]
     return {k: (text, frac) for k, text, frac in st if encrypt or k != "unlock"}
 
 
@@ -405,6 +422,18 @@ def main():
     .in-log { font-family: monospace; font-size: 0.85em; opacity: 0.55; }
     .in-warn { color: var(--warning-color); }
     .in-erase .title { color: var(--destructive-color); }
+    .in-danger { color: var(--destructive-color); }
+    /* What an erase deletes, said once, above the rest of the page: a
+       red-edged panel, not a red page */
+    .in-callout { border: 1px solid var(--destructive-color); border-radius: 12px; padding: 14px 18px;
+                  background: var(--card-bg-color); }
+    .in-callout-title { font-weight: 800; font-size: 1.05em; color: var(--destructive-color); }
+    /* The button that erases is filled red: the theme's tinted red read as
+       switched off. A theme makes its red readable on its view background,
+       so the view background is readable on its red: dark text on a dark
+       theme's light red, light text on a light theme's deep one */
+    .in-pill.destructive-action:not(:disabled) { background: var(--destructive-bg-color);
+                                                 color: var(--view-bg-color); }
     .in-mark { opacity: 0; transform: translateY(14px) scale(0.96);
                transition: opacity 700ms ease-out, transform 900ms cubic-bezier(0.16, 1, 0.3, 1); }
     .in-mark.in { opacity: 1; transform: none; }
@@ -417,6 +446,17 @@ def main():
         lb = Gtk.Label(label=text, css_classes=cls, xalign=xalign, wrap=True, justify=(
             Gtk.Justification.CENTER if xalign == 0.5 else Gtk.Justification.LEFT), **kw)
         return lb
+
+    def callout(title, body):
+        """A red-edged panel: what is about to be deleted, in a sentence."""
+        box = Gtk.Box(spacing=14, css_classes=["in-callout"])
+        box.append(Gtk.Image(icon_name="dialog-warning-symbolic", pixel_size=24, valign=Gtk.Align.START,
+                             css_classes=["in-danger"]))
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
+        text.append(label(title, ["in-callout-title"], 0))
+        text.append(label(body, [], 0))
+        box.append(text)
+        return box
 
     def column(*children, width=620, spacing=14):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing, valign=Gtk.Align.CENTER,
@@ -487,6 +527,7 @@ def main():
             # install partway: the close button is hidden and a close asked
             # for another way (Alt+F4) is refused, with the reason
             self.installing = False
+            self.logf, self.log_t0 = None, time.monotonic()
             self.connect("close-request", self._close_request)
             self.nav = Adw.NavigationView()
             self.set_content(self.nav)
@@ -545,7 +586,7 @@ def main():
                 if found == []:
                     listbox.append(Adw.ActionRow(
                         title="No disk found",
-                        subtitle="The USB stick the installer runs from is never offered."))
+                        subtitle="The USB stick the installer is running from isn't listed."))
                 extra.append(label(f"Connect a disk of at least {human(NEEDS_ERASE)}, then press Refresh.",
                                    ["in-note"]))
                 again = Gtk.Button(label="Refresh", css_classes=["in-pill"], halign=Gtk.Align.CENTER)
@@ -598,10 +639,12 @@ def main():
             sure.connect("toggled", lambda b: go.set_sensitive(b.get_active()))
             go.connect("clicked", lambda *_: self.nav.push(self.passphrase_page()))
             return nav_page("Erase", "erase", column(
+                Gtk.Image(icon_name="dialog-warning-symbolic", pixel_size=48, css_classes=["in-danger"]),
                 label(f"Erase {d['name']}?", ["in-title"]),
                 label(f"{identity(d)} · {d['path']}", ["in-note"]),
                 Gtk.Box(height_request=4),
-                label("These partitions, and everything in them, will be deleted:", ["in-lede"]),
+                label("The whole disk is formatted for Pulsar. These partitions and everything in them "
+                      "are deleted, and can't be recovered:", ["in-lede"]),
                 parts, sure,
                 label("Nothing is deleted until you press Erase and Install on the last step.", ["in-note"])),
                 back=back_button(self.nav), nxt=go)
@@ -679,32 +722,29 @@ def main():
         def summary_page(self, plan):
             d = self.disk
             root = next((p for p in plan if p["type"].startswith("root")), None)
-            if self.mode == "alongside":
-                what = ("Pulsar goes in the free space. " + (f"{d['holds']} stays as it is."
-                        if d["holds"] in ("Windows", "Linux") else "Your files stay as they are."))
-            elif d["empty"]:
-                what = "Pulsar uses the whole disk."
-            elif d["holds"] in ("Windows", "Linux"):
-                what = f"Everything on the disk is deleted, including {d['holds']}, and replaced by Pulsar."
-            else:
-                what = "Everything on the disk is deleted and replaced by Pulsar."
+            destroys = install_destroys(self.mode, d)
             rows = [("Disk", f"{d['name']}\n{identity(d)} · {d['path']}"),
-                    ("What happens", what),
                     ("Space for Pulsar", human(root["raw_size"]) if root else "Decided by the disk's free space"),
                     ("Encryption", encryption_summary(self.encrypt))]
+            # an erase says so first, in red, above everything else; an
+            # install that deletes nothing says what it does in the list
+            if self.mode == "alongside":
+                rows.insert(1, ("What happens", "Pulsar goes in the free space. " + (
+                    f"{d['holds']} stays as it is." if d["holds"] in ("Windows", "Linux")
+                    else "Your files stay as they are.")))
+            elif not destroys:
+                rows.insert(1, ("What happens", "Pulsar uses the whole disk."))
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             for k, v in rows:
-                r = Adw.ActionRow(title=k, subtitle=v, subtitle_selectable=True, css_classes=["property"])
-                if k == "What happens" and install_destroys(self.mode, d):
-                    r.add_css_class("in-erase")
-                listbox.append(r)
+                listbox.append(Adw.ActionRow(title=k, subtitle=v, subtitle_selectable=True, css_classes=["property"]))
             # red only when Install deletes something: never for an empty disk
             go = Gtk.Button(label=install_button(self.mode, d),
-                            css_classes=["destructive-action" if install_destroys(self.mode, d)
-                                         else "suggested-action", "in-pill"])
+                            css_classes=["destructive-action" if destroys else "suggested-action", "in-pill"])
             go.connect("clicked", lambda *_: self.install())
-            return nav_page("Ready", "summary", column(label("Ready to install", ["in-title"]), listbox),
-                            back=back_button(self.nav), nxt=go)
+            head = [label("Ready to erase and install" if destroys else "Ready to install", ["in-title"])]
+            if destroys:
+                head.append(callout(f"{d['name']} will be erased", erase_warning(d)))
+            return nav_page("Ready", "summary", column(*head, listbox), back=back_button(self.nav), nxt=go)
 
         def install(self):
             self.key_path = None
@@ -802,8 +842,11 @@ def main():
 
         def failed_page(self, error, restored, planning=False):
             head = "Pulsar can't go on this disk" if planning else "The install didn't finish"
-            details = Gtk.Expander(label="Details", halign=Gtk.Align.CENTER,
-                                   child=label(error, ["in-log"], 0, selectable=True, max_width_chars=70))
+            more = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            more.append(label(error, ["in-log"], 0, selectable=True, max_width_chars=70))
+            more.append(label(f"The installer's full log is {LOG}. Restarting the computer deletes it.",
+                              ["in-note"], 0, selectable=True, max_width_chars=70))
+            details = Gtk.Expander(label="Details", halign=Gtk.Align.CENTER, child=more)
             again = Gtk.Button(label="Start Over", css_classes=["suggested-action", "in-pill"],
                                halign=Gtk.Align.CENTER)
             # the disk list is read again: a failed install may have changed what is on a disk
@@ -820,22 +863,48 @@ def main():
                 if e.get("stage") == "failed":
                     return e.get("error") or "unknown error"
             logs = [e["log"] for e in events if "log" in e]
-            return (logs[-1] if logs else "") or "The installer's backend stopped without saying why."
+            return (logs[-1] if logs else "") or "The installer stopped without saying why."
 
         # ------------------------------------------- the backend, async
 
+        def note(self, text):
+            """One line of LOG, stamped with the seconds since the app
+            started. A log that can't be written never stops an install."""
+            try:
+                if self.logf is None:
+                    self.logf = open(LOG, "a", buffering=1)
+                    self.logf.write(f"--- pulsar-installer, {time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+                self.logf.write(f"[{time.monotonic() - self.log_t0:7.1f}s] {text}\n")
+            except OSError:
+                pass
+
         def run(self, argv, done, on_event=None):
             """Run argv, read its JSON lines as they come, call done(events,
-            exit code). The window stays responsive throughout."""
+            exit code). The window stays responsive throughout. Everything
+            it prints, stdout and stderr, goes to the log."""
+            self.note("$ " + shlex.join(argv))
             proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE)
             stream = Gio.DataInputStream.new(proc.get_stdout_pipe())
+            errs = Gio.DataInputStream.new(proc.get_stderr_pipe())
             events = []
+
+            def err_line(src, res):
+                text, _ = src.read_line_finish_utf8(res)
+                if text is not None:
+                    self.note("stderr: " + text)
+                    src.read_line_async(GLib.PRIORITY_DEFAULT, None, err_line)
+
+            def finished(p, r):
+                p.wait_finish(r)
+                self.note(f"exit {p.get_exit_status()}")
+                done(events, p.get_exit_status())
 
             def line(src, res):
                 text, _ = src.read_line_finish_utf8(res)
                 if text is None:
-                    proc.wait_async(None, lambda p, r: (p.wait_finish(r), done(events, p.get_exit_status())))
+                    proc.wait_async(None, finished)
                     return
+                self.note(text)
                 try:
                     ev = json.loads(text)
                 except ValueError:
@@ -845,6 +914,7 @@ def main():
                     on_event(ev)
                 src.read_line_async(GLib.PRIORITY_DEFAULT, None, line)
             stream.read_line_async(GLib.PRIORITY_DEFAULT, None, line)
+            errs.read_line_async(GLib.PRIORITY_DEFAULT, None, err_line)
 
     shots = pathlib.Path(sys.argv[sys.argv.index("--shots") + 1]) if "--shots" in sys.argv else None
 

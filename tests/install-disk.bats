@@ -411,6 +411,51 @@ PY
     done
 }
 
+@test "apply: repart's own log reaches stderr as it works, and stdout stays the plan" {
+    needs_disk_tools
+    windows_disk "$T/w.img" 1G 2000000 600MiB
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode erase --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+    # what the installer shows under the bar while the disk is being set up
+    [[ "$stderr" == *"partition"* ]]
+    [ "$(echo "$output" | plan_types | sort)" = "$(printf 'esp create\nroot-x86-64 create\nxbootldr create')" ]
+}
+
+@test "apply: mkfs.btrfs never TRIMs the root again after repart has (it went through loop and LUKS)" {
+    needs_disk_tools
+    # the real repart, with a mkfs.btrfs in front of the real one that notes
+    # how it was called
+    mkdir -p "$T/shim"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec %s "$@"\n' "$T/mkfs-args" "$(command -v mkfs.btrfs)" \
+        > "$T/shim/mkfs.btrfs"
+    chmod +x "$T/shim/mkfs.btrfs"
+    windows_disk "$T/w.img" 1G 2000000 600MiB
+    PATH="$T/shim:$PATH" PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode erase --key-file "$T/key" "$T/w.img"
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$T/mkfs-args")" -eq 1 ]
+    grep -q -- '--nodiscard' "$T/mkfs-args"
+}
+
+@test "the disk step's log is shown line by line as it comes, its output kept, its failure named" {
+    run --separate-stderr python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" <<'PY'
+import importlib.machinery as M, importlib.util as U, sys, time
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+t0, seen = time.monotonic(), []
+m.emit = lambda **e: seen.append((e["log"], round(time.monotonic() - t0)))
+out = m.run_logged("sh", "-c", 'echo "Encrypting future partition 3..." >&2; sleep 2; '
+                               'echo "Formatting future partition 3." >&2; echo "[1]"')
+print(seen, out.strip())
+try:
+    m.run_logged("sh", "-c", 'echo "Device busy" >&2; exit 4')
+except m.Failed as e:
+    print(e)
+PY
+    [ "$status" -eq 0 ]
+    # the first line arrived before the step's two seconds were up, not at its end
+    [ "${lines[0]}" = "[('Encrypting future partition 3...', 0), ('Formatting future partition 3.', 2)] [1]" ]
+    [ "${lines[1]}" = "sh exited 4: Device busy" ]
+}
+
 @test "copy progress: bootc's announced size, and what has landed against it, never past 0.99" {
     run python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" <<'PY'
 import importlib.machinery as M, importlib.util as U, sys
@@ -455,7 +500,7 @@ PY
 }
 
 # pulsar-install-system's main() with every outside command stubbed: run()
-# prints what the disk tool was asked and stops there, so nothing is
+# and run_logged() print what the disk tool was asked and stop there, so nothing is
 # partitioned, opened or mounted; any other command fails the test.
 system_py() {
     python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-install-system" "$T" "$@" 2>&1 <<'PY'
@@ -470,8 +515,8 @@ def run(*cmd, **kw):
     raise SystemExit(f"unexpected command {cmd}")
 def nothing(*a, **k):
     raise SystemExit(f"unexpected command {a}")
-m.run = run
-m.subprocess.run = nothing
+m.run = m.run_logged = run
+m.subprocess.run = m.subprocess.Popen = nothing
 m.emit = lambda **e: None
 sys.argv = ["pulsar-install-system"] + sys.argv[3:]
 sys.exit(m.main())

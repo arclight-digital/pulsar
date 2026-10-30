@@ -83,7 +83,23 @@ def repart(mode, defs, disk, key_file, dry_run):
     if key_file:
         cmd.append(f"--key-file={key_file}")
     cmd.append(disk)
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    # repart TRIMs the new partitions itself, straight on the disk. Left to
+    # its default, mkfs.btrfs then TRIMs the root a second time, through the
+    # LUKS mapping and the loop device repart formats it on; on a block device
+    # a loop device's TRIM becomes a write-zeroes, which some NVMe drives carry
+    # out by writing. The suspect in installs that sat at "Partitioning and
+    # encrypting the disk" for minutes on a 1 TB NVMe (2026-10-29); the disk
+    # step's log, now shown and kept, says whether it was.
+    env = dict(os.environ, SYSTEMD_REPART_MKFS_OPTIONS_BTRFS="--nodiscard")
+    if not dry_run:
+        # the real run says what it is doing as it goes (encrypting,
+        # formatting): its log passes straight through to the caller, which
+        # shows it, instead of arriving all at once when it ends
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, env=env)
+        if r.returncode != 0:
+            raise Refused(f"systemd-repart exited {r.returncode}")
+        return json.loads(r.stdout)
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
         why = r.stderr.strip().splitlines()
         raise Refused(why[0] if why else f"systemd-repart exited {r.returncode}")

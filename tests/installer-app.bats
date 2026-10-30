@@ -213,3 +213,17 @@ PY
     [[ "$output" != *unlock* ]]
     [[ "$output" == *'"disk"'* ]]
 }
+
+@test "a filesystem made on the whole disk, with no partition table, is never 'Empty'" {
+    # lsblk's shape for `mkfs.ext4 /dev/sdf`: a filesystem on the disk itself
+    run py '(lambda d: (d["empty"], m.skips_method(d), m.needs_erase_confirm(d), d["free"], m.identity(d),
+        [p["what"] for p in d["partitions"]]))(m.describe({"name": "sdf", "path": "/dev/sdf", "type": "disk",
+        "size": 500 * 10**9, "fstype": "ext4", "label": "Backup", "model": "Backup Drive"}))'
+    [ "$output" = "(False, False, True, 0, '500 GB · Linux', ['Backup · Linux'])" ]
+}
+
+@test "the ready page's red panel says what the erase deletes, by name" {
+    [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, is deleted when you press Erase and Install. It can't be recovered." ]
+    [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it is deleted when you press Erase and Install. It can't be recovered." ]
+    [ "$(py 'm.options(D["/dev/nvme1n1"])["erase"][1]')" = "Deletes everything on this disk, including Windows." ]
+}
