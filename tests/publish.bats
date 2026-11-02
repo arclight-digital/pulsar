@@ -25,6 +25,11 @@ VERSION=44.20261011.2
 BUCKET=pulsar-artifacts
 
 setup() {
+  # These fixtures are a Fedora 44 version series (next-version's 45.* tag is
+  # the other-release distractor), so the release is stated here, not
+  # inherited: the scripts default it to the current release, and the build
+  # host exports its own FEDORA_VERSION into every hand-run test.
+  export FEDORA_VERSION=44
   for v in "${!PULSAR_@}"; do unset "${v}"; done
   unset R2_ACCOUNT_ID R2_ENDPOINT R2_BUCKET R2_CREDENTIALS_FILE AWS_ACCESS_KEY_ID \
     AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION AWS_REQUEST_CHECKSUM_CALCULATION \

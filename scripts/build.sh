@@ -75,7 +75,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FEDORA_VERSION="${FEDORA_VERSION:-44}"
+FEDORA_VERSION="${FEDORA_VERSION:-45}"
 
 # The image the vanilla Containerfile derives from. Named here as well as
 # there because build_vanilla records which digest of it this build used, and

@@ -1,7 +1,7 @@
 NAME="Pulsar"
-PRETTY_NAME="Pulsar 44"
-VERSION="44"
-VERSION_ID=44
+PRETTY_NAME="Pulsar 45"
+VERSION="45"
+VERSION_ID=45
 RELEASE_TYPE=stable
 LOGO=pulsar-logo-icon
 ANSI_COLOR="0;38;2;120;90;220"
@@ -14,4 +14,4 @@ SUPPORT_URL="https://github.com/arclight-digital/pulsar/issues"
 BUG_REPORT_URL="https://github.com/arclight-digital/pulsar/issues"
 ID=fedora
 ID_LIKE=fedora
-CPE_NAME="cpe:/o:fedoraproject:fedora:44"
+CPE_NAME="cpe:/o:fedoraproject:fedora:45"

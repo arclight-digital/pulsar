@@ -1,7 +1,7 @@
 # This machine runs Pulsar
 
 Pulsar is an image-based OS (bootc / rpm-ostree), built on Fedora
-Silverblue 44. It is not a mutable distro. Read this before changing anything
+Silverblue 45. It is not a mutable distro. Read this before changing anything
 outside the project you were given.
 
 Ships at `/usr/share/pulsar/AGENTS.md`, updates with the image.

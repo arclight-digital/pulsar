@@ -1,4 +1,4 @@
-ARG FEDORA_VERSION=44
+ARG FEDORA_VERSION=45
 # Default base is the nightly-built image from ghcr. Override with
 # BASE_IMAGE=localhost/pulsar to test against a local vanilla build.
 ARG BASE_IMAGE=ghcr.io/arclight-digital/pulsar
@@ -127,6 +127,11 @@ RUN for attempt in 1 2 3; do \
 # pass `rpmkeys -K` against Fedora's own key with "signatures OK" -- on an
 # unsigned file rpmkeys says "digests OK" and exits 0, so its exit status
 # alone proves nothing.
+#
+# The key is found through the package that ships it, fedora-gpg-keys, not at
+# a fixed path: Fedora 45 moved the keys from /etc/pki/rpm-gpg to
+# /usr/share/pki/rpm-gpg and left the old directory empty, and this fallback
+# is exactly what the first F45 nightly would have needed.
 RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     VER=$(rpm -q --qf '%{VERSION}' kernel-core) && \
     REL=$(rpm -q --qf '%{RELEASE}' kernel-core) && \
@@ -134,7 +139,8 @@ RUN KV=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core) && \
     { dnf5 install -y --enablerepo=updates-archive kernel-devel-${KV} akmods \
         gcc-c++ elfutils-libelf-devel 'dnf5-command(download)' || \
       { echo "kernel-devel ${KV} not on mirrors yet; fetching from koji directly" && \
-        FKEY="/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-$(rpm -E %fedora)-primary" && \
+        FKEY=$(rpm -ql fedora-gpg-keys | grep -m1 "/RPM-GPG-KEY-fedora-$(rpm -E %fedora)-primary$") && \
+        [ -f "${FKEY}" ] && \
         rpm --import "${FKEY}" && \
         KID=$(GNUPGHOME="$(mktemp -d)" gpg --show-keys --with-colons "${FKEY}" | awk -F: '$1 == "pub" { print tolower(substr($5, 9)); exit }') && \
         [ -n "${KID}" ] && \

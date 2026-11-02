@@ -2318,7 +2318,7 @@ SANDBOX_BASE=${PULSAR_SANDBOX_BASE:-registry.fedoraproject.org/fedora-toolbox}
 sandbox_recipe() {
     local ver
     ver=$(sed -n 's/^VERSION_ID=//p' /etc/os-release 2>/dev/null | tr -d '"')
-    [ -n "$ver" ] || ver=44
+    [ -n "$ver" ] || ver=45
     cat <<EOF
 FROM ${SANDBOX_BASE}:${ver}
 RUN dnf -y install nodejs npm uv git python3 ripgrep fd-find jq && dnf clean all

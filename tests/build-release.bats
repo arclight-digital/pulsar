@@ -18,6 +18,11 @@ bats_require_minimum_version 1.5.0
 VERSION=44.20260927.0
 
 setup() {
+  # These fixtures are a Fedora 44 version series (next-version's 45.* tag is
+  # the other-release distractor), so the release is stated here, not
+  # inherited: the scripts default it to the current release, and the build
+  # host exports its own FEDORA_VERSION into every hand-run test.
+  export FEDORA_VERSION=44
   for v in "${!PULSAR_@}"; do unset "${v}"; done
   BIN="${BATS_TEST_TMPDIR}/bin"; mkdir -p "${BIN}"
   PATH="${BIN}:${PATH}"

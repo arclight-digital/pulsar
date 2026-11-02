@@ -102,7 +102,7 @@ cd "${REPO}"
 
 IMAGE="${IMAGE:?IMAGE is not set}"
 IMAGE_NVIDIA="${IMAGE_NVIDIA:?IMAGE_NVIDIA is not set}"
-FEDORA_VERSION="${FEDORA_VERSION:-44}"
+FEDORA_VERSION="${FEDORA_VERSION:-45}"
 WORK="${PULSAR_BUILD_WORK:-/var/mnt/pulsar-build}"
 # Scratch for this script itself, which is a manifest or two -- not ${WORK},
 # which is OCI layouts and wants the big volume, and which the gate below runs

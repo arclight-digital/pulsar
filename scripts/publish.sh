@@ -75,7 +75,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FEDORA_VERSION="${FEDORA_VERSION:-44}"
+FEDORA_VERSION="${FEDORA_VERSION:-45}"
 
 VERSION=""
 IMAGE="${IMAGE:-}"

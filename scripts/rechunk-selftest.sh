@@ -33,7 +33,7 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FEDORA_VERSION="${FEDORA_VERSION:-44}"
+FEDORA_VERSION="${FEDORA_VERSION:-45}"
 # registry-shaped on purpose, and never pushed -- see the header
 TOY="${TOY:-ghcr.io/arclight-digital/pulsar-selftest}"
 BASE_IMAGE="quay.io/fedora-ostree-desktops/silverblue:${FEDORA_VERSION}"

@@ -14,6 +14,11 @@
 bats_require_minimum_version 1.5.0
 
 setup() {
+  # These fixtures are a Fedora 44 version series (next-version's 45.* tag is
+  # the other-release distractor), so the release is stated here, not
+  # inherited: the scripts default it to the current release, and the build
+  # host exports its own FEDORA_VERSION into every hand-run test.
+  export FEDORA_VERSION=44
   # The builder exports PULSAR_* into /etc/pulsar/build.env, so a hand-run build
   # inherits them: PULSAR_CHANNEL=manual made the scheduled-channel tests below
   # assert scheduled output against the manual series, failing on the build host

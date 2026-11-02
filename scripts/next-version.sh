@@ -58,7 +58,7 @@
 #   next-version.sh --channel manual ghcr.io/...           -> 44.20260806.4
 set -euo pipefail
 
-FEDORA_VERSION="${FEDORA_VERSION:-44}"
+FEDORA_VERSION="${FEDORA_VERSION:-45}"
 CHANNEL="${PULSAR_CHANNEL:-scheduled}"
 # The image is the argument and nothing else: nightly.sh exports its own
 # IMAGE, so one inherited from the environment answered for a missing argument.

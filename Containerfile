@@ -1,4 +1,4 @@
-ARG FEDORA_VERSION=44
+ARG FEDORA_VERSION=45
 FROM quay.io/fedora-ostree-desktops/silverblue:${FEDORA_VERSION}
 ARG FEDORA_VERSION
 
@@ -80,7 +80,10 @@ ARG FEDORA_VERSION
 # GNOME Software offers). Removing the keys removed it as a dependent, and the
 # nvidia image then failed on "No matching repositories for
 # rpmfusion-nonfree-nvidia-driver" (2026-09-27). The check below keeps that
-# from reaching the nvidia build as a mystery.
+# from reaching the nvidia build as a mystery. It asks dnf whether the repo is
+# DEFINED rather than looking for its file: Fedora 45 moved the package's repo
+# files from /etc/yum.repos.d to /usr/share/dnf5/repos.d, and a path test
+# failed the first F45 build on a repo that was there all along.
 # ---------------------------------------------------------------------------
 RUN for attempt in 1 2 3; do \
       host=mirrors.rpmfusion.org; \
@@ -107,7 +110,7 @@ RUN for attempt in 1 2 3; do \
     dnf5 install -y /tmp/rpmfusion-free-release.rpm /tmp/rpmfusion-nonfree-release.rpm && \
     rm -f /tmp/rpmfusion-*-release.rpm && \
     { rpm -q fedora-workstation-repositories >/dev/null && \
-      [ -f /etc/yum.repos.d/rpmfusion-nonfree-nvidia-driver.repo ] || \
+      dnf5 -q repo list --all | awk '{print $1}' | grep -qx rpmfusion-nonfree-nvidia-driver || \
       { echo "FATAL: fedora-workstation-repositories or its rpmfusion-nonfree-nvidia-driver repo is gone; the nvidia image cannot fetch its driver" >&2; exit 1; }; } && \
     dnf5 swap -y ffmpeg-free ffmpeg --allowerasing
 
@@ -449,7 +452,7 @@ RUN for attempt in 1 2 3; do \
 # seven round trips here -- seven chances for one blip to cost the build. The
 # sha256sum block below is unchanged and still decides what is acceptable, so
 # retrying can only affect whether bytes arrive, never which bytes count.
-ARG GAMESCALE_VERSION=v2.0.3
+ARG GAMESCALE_VERSION=v2.0.4
 ARG GAMESCALE_UUID=gamescale@arclight.digital
 RUN set -eux; \
     REL="https://github.com/arclight-digital/gamescale/releases/download/${GAMESCALE_VERSION}"; \
@@ -466,10 +469,10 @@ RUN set -eux; \
     get "${RAW}/icons/gamescale-symbolic.svg" "${SRC}/extension/icons/gamescale-symbolic.svg"; \
     get "${RAW}/icons/gamescale.svg"          "${SRC}/extension/icons/gamescale.svg"; \
     ( cd "${SRC}" && printf '%s\n' \
-      "80bd6411ef9b0f6e05f18e89339476da2cc93660f73bebeecc10e536bedaa096  gamescale.sh" \
+      "b6739504452e76d9194f12ddc75d22ea509328ab430feaadc4defa3b97c3d69f  gamescale.sh" \
       "f1e0e12089d3b6d94f39b321ff7fcae8663623c63f8d4c406f5ec93d07e7bd6f  install.sh" \
       "81487974e5d143f6833b9d95fa78c7a1181e7d1eb963cd451f030a4c527f9a7f  extension/extension.js" \
-      "1f00a677e1639913cc898c5cf9440c47a60ea73f26c8f15a443601a22f720c7c  extension/metadata.json" \
+      "636022449befa497489e21849d7f9d8cdb9f366de1413f48f86732cbfcd6b23f  extension/metadata.json" \
       "7c41ae899869994c5056c2ed6e0ce939c46333e90fe355f26cf7e3e580f79e27  extension/stylesheet.css" \
       "57e345929be538ed1542c5c7b1d7a25b9c8551d3c5de193f4883416ec00ba708  extension/icons/gamescale-symbolic.svg" \
       "ddea876638fca8e25dfd4508385a881e529de9b1c0f4db65585e26aaacdca206  extension/icons/gamescale.svg" \
@@ -586,10 +589,17 @@ RUN ls /usr/share/icons/hicolor/*/apps/fedora-logo-icon.* >/dev/null 2>&1 || \
 # never in the string. Setting it here is what puts it in the boot menu, and
 # the same value goes on the image label so `bootc status` agrees with GRUB.
 #
-# VERSION_ID is deliberately left alone, which is also what stock Fedora does:
-# it keeps VERSION_ID=44 and puts the datestamp only in VERSION and
-# PRETTY_NAME. VERSION_ID is the field third-party scripts compare
-# numerically, for the same reason ID stays "fedora" in os-release itself.
+# VERSION_ID is the Fedora release, which is also what stock Fedora does: it
+# keeps VERSION_ID=44 and puts the datestamp only in VERSION and PRETTY_NAME.
+# VERSION_ID is the field third-party scripts compare numerically, for the
+# same reason ID stays "fedora" in os-release itself.
+#
+# The Fedora fields are WRITTEN HERE from the release the base image actually
+# is (rpm's %fedora), not kept as literals in system_files' copy. That copy
+# said 44 by hand, and the first Fedora 45 build stopped on it: a value typed
+# into the overlay is a value someone has to remember every six months, while
+# the base already knows. FEDORA_VERSION must agree with it, or the build
+# argument and the image are describing two different releases.
 # ---------------------------------------------------------------------------
 #
 # Two numbers, two jobs. PULSAR_VERSION is the BUILD (44.YYYYMMDD.N): what
@@ -605,21 +615,26 @@ ARG PULSAR_VERSION=""
 RUN rel=$(cat /usr/share/pulsar/release) && \
     printf '%s' "${rel}" | grep -qxE '[0-9]{2}\.([1-9]|1[0-2])\.[1-9][0-9]*' || \
       { echo "FATAL: /usr/share/pulsar/release is '${rel}', not YY.M.N (26.9.1)"; exit 1; }; \
-    sed -i -e '/^PULSAR_RELEASE=/d' /usr/lib/os-release && \
-    echo "PULSAR_RELEASE=\"${rel}\"" >> /usr/lib/os-release && \
-    sed -i -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${rel}\"|" /usr/lib/os-release; \
+    fed=$(rpm -E %fedora) && \
+    [ "${fed}" = "${FEDORA_VERSION}" ] || \
+      { echo "FATAL: the base image is Fedora ${fed}, but FEDORA_VERSION is '${FEDORA_VERSION}'"; exit 1; }; \
+    sed -i \
+      -e "s|^VERSION=.*|VERSION=\"${fed}\"|" \
+      -e "s|^VERSION_ID=.*|VERSION_ID=${fed}|" \
+      -e "s|^CPE_NAME=.*|CPE_NAME=\"cpe:/o:fedoraproject:fedora:${fed}\"|" \
+      -e '/^PULSAR_RELEASE=/d' \
+      -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${rel}\"|" \
+      /usr/lib/os-release && \
+    echo "PULSAR_RELEASE=\"${rel}\"" >> /usr/lib/os-release; \
     if [ -n "${PULSAR_VERSION}" ]; then \
       sed -i \
         -e "s|^VERSION=.*|VERSION=\"${PULSAR_VERSION}\"|" \
         -e "s|^PRETTY_NAME=.*|PRETTY_NAME=\"Pulsar ${rel} (${PULSAR_VERSION})\"|" \
         /usr/lib/os-release; \
-      grep -E '^(VERSION|VERSION_ID|PRETTY_NAME)=' /usr/lib/os-release; \
-      vid=$(. /usr/lib/os-release; echo "${VERSION_ID}"); \
-      if [ "${vid}" != "${FEDORA_VERSION}" ]; then \
-        echo "FATAL: VERSION_ID became '${vid}'; it must stay ${FEDORA_VERSION} or numeric comparisons break"; \
-        exit 1; \
-      fi; \
-    fi
+    fi; \
+    grep -E '^(VERSION|VERSION_ID|PRETTY_NAME|CPE_NAME)=' /usr/lib/os-release; \
+    ( . /usr/lib/os-release && [ "${VERSION_ID}" = "${fed}" ] && [ "${CPE_NAME##*:}" = "${fed}" ] ) || \
+      { echo "FATAL: os-release's VERSION_ID or CPE_NAME is not Fedora ${fed}; numeric comparisons and CPE matching break"; exit 1; }
 
 # ID stays `fedora`, deliberately: dnf's $releasever, some flatpak remote
 # filtering, and a pile of third-party scripts key off it. Bazzite and Bluefin
@@ -1026,13 +1041,15 @@ RUN set -eu; \
 # this image rides on counted, and a fork that objects turns off one timer.
 RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
       { echo "FATAL: greenboot no longer ships its bootupd grub fragment; without it GRUB never decrements boot_counter and automatic rollback silently never arms"; exit 1; }; \
-    fc-cache -f && \
+    fcerr=$(fc-cache -f 2>&1 >/dev/null | grep -iE 'Fontconfig (error|warning).*pulsar' || true); \
+    [ -z "${fcerr}" ] || \
+      { echo "FATAL: fontconfig rejects part of Pulsar's font config, and drops it with only this on stderr:"; echo "${fcerr}"; exit 1; }; \
     for f in "Host Grotesk" "JetBrains Mono" "Nimbus Sans"; do \
       got=$(fc-match -f '%{family[0]}' "$f"); \
       [ "$got" = "$f" ] || \
         { echo "FATAL: font '$f' does not resolve; fontconfig substitutes '$got'. Every font key in zz0-pulsar.gschema.override would silently render in the wrong face"; exit 1; }; \
     done; \
-    for g in sans-serif:"Host Grotesk" monospace:"JetBrains Mono"; do \
+    for g in sans-serif:"Host Grotesk" sans:"Host Grotesk" monospace:"JetBrains Mono"; do \
       got=$(fc-match -f '%{family[0]}' "${g%%:*}"); \
       [ "$got" = "${g#*:}" ] || \
         { echo "FATAL: generic '${g%%:*}' resolves to '$got', not '${g#*:}'; 52-pulsar.conf is not winning its sort order against Fedora's font configs"; exit 1; }; \
