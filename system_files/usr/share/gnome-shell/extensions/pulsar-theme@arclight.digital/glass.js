@@ -1416,45 +1416,61 @@ function luminance(c) {
 // paints as it would have.
 const STACK_CUT = 'pulsar-stack-cut';
 // the cards over one that are cut out of it: the newest, and the nearest
+// (a multiple of 4: the radii travel four to a vec4)
 const STACK_SLOTS = 8;
+// NO UNIFORM ARRAYS. Each card over this one is its own vec4 (rect0..rect7)
+// and the radii go four to a vec4 (radii0, radii1), unrolled below. GNOME 51's
+// Clutter.ShaderEffect uploads a float array as ONE uniform as wide as the
+// whole array (cogl_pipeline_set_uniform_float(.., size, 1, ..), with the
+// caller's component count dropped), which Cogl refuses past four, so an
+// array of rects never reached the shader and nothing was cut. Plain vec4s
+// set the same way through 50's Shell.GLSLEffect and 51's ShaderEffect.
+const STACK_RECTS = Array.from({length: STACK_SLOTS}, (_, i) => `rect${i}`);
+const STACK_RADII = Array.from({length: STACK_SLOTS / 4}, (_, i) => `radii${i}`);
 const STACK_DECL = `
 uniform sampler2D tex;
 uniform vec4 map;
 uniform float px;
-uniform vec4 rects[${STACK_SLOTS}];
-uniform float radii[${STACK_SLOTS}];
+${STACK_RECTS.map(r => `uniform vec4 ${r};`).join('\n')}
+${STACK_RADII.map(r => `uniform vec4 ${r};`).join('\n')}
 float sd(vec2 p, vec2 b, float r) {
   vec2 q = abs(p) - b + r;
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+float over(vec2 p, vec4 r, float radius) {
+  vec2 b = (r.zw - r.xy) * 0.5;
+  return clamp(0.5 - sd(p - r.xy - b, b, radius) * px, 0.0, 1.0);
 }
 `;
 const STACK_CODE = `
 vec2 uv = cogl_tex_coord_in[0].xy;
 vec2 p = map.xy + uv * map.zw;
 float cover = 0.0;
-for (int i = 0; i < ${STACK_SLOTS}; i++) {
-  vec2 b = (rects[i].zw - rects[i].xy) * 0.5;
-  cover = max(cover, clamp(0.5 - sd(p - rects[i].xy - b, b, radii[i]) * px, 0.0, 1.0));
-}
+${STACK_RECTS.map((r, i) => `cover = max(cover, over(p, ${r}, radii${i >> 2}.${'xyzw'[i & 3]}));`).join('\n')}
 cogl_color_out = texture2D(tex, uv) * cogl_color_in * (1.0 - cover);
 `;
 
-const StackCut = GObject.registerClass(
-class PulsarStackCut extends Shell.GLSLEffect {
+// GNOME 50 draws it through Shell.GLSLEffect. GNOME 51 removed that class and
+// moved the Shell's own effects (the lightbox vignette, the message list
+// fade) to Clutter.ShaderEffect, whose 51 API takes the shader as a static
+// snippet and its uniforms by name. Neither API exists on the other release
+// (50's ShaderEffect has no set_uniform_float or static snippet), so the class
+// rides on whichever this Shell has. Only two things differ, how the shader
+// goes in and what names a uniform; the rest is shared.
+const GLSL = Shell.GLSLEffect !== undefined;
+
+class PulsarStackCut extends (GLSL ? Shell.GLSLEffect : Clutter.ShaderEffect) {
     constructor() {
         super();
         this._loc = {};
-        for (const u of ['map', 'px', 'rects', 'radii'])
-            this._loc[u] = this.get_uniform_location(u);
+        for (const u of ['map', 'px', ...STACK_RECTS, ...STACK_RADII])
+            this._loc[u] = GLSL ? this.get_uniform_location(u) : u;
         this._rects = new Array(4 * STACK_SLOTS).fill(0);
         this._radii = new Array(STACK_SLOTS).fill(0);
+        // each uniform's four floats, kept so a paint allocates nothing
+        this._v4 = Array.from({length: STACK_SLOTS + STACK_SLOTS / 4}, () => [0, 0, 0, 0]);
         this._card = [0, 0, 0, 0];
         this._other = [0, 0, 0, 0];
-    }
-
-    // once per class: each instance copies it
-    vfunc_build_pipeline() {
-        this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT, STACK_DECL, STACK_CODE, true);
     }
 
     // Drawn afresh every paint: a texture kept from a frame it was cut
@@ -1475,8 +1491,18 @@ class PulsarStackCut extends Shell.GLSLEffect {
         const [ox, oy] = offscreenOrigin(card, tex, s);
         this.set_uniform_float(this._loc.map, 4, [ox, oy, tex.get_width() / s, tex.get_height() / s]);
         this.set_uniform_float(this._loc.px, 1, [s]);
-        this.set_uniform_float(this._loc.rects, 4, this._rects);
-        this.set_uniform_float(this._loc.radii, 1, this._radii);
+        STACK_RECTS.forEach((r, i) => {
+            const v = this._v4[i];
+            for (let k = 0; k < 4; k++)
+                v[k] = this._rects[4 * i + k];
+            this.set_uniform_float(this._loc[r], 4, v);
+        });
+        STACK_RADII.forEach((r, i) => {
+            const v = this._v4[STACK_SLOTS + i];
+            for (let k = 0; k < 4; k++)
+                v[k] = this._radii[4 * i + k];
+            this.set_uniform_float(this._loc[r], 4, v);
+        });
         super.vfunc_paint_target(node, paintContext);
     }
 
@@ -1527,7 +1553,30 @@ class PulsarStackCut extends Shell.GLSLEffect {
         }
         return n;
     }
-});
+}
+
+// The shader goes in through whichever hook this Shell's base class has. A
+// vfunc_ the parent does not define fails GObject.registerClass, so only the
+// matching one is put on the class. DEFINED, never assigned: an assignment
+// looks the name up the prototype chain first, and GJS answers a lookup of a
+// vfunc the parent leaves unimplemented by throwing "Virtual function not
+// implemented" (it did, on both 50 and 51).
+Object.defineProperty(PulsarStackCut.prototype,
+    GLSL ? 'vfunc_build_pipeline' : 'vfunc_get_static_snippet', {
+        value: GLSL
+            // once per class: each instance copies it
+            ? function () {
+                this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT, STACK_DECL, STACK_CODE, true);
+            }
+            : function () {
+                const snippet = Cogl.Snippet.new(Cogl.SnippetHook.FRAGMENT, STACK_DECL, null);
+                snippet.set_replace(STACK_CODE);
+                return snippet;
+            },
+        writable: true,
+        configurable: true,
+    });
+const StackCut = GObject.registerClass(PulsarStackCut);
 
 // A message's corner in its group and its scale there: its bin eases it
 // in and out about the bin's middle (ScaleLayout). The header is the
