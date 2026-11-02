@@ -43,6 +43,8 @@ ENV.pop("DISPLAY", None)
 LOG = open(os.environ.get("GATE_APPS_LOG", "/tmp/harness-apps.log"), "w")
 # the Shell's own output, apart from the apps': shell_log_problems() reads it
 SHELL_LOG = pathlib.Path(os.environ.get("GATE_SHELL_LOG", "/tmp/harness-shell.log"))
+# glass.js's name for the cut it puts on each card of a notification stack
+STACK_EFFECT = 'pulsar-stack-cut'
 procs = []
 EXT = "pulsar-theme@arclight.digital"
 
@@ -154,7 +156,12 @@ def stop_shell():
 # glass never takes a Shell menu down with it -- which also means a glass
 # that throws on every menu still draws every menu, and passes any pixel
 # check. So the log is read: any of our warnings, and any JS error at all.
-SHELL_LOG_FAIL = re.compile(r"pulsar-theme:|JS ERROR")
+# And any extension of ours the Shell failed to load or enable: it logs that
+# as "Extension pulsar-theme@arclight.digital: TypeError: ..." at CRITICAL,
+# which neither pattern above matches. On the first GNOME 51 run the theme
+# extension died at import (Shell.GLSLEffect was gone) and this check
+# reported no errors while every theme failed.
+SHELL_LOG_FAIL = re.compile(r"pulsar-theme:|JS ERROR|Extension [\w.-]+@arclight\.digital: ")
 # Known harmless, each with why. Match the whole reason, never a bare
 # "pulsar-theme:", or this list swallows the check.
 SHELL_LOG_ALLOW = [
@@ -887,6 +894,82 @@ GAME_JS = r"""(() => {
 })()""".replace("EXT", EXT)
 
 
+def glass_stack(add):
+    """A collapsed notification group in the date menu stacks its older cards
+    behind the newest, and on glass each card behind is cut wherever a card
+    over it lies (glass.js StackCut), or its text reads through. Nothing else
+    in the gate builds a stack, so nothing else draws that shader; on GNOME
+    51 it is a different shader API from 50's (Shell.GLSLEffect is gone).
+    Three identical cards against one: where the newest card lies, a working
+    cut leaves the two screenshots the same."""
+    set_scale(1.0)
+    menu = "Main.panel.statusArea.dateMenu.menu"
+    # Main.notify's notifications all come from the one system source, so they
+    # land in one group, as the calendar-notification surface's does
+    notify = "for (let i = 0; i < N; i++) Main.notify('Stacked card', 'the same words on every card'); 1"
+    group = (f"(() => {{ const walk = a => a.constructor.name === 'NotificationMessageGroup' ? a : "
+             f"a.get_children().map(walk).find(Boolean); return walk({menu}.actor); }})()")
+    # the newest card: the group paints its children last to first
+    top = (f"(() => {{ const g = {group}; const b = g?.get_children().find(c => c.visible && c.child?.get_theme_node); "
+           "if (!b) return JSON.stringify(null); const a = b.child; const [x, y] = a.get_transformed_position(); "
+           "const [w, h] = a.get_transformed_size(); return JSON.stringify([x, y, w, h]); })()")
+
+    def stacked(n, name):
+        eval_js("Main.messageTray.getSources().forEach(s => s.destroy()); 1")
+        time.sleep(1.0)
+        eval_js(notify.replace("N", str(n)))
+        time.sleep(1.5)
+        eval_js(f"{menu}.open(false); 1")
+        time.sleep(2.5)
+        rect, _ = eval_json(top)
+        cut = eval_json(f"(() => {{ const g = {group}; if (!g) return JSON.stringify(null); "
+                        "return JSON.stringify(g.get_children().map(c => c.child ?? c)"
+                        f".map(a => a.get_effect?.('{STACK_EFFECT}')).filter(Boolean)"
+                        ".map(e => ({enabled: e.enabled, over: e._lay?.() ?? -1}))); })()")[0]
+        out = SHOTS / f"stack-{name}.png"
+        SHOTS.mkdir(exist_ok=True)
+        sh("gdbus", "call", "--session", "--dest", "org.gnome.Shell.Screenshot", "--object-path",
+           "/org/gnome/Shell/Screenshot", "--method", "org.gnome.Shell.Screenshot.Screenshot",
+           "false", "false", str(out), check=False)
+        eval_js(f"{menu}.close(false); Main.messageTray.getSources().forEach(s => s.destroy()); 1")
+        time.sleep(1.0)
+        return rect, cut, out
+
+    one_rect, _, one = stacked(1, "one")
+    three_rect, cuts, three = stacked(3, "three")
+    # back to the scale the scale loop left, which the game checks expect
+    set_scale(GLASS_SCALES[-1])
+    run = {"one": one_rect, "three": three_rect, "effects": cuts}
+    behind = [c for c in (cuts or []) if c["over"] > 0]
+    add("stack: the cards behind the newest carry the cut, and something lies over them",
+        len(behind) >= 2, f"{cuts}")
+    if not (one_rect and three_rect):
+        add("stack: the newest card reads the same over two cards as over none", False,
+            f"no card found: {one_rect} / {three_rect}")
+        return run
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    a, b = GdkPixbuf.Pixbuf.new_from_file(str(one)), GdkPixbuf.Pixbuf.new_from_file(str(three))
+    # inside the newest card, clear of its rounded edge; it sits in the same
+    # place either way, so the rect from the three-card run is used for both
+    x, y, w, h = (int(v) for v in three_rect)
+    diffs = []
+    for img_a, img_b in ((a, b),):
+        n, stride = img_a.get_n_channels(), img_a.get_rowstride()
+        pa, pb = img_a.get_pixels(), img_b.get_pixels()
+        for yy in range(y + 6, y + h - 6, 2):
+            for xx in range(x + 12, x + w - 12, 2):
+                o = yy * stride + xx * n
+                diffs.append(max(abs(pa[o + k] - pb[o + k]) for k in range(3)))
+    moved = sum(1 for d in diffs if d > 24) / max(len(diffs), 1)
+    run["moved"] = moved
+    add("stack: the newest card reads the same over two cards as over none",
+        bool(diffs) and moved < 0.01 and abs(one_rect[1] - three_rect[1]) < 2,
+        f"{moved:.2%} of its pixels moved; card at {one_rect} then {three_rect}")
+    return run
+
+
 def glass_game(add):
     js = lambda what: eval_js(GAME_JS.replace("WHAT", what))[1]
     jsj = lambda what: eval_json(GAME_JS.replace("WHAT", what))[0]
@@ -1125,6 +1208,9 @@ def glass():
         wait_for(popped + ".length", want="0", secs=5)
         report["runs"][tag] = {"scales": got, "monitors": mons, "probed": run}
     report["runs"]["game"] = glass_game(add)
+    # last: it changes the scale and leaves the system source's notifications
+    # in its wake, neither of which the game checks expect
+    report["runs"]["stack"] = glass_stack(add)
     kill_apps()
     stop_shell()
     bad = shell_log_problems("glass")
@@ -1217,13 +1303,16 @@ SURFACES = [
     # needs the a11y screen-keyboard key on (leaks() sets it)
     ("keyboard", "Main.keyboard.open(Main.layoutManager.primaryIndex)", "Main.layoutManager.keyboardBox",
      "Main.keyboard.close(true)"),
-    # a key's long-press popup (its extended keys)
+    # a key's long-press popup (its extended keys). GNOME 50 keeps it as the
+    # key's own BoxPointer (_boxPointer); GNOME 51 made it a popup menu
+    # (_menu, a NoGrabPopup) whose actor is that BoxPointer.
     ("keyboard-subkeys",
      "Main.keyboard.open(Main.layoutManager.primaryIndex); imports.gi.GLib.timeout_add(0, 800, () => { "
      "const find = a => a._extendedKeys?.length ? a : a.get_children().map(find).find(Boolean); "
      "const k = find(Main.layoutManager.keyboardBox); if (k) { k._ensureExtendedKeysPopup(); k._showSubkeys(); "
      "globalThis.__sk = k; } return false; })",
-     "globalThis.__sk._boxPointer", "globalThis.__sk?._hideSubkeys?.(); Main.keyboard.close(true)", 2.5),
+     "(globalThis.__sk._menu?.actor ?? globalThis.__sk._boxPointer)",
+     "globalThis.__sk?._hideSubkeys?.(); Main.keyboard.close(true)", 2.5),
     ("end-session",
      "const d = Main.layoutManager.modalDialogGroup.get_children().find(c => c.constructor.name === 'EndSessionDialog'); "
      "globalThis.__es = d; d.OpenAsync([2, 0, 60, []], {return_error_literal() {}, return_value() {}})",
@@ -1291,8 +1380,12 @@ SURFACES = [
      "src.set_position(400, 300); const menu = new m.WindowMenu(w, src); "
      "Main.layoutManager.uiGroup.add_child(menu.actor); menu.open(false); globalThis.__wm = menu; })",
      "globalThis.__wm.actor", "globalThis.__wm?.close(false); globalThis.__wm?.destroy()"),
+    # GNOME 50 adds the popup to the UI group as top chrome; GNOME 51 puts it
+    # in the compositor's input panel group (a child of the UI group, beside
+    # the keyboard box), so it is looked for in both
     ("ibus-candidates",
-     "const p = Main.layoutManager.uiGroup.get_children().find(c => c.constructor.name === 'IbusCandidatePopup'); "
+     "const p = [global.compositor?.get_input_panel_group?.(), Main.layoutManager.uiGroup]"
+     ".filter(Boolean).flatMap(g => g.get_children()).find(c => c.constructor.name === 'IbusCandidatePopup'); "
      "globalThis.__cp = p; p._dummyCursor.set_position(500, 400); p._dummyCursor.set_size(1, 20); "
      "p._preeditText.text = 'pinyin'; p._preeditText.show(); p._auxText.text = 'aux'; p._auxText.show(); "
      "p._candidateArea.setCandidates(['1', '2', '3'], ['alpha', 'beta', 'gamma'], 1, true); "
