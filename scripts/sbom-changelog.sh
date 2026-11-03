@@ -36,6 +36,14 @@ done
 
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 
+# The intermediate JSON travels between jq calls in files, never on the
+# command line. Linux caps a single argument at 128 KiB (E2BIG, "Argument
+# list too long"), and an environment variable has the same cap. An ordinary
+# night's diff is a few KiB, but the first build on a new Fedora release
+# changes nearly every package: 45.20261103.0 died here with ~1800 changed.
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
 # ---------------------------------------------------------------------------
 # Set diff. Keyed on package name; versionInfo is the value.
 #
@@ -44,7 +52,7 @@ command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 # That collapses such a pair to one row rather than reporting a phantom
 # change, which is the behaviour we want in a human-facing changelog.
 # ---------------------------------------------------------------------------
-raw=$(jq -n --slurpfile old "$OLD" --slurpfile new "$NEW" '
+jq -n --slurpfile old "$OLD" --slurpfile new "$NEW" '
   def pkgmap:
     [ .packages[]? | select(.versionInfo != null and .name != null)
       | {key: .name, value: .versionInfo} ] | from_entries;
@@ -57,7 +65,7 @@ raw=$(jq -n --slurpfile old "$OLD" --slurpfile new "$NEW" '
                | {name: .key, version: .value} ] | sort_by(.name),
     changed: [ $n | to_entries[] | select($o[.key] != null and $o[.key] != .value)
                | {name: .key, from: $o[.key], to: .value} ] | sort_by(.name)
-  }')
+  }' > "$work/raw.json"
 
 # ---------------------------------------------------------------------------
 # Classify each change. rpmdev-vercmp exits 11 when the first argument is
@@ -66,8 +74,7 @@ raw=$(jq -n --slurpfile old "$OLD" --slurpfile new "$NEW" '
 # rather than silently becoming an "upgrade".
 # ---------------------------------------------------------------------------
 if command -v rpmdev-vercmp >/dev/null; then
-    directions=$(
-        jq -r '.changed[] | "\(.name)\t\(.from)\t\(.to)"' <<<"$raw" |
+    jq -r '.changed[] | "\(.name)\t\(.from)\t\(.to)"' "$work/raw.json" |
         while IFS=$'\t' read -r name from to; do
             set +e
             rpmdev-vercmp "$from" "$to" >/dev/null 2>&1
@@ -80,21 +87,22 @@ if command -v rpmdev-vercmp >/dev/null; then
             esac
             printf '%s\t%s\n' "$name" "$dir"
         done | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t"))
-                            | map({key: .[0], value: .[1]}) | from_entries'
-    )
+                            | map({key: .[0], value: .[1]}) | from_entries' \
+        > "$work/dir.json"
 else
     echo "warning: rpmdev-vercmp not found; changes reported without direction" >&2
-    directions='{}'
+    echo '{}' > "$work/dir.json"
 fi
 
 jq -n \
-  --argjson raw "$raw" \
-  --argjson dir "$directions" \
+  --slurpfile raws "$work/raw.json" \
+  --slurpfile dirs "$work/dir.json" \
   --arg generated "${GENERATED:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
   --arg from_ref "${FROM_REF:-}" \
   --arg to_ref "${TO_REF:-}" \
   --arg from_digest "${FROM_DIGEST:-}" \
   --arg to_digest "${TO_DIGEST:-}" '
+  $raws[0] as $raw | $dirs[0] as $dir |
   ($raw.changed | map(. + {direction: ($dir[.name] // "changed")})) as $changed |
   {
     generated: $generated,
