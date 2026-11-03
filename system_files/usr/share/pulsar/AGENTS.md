@@ -30,6 +30,7 @@ and guard state.
 | `/var` | Writable, persistent, shared by all deployments. `/home` = `/var/home`. |
 | `/usr/local`, `/opt` | Symlinks into `/var`. Not in the image, shadow it on `PATH`, survive every update and rollback, invisible to `rpm-ostree status`. Don't install there. |
 | `$HOME` | User data. Nothing rolls it back. |
+| `/tmp` | tmpfs: held in RAM, up to half of it. What you leave there pushes the user's apps into swap. Keep it to small files. Disk images, VM images and build trees go in `/var/tmp` or `~/.cache` (on disk; `TMPDIR=/var/tmp` for tools and tests that make them). Delete them when you're done. |
 
 ## Where software goes
 
