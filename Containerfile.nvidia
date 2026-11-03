@@ -317,6 +317,15 @@ RUN --mount=type=bind,source=patches/nvidia-open,target=/run/nvidia-patches \
 # the userspace half and heals this immediately; scriptlets stay ON here
 # because the kmod's %post runs depmod, which we want.
 #
+# It also installs with --nosignature, and only it. rpm 6 (Fedora 45) refuses
+# any package without an OpenPGP signature ("does not verify: no signature"),
+# and this RPM was built by akmodsbuild a few lines up, so nothing could have
+# signed it. Its header and payload digests are still checked. The signature
+# that matters for this package is the one on nvidia.ko, which the signer
+# made and phase 5 checks against MOK.der. Phase 2's akmod comes from
+# rpmfusion and keeps full signature checking. dnf5 (phase 4's shim) only
+# warns for a local file, so it needs nothing.
+#
 # TRANSPORT TRUST IS NOT AMBIENT HERE. The signer serves TLS with a private,
 # self-signed certificate -- it lives on a VPC address that no public CA will
 # ever issue for. The build HOST is given that certificate, but this RUN is a
@@ -374,7 +383,7 @@ RUN --mount=type=secret,id=signer_token,target=/run/secrets/signer_token \
           "/usr/src/kernels/${KV}/scripts/sign-file"; \
     mv "/usr/src/kernels/${KV}/scripts/sign-file.real" \
        "/usr/src/kernels/${KV}/scripts/sign-file"; \
-    rpm -Uvh --nodeps $(find /tmp/akmod-out -name 'kmod-nvidia-open-*.rpm' ! -name '*debug*'); \
+    rpm -Uvh --nodeps --nosignature $(find /tmp/akmod-out -name 'kmod-nvidia-open-*.rpm' ! -name '*debug*'); \
     rm -rf /tmp/akmod-out
 
 # Phase 4: userspace.
