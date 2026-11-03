@@ -10,7 +10,6 @@
 # own, so a `systemctl preset-all` run in full mode would fall through to
 # Fedora's `disable *` and quietly disarm automatic rollback. The
 # Containerfile asserts this list and its enablements agree.
-enable scx.service
 enable greenboot-healthcheck.service
 enable pulsar-flatpaks.service
 enable pulsar-esp-fallback.service

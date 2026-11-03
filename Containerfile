@@ -161,13 +161,17 @@ RUN mesa="$(rpm -q --qf '%{VERSION}' mesa-filesystem.x86_64)" && \
     done
 
 # ---------------------------------------------------------------------------
-# sched_ext. Arrow Lake-HX is 8 P-cores + 16 E-cores with no SMT, which is
-# exactly where stock EEVDF placement underperforms.
+# sched_ext: installed, NOT enabled. Pulsar runs the kernel's own scheduler
+# (EEVDF) by default since 2026-11-03, as Fedora and CachyOS do; scx.service
+# (scx_bpfland) is an opt-in; its unit file says how to turn it on.
 #
-# scx_bpfland, NOT scx_lavd: lavd --autopilot hits sched-ext/scx#3340 on this
-# CPU and leaks ~300MB/s until it is OOM-killed. bpfland is reported
-# unaffected, and ships on ALL hardware -- one scheduler everywhere beats a
-# per-CPU conditional nobody can test the other branch of.
+# Why off: on a hybrid CPU (275HX, 8 P + 16 E-cores, no SMT) bpfland's default
+# spread GNOME Shell over E-cores (66-78% of its time) and animations jumped
+# to their end; lavd --autopower compacted the desktop onto E-cores on a light
+# load (69-86%, stalls 2-30 per 30 s run to run); stock EEVDF kept it on
+# P-cores (15-24%) with 4-5 stalls in both runs, at the same package power
+# within noise. The scheduler that had shipped (lavd, then bpfland) was never
+# measured against EEVDF before; this was the first time, and it lost.
 #
 # scx.service carries ConditionPathExists=/sys/kernel/sched_ext. That proves
 # the KERNEL supports sched_ext; it does NOT prove a scheduler attached: when
@@ -357,14 +361,14 @@ RUN chmod 0755 /usr/libexec/pulsar/check-scx-btf.sh && \
     mkdir -p /usr/lib/pulsar && \
     if /usr/libexec/pulsar/check-scx-btf.sh --image; then \
       touch /usr/lib/pulsar/scx-supported; \
-      echo "scx: kernel BTF is clean, scx.service will start at boot"; \
+      echo "scx: kernel BTF is clean, scx.service can be enabled"; \
     else \
       rc=$?; \
       if [ "${rc}" != "1" ]; then \
         echo "FATAL: could not determine whether this kernel can load sched_ext (exit ${rc})"; \
         exit 1; \
       fi; \
-      echo "scx: this kernel cannot load a BPF scheduler; scx.service will be skipped"; \
+      echo "scx: this kernel cannot load a BPF scheduler; scx.service would be skipped"; \
     fi
 
 # ---------------------------------------------------------------------------
@@ -670,12 +674,12 @@ LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
 # `pulsar sbom` reads the live rpm database instead, which is the same source
 # and is correct by construction; the published per-build copies live in R2.
 #
-# The scheduler row names the scheduler that RUNS. scx_bpfland attaches only
-# on a kernel whose BTF can load it (check-scx-btf.sh above stages
-# scx-supported); on one that cannot, the machine runs stock EEVDF. The row
-# used to say scx_bpfland regardless, beside "scheduler_btf: malformed" --
-# true, and read as a failure by everyone who saw it, including on the site,
-# which prints this file.
+# The scheduler row names the scheduler that RUNS by default: EEVDF, the
+# kernel's own (scx.service is opt-in). The sched_ext row says whether the
+# opt-in can work on this kernel (check-scx-btf.sh above stages
+# scx-supported). Rows that read as a failure get read as one, including on
+# the site, which prints this file: it once said scx_bpfland beside
+# "scheduler_btf: malformed".
 # ---------------------------------------------------------------------------
 ARG PULSAR_CHANGELOG_URL="https://getpulsar.dev/changelog.json"
 COPY cli/pulsar /usr/bin/pulsar
@@ -710,8 +714,8 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       --arg base      "fedora-silverblue:${FEDORA_VERSION}" \
       --arg built     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg kernel    "$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)" \
-      --arg scheduler "$([ -e /usr/lib/pulsar/scx-supported ] && echo scx_bpfland || echo eevdf)" \
-      --arg scx       "$([ -e /usr/lib/pulsar/scx-supported ] && echo on || echo "off: this kernel can't load it")" \
+      --arg scheduler "eevdf" \
+      --arg scx       "$([ -e /usr/lib/pulsar/scx-supported ] && echo "opt-in (scx.service)" || echo "off: this kernel can't load it")" \
       --arg gamescope "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamescope)" \
       --arg gamemode  "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamemode)" \
       --arg mangohud  "$(rpm -q --qf '%{VERSION}-%{RELEASE}' mangohud)" \
@@ -938,7 +942,7 @@ RUN set -eu; \
 # to come after the overlay lands. The nvidia variant regenerates it a second
 # time because it adds modprobe.d options that also live in the initramfs.
 # ---------------------------------------------------------------------------
-# scx.service and greenboot-healthcheck.service are enabled HERE, not by the
+# greenboot-healthcheck.service and the others are enabled HERE, not by the
 # preset file: presets only run on a fresh `bootc install`, never on a rebase,
 # so on a rebased system the units would silently never start. This writes the
 # /etc wants symlink, which the ostree /etc merge carries onto rebased systems.
@@ -1058,7 +1062,6 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
       { echo "FATAL: non-Latin sans-serif fallback no longer reaches Noto; 52-pulsar.conf has pinned a Latin-only face ahead of the CJK chain"; exit 1; }; \
     echo "fonts: Host Grotesk / JetBrains Mono / Nimbus Sans resolve; generics bound; non-Latin fallback intact" && \
     glib-compile-schemas /usr/share/glib-2.0/schemas && \
-    systemctl enable scx.service && \
     systemctl enable greenboot-healthcheck.service && \
     systemctl enable pulsar-flatpaks.service && \
     systemctl enable pulsar-esp-fallback.service && \
@@ -1077,7 +1080,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-theme-notice.service && \
     systemctl --global enable pulsar-welcome.service && \
     systemctl disable NetworkManager-wait-online.service && \
-    for u in scx.service greenboot-healthcheck.service pulsar-flatpaks.service \
+    for u in greenboot-healthcheck.service pulsar-flatpaks.service \
              pulsar-gamemode-group.service pulsar-steam-grants.service pulsar-update-auto.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/system-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \

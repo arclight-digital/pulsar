@@ -1,5 +1,10 @@
 [Unit]
-Description=sched_ext scheduler (scx_bpfland)
+Description=sched_ext scheduler (scx_bpfland), opt-in
+# NOT enabled by default since 2026-11-03: Pulsar runs the kernel's own
+# scheduler, EEVDF. On a hybrid Intel CPU bpfland's default kept GNOME Shell
+# on E-cores and animations jumped to their end; EEVDF kept it on P-cores at
+# the same power (measurements in the Containerfile's sched_ext section).
+# To opt in: sudo systemctl enable --now scx.service
 After=multi-user.target systemd-tmpfiles-setup.service
 # This proves the KERNEL supports sched_ext. It does NOT prove that a
 # scheduler attached -- when this unit fails, the kernel silently keeps

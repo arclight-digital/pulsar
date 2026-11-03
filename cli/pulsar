@@ -129,20 +129,29 @@ record() {
 }
 
 check_scheduler() {
-    local state file=/sys/kernel/sched_ext/state
-    if [ ! -e "$file" ]; then
-        record scheduler ok "kernel has no sched_ext; stock EEVDF" ; return
+    # EEVDF, the kernel's own scheduler, is Pulsar's default since 2026-11-03;
+    # scx.service is an opt-in. Only an opt-in that did not attach warns.
+    local state sx=${PULSAR_SCHED_EXT:-/sys/kernel/sched_ext}
+    local supported=${PULSAR_SCX_SUPPORTED:-/usr/lib/pulsar/scx-supported}
+    if [ ! -e "$sx/state" ]; then
+        record scheduler ok "EEVDF (kernel has no sched_ext)" ; return
     fi
-    state=$(cat "$file" 2>/dev/null || echo unknown)
+    state=$(cat "$sx/state" 2>/dev/null || echo unknown)
+    local enabled
+    # is-enabled PRINTS "disabled" and THEN exits nonzero; see is-active below
+    enabled=$(systemctl is-enabled scx.service 2>/dev/null) || true
     if [ "$state" = "enabled" ]; then
-        local ops; ops=$(cat /sys/kernel/sched_ext/root/ops 2>/dev/null || echo unknown)
-        record scheduler ok "sched_ext enabled" "root scheduler: ${ops}"
-    elif [ ! -e /usr/lib/pulsar/scx-supported ]; then
+        local ops; ops=$(cat "$sx/root/ops" 2>/dev/null || echo unknown)
+        record scheduler ok "sched_ext scheduler attached (opt-in)" "root scheduler: ${ops}"
+    elif [ "$enabled" != "enabled" ]; then
+        record scheduler ok "EEVDF, Pulsar's default" \
+               "a sched_ext scheduler is opt-in: sudo systemctl enable --now scx.service"
+    elif [ ! -e "$supported" ]; then
         # Not a fault: this kernel's BTF cannot load ANY BPF scheduler, the
         # build detected that, and scx.service is skipped rather than failed.
         # Reporting it as a warning forever would be indistinguishable from
         # something the user could fix, and there is nothing to fix here.
-        record scheduler ok "stock EEVDF: this kernel cannot load a BPF scheduler" \
+        record scheduler ok "EEVDF: scx.service is enabled, but this kernel cannot load a BPF scheduler" \
                "scx kfuncs carry the implicit prog-aux argument (Fedora kernel BTF)"
     else
         # Warn, not fail. The machine runs fine on EEVDF -- but this is the
@@ -159,7 +168,7 @@ check_scheduler() {
         local last
         last=$(journalctl -u scx.service -b -n 1 -o cat --no-pager 2>/dev/null | head -c 200) || true
         [ -z "$last" ] || unit="${unit}; last: ${last}"
-        record scheduler warn "sched_ext is '${state}' -- running stock EEVDF" \
+        record scheduler warn "scx.service is enabled but sched_ext is '${state}' -- running EEVDF" \
                "scx.service: ${unit}"
     fi
 }

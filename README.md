@@ -160,12 +160,16 @@ copies from your home folder.
 
 ### Scheduler
 
-Pulsar runs the `scx_bpfland` scheduler, which handles CPUs with many
-efficiency cores and no SMT better than the kernel's default. Some Fedora
-kernels can't load BPF schedulers because of a bug in their type
-information. The build tests for this with `scripts/check-scx-btf.sh`, and
-on an affected kernel `scx.service` is skipped and the default scheduler
-runs.
+Pulsar runs the kernel's own scheduler, EEVDF, the same as Fedora. On
+Intel CPUs with performance and efficiency cores it keeps the desktop on
+the fast cores; the `scx_bpfland` scheduler Pulsar used to run by default
+spread it onto the slow ones, and animations stuttered.
+
+`scx_bpfland` is still installed. To use it, run
+`sudo systemctl enable --now scx.service`. Some Fedora kernels can't load
+BPF schedulers because of a bug in their type information. The build tests
+for this with `scripts/check-scx-btf.sh`, and on an affected kernel
+`scx.service` is skipped and the default scheduler runs.
 
 ## Development
 
