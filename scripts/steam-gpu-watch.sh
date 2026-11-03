@@ -18,18 +18,29 @@
 # stays open. Same class of fault as NVIDIA/open-gpu-kernel-modules#1137.
 #
 # WHY ONLY WHEN STUCK, NOT ON EVERY RESUME. Chromium counts a killed GPU
-# process as a crash, and after a few within its window it gives up on the
-# GPU and renders in software for the rest of the session. So this restarts
-# the process only when the stall is observed, never as a precaution.
+# process as a crash, and Steam's browser process keeps that count for as
+# long as it runs (cef_log.txt, 2026-10-11: a crash on 10-09 was still number
+# 1 when the next came two days later). On the third, Steam relaunches its
+# whole UI. So this restarts the process only when the stall is observed,
+# never as a precaution.
 #
 # WHAT "STUCK" MEANS. The GPU process is the steamwebhelper that owns a
 # VizCompositorTh thread (it is forked from a zygote, so its command line
 # says --type=zygote, not --type=gpu-process). Its main thread is stuck when,
 # on STALL_TICKS consecutive one-second samples, it is inside a drm_syncobj
-# wait AND has made almost no voluntary context switches since the previous
-# sample. A healthy frame loop waits there too, but for a few milliseconds at
-# a time and switches dozens of times a second; the stall switches once per
-# 5 s timeout. An idle Steam sits in poll, not here.
+# wait AND has made no more than MAX_SWITCHES voluntary context switches in
+# all that time. The driver's wait times out after 5 s and goes straight back
+# in, so the stall wakes about once per 5 s and ten seconds of it costs a
+# switch or two. An idle Steam sits in poll, not here.
+#
+# Two healthy states wait there too. A frame loop on screen waits a few
+# milliseconds at a time and switches dozens of times a second. A Steam window
+# that is not on screen gets one frame a second from Xwayland, so its GPU
+# process spends nearly all its time in this wait and switches only 2-8 times
+# a second (cherenkov, 2026-10-11: the release point it waited on moved on
+# every second). The first version allowed 2 switches a second for 3 s, and
+# that background loop fell under it now and then: eight restarts in one
+# afternoon with no stall, three of which relaunched the whole Steam UI.
 #
 # Drop this when an NVIDIA or Xwayland release no longer stalls after resume:
 # stop shipping the unit, then check that the window repaints after a lid close.
@@ -39,10 +50,12 @@ shopt -s nullglob
 PROC=${PULSAR_PROC:-/proc}
 INTERVAL=${PULSAR_STEAM_WATCH_INTERVAL:-1}
 IDLE_INTERVAL=${PULSAR_STEAM_WATCH_IDLE:-10}
-STALL_TICKS=${PULSAR_STEAM_WATCH_TICKS:-3}
-# Switches allowed between two samples of a stalled thread: the wait's own
-# timeout wakes it about every five seconds, once or twice.
-MAX_SWITCHES=2
+# Two of the driver's 5 s wait timeouts.
+STALL_TICKS=${PULSAR_STEAM_WATCH_TICKS:-10}
+# Switches allowed across those STALL_TICKS samples: the wait's own timeout
+# wakes it twice in ten seconds, and this allows twice that. Off screen, the
+# frame loop makes 20 or more.
+MAX_SWITCHES=4
 COOLDOWN=${PULSAR_STEAM_WATCH_COOLDOWN:-30}
 # Tests bound the loop; 0 is forever.
 MAX_LOOPS=${PULSAR_STEAM_WATCH_LOOPS:-0}
@@ -79,29 +92,33 @@ switches() {
     return 1
 }
 
-gpu="" last="" stalled=0 loops=0
+# since: the switch count when the current run of quiet waiting began.
+gpu="" since="" stalled=0 loops=0
 while :; do
     if [ "$MAX_LOOPS" -gt 0 ]; then
         loops=$((loops + 1)); [ "$loops" -le "$MAX_LOOPS" ] || exit 0
     fi
     if [ -z "$gpu" ] || ! is_gpu_process "$gpu"; then
-        gpu="" last="" stalled=0
+        gpu="" since="" stalled=0
         find_gpu_process || { sleep "$IDLE_INTERVAL"; continue; }
     fi
     wchan="" sw=""
     read_line "$PROC/$gpu/task/$gpu/wchan" wchan
     switches "$gpu" sw
-    if [[ $wchan == drm_syncobj* ]] && [ -n "$last" ] && [ -n "$sw" ] &&
-       [ $((sw - last)) -le "$MAX_SWITCHES" ]; then
-        stalled=$((stalled + 1))
+    if [[ $wchan == drm_syncobj* ]] && [ -n "$sw" ]; then
+        if [ -n "$since" ] && [ $((sw - since)) -le "$MAX_SWITCHES" ]; then
+            stalled=$((stalled + 1))
+        else
+            # Out of budget: a frame got through. Start again from here.
+            since=$sw stalled=0
+        fi
     else
-        stalled=0
+        since="" stalled=0
     fi
-    last=$sw
     if [ "$stalled" -ge "$STALL_TICKS" ]; then
-        log "Steam's GPU process $gpu has waited on one explicit-sync release for ${stalled}s; restarting it"
+        log "Steam's GPU process $gpu has been stuck in an explicit-sync wait for ${stalled}s ($((sw - since)) wakeups); restarting it"
         kill "$gpu" 2>/dev/null || log "could not signal $gpu"
-        gpu="" last="" stalled=0
+        gpu="" since="" stalled=0
         sleep "$COOLDOWN"
         continue
     fi

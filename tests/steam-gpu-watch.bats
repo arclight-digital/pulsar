@@ -9,22 +9,24 @@
 # Pinned here: only the GPU process is touched (the steamwebhelper that owns
 # VizCompositorTh, not the browser process that also maps NVIDIA GL); only a
 # wait that makes no progress counts, so a busy frame loop that waits in the
-# same place is left alone; a GPU process that is merely idle is too; and
+# same place is left alone, and so is the one-frame-a-second loop of a Steam
+# window that is not on screen; a GPU process that is merely idle is too; and
 # another Chromium app's GPU process (Discord, a browser), which owns a
 # VizCompositorTh just the same, is never Steam's however stuck it looks.
 # Chromium treats every kill as a crash and falls back to software after a
 # few, so a false positive is not harmless.
 #
-# And the count itself: only CONSECUTIVE stalled samples add up, a GPU
-# process CEF starts in place of the old one starts from zero, and after a
-# restart the watcher waits out its cooldown and wants a fresh stall before
-# it acts again.
+# And the count itself: ten seconds in the wait, spanning two of the
+# driver's 5 s timeouts, with no more than four wakeups between them; a frame
+# that gets through starts the count again; a GPU process CEF starts in place
+# of the old one starts from zero; and after a restart the watcher waits out
+# its cooldown and wants a fresh stall before it acts again.
 
 setup() {
     SCRIPT="${BATS_TEST_DIRNAME}/../scripts/steam-gpu-watch.sh"
     export PULSAR_PROC="${BATS_TEST_TMPDIR}/proc"
     export PULSAR_STEAM_WATCH_INTERVAL=0 PULSAR_STEAM_WATCH_IDLE=0
-    export PULSAR_STEAM_WATCH_COOLDOWN=0 PULSAR_STEAM_WATCH_LOOPS=8
+    export PULSAR_STEAM_WATCH_COOLDOWN=0 PULSAR_STEAM_WATCH_LOOPS=14
     mkdir -p "$PULSAR_PROC"
     sleep 300 & VICTIM=$!
 }
@@ -69,6 +71,9 @@ set_switches() {
         "$2" > "$PULSAR_PROC/$1/task/$1/status"
 }
 
+# set_wchan PID WCHAN: where the main thread is blocked now
+set_wchan() { printf '%s' "$2" > "$PULSAR_PROC/$1/task/$1/wchan"; }
+
 # The watcher's only clock is sleep, once per sample. This one takes no time,
 # records what it was asked to wait, and after sample N runs step N, if a test
 # wrote one, so each change to the fake /proc lands between two known samples
@@ -85,7 +90,7 @@ echo "$1" >> "$CLOCK/slept"
 EOF
     chmod +x "$CLOCK/bin/sleep"
     export CLOCK PATH="$CLOCK/bin:$PATH"
-    export -f fake_proc set_switches
+    export -f fake_proc set_switches set_wchan
 }
 
 # step N COMMANDS: run COMMANDS after the watcher's Nth sample
@@ -99,6 +104,19 @@ alive() { kill -0 "$VICTIM" 2>/dev/null; }
     run "$SCRIPT"
     [ "$status" -eq 0 ]
     [[ "$output" == *"restarting it"* ]]
+    sleep 0.2
+    ! alive
+}
+
+@test "a stall that wakes on each of the driver's 5 s timeouts is still restarted" {
+    fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 1000 VizCompositorTh
+    fake_clock
+    # two switches per timeout, twice what one wakeup costs: four in the
+    # ten seconds, the most a stall may make
+    step 5 "set_switches $VICTIM 1002"
+    step 10 "set_switches $VICTIM 1004"
+    run "$SCRIPT"
+    [[ "$output" == *"for 10s (4 wakeups); restarting it"* ]]
     sleep 0.2
     ! alive
 }
@@ -142,37 +160,65 @@ alive() { kill -0 "$VICTIM" 2>/dev/null; }
     fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 0 VizCompositorTh
     fake_clock
     # dozens of switches between every two samples, as a healthy loop makes
-    for n in 1 2 3 4 5 6 7; do step "$n" "set_switches $VICTIM $((n * 60))"; done
+    for n in $(seq 1 13); do step "$n" "set_switches $VICTIM $((n * 60))"; done
     run "$SCRIPT"
     [ -z "$output" ]
     alive
 }
 
-@test "only consecutive stalled samples count: progress in between starts the count again" {
+@test "a Steam window that is not on screen, drawing one frame a second, is left alone" {
+    # Measured on cherenkov 2026-10-11, the Steam window maximized behind
+    # other windows and its Friends List on another workspace: in the wait on
+    # every sample, 2 to 8 switches a second, and the release point it waited
+    # on moved on every second. Two a second is the floor seen; the first
+    # watcher killed this loop eight times in one afternoon.
     fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 1000 VizCompositorTh
     fake_clock
-    # a quiet second, then 60 switches, over and over: never three quiet
-    # seconds in a row, so never the stall
-    step 2 "set_switches $VICTIM 1060"
-    step 4 "set_switches $VICTIM 1120"
-    step 6 "set_switches $VICTIM 1180"
-    run "$SCRIPT"
+    for n in $(seq 1 29); do step "$n" "set_switches $VICTIM $((1000 + n * 2))"; done
+    PULSAR_STEAM_WATCH_LOOPS=30 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    alive
+}
+
+@test "a frame that gets through starts the count again" {
+    fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 1000 VizCompositorTh
+    fake_clock
+    # quiet for seven seconds, a burst of frames, quiet for nine, another
+    # burst: never ten quiet seconds in a row, so never the stall
+    step 8 "set_switches $VICTIM 1060"
+    step 18 "set_switches $VICTIM 1120"
+    PULSAR_STEAM_WATCH_LOOPS=22 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    alive
+}
+
+@test "time spent out of the wait starts the count again" {
+    # Five quiet seconds in the wait, a spell idle in poll, then more quiet
+    # waiting: thirteen samples in the wait without a switch, never ten in
+    # one run, so never the stall.
+    fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 1000 VizCompositorTh
+    fake_clock
+    step 6 "set_wchan $VICTIM poll_schedule_timeout.constprop.0"
+    step 9 "set_wchan $VICTIM drm_syncobj_array_wait_timeout.constprop.0"
+    PULSAR_STEAM_WATCH_LOOPS=18 run "$SCRIPT"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     alive
 }
 
 @test "a GPU process CEF starts in place of the old one is counted from zero" {
-    # The old one went quiet for two samples and was replaced. The new one
+    # The old one went quiet for eight seconds and was replaced. The new one
     # has a low switch count of its own and a busy frame loop; held against
-    # the old one's count it would look stalled on its first sample.
+    # the old one's count it would look stalled from its first sample.
     sleep 300 & VICTIM2=$!
     fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 136053 VizCompositorTh
     fake_clock
-    step 3 "rm -rf '$PULSAR_PROC/$VICTIM'
+    step 9 "rm -rf '$PULSAR_PROC/$VICTIM'
 fake_proc $VICTIM2 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 10 VizCompositorTh"
-    for n in 4 5 6 7; do step "$n" "set_switches $VICTIM2 $((10 + (n - 3) * 60))"; done
-    run "$SCRIPT"
+    for n in $(seq 10 15); do step "$n" "set_switches $VICTIM2 $((10 + (n - 9) * 60))"; done
+    PULSAR_STEAM_WATCH_LOOPS=16 run "$SCRIPT"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     kill -0 "$VICTIM2"
@@ -184,8 +230,8 @@ fake_proc $VICTIM2 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 10 
     fake_clock
     run "$SCRIPT"
     [[ "$output" == *"restarting it"* ]]
-    # three one-second samples to see the stall, then the cooldown
-    [ "$(head -4 "$CLOCK/slept" | paste -sd' ')" = "1 1 1 30" ]
+    # ten one-second samples to see the stall, then the cooldown
+    [ "$(head -11 "$CLOCK/slept" | paste -sd' ')" = "1 1 1 1 1 1 1 1 1 1 30" ]
     # one wait per sample: the cooldown takes the interval's place, it is
     # not a wait on top of it
     [ "$(wc -l < "$CLOCK/slept")" -eq "$PULSAR_STEAM_WATCH_LOOPS" ]
@@ -193,11 +239,11 @@ fake_proc $VICTIM2 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 10 
 
 @test "a GPU process that outlives its restart is not restarted again without a fresh stall" {
     # It ignores the TERM and stays stuck. The next restart has to be earned
-    # by three stalled samples of its own, not inherited from the last one.
+    # by ten stalled seconds of its own, not inherited from the last one.
     ( trap '' TERM; exec sleep 300 ) & VICTIM2=$!
     fake_proc "$VICTIM2" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 136053 VizCompositorTh
     fake_clock
-    PULSAR_STEAM_WATCH_LOOPS=6 run "$SCRIPT"
+    PULSAR_STEAM_WATCH_LOOPS=20 run "$SCRIPT"
     [ "$status" -eq 0 ]
     [ "$(grep -c 'restarting it' <<<"$output")" -eq 1 ]
     kill -0 "$VICTIM2"
