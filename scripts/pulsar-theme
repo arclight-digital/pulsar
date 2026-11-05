@@ -2163,9 +2163,9 @@ def bind_picker(tx):
 
 # The markers a desktop session leaves in an account the first time it runs:
 # the Shell's own data dir (session state, app usage) and xdg-user-dirs'
-# config, which an autostart writes on every GNOME login. init runs BEFORE
-# gnome-session-pre.target, so on an account's very first desktop login
-# neither exists yet; on any account that has ever had a GNOME session here,
+# config, which xdg-user-dirs.service writes at every login. init's unit is
+# ordered before both that unit and gnome-session-pre.target, so on an
+# account's very first desktop login neither exists yet; on any account that has ever had a GNOME session here,
 # both do. gnome-initial-setup copies dconf, keyrings and monitors.xml into
 # the account it creates, never these, so they hold on that path too.
 SESSION_MARKERS = (DATA / "gnome-shell", CONFIG / "user-dirs.dirs")

@@ -197,3 +197,17 @@ print("ok")' "${REPO}/scripts"
     for u in pulsar-theme-init pulsar-theme-notice pulsar-welcome; do grep -qx 'ConditionUser=!@system' "$U/$u.service"; done
     grep -qx 'ExecCondition=/usr/libexec/pulsar/pulsar-theme login-account' "$U/pulsar-welcome.service"
 }
+
+@test "init looks at the account before xdg-user-dirs writes into it" {
+    # On Fedora 45 xdg-user-dirs.service writes ~/.config/user-dirs.dirs, a
+    # first-login mark, in the same instant init starts; unordered, it won,
+    # and no new account was ever greeted.
+    unit="${REPO}/system_files/usr/lib/systemd/user/pulsar-theme-init.service"
+    grep -qx 'Before=xdg-user-dirs.service' "$unit"
+    grep -qx 'Before=gnome-session-pre.target' "$unit"
+    # and that file is still one of the marks: an account that has it is not new
+    mkdir -p "$XDG_CONFIG_HOME"; : > "$XDG_CONFIG_HOME/user-dirs.dirs"
+    python3 "$ENGINE" init >/dev/null
+    grep -q '"fresh": false' "$TS/init.json"
+    [ ! -e "$TS/welcome.pending" ]
+}

@@ -18,6 +18,13 @@ ConditionUser=!@system
 # Before gnome-session starts the Shell and the autostart apps, so they come
 # up already themed and nothing is holding the old palette.
 Before=gnome-session-pre.target
+# And before xdg-user-dirs writes ~/.config/user-dirs.dirs, one of the two
+# marks init reads to tell an account's first desktop login (see
+# fresh_account()). On Fedora 45 that is a user unit pulled in by
+# graphical-session-pre.target, started in the same instant as this one and
+# done in milliseconds: on a new account it wrote the file first, init took
+# the account for a used one, and the welcome never came.
+Before=xdg-user-dirs.service
 PartOf=graphical-session.target
 
 [Service]
