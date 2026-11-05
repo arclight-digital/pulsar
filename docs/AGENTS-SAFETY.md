@@ -71,7 +71,11 @@ update and rollback.
   `~/.ssh/config`, a force-pushed branch, a leaked token: none is an OS change,
   so rollback can't help. The sandbox limits this to one project and removes
   force-push and your keys; within the project, git and backups are the
-  defense. A checkpoint restores settings, not documents or projects.
+  defense. A checkpoint restores settings, not documents or projects. A
+  session started with `pulsar agent run <agent> --tmux <name>` in a git
+  repository snapshots the project's files first, and
+  `pulsar agent undo <name>` puts them back; it leaves ignored files,
+  commits and branches alone, and it is not a backup.
 - **`/etc` across rollback.** Each deployment has its own `/etc`; updates
   carry local edits forward with a three-way merge. Rolling back boots the
   older copy, which can restore files you meant to change, lack edits made

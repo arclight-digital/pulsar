@@ -13,6 +13,83 @@ move independently: a month with no new Pulsar features keeps its release
 while the builds go on, so the About page may read
 `Pulsar 26.9.1 (44.20261103.0)` in November.
 
+## 26.11.1
+
+Agents you can leave running, a command menu, and GNOME 51.
+
+### Agents
+
+- `pulsar agent run <agent> --tmux <name>` keeps a coding agent in a named
+  session that outlives its terminal window. Run the same command again,
+  from any terminal, to come back to it; with Claude Code, the same
+  conversation picks up where it was. The sessions run on a tmux of their
+  own, tuned for agents, apart from yours. tmux is now in the image.
+- When an agent in a session you aren't looking at finishes or needs you,
+  a notification says so, and its Open button takes you to that session.
+- `--worktree` gives a session its own git worktree and branch, so several
+  agents can work in one project without touching each other's files. It
+  works in the sandbox too.
+- `pulsar agent undo <name>` puts a project's files back as they were when
+  the session started (in a git repository), and `--redo` takes that back. It never touches files
+  git ignores and never moves a branch.
+- `pulsar agent sessions` lists the sessions and what each is doing, and
+  `pulsar agent usage <name>` shows a Claude Code session's tokens.
+- Pulsar Settings has an Agents page: each session, its folder and usage,
+  with Open, Undo and End.
+
+### Command menu
+
+- Super+/ opens a search over what Pulsar does: copy text off the screen,
+  themes, updates, agent sessions, a health check, a checkpoint before a
+  risky change, asking your agent.
+- It answers too. Type a sum (`2^10`, `15% of 80`), a conversion
+  (`5 mi in km`, `100 f in c`, `2 GiB in MB`, `255 in hex`), money
+  (`100 usd in eur`) or a date (`in 90 days`, `days until dec 25`), and
+  Enter copies the answer. Exchange rates are the European Central Bank's,
+  fetched from frankfurter.dev only when you type a conversion, and kept
+  for 12 hours.
+
+### Screen
+
+- Super+Print copies the text in any part of the screen: pick the area and
+  it is on the clipboard (English). `pulsar screen qr` reads a QR code the
+  same way, and a link in it can be opened from the notification.
+- Both shortcuts are offered once. If your account already uses the keys,
+  they're left alone, and you can change either in Settings > Keyboard.
+
+### Gaming
+
+- When a game hits a GPU fault on NVIDIA, a notification names the game and
+  what to try, where before it just froze or vanished. If it keeps
+  happening, the usual fix is turning DLSS or frame generation off.
+  `pulsar doctor gpu-faults` lists this boot's.
+- Faugus games run the image's `gamescale`, as Steam games do. A game with
+  `gamescale` in its launch arguments no longer hangs on its splash.
+- Steam's window comes back when it stops redrawing after a resume on
+  NVIDIA. The fix shipped in 26.10.1 never fired; now it does, and Steam in
+  the background no longer counts as stuck.
+- An NVIDIA driver update for Flatpak apps waits until no app is using the
+  driver, instead of swapping it under a running Steam or Discord.
+
+### Desktop
+
+- GNOME 51, on Fedora 45. Themes, glass and the top bar carry over.
+- The kernel's own scheduler is the default again. On hybrid Intel CPUs the
+  one Pulsar shipped kept GNOME Shell on efficiency cores, and animations
+  stuttered. `scx.service` is still there to turn on.
+- Opening a file in a Flatpak app no longer hangs when the document portal
+  has deadlocked: Pulsar restarts it within a minute and offers to reopen
+  the apps it cut off.
+- Host Grotesk is the interface font again under Fedora 45's fontconfig.
+
+### Installer
+
+- Erasing a disk is unmistakable: a warning, the disk and what is on it
+  in red, and a red Erase and Install button.
+- The disk step shows what it is doing, and every install keeps a log at
+  `~/pulsar-install.log`, named on the failure page.
+- The ISO's boot menu is Pulsar's own.
+
 ## 26.10.1
 
 Pulsar's own installer, Pulsar Settings, and glass everywhere.
