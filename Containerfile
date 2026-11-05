@@ -1010,6 +1010,13 @@ RUN set -eu; \
 # repainting; the watcher restarts that one process when it sees the stall
 # (see scripts/steam-gpu-watch.sh). On the vanilla image it never starts.
 #
+# pulsar-gpu-fault-watch.service is --global for the same reason: it follows
+# the kernel log for NVIDIA Xid lines and tells the user, in words, when a
+# game's GPU work faulted, naming the game while it still runs. A game killed
+# that way leaves no core dump, so pulsar-crash-watch never sees it. Only on
+# the nvidia image. Reading the kernel log needs the wheel group, which
+# GNOME's first-run setup gives the account it makes (an administrator).
+#
 # pulsar-doc-portal-watch.timer is --global because the document portal is
 # per session. Once a minute it checks that the user's portal answers, and
 # restarts it when its mount is gone or it has deadlocked, which hangs every
@@ -1083,6 +1090,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-gl-check.path && \
     systemctl --global enable pulsar-crash-watch.path && \
     systemctl --global enable pulsar-steam-gpu-watch.service && \
+    systemctl --global enable pulsar-gpu-fault-watch.service && \
     systemctl --global enable pulsar-doc-portal-watch.timer && \
     systemctl --global enable pulsar-steam-gl-profile.service && \
     systemctl --global enable pulsar-theme-init.service && \
@@ -1095,7 +1103,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
         { echo "FATAL: ${u} is enabled here but missing from the system preset; a full preset-all would disable it"; exit 1; }; \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
-             pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
+             pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-gpu-fault-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
              pulsar-welcome.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \

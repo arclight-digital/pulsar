@@ -2784,6 +2784,148 @@ fake_agent() {
     [[ "$output" == warn*"1 crash(es) of yours this boot: foo (2 ignored"* ]] || fail "$output"
 }
 
+# ---------------------------------------------------------------------------
+# gpu faults: NVIDIA Xid lines from the kernel log, named and said in words.
+# The Xid lines are cherenkov's own (Hell Is Us 2026-10-09, State of Decay 2
+# 2026-11-04). /proc is a fixture: a Steam game, a Faugus (Wine) game, and a
+# pid that has already gone.
+# ---------------------------------------------------------------------------
+gpu_env() {
+    crash_env
+    jq '.variant = "nvidia"' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    export PULSAR_PROC_MODULES="${BATS_TEST_TMPDIR}/modules"
+    echo 'nvidia 1 0 - Live 0x0' > "$PULSAR_PROC_MODULES"
+    export PULSAR_PROC="${BATS_TEST_TMPDIR}/proc" KLOG="${BATS_TEST_TMPDIR}/klog" JOURNAL_ERR=""
+    : > "$KLOG"
+    # Steam (Flatpak), with its game in a second library
+    local steam="${HOME}/.var/app/com.valvesoftware.Steam/.local/share/Steam" lib="${BATS_TEST_TMPDIR}/games"
+    mkdir -p "${steam}/steamapps" "${lib}/steamapps"
+    printf '"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n\t"1"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n}\n' "$steam" "$lib" \
+        > "${steam}/steamapps/libraryfolders.vdf"
+    printf '"AppState"\n{\n\t"appid"\t\t"1620730"\n\t"name"\t\t"Hell Is Us"\n}\n' > "${lib}/steamapps/appmanifest_1620730.acf"
+    mkdir -p "${PULSAR_PROC}/4242" "${PULSAR_PROC}/5151"
+    printf 'SteamAppId=1620730\0STEAM_COMPAT_DATA_PATH=/x\0' > "${PULSAR_PROC}/4242/environ"
+    printf 'Z:\\games\\HellIsUs\\HellIsUs-Win64-Shipping.exe\0' > "${PULSAR_PROC}/4242/cmdline"
+    printf 'WINEPREFIX=/home/x/prefix\0' > "${PULSAR_PROC}/5151/environ"
+    printf '/home/x/Faugus/freelode/Freelode.exe\0-dx12\0' > "${PULSAR_PROC}/5151/cmdline"
+    cat > "${STUB}/journalctl" <<'SH'
+#!/bin/sh
+[ -n "$JOURNAL_ERR" ] && echo "$JOURNAL_ERR" >&2
+cat "$KLOG"
+SH
+    chmod +x "${STUB}/journalctl"
+}
+
+# klog <line>...: what the kernel log holds (and what --watch follows)
+klog() { printf '%s\n' "$@" >> "$KLOG"; }
+
+HIU_13='NVRM: Xid (PCI:0000:02:00): 13, pid=4242, name=GameThread, Graphics Exception: channel 0x00000028, Class 0000ce97, Offset 00000000, Data 00000000'
+HIU_13_DETAIL='NVRM: Xid (PCI:0000:02:00): 13, Graphics SM Warp Exception on (GPC 3, TPC 4, SM 1): MMU Fault'
+HIU_43='NVRM: Xid (PCI:0000:02:00): 43, pid=4242, name=GameThread, Ch 00000028'
+FREELODE_13='NVRM: Xid (PCI:0000:02:00): 13, pid=5151, name=freelode, Graphics Exception: channel 0x00000037, Class 0000ce97, Offset 00000000, Data 00000000'
+GONE_32='NVRM: Xid (PCI:0000:02:00): 32, pid=6161, name=StateOfDecay2-W, channel 0x00000014 intr0 00040000'
+
+@test "gpu faults: a game's Xid is one notification, naming the game and what to try" {
+    gpu_env
+    klog "$HIU_13" "$HIU_13_DETAIL" "$HIU_13_DETAIL" "$HIU_43"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ] || fail "$output"
+    # one fault, not one per line: the detail lines and the Xid 43 are the same one
+    [ "$(grep -c "^--user" "$RUN_LOG")" -eq 1 ] || fail "$(cat "$RUN_LOG")"
+    # Steam's name for it, from the manifest in the second library
+    grep -q -- "--unit=pulsar-gpu-fault-4242 " "$RUN_LOG"
+    grep -q "Hell Is Us hit a GPU fault" "$RUN_LOG"
+    grep -q "Xid 13: a fault in its graphics work" "$RUN_LOG"
+    grep -q "turn off DLSS and frame generation" "$RUN_LOG"
+    # no agent installed: no Ask button, but Ignore is there, by the game's name
+    ! grep -q "Ask Claude" "$RUN_LOG" || false
+    grep -q "crashes ignore add" "$RUN_LOG"
+    grep -qE " Hell Is Us$" "$RUN_LOG"
+}
+
+@test "gpu faults: a Wine game is named by its .exe; a gone process by its thread; neither twice" {
+    gpu_env
+    klog "$FREELODE_13" "$GONE_32"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -q "Freelode hit a GPU fault" "$RUN_LOG"
+    grep -q "StateOfDecay2-W hit a GPU fault" "$RUN_LOG"
+    # The gone one can't be told from a desktop program: no game advice for it
+    [ "$(grep -c "turn off DLSS" "$RUN_LOG")" -eq 1 ] || fail "$(cat "$RUN_LOG")"
+    grep "Freelode hit" "$RUN_LOG" | grep -q "turn off DLSS"
+    # Freelode again, as a new process (relaunched): not news this boot
+    cp -r "${PULSAR_PROC}/5151" "${PULSAR_PROC}/5152"
+    : > "$KLOG"; : > "$RUN_LOG"
+    klog "${FREELODE_13/pid=5151/pid=5152}"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ ! -s "$RUN_LOG" ] || fail "$(cat "$RUN_LOG")"
+    # after a reboot it is
+    echo boot-b > "$PULSAR_BOOT_ID_FILE"
+    run "$PULSAR" doctor gpu-faults --watch
+    grep -q "Freelode hit a GPU fault" "$RUN_LOG"
+}
+
+@test "gpu faults: an Xid 45 alone is not news; the GPU itself is, with no Ignore" {
+    gpu_env
+    klog 'NVRM: Xid (PCI:0000:02:00): 45, pid=4242, name=GameThread, Ch 00000028'
+    run "$PULSAR" doctor gpu-faults --watch
+    [ ! -s "$RUN_LOG" ] || fail "$(cat "$RUN_LOG")"
+    klog 'NVRM: Xid (PCI:0000:02:00): 79, GPU has fallen off the bus.'
+    run "$PULSAR" doctor gpu-faults --watch
+    grep -q "The NVIDIA GPU stopped answering the system" "$RUN_LOG"
+    grep -q "Save your work" "$RUN_LOG"
+    # nothing to ignore it by: the last argument (the name to ignore) is empty
+    grep -qE " $" "$RUN_LOG" || fail "$(cat "$RUN_LOG")"
+}
+
+@test "gpu faults: an ignored game is not announced; with an agent there is an Ask button" {
+    gpu_env
+    run "$PULSAR" crashes ignore add "Hell Is Us"
+    [ "$status" -eq 0 ]
+    fake_agent claude
+    klog "$HIU_13" "$FREELODE_13"
+    run "$PULSAR" doctor gpu-faults --watch
+    ! grep -q "Hell Is Us hit" "$RUN_LOG" || false
+    grep -q "Freelode hit a GPU fault" "$RUN_LOG"
+    grep -q 'action=ask="$1"' "$RUN_LOG"
+    grep -q "Ask Claude Code Freelode hit" "$RUN_LOG"
+    grep -q "search for reports of it with Freelode" "$RUN_LOG"
+}
+
+@test "doctor gpu-faults lists this boot's faults by the names the watcher found" {
+    gpu_env
+    run "$PULSAR" doctor gpu-faults
+    [ "$status" -eq 0 ]
+    [[ "$output" == ok*"no GPU faults this boot"* ]] || fail "$output"
+    klog "$HIU_13" "$HIU_13_DETAIL" "$HIU_43" "$GONE_32"
+    "$PULSAR" doctor gpu-faults --watch
+    run "$PULSAR" doctor gpu-faults
+    [ "$status" -eq 0 ]
+    [[ "$output" == warn*"2 GPU fault(s) this boot: Hell Is Us (Xid 13), StateOfDecay2-W (Xid 32)"* ]] || fail "$output"
+    [[ "$output" == *"Xid 13: a fault in its graphics work; Xid 32: a corrupted stream"* ]] || fail "$output"
+    # the same game twice is counted, once
+    klog "${HIU_13/pid=4242/pid=4243}"
+    run "$PULSAR" doctor gpu-faults
+    [[ "$output" == *"3 GPU fault(s) this boot: Hell Is Us (Xid 13), StateOfDecay2-W (Xid 32), GameThread (Xid 13)"* ]] || fail "$output"
+}
+
+@test "doctor gpu-faults: says so when it cannot read the kernel log; silent off the nvidia image" {
+    gpu_env
+    klog "$HIU_13"
+    JOURNAL_ERR="Hint: You are currently not seeing messages from other users and the system." \
+        run "$PULSAR" doctor gpu-faults
+    [[ "$output" == warn*"cannot read the kernel log"* ]] || fail "$output"
+    jq '.variant = "vanilla"' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+    run "$PULSAR" doctor gpu-faults
+    [[ "$output" == skip*"does not apply"* ]] || fail "$output"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ]
+    [ ! -s "$RUN_LOG" ]
+    run "$PULSAR" doctor crashes --watch
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--watch goes with one check: pulsar doctor gpu-faults --watch"* ]]
+}
+
 @test "agent ask starts the agent on a private report, with the crash and the rule" {
     crash_env
     fake_agent claude

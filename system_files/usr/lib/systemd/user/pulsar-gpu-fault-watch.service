@@ -1,0 +1,20 @@
+[Unit]
+# Follows the kernel log for NVIDIA "Xid" lines: a game whose GPU work
+# faulted freezes or quits with no core dump and no message. Names the game
+# while it is still running and says what to try. See "gpu faults" in
+# /usr/bin/pulsar.
+Description=Say when a game hits an NVIDIA GPU fault
+# The vanilla image ships this unit too; with no NVIDIA driver there is
+# nothing to watch.
+ConditionPathExists=/sys/module/nvidia
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/pulsar doctor gpu-faults --watch
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=graphical-session.target

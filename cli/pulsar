@@ -740,7 +740,7 @@ check_disk() {
 
 # Ids, in the order they run. Each is check_<id with - as _>, and each is
 # the id its findings carry in --json.
-DOCTOR_CHECKS='scheduler ntsync gamemode mangohud greenboot nvidia flatpak-gl gpu-containers flathub fedora origin updates disk crashes cli'
+DOCTOR_CHECKS='scheduler ntsync gamemode mangohud greenboot nvidia flatpak-gl gpu-faults gpu-containers flathub fedora origin updates disk crashes cli'
 
 doctor_help() {
     cat <<EOF
@@ -753,6 +753,11 @@ usage: pulsar doctor [check...]      health checks; exit 1 if one fails
                                      also notify, once per program per boot,
                                      with a button that asks your agent about
                                      it (pulsar-crash-watch; only with an agent)
+       pulsar doctor gpu-faults --watch
+                                     follow the kernel log and notify when a
+                                     program hits an NVIDIA GPU fault (Xid),
+                                     naming the game and what to try
+                                     (pulsar-gpu-fault-watch; nvidia image)
 
 checks: ${DOCTOR_CHECKS}
 --json gives {checks: [{id, status, summary, detail}], ok}. A check that
@@ -761,12 +766,13 @@ EOF
 }
 
 cmd_doctor() {
-    local notify=0 a c before
+    local notify=0 watch=0 a c before
     local -a only=() run=()
     for a in "$@"; do
         case "$a" in
             -h|--help) doctor_help; return 0 ;;
             --notify) notify=1 ;;
+            --watch) watch=1 ;;
             -*) die "unknown option: ${a} (see: pulsar doctor --help)" ;;
             *)
                 case " ${DOCTOR_CHECKS} " in
@@ -780,6 +786,12 @@ cmd_doctor() {
             flatpak-gl|crashes) ;;
             *) die "--notify goes with one check: pulsar doctor flatpak-gl --notify, or crashes --notify" ;;
         esac
+    fi
+    if [ "$watch" = 1 ]; then
+        [ "${only[*]-}" = gpu-faults ] && [ "$notify" = 0 ] \
+            || die "--watch goes with one check: pulsar doctor gpu-faults --watch"
+        gpu_faults_watch
+        return 0
     fi
     if [ ${#only[@]} -eq 0 ]; then
         read -ra run <<<"$DOCTOR_CHECKS"
@@ -4737,6 +4749,234 @@ cmd_crashes() {
             echo "  wherever it ran from; a pattern with a / matches the end of its path." ;;
         *) die "usage: pulsar crashes [ignore list | add <pattern> | remove <pattern>]" ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# gpu faults -- an NVIDIA "Xid" in the kernel log, said in words.
+#
+# When a game's GPU work faults, the NVIDIA driver writes an Xid line to the
+# kernel log and stops that work. The game freezes or quits with no core dump
+# and no message, so pulsar-crash-watch never hears of it. On cherenkov
+# (2026-10-09, driver 615, RTX 5080 Laptop) Hell Is Us did this four runs in
+# four (Xid 13 and Xid 109) until DLSS was turned off; nothing on screen said
+# why. The line names the process ("pid=4242, name=GameThread"), but by the
+# name of its thread, which is often not the game's.
+# pulsar-gpu-fault-watch (`pulsar doctor gpu-faults --watch`) reads the kernel
+# log as it is written, names the game while its process is still there to
+# ask, and says what to try. NVIDIA's list: docs.nvidia.com/deploy/xid-errors
+#
+# Only the nvidia image: the vanilla one has no NVIDIA driver to log Xids.
+# ---------------------------------------------------------------------------
+GPU_FAULT_PROC=${PULSAR_PROC:-/proc}
+
+# A kernel log line -> "xid<TAB>pid<TAB>name". pid and name are empty when the
+# line names no process: the detail lines that follow an Xid 13, an Xid 79.
+xid_parse() {
+    sed -nE '/NVRM: Xid /{
+        s/^.*NVRM: Xid \([^)]*\): ([0-9]+), pid=([0-9]+), name=([^,]*),.*$/\1\t\2\t\3/p
+        t
+        s/^.*NVRM: Xid \([^)]*\): ([0-9]+)[,:].*$/\1\t\t/p
+    }'
+}
+
+# xid -> "kind<TAB>words". game: one program's GPU work faulted; gpu: the GPU
+# itself; skip: not news on its own.
+xid_meaning() {
+    case "$1" in
+        13|69) printf 'game\ta fault in its graphics work' ;;
+        31)    printf 'game\ta GPU memory access outside its own memory' ;;
+        32)    printf 'game\ta corrupted stream of GPU commands' ;;
+        8|109) printf 'game\tGPU work that hung and had to be stopped' ;;
+        43)    printf 'game\tGPU work the driver had to stop' ;;
+        # the driver cleaning up after a program that ended mid-work: logged
+        # when one is killed, and after the Xid that was the news
+        45)    printf 'skip\t' ;;
+        79)    printf 'gpu\tThe NVIDIA GPU stopped answering the system' ;;
+        62|119|120) printf "gpu\\tThe NVIDIA GPU's firmware stopped responding" ;;
+        154)   printf 'gpu\tThe NVIDIA driver says the GPU needs a reset' ;;
+        *)     printf 'game\tan error the NVIDIA driver logs as Xid %s' "$1" ;;
+    esac
+}
+
+# A Steam app id -> its name, from the app manifest in whichever library has
+# it (Flatpak Steam, then a native one). libraryfolders.vdf lists every
+# library, the one beside it included. Prints nothing when not found.
+steam_app_name() {
+    local id=$1 root lib f n
+    for root in "${HOME:-/nonexistent}/.var/app/com.valvesoftware.Steam/.local/share/Steam" \
+                "${HOME:-/nonexistent}/.local/share/Steam" "${HOME:-/nonexistent}/.steam/steam"; do
+        [ -r "${root}/steamapps/libraryfolders.vdf" ] || continue
+        while IFS= read -r lib; do
+            f="${lib}/steamapps/appmanifest_${id}.acf"
+            [ -r "$f" ] || continue
+            n=$(sed -nE '/^[[:space:]]*"name"[[:space:]]+"(.*)"[[:space:]]*$/{s//\1/p;q}' "$f")
+            if [ -n "$n" ]; then printf '%s\n' "$n"; return 0; fi
+        done < <(sed -nE 's/^[[:space:]]*"path"[[:space:]]+"(.*)"[[:space:]]*$/\1/p' "${root}/steamapps/libraryfolders.vdf")
+    done
+    return 0
+}
+
+# pid comm -> "name<TAB>game", game 1 for a Steam game or a Windows one (an
+# .exe on its command line: Proton, Faugus, any Wine). The name: Steam's for its app, else the .exe it runs, else the
+# thread name the driver logged. Asked while the process is still running;
+# after it has gone, the thread name is all there is.
+gpu_fault_who() {
+    local pid=$1 name="" game=0 env="" app="" a
+    local -a args=()
+    if [ -r "${GPU_FAULT_PROC}/${pid}/environ" ]; then
+        env=$(tr '\0' '\n' < "${GPU_FAULT_PROC}/${pid}/environ" 2>/dev/null) || env=""
+        app=$(printf '%s\n' "$env" | sed -n '/^SteamAppId=/{s///p;q}')
+        case "$app" in ''|0|*[!0-9]*) app="" ;; *) game=1; name=$(steam_app_name "$app") ;; esac
+    fi
+    if [ -r "${GPU_FAULT_PROC}/${pid}/cmdline" ]; then
+        mapfile -d '' -t args < "${GPU_FAULT_PROC}/${pid}/cmdline" 2>/dev/null || args=()
+        for a in "${args[@]}"; do
+            case "$a" in
+                *.[eE][xX][eE])
+                    game=1
+                    if [ -z "$name" ]; then a=${a##*/}; a=${a##*\\}; name=${a%.[eE][xX][eE]}; fi ;;
+            esac
+        done
+    fi
+    [ -n "$name" ] || name=$2
+    # "Ignore this" stores it as a pattern, where a / means a path
+    printf '%s\t%s\n' "${name//\//-}" "$game"
+}
+
+GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS and frame generation in its settings (try FSR or TSR) and undo any GPU overclock."
+
+gpu_fault_boot() { cat "${PULSAR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null || echo unknown; }
+
+# One Xid as the watcher sees it: named, remembered for doctor, and announced
+# once per program per boot (a game that faults every launch is one piece of
+# news an evening). The state file holds this boot's faults, one per process:
+# boot <TAB> pid <TAB> xid <TAB> name.
+gpu_fault_event() {
+    local xid=$1 pid=$2 comm=$3 kind what name game boot state="${UPDATE_STATE}/gpu-faults" rows=""
+    IFS=$'\t' read -r kind what <<<"$(xid_meaning "$xid")"
+    [ "$kind" != skip ] || return 0
+    # A program's fault without its pid is a detail line of one already seen.
+    [ -n "$pid" ] || [ "$kind" = gpu ] || return 0
+    if [ -n "$pid" ]; then
+        IFS=$'\t' read -r name game <<<"$(gpu_fault_who "$pid" "$comm")"
+    else
+        pid=- name="the GPU" game=0
+    fi
+    boot=$(gpu_fault_boot)
+    [ -r "$state" ] && rows=$(awk -F'\t' -v b="$boot" '$1 == b' "$state")
+    # once per program: the Xid 43 after an Xid 13 is the same fault
+    local news=1
+    printf '%s\n' "$rows" | awk -F'\t' -v n="$name" -v x="$xid" -v p="$pid" \
+        '(p != "-" && $4 == n) || (p == "-" && $2 == "-" && $3 == x) { f = 1 } END { exit !f }' && news=0
+    mkdir -p "$UPDATE_STATE" \
+        && printf '%s\n%s\t%s\t%s\t%s\n' "$rows" "$boot" "$pid" "$xid" "$name" | awk 'NF' > "$state"
+    [ "$news" = 1 ] || return 0
+    [ "$pid" = - ] || ! crash_ignored "$name" || return 0
+    gpu_fault_notify_one "$xid" "$kind" "$what" "$name" "$game" "${pid#-}"
+}
+
+gpu_fault_notify_one() {
+    local xid=$1 kind=$2 what=$3 name=$4 game=$5 title body q
+    # $6: the pid, when a program faulted
+    have notify-send || return 0
+    if [ "$kind" = gpu ]; then
+        title=$what
+        body="Xid ${xid}. Save your work: apps using the GPU may not recover until you restart. Details: pulsar doctor gpu-faults"
+        q="The NVIDIA driver logged Xid ${xid} (${what}). Explain what it means on this machine and whether it points to the driver, the GPU or its power, and what I should do."
+    else
+        title="${name} hit a GPU fault"
+        body="Xid ${xid}: ${what}. That is usually a bug in ${name} or in the NVIDIA driver, not a failing GPU."
+        [ "$game" = 1 ] && body+=" ${GPU_FAULT_ADVICE}"
+        q="${name} hit an NVIDIA GPU fault (Xid ${xid}, ${what}); pulsar doctor gpu-faults lists this boot's. Explain what this Xid means, search for reports of it with ${name} and this driver, and tell me what to try."
+    fi
+    if ! have systemd-run; then
+        notify-send --app-name="Pulsar" --icon=dialog-warning "$title" "$body" || true
+        return 0
+    fi
+    local self agent="" ask="" unit
+    self=$(realpath "$SELF")
+    if agent=$(agent_default_name 2>/dev/null) && agent_row "$agent"; then
+        ask="Ask ${A_DESC%% (*}"
+    fi
+    # one unit per fault: the pid, or for the GPU itself the Xid and this run
+    unit=pulsar-gpu-fault-${6:-xid${xid}-$$}
+    # The buttons outlive the watcher's own work, as crash_notify_one's do.
+    # shellcheck disable=SC2016  # expanded by the transient unit's sh, not here
+    local script='if [ -n "$1" ]; then
+    a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" --action=ignore="Ignore this" "$2" "$3") || exit 0
+elif [ -n "$6" ]; then
+    a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ignore="Ignore this" "$2" "$3") || exit 0
+else
+    exec notify-send --app-name=Pulsar --icon=dialog-warning "$2" "$3"
+fi
+case "$a" in
+    ask) exec ptyxis --new-window -d "$HOME" -- "$5" agent ask "$4" ;;
+    ignore) exec "$5" crashes ignore add "$6" ;;
+esac'
+    local ign=$name
+    [ "$kind" != gpu ] || ign=""
+    systemd-run --user --collect --quiet --unit="$unit" \
+        -- sh -c "$script" sh "$ask" "$title" "$body" "$q" "$self" "$ign" 2>/dev/null || true
+}
+
+# Follow the kernel log for the length of the desktop session.
+gpu_faults_watch() {
+    gpu_faults_apply || return 0
+    have journalctl || return 0
+    local line xid pid comm
+    while IFS= read -r line; do
+        case "$line" in *"NVRM: Xid "*) ;; *) continue ;; esac
+        IFS=$'\t' read -r xid pid comm <<<"$(printf '%s\n' "$line" | xid_parse)"
+        [ -n "$xid" ] || continue
+        gpu_fault_event "$xid" "$pid" "$comm" || true
+    done < <(journalctl -k -f -n 0 -o cat --no-pager 2>/dev/null)
+}
+
+# the nvidia image, with the driver loaded
+gpu_faults_apply() {
+    case "$(mf variant)" in *nvidia*) ;; *) return 1 ;; esac
+    grep -q '^nvidia ' "${PULSAR_PROC_MODULES:-/proc/modules}" 2>/dev/null
+}
+
+check_gpu_faults() {
+    gpu_faults_apply || return 0
+    have journalctl || return 0
+    local out err
+    err=$(mktemp)
+    out=$(journalctl -k -b -o cat --no-pager 2>"$err" | xid_parse) || true
+    if grep -qi 'insufficient permissions\|permission denied\|not seeing messages' "$err"; then
+        rm -f "$err"
+        record gpu-faults warn "cannot read the kernel log" \
+            "join the wheel, adm or systemd-journal group, or run: sudo pulsar doctor gpu-faults"
+        return 0
+    fi
+    rm -f "$err"
+    # names the watcher found while the programs were running
+    local boot names="" state="${UPDATE_STATE}/gpu-faults"
+    boot=$(gpu_fault_boot)
+    [ -r "$state" ] && names=$(awk -F'\t' -v b="$boot" '$1 == b { print $2 "\t" $4 }' "$state")
+    local list
+    list=$(printf '%s\n' "$out" | while IFS=$'\t' read -r xid pid comm; do
+        [ -n "$xid" ] || continue
+        IFS=$'\t' read -r kind what <<<"$(xid_meaning "$xid")"
+        case "$kind" in skip) continue ;; gpu) ;; *) [ -n "$pid" ] || continue ;; esac
+        if [ -n "$pid" ]; then
+            n=$(printf '%s\n' "$names" | awk -F'\t' -v p="$pid" '$1 == p { print $2; exit }')
+            printf '%s\t%s\t%s\t%s\n' "$pid" "$xid" "${n:-$comm}" "$what"
+        else
+            printf -- '-\t%s\t%s\t%s\n' "$xid" "GPU" "$what"
+        fi
+    done | awk -F'\t' '$1 == "-" || !seen[$1]++')
+    if [ -z "$list" ]; then
+        record gpu-faults ok "no GPU faults this boot"
+        return 0
+    fi
+    local n summary detail
+    n=$(printf '%s\n' "$list" | grep -c .)
+    summary=$(printf '%s\n' "$list" | awk -F'\t' '{ k = $3 " (Xid " $2 ")"; if (!c[k]++) o[++m] = k }
+        END { for (i = 1; i <= m; i++) printf "%s%s%s", (i > 1 ? ", " : ""), o[i], (c[o[i]] > 1 ? " x" c[o[i]] : "") }')
+    detail=$(printf '%s\n' "$list" | awk -F'\t' '{ k = "Xid " $2 ": " $4; if (!s[k]++) printf "%s%s", (n++ ? "; " : ""), k }')
+    record gpu-faults warn "${n} GPU fault(s) this boot: ${summary}" "${detail}. ${GPU_FAULT_ADVICE}"
 }
 
 # ---------------------------------------------------------------------------

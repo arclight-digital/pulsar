@@ -114,6 +114,7 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
 | `pulsar report` | Doctor + status + manifest, failed units, recent warning+ journal, GPU driver, Flatpak state. Redacted JSON. Use when something is broken. |
 | `pulsar report --crash latest` | One crash: program, signal, package, unit, crashing thread's stack, its log lines. `pulsar doctor crashes` lists this boot's. |
 | `pulsar doctor flatpak-gl` | Whether running Flatpak apps (Steam) have the NVIDIA driver. An app started before its GL extension arrived renders black on the iGPU; quit and reopen it. The NVIDIA GL extensions are masked on purpose: `flatpak update` skips them, and `pulsar-gl-nvidia.service` updates them when no app holds them. Don't unmask them. |
+| `pulsar doctor gpu-faults` | This boot's NVIDIA GPU faults (Xid lines in the kernel log), by program, in words. A game that froze or quit without a crash usually has one. |
 | `pulsar update --check --json` | Exit 0 current or staged, 10 newer available, 1 couldn't tell. |
 | `pulsar pin --json` | Whether the booted deployment is pinned. |
 | `pulsar agent guard --json` | `on`: layering and system Flatpak installs ask for a password. `off`: they don't. |
