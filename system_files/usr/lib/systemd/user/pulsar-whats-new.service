@@ -1,0 +1,20 @@
+# After an update to a new Pulsar release, one notification at the first
+# login on it: "Pulsar <release> is here", with a "See what's new" button that
+# opens the welcome app's page of the release notes. Once per release per
+# account, clicked or not; a new account gets the welcome tour instead. The
+# record is %S/pulsar-welcome/release. See /usr/libexec/pulsar/pulsar_whats_new.py.
+[Unit]
+Description=Pulsar: what's new in this release
+ConditionUser=!@system
+After=gnome-session.target pulsar-theme-init.service
+PartOf=graphical-session.target
+
+[Service]
+# Type=exec: it waits on the notification for the button, then opens the page
+Type=exec
+# the login screen's dynamic greeter accounts are not @system
+ExecCondition=/usr/libexec/pulsar/pulsar-theme login-account
+ExecStart=/usr/bin/python3 /usr/libexec/pulsar/pulsar_whats_new.py --notify
+
+[Install]
+WantedBy=gnome-session.target

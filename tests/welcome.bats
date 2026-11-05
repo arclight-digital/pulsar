@@ -19,6 +19,8 @@ setup() {
 
 setkey() { python3 -c 'import json,sys; f=sys.argv[1]; d=json.load(open(f)); d[sys.argv[2]]=sys.argv[3]; json.dump(d, open(f, "w"))' "$PULSAR_THEME_FAKE_DCONF" "$1" "$2"; }
 
+fail() { echo "$*" >&2; return 1; }
+
 have_adw() { python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Adw' 2>/dev/null; }
 
 @test "a new account's first login queues the welcome, not the notice" {
@@ -210,4 +212,113 @@ print("ok")' "${REPO}/scripts"
     python3 "$ENGINE" init >/dev/null
     grep -q '"fresh": false' "$TS/init.json"
     [ ! -e "$TS/welcome.pending" ]
+}
+
+# ---------------------------------------------------------------------------
+# What's new: the notes for this release, and one notice per release
+# ---------------------------------------------------------------------------
+WHATS_NEW="${BATS_TEST_DIRNAME}/../scripts/pulsar_whats_new.py"
+
+news_env() {
+    export PULSAR_RELEASE_FILE="${BATS_TEST_TMPDIR}/release" PULSAR_RELEASE_NOTES="${BATS_TEST_TMPDIR}/releases.md"
+    cat > "$PULSAR_RELEASE_NOTES" <<'MD'
+# Releases
+
+Intro that is not a release.
+
+## 26.12.1
+
+Snow, and `pulsar snow` for it.
+
+### Desktop
+
+- Snow falls on the **top bar**, as
+  [documented](https://example.invalid) & tested.
+- Second <point>.
+
+### Gaming
+
+- `gg` is faster.
+
+## 26.11.1
+
+Older.
+MD
+    echo 26.12.1 > "$PULSAR_RELEASE_FILE"
+    STUB="${BATS_TEST_TMPDIR}/stub"; mkdir -p "$STUB"
+    export NOTIFY_LOG="${BATS_TEST_TMPDIR}/notify.log" CLICK=""
+    printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done >> "$NOTIFY_LOG"\n[ -n "$CLICK" ] && echo open\nexit 0\n' > "${STUB}/notify-send"
+    printf '#!/bin/sh\necho "welcome $*" > "%s/opened"\n' "$BATS_TEST_TMPDIR" > "${STUB}/welcome"
+    chmod +x "${STUB}/notify-send" "${STUB}/welcome"
+    export PATH="${STUB}:${PATH}" PULSAR_WELCOME="${STUB}/welcome"
+}
+
+@test "what's new: the release's own section of the notes, as markup" {
+    news_env
+    run python3 "$WHATS_NEW" --print
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "26.12.1: Snow, and <tt>pulsar snow</tt> for it." ]
+    [ "${lines[1]}" = "Desktop" ]
+    # a bullet's wrapped lines joined; bold, links and what Pango would read as tags
+    [ "${lines[2]}" = "  - Snow falls on the <b>top bar</b>, as documented &amp; tested." ]
+    [ "${lines[3]}" = "  - Second &lt;point&gt;." ]
+    [ "${lines[4]}" = "Gaming" ]
+    [ "${lines[5]}" = "  - <tt>gg</tt> is faster." ]
+    [ "${#lines[@]}" -eq 6 ]
+    echo 99.1.1 > "$PULSAR_RELEASE_FILE"
+    run python3 "$WHATS_NEW" --print
+    [ "$status" -eq 1 ]
+}
+
+@test "what's new: the shipped notes have a section for the shipped release" {
+    run env PULSAR_RELEASE_FILE="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/release" \
+        PULSAR_RELEASE_NOTES="${BATS_TEST_DIRNAME}/../docs/releases.md" python3 "$WHATS_NEW" --print
+    [ "$status" -eq 0 ] || fail "the release in system_files/usr/share/pulsar/release has no section in docs/releases.md"
+    [[ "${lines[0]}" == "$(cat "${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/release"): "?* ]]
+}
+
+@test "what's new: an updated account is told once per release, and the button opens the page" {
+    news_env
+    run python3 "$WHATS_NEW" --notify
+    [ "$status" -eq 0 ]
+    grep -qx "Pulsar 26.12.1 is here" "$NOTIFY_LOG"
+    grep -qx "Snow, and pulsar snow for it." "$NOTIFY_LOG"
+    grep -qx -- "--action=open=See what's new" "$NOTIFY_LOG"
+    [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.12.1 ]
+    [ ! -e "${BATS_TEST_TMPDIR}/opened" ]
+    # the same release again: nothing
+    : > "$NOTIFY_LOG"
+    python3 "$WHATS_NEW" --notify
+    [ ! -s "$NOTIFY_LOG" ]
+    # the next one, clicked: the page opens
+    sed -i 's/^## 26.11.1$/## 27.1.1/' "$PULSAR_RELEASE_NOTES"
+    echo 27.1.1 > "$PULSAR_RELEASE_FILE"
+    CLICK=1 python3 "$WHATS_NEW" --notify
+    grep -qx "Pulsar 27.1.1 is here" "$NOTIFY_LOG"
+    [ "$(cat "${BATS_TEST_TMPDIR}/opened")" = "welcome --whats-new" ]
+}
+
+@test "what's new: a new account gets the tour, not the notice; a release without notes says nothing" {
+    news_env
+    mkdir -p "$TS"; touch "$TS/welcome.pending"
+    python3 "$WHATS_NEW" --notify
+    [ ! -s "$NOTIFY_LOG" ]
+    # recorded all the same: the next release is news
+    [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.12.1 ]
+    rm "$TS/welcome.pending"
+    echo 99.1.1 > "$PULSAR_RELEASE_FILE"
+    python3 "$WHATS_NEW" --notify
+    [ ! -s "$NOTIFY_LOG" ]
+    [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 99.1.1 ]
+}
+
+@test "what's new: the notes ship, the unit is enabled with the welcome, and the app grid has the page" {
+    cf="${REPO}/Containerfile"
+    grep -qx 'COPY docs/releases.md /usr/share/pulsar/releases.md' "$cf"
+    grep -q '^COPY scripts/pulsar-theme .*scripts/pulsar_whats_new.py.* /usr/libexec/pulsar/$' "$cf"
+    grep -q 'systemctl --global enable pulsar-whats-new.service' "$cf"
+    grep -qx 'enable pulsar-whats-new.service' "${REPO}/system_files/usr/lib/systemd/user-preset/50-pulsar.preset"
+    d="${REPO}/system_files/usr/share/applications/digital.arclight.Pulsar.Welcome.desktop"
+    grep -qx 'Actions=whats-new;' "$d"
+    grep -qx 'Exec=/usr/libexec/pulsar/pulsar-welcome --whats-new' "$d"
 }

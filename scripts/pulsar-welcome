@@ -1,6 +1,10 @@
 #!/usr/bin/python3
 """pulsar-welcome -- the first-login welcome: six pages, then out of the way.
 
+With --whats-new it is one page instead: what changed in the release this
+machine runs, from the release notes (pulsar_whats_new.py). The notification
+after an update opens it, and so does "What's New" on the app grid entry.
+
 Started once per account by pulsar-welcome.service with --first-login, which
 only fires on a new account's first desktop session (see that unit, and
 fresh_account() in the theme engine). With --first-login the window stamps
@@ -35,6 +39,7 @@ import pulsar_theme_engine  # noqa: E402
 
 pt = pulsar_theme_engine.load(HERE / "pulsar-theme")
 import pulsar_theme_cards as cards  # noqa: E402
+import pulsar_whats_new as whats_new  # noqa: E402
 
 STATE = pt.xdg("XDG_STATE_HOME", ".local/state")
 STAMP = STATE / "pulsar-welcome" / "shown.json"
@@ -113,6 +118,65 @@ def command(cmd, what):
     row.append(Gtk.Label(label=cmd, css_classes=["wl-cmd"], valign=Gtk.Align.CENTER, width_chars=16, xalign=0))
     row.append(label(what, ["wl-body"], 0, hexpand=True, valign=Gtk.Align.CENTER))
     return row
+
+
+# What's new: each section of the notes under an icon of its own
+SECTION_ICONS = {"agents": "utilities-terminal-symbolic", "command menu": "system-search-symbolic",
+                 "screen": "edit-copy-symbolic", "gaming": "input-gaming-symbolic",
+                 "desktop": "preferences-desktop-appearance-symbolic", "installer": "drive-harddisk-symbolic",
+                 "themes": "applications-graphics-symbolic", "glass and light": "weather-clear-symbolic",
+                 "crashes": "dialog-warning-symbolic", "under the hood": "emblem-system-symbolic",
+                 "pulsar settings": "preferences-system-symbolic"}
+
+
+def section(heading, items):
+    """One section of the notes: its heading over its points, in a panel."""
+    b = Gtk.Box(spacing=16, css_classes=["wl-fact"])
+    b.append(Gtk.Image(icon_name=SECTION_ICONS.get(heading.lower(), "starred-symbolic"), pixel_size=28,
+                       valign=Gtk.Align.START, css_classes=["wl-fact-icon"], margin_top=2))
+    txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, hexpand=True)
+    txt.append(label(heading, ["wl-h"], 0))
+    for item in items:
+        txt.append(markup(item, ["wl-body"], 0))
+    b.append(txt)
+    return b
+
+
+class WhatsNew(Adw.ApplicationWindow):
+    """What changed in this release, from its notes: one scrolling page."""
+    def __init__(self, app, n):
+        super().__init__(application=app, title=f"What's New in Pulsar {n['release']}",
+                         default_width=860, default_height=780)
+        cards.install_css()
+        prov = Gtk.CssProvider()
+        prov.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), prov,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        tv = Adw.ToolbarView(top_bar_style=Adw.ToolbarStyle.FLAT, bottom_bar_style=Adw.ToolbarStyle.FLAT)
+        tv.add_top_bar(Adw.HeaderBar(show_title=False))
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        head.append(label("WHAT'S NEW", ["wl-kicker"]))
+        head.append(label(f"Pulsar {n['release']}", ["wl-title"]))
+        if n["lede"]:
+            head.append(markup(n["lede"], ["wl-lede"]))
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for h, items in n["sections"]:
+            body.append(section(h, items))
+        tv.set_content(page(head, spacer(8), body, width=720, top=8))
+        bottom = Gtk.CenterBox(css_classes=["wl-bottom"])
+        tour = Gtk.Button(label="Take the tour", css_classes=["flat", "wl-pill"],
+                          tooltip_text="Themes, games and coding agents: the welcome")
+        tour.connect("clicked", lambda *_: (Welcome(app, False).present(), self.close()))
+        done = Gtk.Button(label="Done", css_classes=["suggested-action", "wl-pill"])
+        done.connect("clicked", lambda *_: self.close())
+        bottom.set_start_widget(tour)
+        bottom.set_end_widget(done)
+        tv.add_bottom_bar(bottom)
+        self.set_content(tv)
+        key = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        key.connect("key-pressed", lambda _c, kv, *_: kv == Gdk.KEY_Escape and (self.close() or True))
+        self.add_controller(key)
+        GLib.idle_add(done.grab_focus)
 
 
 def shortcut_bound():
@@ -609,6 +673,9 @@ def initial_setup_running():
 
 def main(argv):
     first = "--first-login" in argv[1:]
+    # the notes for this release; none (a release without notes, a checkout
+    # without a release file) opens the tour instead
+    news = whats_new.notes() if "--whats-new" in argv[1:] else None
     if first and STAMP.exists():
         # the unit's condition already says this; a second guard costs nothing
         PENDING.unlink(missing_ok=True)
@@ -627,7 +694,7 @@ def main(argv):
     app = Adw.Application(application_id="digital.arclight.Pulsar.Welcome")
 
     def activate(a):
-        w = a.get_active_window() or Welcome(a, first)
+        w = a.get_active_window() or (WhatsNew(a, news) if news else Welcome(a, first))
         w.present()
     app.connect("activate", activate)
     return app.run([argv[0]])

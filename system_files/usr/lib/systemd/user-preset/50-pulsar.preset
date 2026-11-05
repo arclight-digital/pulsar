@@ -14,4 +14,5 @@ enable pulsar-steam-gl-profile.service
 enable pulsar-theme-init.service
 enable pulsar-theme-notice.service
 enable pulsar-welcome.service
+enable pulsar-whats-new.service
 enable pulsar-shortcuts.service

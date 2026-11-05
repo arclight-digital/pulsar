@@ -711,6 +711,9 @@ COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 COPY scripts/pulsar-agent-gate /usr/libexec/pulsar/pulsar-agent-gate
 COPY scripts/pulsar-mcp /usr/libexec/pulsar/pulsar-mcp
 COPY scripts/steam-gpu-watch.sh /usr/libexec/pulsar/steam-gpu-watch.sh
+# The release notes, for the welcome's What's New page (pulsar_whats_new.py
+# reads the section for /usr/share/pulsar/release out of them).
+COPY docs/releases.md /usr/share/pulsar/releases.md
 # The screen reader, the command menu and the shortcuts that open them (see
 # the tesseract/zbar entry in the package list, and pulsar-shortcuts.service).
 COPY scripts/pulsar-screen scripts/pulsar-menu scripts/pulsar-shortcuts /usr/libexec/pulsar/
@@ -813,7 +816,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 # adw-gtk3 is what lets GTK3 apps take the palette at all: stock Adwaita GTK3
 # reads different colour names and no light/dark pairing.
 # ---------------------------------------------------------------------------
-COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py scripts/pulsar-settings scripts/pulsar-welcome /usr/libexec/pulsar/
+COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py scripts/pulsar_whats_new.py scripts/pulsar-settings scripts/pulsar-welcome /usr/libexec/pulsar/
 RUN set -eu; \
     chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker /usr/libexec/pulsar/pulsar-welcome /usr/libexec/pulsar/pulsar-settings; \
     free_kb=$(df --output=avail -k / | tail -1); \
@@ -1055,6 +1058,12 @@ RUN set -eu; \
 # place of the notice, and the welcome stamps itself shown. An existing
 # account that gets this in an update is never greeted.
 #
+# pulsar-whats-new.service is --global for the same reason, and is the
+# welcome's other half: on an account's first login on a new release, one
+# notification with a button that opens the welcome app's page of that
+# release's notes (/usr/share/pulsar/releases.md, docs/releases.md here).
+# Once per release per account; a new account gets the tour instead.
+#
 # pulsar-shortcuts.service is --global for the same reason: shortcuts live in
 # each account's dconf. At each login it offers what the account has not been
 # offered yet (Super+Space for the command menu, Super+Print for copying
@@ -1121,6 +1130,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-theme-init.service && \
     systemctl --global enable pulsar-theme-notice.service && \
     systemctl --global enable pulsar-welcome.service && \
+    systemctl --global enable pulsar-whats-new.service && \
     systemctl --global enable pulsar-shortcuts.service && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in greenboot-healthcheck.service pulsar-flatpaks.service \
@@ -1130,7 +1140,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
              pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-gpu-fault-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
-             pulsar-welcome.service pulsar-shortcuts.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer; do \
+             pulsar-welcome.service pulsar-whats-new.service pulsar-shortcuts.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

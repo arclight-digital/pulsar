@@ -8,3 +8,8 @@ Icon=digital.arclight.Pulsar.Welcome
 Categories=GTK;System;
 StartupNotify=true
 X-GNOME-UsesNotifications=false
+Actions=whats-new;
+
+[Desktop Action whats-new]
+Name=What's New
+Exec=/usr/libexec/pulsar/pulsar-welcome --whats-new
