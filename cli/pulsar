@@ -3552,22 +3552,147 @@ agent_sessions() {
             printf 'forgot %s (the conversation itself is still in the agent'"'"'s history)\n' "$2"
             return 0 ;;
     esac
-    local live="" names n f
-    ! have tmux || live=$(atmux list-sessions -F '#{session_name}' 2>/dev/null) || live=""
-    names=$( { printf '%s\n' "$live"
+    local live="" names n f row
+    ! have tmux || live=$(atmux list-sessions -F $'#{session_name}\t#{session_created}\t#{@pulsar-alert}' 2>/dev/null) || live=""
+    names=$( { cut -f1 <<<"$live"
                for f in "$AGENT_SESSIONS"/*.session; do
                    [ ! -e "$f" ] || basename "$f" .session
                done; } | sed '/^$/d' | sort -u)
+    if [ "${JSON:-0}" = 1 ]; then
+        need jq
+        while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            row=$(awk -F'\t' -v n="$n" '$1 == n' <<<"$live")
+            agent_session_json "$n" "$row"
+        done <<<"$names" | jq -s '.'
+        return 0
+    fi
     if [ -z "$names" ]; then
         printf 'no agent sessions  (pulsar agent run <name> --tmux <session>)\n'
         return 0
     fi
-    printf '%-16s %-9s %-8s %s\n' NAME AGENT STATE FOLDER
+    local state since ctx agent dir u now
+    now=$(date +%s)
+    printf '%-16s %-9s %-8s %-8s %-8s %s\n' NAME AGENT STATE SINCE CONTEXT FOLDER
     while IFS= read -r n; do
-        printf '%-16s %-9s %-8s %s\n' "$n" "$(session_get "$n" agent || echo -)" \
-            "$(grep -Fxq -- "$n" <<<"$live" && echo running || echo ended)" \
-            "$(session_get "$n" dir || echo -)"
+        row=$(awk -F'\t' -v n="$n" '$1 == n' <<<"$live")
+        agent=$(session_get "$n" agent) || agent=-
+        dir=$(session_get "$n" dir) || dir=-
+        state=ended; since=-; ctx=-
+        if [ -n "$row" ]; then
+            IFS=$'\t' read -r _ since state <<<"$row"
+            since=$(human_age $(( now - since )))
+            case "$state" in "") state=running ;; *) state=waiting ;; esac
+        fi
+        if [ "$agent" = claude ] && u=$(session_usage "$n"); then
+            ctx=$(jq -r '.context' <<<"$u" | human_tokens)
+        fi
+        printf '%-16s %-9s %-8s %-8s %-8s %s\n' "$n" "$agent" "$state" "$since" "$ctx" "${dir/#"$HOME"/\~}"
     done <<<"$names"
+}
+
+# 75 -> 1m, 7300 -> 2h 1m, 200000 -> 2d 7h
+human_age() {
+    local t=$1
+    if [ "$t" -lt 3600 ]; then printf '%dm\n' $(( t / 60 ))
+    elif [ "$t" -lt 86400 ]; then printf '%dh %dm\n' $(( t / 3600 )) $(( t % 3600 / 60 ))
+    else printf '%dd %dh\n' $(( t / 86400 )) $(( t % 86400 / 3600 )); fi
+}
+
+# stdin: a count of tokens -> 950, 12k, 273k, 25.1M
+human_tokens() {
+    awk '{ n = $1 + 0
+           if (n < 1000) printf "%d\n", n
+           else if (n < 1000000) printf "%dk\n", int(n / 1000 + 0.5)
+           else printf "%.1fM\n", n / 1000000 }'
+}
+
+# ---------------------------------------------------------------------------
+# agent usage -- what a session's conversation has cost in tokens, read from
+# the agent's own transcript (Claude Code only: the one whose conversation a
+# session can name). A message is written once per content block, all with
+# the same usage, so each counts once (by its id, taking the largest output
+# seen), and the subagents' own transcripts count too.
+#
+# No money: on a subscription there is no per-token price, and a price
+# table in the OS would be wrong the day prices move.
+# ---------------------------------------------------------------------------
+
+# session_usage <session> -> one JSON object, or fail when there is nothing
+session_usage() {
+    local s=$1 id f="" c t
+    [ "$(session_get "$s" agent 2>/dev/null)" = claude ] || return 1
+    id=$(session_get "$s" id) || return 1
+    [ -n "$id" ] || return 1
+    have jq || return 1
+    for c in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "${SANDBOX_HOMES}/claude/.claude"; do
+        for t in "$c"/projects/*/"${id}.jsonl"; do
+            [ -f "$t" ] || continue
+            if [ -z "$f" ] || [ "$t" -nt "$f" ]; then f=$t; fi
+        done
+    done
+    [ -n "$f" ] || return 1
+    local -a files=("$f")
+    for t in "${f%.jsonl}"/subagents/*.jsonl; do [ ! -f "$t" ] || files+=("$t"); done
+    jq -c 'select(.type == "assistant" and .message.usage != null and .message.id != null)
+           | .message.usage as $u
+           | [.message.id, (.isSidechain // false), (.message.model // ""), (.timestamp // ""),
+              ($u.input_tokens // 0), ($u.cache_creation_input_tokens // 0),
+              ($u.cache_read_input_tokens // 0), ($u.output_tokens // 0)]' "${files[@]}" 2>/dev/null \
+    | jq -s -c 'reduce .[] as $r ({}; .[$r[0]] = (if .[$r[0]] == null or $r[7] > .[$r[0]][7] then $r else .[$r[0]] end))
+        | [.[]] as $m
+        | if ($m | length) == 0 then null else
+          ([$m[] | select(.[1] | not)] | max_by(.[3])) as $last
+          | {model: ($last[2] // ""),
+             requests: ([$m[] | select(.[1] | not)] | length),
+             subagent_requests: ([$m[] | select(.[1])] | length),
+             context: (if $last then $last[4] + $last[5] + $last[6] else 0 end),
+             read: ([$m[] | .[4] + .[5] + .[6]] | add),
+             read_cached: ([$m[] | .[6]] | add),
+             written: ([$m[] | .[7]] | add)}
+          end' | grep -v '^null$'
+}
+
+agent_usage() {
+    local s=${1:-}
+    case "$s" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent usage <session> [--json]" ;; esac
+    [ $# -eq 1 ] || die "usage: pulsar agent usage <session> [--json]"
+    need jq
+    local agent u
+    agent=$(session_get "$s" agent) || die "no session called ${s} (pulsar agent sessions)"
+    [ "$agent" = claude ] || die "${s} runs ${agent}; usage is read from Claude Code's transcripts only"
+    u=$(session_usage "$s") || die "${s} has no conversation on disk yet"
+    if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$u"; return 0; fi
+    printf '%s  %s\n' "$s" "$(jq -r .model <<<"$u")"
+    printf '  context now  %s tokens\n' "$(jq -r .context <<<"$u" | human_tokens)"
+    printf '  requests     %s' "$(jq -r .requests <<<"$u")"
+    [ "$(jq -r .subagent_requests <<<"$u")" = 0 ] || printf ', and %s by subagents' "$(jq -r .subagent_requests <<<"$u")"
+    printf '\n  read         %s tokens (%s of them from the cache)\n' \
+        "$(jq -r .read <<<"$u" | human_tokens)" "$(jq -r .read_cached <<<"$u" | human_tokens)"
+    printf '  written      %s tokens\n' "$(jq -r .written <<<"$u" | human_tokens)"
+}
+
+# one session, as `agent sessions --json` lists it. $2: its tmux row, if live
+agent_session_json() {
+    local n=$1 row=$2 created="" alert="" top snaps=0 u
+    [ -z "$row" ] || IFS=$'\t' read -r _ created alert <<<"$row"
+    local dir; dir=$(session_get "$n" dir) || dir=""
+    if [ -d "$dir" ] && top=$(undo_top "$dir"); then
+        snaps=$(git -C "$top" for-each-ref --format=x "refs/pulsar/undo/${n}/" | wc -l)
+    fi
+    u=$(session_usage "$n") || u=null
+    jq -n -c --arg name "$n" --arg agent "$(session_get "$n" agent || true)" --arg dir "$dir" \
+        --arg conv "$(session_get "$n" id || true)" --arg repo "$(session_get "$n" repo || true)" \
+        --arg live "$([ -n "$row" ] && echo 1)" --arg created "$created" --arg alert "$alert" \
+        --argjson snaps "$snaps" --argjson usage "$u" \
+        '{name: $name, agent: (if $agent == "" then null else $agent end),
+          state: (if $live == "" then "ended" elif $alert != "" then "waiting" else "running" end),
+          waiting_for: (if $alert == "" then null else $alert end),
+          started: (if $created == "" then null else ($created | tonumber) end),
+          dir: (if $dir == "" then null else $dir end),
+          worktree_of: (if $repo == "" then null else $repo end),
+          conversation: (if $conv == "" then null else $conv end),
+          snapshots: $snaps, usage: $usage}'
 }
 
 # ---------------------------------------------------------------------------
@@ -3786,7 +3911,10 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      put the project's files back as they were when
                                      the session started (git repositories; files git
                                      ignores stay as they are, commits stay)
-       pulsar agent sessions [--kill <name> | --forget <name>]
+       pulsar agent usage <session> [--json]
+                                     its model, how full the context is, and tokens
+                                     read and written (Claude Code; no prices)
+       pulsar agent sessions [--kill <name> | --forget <name>] [--json]
                                      the tmux sessions; --kill ends one (it can come
                                      back), --forget drops its conversation
        pulsar agent model [on|off] [--model <hf-repo[:quant]>] [--at-login] [--purge]
@@ -3846,8 +3974,10 @@ cmd_agent() {
         notify)
             need_user "agent notify"
             agent_notify "$@" ;;
+        usage)
+            need_user "agent usage"
+            agent_usage "$@" ;;
         sessions)
-            no_json "agent sessions"
             need_user "agent sessions"
             agent_sessions "$@" ;;
         model)

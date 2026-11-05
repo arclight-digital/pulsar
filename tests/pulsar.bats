@@ -3361,7 +3361,11 @@ case "$cmd" in
         printf '%s\n' "$c" "$@" > "${TMUX_LIVE}/${s}"
         printf '%s\0' "$@" > "${TMUX_LIVE}/.${s}.argv" ;;
     kill-session) rm "${TMUX_LIVE}/$(target "$@")" ;;
-    list-sessions) ls "$TMUX_LIVE" ;;   # ls skips the .argv files
+    list-sessions)   # name, created, @pulsar-alert; the glob skips the dot files
+        for f in "$TMUX_LIVE"/*; do
+            [ -e "$f" ] || continue; n=${f##*/}
+            printf '%s\t%s\t%s\n' "$n" "$(stat -c %Y "$f")" "$(sed -n 2p "${TMUX_LIVE}/.${n}.opt" 2>/dev/null)"
+        done ;;
     attach-session|switch-client) echo "tmux-env=${TMUX-unset}" >> "$TMUX_CALLS"; echo "attached $(target "$@")" ;;
     set-hook) ;;
     set-option) t=$(target "$@"); t=${t%:}; [ -e "${TMUX_LIVE}/${t}" ] || exit 1; printf '%s\n' "${@: -2}" > "${TMUX_LIVE}/.${t}.opt" ;;
@@ -3543,9 +3547,9 @@ rec_id() { sed -n 's/^id=//p' "${REC}/$1.session"; }
     "$PULSAR" agent sessions --kill two >/dev/null
     run "$PULSAR" agent sessions
     [ "$status" -eq 0 ] || fail "$output"
-    [[ "$output" =~ one\ +claude\ +running\ +${PROJ} ]] || fail "$output"
-    [[ "$output" =~ two\ +claude\ +ended\ +${PROJ} ]] || fail "$output"
-    [[ "$output" =~ mine\ +-\ +running\ +- ]] || fail "$output"
+    [[ "$output" =~ one\ +claude\ +running\ +0m\ +-\ +~/code/proj ]] || fail "$output"
+    [[ "$output" =~ two\ +claude\ +ended\ +-\ +-\ +~/code/proj ]] || fail "$output"
+    [[ "$output" =~ mine\ +-\ +running\ +0m\ +-\ +- ]] || fail "$output"
     run "$PULSAR" agent sessions --kill two
     [[ "$output" == *"two is not running"* ]]
     run "$PULSAR" agent sessions --forget one
@@ -3888,6 +3892,83 @@ agent_works() {
     [ -n "$(git for-each-ref 'refs/pulsar/')" ]
     "$PULSAR" agent sessions --forget work >/dev/null
     [ -z "$(git for-each-ref 'refs/pulsar/')" ]
+}
+
+# agent usage: tokens from Claude's own transcript, each message once
+usage_env() {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    ID=$(rec_id work)
+    local d="${HOME}/.claude/projects/-code-proj"
+    mkdir -p "${d}/${ID}/subagents"
+    # m1 is written twice (one line per content block), the second with the
+    # full output; m2 is the latest; a user line and a summary carry no usage
+    {
+        printf '{"type":"user","message":{"content":"hi"}}\n'
+        printf '{"type":"assistant","timestamp":"2026-11-05T10:00:00Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":5}}}\n'
+        printf '{"type":"assistant","timestamp":"2026-11-05T10:00:01Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":400}}}\n'
+        printf '{"type":"assistant","timestamp":"2026-11-05T10:01:00Z","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":500,"cache_read_input_tokens":272000,"output_tokens":1600}}}\n'
+        printf '{"type":"summary","summary":"x"}\n'
+    } > "${d}/${ID}.jsonl"
+    printf '{"type":"assistant","isSidechain":true,"timestamp":"2026-11-05T10:02:00Z","message":{"id":"s1","model":"claude-haiku-5-5","usage":{"input_tokens":3000000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":100}}}\n' \
+        > "${d}/${ID}/subagents/agent-1.jsonl"
+}
+
+@test "agent usage: each message counted once, subagents included, context from the latest main message" {
+    usage_env
+    run "$PULSAR" agent usage work --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -c . <<<"$output")" = '{"model":"claude-opus-5-5","requests":2,"subagent_requests":1,"context":272502,"read":3273512,"read_cached":272000,"written":2100}' ] \
+        || fail "$output"
+    run "$PULSAR" agent usage work
+    [[ "$output" == *"context now  273k tokens"* ]] || fail "$output"
+    [[ "$output" == *"requests     2, and 1 by subagents"* ]]
+    [[ "$output" == *"read         3.3M tokens (272k of them from the cache)"* ]]
+    [[ "$output" == *"written      2k tokens"* ]]
+}
+
+@test "agent usage: a sandboxed conversation is read from the sandbox's home; other agents and empty ones say why" {
+    usage_env
+    mkdir -p "${HOME}/.local/share/pulsar/sandbox/claude"
+    cp -a "${HOME}/.claude" "${HOME}/.local/share/pulsar/sandbox/claude/"
+    # the host's copy is older and says something else: the newer one counts
+    local host="${HOME}/.claude/projects/-code-proj/${ID}.jsonl"
+    printf '{"type":"assistant","timestamp":"2026-11-04T00:00:00Z","message":{"id":"old","usage":{"output_tokens":7}}}\n' > "$host"
+    touch -d '-1 hour' "$host"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r .written <<<"$output")" = 2100 ] || fail "$output"
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/codex"; chmod +x "${STUB}/codex"
+    "$PULSAR" agent run codex --tmux cx >/dev/null
+    run "$PULSAR" agent usage cx
+    [ "$status" -ne 0 ]; [[ "$output" == *"usage is read from Claude Code's transcripts only"* ]]
+    "$PULSAR" agent run claude --tmux fresh >/dev/null
+    run "$PULSAR" agent usage fresh
+    [ "$status" -ne 0 ]; [[ "$output" == *"no conversation on disk yet"* ]]
+}
+
+@test "agent sessions: a waiting session says so, with its context; --json carries it all" {
+    usage_env
+    printf 'x\n' > "${PROJ}/f"
+    "$PULSAR" agent run claude --tmux other >/dev/null
+    printf '@pulsar-alert\nStop\n' > "${TMUX_LIVE}/.work.opt"
+    run "$PULSAR" agent sessions
+    [[ "$output" =~ work\ +claude\ +waiting\ +0m\ +273k\ +~/code/proj ]] || fail "$output"
+    [[ "$output" =~ other\ +claude\ +running\ +0m\ +-\ + ]] || fail "$output"
+    run "$PULSAR" agent sessions --json
+    [ "$status" -eq 0 ] || fail "$output"
+    local w; w=$(jq -c '.[] | select(.name == "work")' <<<"$output")
+    [ "$(jq -r .state <<<"$w")" = waiting ]
+    [ "$(jq -r .waiting_for <<<"$w")" = Stop ]
+    [ "$(jq -r .dir <<<"$w")" = "$PROJ" ]
+    [ "$(jq -r .conversation <<<"$w")" = "$ID" ]
+    [ "$(jq -r .snapshots <<<"$w")" = 1 ]
+    [ "$(jq -r .usage.context <<<"$w")" = 272502 ]
+    [ "$(jq -r '.started | type' <<<"$w")" = number ]
+    [ "$(jq -r '.[] | select(.name == "other") | .usage' <<<"$output")" = null ]
+    rm "${TMUX_LIVE}/work"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "work") | [.state, .started] | @tsv' <<<"$output")" = $'ended\t' ]
 }
 
 # ---------------------------------------------------------------------------
