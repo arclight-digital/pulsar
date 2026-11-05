@@ -179,6 +179,27 @@ function windowGrade() {
     } catch {}
     return lastWindowGrade;
 }
+// How far what is beneath is pulled toward the theme's own lightness before
+// the tint goes on, keeping its hue and shapes: 0 leaves it as graded, 1
+// flattens it to the theme's lightness. The grade lifts dark backdrops
+// (its contrast pivots on mid-grey) and a bright wallpaper or page shows
+// through the tint, so glass read lighter than the theme it wears (Nick,
+// 2026-11-05: "closer to the typical theme color"). Halfway: a menu over a
+// bright wallpaper on Pulsar dark went from luminance 0.26 to 0.15, over a
+// dark window from 0.09 to 0.06, against the theme's 0.04.
+const GLASS_PULL = 0.5;
+// The theme's ground, read off the top bar's glass (as windowGrade does),
+// for glass whose tint GTK or St paints rather than the shader: windows and
+// the bar itself. The last answer stands while the bar is transparent.
+let lastGround = null;
+function groundPull() {
+    try {
+        const bg = Main.panel.get_theme_node().get_background_color();
+        if (bg.alpha > 0)
+            lastGround = [bg.red / 255, bg.green / 255, bg.blue / 255];
+    } catch {}
+    return lastGround ? [...lastGround, GLASS_PULL] : [0, 0, 0, 0];
+}
 const ENGINE = '/usr/libexec/pulsar/pulsar-theme';
 
 const MASK_DECL = `
@@ -198,6 +219,7 @@ uniform vec2 sharpScale;
 uniform vec4 lens;
 uniform float edgeDark;
 uniform vec4 tint;
+uniform vec4 pull;
 uniform sampler2D cut;
 uniform vec4 cutRect;
 float sd(vec2 p, vec2 b, float r) {
@@ -240,6 +262,13 @@ float l = dot(raw, vec3(0.2126, 0.7152, 0.0722));
 vec3 rgb = mix(vec3(l), raw, grade.x);
 rgb = (rgb - 0.5) * grade.y + 0.5;
 rgb = clamp(rgb * grade.z, 0.0, 1.0);
+/* toward the theme's own lightness (pull: its color, how far), hue kept:
+   scaled down to it, or lifted to it with grey, never scaled up from black */
+if (pull.a > 0.0) {
+  float lb = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+  float lg = mix(lb, dot(pull.rgb, vec3(0.2126, 0.7152, 0.0722)), pull.a);
+  rgb = lg < lb ? rgb * (lg / lb) : clamp(rgb + (lg - lb), 0.0, 1.0);
+}
 /* the darkened edge: a thin band just inside the rim, under the surface's
    own border -- the separation iOS 27 gives its glass instead of a shadow */
 if (edgeDark > 0.0 && d < 0.0) rgb *= 1.0 - edgeDark * exp(d / 2.2);
@@ -625,7 +654,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._mask = pipeline(MASK_DECL, MASK_CODE);
         this._loc = {};
         for (const u of ['tex', 'size', 'rect', 'radius', 'grade', 'shadow', 'shadowGeom', 'gradeEdge', 'opacity', 'soft',
-            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'tint', 'cut', 'cutRect'])
+            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'tint', 'pull', 'cut', 'cutRect'])
             this._loc[u] = this._mask.get_uniform_location(u);
         this._mask.set_uniform_1i(this._loc.tex, 0);
         this._mask.set_uniform_1i(this._loc.sharp, 1);
@@ -647,6 +676,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._f('lens', ...this._lens);
         this.setEdgeDark(0);
         this.setTint(0, 0, 0, 0);
+        this.setPull(0, 0, 0, 0);
         this._shape = null;
         // per stage view (by framebuffer): the kept copy and its blur
         this._states = new Map();
@@ -696,6 +726,12 @@ class PulsarLiveBlur extends Clutter.Effect {
     // straight (not premultiplied) color and alpha, painted over the blur
     setTint(r, g, b, a) {
         this._f('tint', r, g, b, a);
+        this.queue_repaint();
+    }
+
+    // the color whose lightness what is beneath is drawn toward, and how far
+    setPull(r, g, b, k) {
+        this._f('pull', r, g, b, k);
         this.queue_repaint();
     }
 
@@ -1812,6 +1848,7 @@ class Surface {
             // A light surface wants the light laid over, not added.
             this._lt = bg.alpha > 0 && luminance(bg) > 0.5 ? 1 : 0;
             this._blur.setTint(...(hasTint ? [...rgb(tint), tint.alpha / 255] : [0, 0, 0, 0]));
+            this._blur.setPull(...(hasTint ? [...rgb(tint), GLASS_PULL] : [0, 0, 0, 0]));
             const tone = this._opts.tone?.() ?? null;
             const pick = name => {
                 const [ok, c] = node.lookup_color(name, true);
@@ -2042,6 +2079,9 @@ class PanelGlass {
         this._actor.add_constraint(new Clutter.BindConstraint({source: panelBox, coordinate: Clutter.BindCoordinate.ALL}));
         this._blur = new LiveBlur();
         this._blur.setSoft(0);
+        // the bar's tint is St's; draw what is beneath toward its color
+        this._blur.setPull(...groundPull());
+        Main.panel.connectObject('style-changed', () => this._blur.setPull(...groundPull()), this);
         this._actor.add_effect_with_name('pulsar-blur', this._blur);
         Main.layoutManager.uiGroup.insert_child_below(this._actor, panelBox);
 
@@ -2138,6 +2178,7 @@ class PanelGlass {
     destroy() {
         Main.layoutManager.panelBox.disconnectObject(this);
         Main.layoutManager.disconnectObject(this);
+        Main.panel.disconnectObject(this);
         this._bg.disconnectObject(this);
         this._actor.destroy();
         this._shadow.destroy();
@@ -2311,6 +2352,7 @@ class WindowGlass {
         // vibrancy: what is beneath lifted, so its color reads through the
         // window's tint instead of muddying it
         this._blur.setGrade(...windowGrade());
+        this._blur.setPull(...groundPull());
         this._blur.setGradeEdge(popup ? 0 : WINDOW_GRADE_EDGE);
         if (popup) {
             this._blur.setCut(() => {
@@ -2326,7 +2368,10 @@ class WindowGlass {
             });
         }
         // a new sheet (a theme, a Dark Style flip) may be the other scheme
-        Main.panel.connectObject('style-changed', () => this._blur.setGrade(...windowGrade()), this);
+        Main.panel.connectObject('style-changed', () => {
+            this._blur.setGrade(...windowGrade());
+            this._blur.setPull(...groundPull());
+        }, this);
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         actor.insert_child_at_index(this._backdrop, 0);
         this._backdrop.connect('destroy', () => (this._backdrop = null));

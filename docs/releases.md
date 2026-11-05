@@ -77,6 +77,9 @@ Agents you can leave running, a command menu, and GNOME 51.
 ### Desktop
 
 - GNOME 51, on Fedora 45. Themes, glass and the top bar carry over.
+- Glass sits closer to the theme's own color: a bright wallpaper or page
+  behind a menu, the top bar or a window shows through as shape and hue,
+  without lifting the glass far above the theme.
 - The kernel's own scheduler is the default again. On hybrid Intel CPUs the
   one Pulsar shipped kept GNOME Shell on efficiency cores, and animations
   stuttered. `scx.service` is still there to turn on.
