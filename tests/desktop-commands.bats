@@ -310,3 +310,103 @@ print(it.matches("2^10"), it.title, "|", it.subtitle, "|", it.argv, it.matches("
         [ "${lines[$i]}" = "${expected[$i]}" ] || fail "line $i: '${lines[$i]}' != '${expected[$i]}'"
     done
 }
+
+@test "menu: date math, from a fixed today" {
+    run menu '
+import datetime
+today = datetime.date(2026, 11, 5)
+for q in ("in 90 days", "3 weeks ago", "2026-12-25 + 45 days", "today + 30 days", "dec 25 - 10 days",
+          "6 months from dec 1", "1 month after jan 31", "2 weeks before 2027-01-01", "in 2 years",
+          "days until dec 25", "days since mar 1", "days since dec 25", "2026-12-25 - 2026-11-05", "12/25/2026 + 1 week",
+          "dec 25", "25 december 2026", "yesterday"):
+    print(q, "=", " | ".join(m.date_calc(q, today)))
+for q in ("2026-02-30", "theme", "12/25", "next theme", "update 26"):
+    print(q, "=", m.date_calc(q, today))'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "in 90 days = Wednesday, February 3, 2027 | 2027-02-03"
+        "3 weeks ago = Thursday, October 15, 2026 | 2026-10-15"
+        "2026-12-25 + 45 days = Monday, February 8, 2027 | 2027-02-08"
+        "today + 30 days = Saturday, December 5, 2026 | 2026-12-05"
+        "dec 25 - 10 days = Tuesday, December 15, 2026 | 2026-12-15"
+        "6 months from dec 1 = Tuesday, June 1, 2027 | 2027-06-01"
+        # the month is shorter: its last day
+        "1 month after jan 31 = Sunday, February 28, 2027 | 2027-02-28"
+        "2 weeks before 2027-01-01 = Friday, December 18, 2026 | 2026-12-18"
+        "in 2 years = Sunday, November 5, 2028 | 2028-11-05"
+        # no year: the next one for "until", the last one for "since"
+        "days until dec 25 = 50 days (Friday, December 25, 2026) | 50"
+        "days since mar 1 = 249 days (Sunday, March 1, 2026) | 249"
+        "days since dec 25 = 315 days (Thursday, December 25, 2025) | 315"
+        "2026-12-25 - 2026-11-05 = 50 days | 50"
+        "12/25/2026 + 1 week = Friday, January 1, 2027 | 2027-01-01"
+        "dec 25 = Friday, December 25, 2026 · in 50 days | 2026-12-25"
+        "25 december 2026 = Friday, December 25, 2026 · in 50 days | 2026-12-25"
+        "yesterday = Wednesday, November 4, 2026 · 1 day ago | 2026-11-04"
+        "2026-02-30 = None"
+        "theme = None"
+        # 12/25 alone is a sum
+        "12/25 = None"
+        "next theme = None"
+        "update 26 = None"
+    )
+    for i in "${!expected[@]}"; do
+        [ "${lines[$i]}" = "${expected[$i]}" ] || fail "line $i: '${lines[$i]}' != '${expected[$i]}'"
+    done
+}
+
+@test "menu: currency at the ECB's rates, fetched only when asked, cached, and stale beats nothing" {
+    local feed="${BATS_TEST_TMPDIR}/rates.json"
+    echo '{"amount":1.0,"base":"EUR","date":"2026-11-05","rates":{"USD":1.1497,"GBP":0.83393,"JPY":177.85}}' > "$feed"
+    export XDG_CACHE_HOME="${BATS_TEST_TMPDIR}/cache" PULSAR_RATES_URL="file://${feed}"
+    run menu '
+r = {"date": "2026-11-05", "rates": {"USD": 1.1497, "GBP": 0.83393, "JPY": 177.85}}
+for q in ("100 usd in eur", "$100 to gbp", "€50 in usd", "100 usd in jpy", "100usd to eur", "$5*3 in eur"):
+    print(q, "=", " | ".join(m.currency_convert(m.currency_parse(q), r)))
+for q in ("5 mi in km", "100 xyz in eur", "100 usd eur", "$100 usd in eur"):
+    print(q, "=", m.currency_parse(q))
+# the row: asks for rates once, shows it is waiting, then the answer
+it = m.CalcItem(); asked = []
+it.want_rates = lambda: asked.append(1)
+print(it.matches("100 usd in eur"), it.title, "|", it.subtitle, "|", it.argv, len(asked))
+it.rates = m.load_rates(now=1000)
+print(it.matches("100 usd in eur"), it.title, "|", it.subtitle)
+it.rates, it.rates_failed = None, True
+print(it.matches("100 usd in eur"), it.title, "|", it.subtitle)'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "100 usd in eur = 86.98 EUR | 86.98"
+        "\$100 to gbp = 72.53 GBP | 72.53"
+        "€50 in usd = 57.48 USD | 57.48"
+        "100 usd in jpy = 15,469 JPY | 15469"
+        "100usd to eur = 86.98 EUR | 86.98"
+        "\$5*3 in eur = 13.05 EUR | 13.05"
+        "5 mi in km = None"
+        "100 xyz in eur = None"
+        "100 usd eur = None"
+        "\$100 usd in eur = None"
+        "True = … | Getting the exchange rates | [] 1"
+        "True = 86.98 EUR | ECB rate of 2026-11-05 · Enter copies 86.98"
+        "True = ? | No exchange rates: offline, and none saved yet"
+    )
+    for i in "${!expected[@]}"; do
+        [ "${lines[$i]}" = "${expected[$i]}" ] || fail "line $i: '${lines[$i]}' != '${expected[$i]}'"
+    done
+    # fetched once and cached; a fresh cache is used without fetching
+    [ "$(jq -r .fetched "${XDG_CACHE_HOME}/pulsar/currency.json")" = 1000 ]
+    # the next day's rates are out, but the cache is fresh: not fetched
+    sed -i 's/2026-11-05/2026-11-06/' "$feed"
+    run menu 'print(m.load_rates(now=1000 + 3600)["date"])'
+    [ "$output" = "2026-11-05" ]
+    # 13 hours on, it is stale: fetched
+    run menu 'print(m.load_rates(now=1000 + 13 * 3600)["date"])'
+    [ "$output" = "2026-11-06" ]
+    # stale and offline: the old rates, not nothing
+    rm "$feed"
+    run menu 'print(m.load_rates(now=1000 + 30 * 3600)["date"])'
+    [ "$output" = "2026-11-06" ]
+    # nothing cached and offline: None
+    rm "${XDG_CACHE_HOME}/pulsar/currency.json"
+    run menu 'print(m.load_rates(now=1000))'
+    [ "$output" = "None" ]
+}

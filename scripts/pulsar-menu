@@ -5,8 +5,9 @@ Type to filter, Up/Down to choose, Enter to run, Esc to close. Pressing the
 shortcut again also closes it. Everything here is something Pulsar already
 does from the CLI or its own apps; the menu only finds it for you:
 
-  - sums and conversions typed into the search: "2^10", "15% of 80",
-    "5 mi in km", "255 in hex"; Enter copies the answer
+  - sums, conversions, currency and dates typed into the search: "2^10",
+    "15% of 80", "5 mi in km", "255 in hex", "100 usd in eur",
+    "days until dec 25", "in 90 days"; Enter copies the answer
   - copy text or a QR code from the screen (pulsar-screen)
   - themes (the picker, or the next one)
   - updates and agent sessions in Pulsar Settings, and each running session
@@ -218,20 +219,247 @@ def calc(query):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Currency: "100 usd in eur", "$100 to gbp". The European Central Bank's
+# daily reference rates through Frankfurter (frankfurter.dev: free, no key,
+# open source). Fetched only when a conversion is typed, at most twice a day,
+# and kept in ~/.cache/pulsar/currency.json; offline, the last rates are
+# used and their date is shown.
+# ---------------------------------------------------------------------------
+RATES_URL = os.environ.get("PULSAR_RATES_URL", "https://api.frankfurter.dev/v1/latest?base=EUR")
+RATES_MAX_AGE = 12 * 3600
+CURRENCIES = set("AUD BGN BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR "
+                 "NOK NZD PHP PLN RON SEK SGD THB TRY USD ZAR".split())
+CURRENCY_SIGNS = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP", "\u00a5": "JPY", "\u20b9": "INR", "\u20a9": "KRW"}
+CURRENCY = re.compile(r"^([$\u20ac\u00a3\u00a5\u20b9\u20a9])?\s*(.+?)\s*([a-z]{3})?\s+(?:in|to|as)\s+"
+                      r"([a-z]{3}|[$\u20ac\u00a3\u00a5\u20b9\u20a9])$", re.I)
+
+
+def rates_file():
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.environ.get("HOME", "/nonexistent"), ".cache")
+    return os.path.join(base, "pulsar", "currency.json")
+
+
+def currency_parse(query):
+    """(amount, from, to) for a currency conversion, else None."""
+    m = CURRENCY.match(query.strip())
+    if not m or bool(m.group(1)) == bool(m.group(3)):
+        return None
+    src = CURRENCY_SIGNS.get(m.group(1)) if m.group(1) else m.group(3).upper()
+    dst = CURRENCY_SIGNS.get(m.group(4)) or m.group(4).upper()
+    if src not in CURRENCIES or dst not in CURRENCIES:
+        return None
+    try:
+        amount = evaluate(m.group(2))
+    except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError, RecursionError, KeyError):
+        return None
+    return amount, src, dst
+
+
+def currency_convert(parsed, rates):
+    """(shown, copied) at `rates` ({"date", "rates": per EUR})."""
+    amount, src, dst = parsed
+    per_eur = dict(rates["rates"], EUR=1.0)
+    if src not in per_eur or dst not in per_eur:
+        return None
+    out = amount / per_eur[src] * per_eur[dst]
+    n = f"{out:,.2f}" if dst not in ("JPY", "KRW", "ISK", "HUF", "IDR") else f"{out:,.0f}"
+    return f"{n} {dst}", n.replace(",", "")
+
+
+def load_rates(now=None, fetch=True):
+    """The rates: the cache if it is fresh, else fetched (and cached), else the
+    stale cache, else None. Blocking: the window calls it off the main thread."""
+    import time
+    now = now or time.time()
+    path = rates_file()
+    cached = None
+    try:
+        with open(path) as f:
+            cached = json.load(f)
+        if now - cached.get("fetched", 0) < RATES_MAX_AGE:
+            return cached
+    except (OSError, ValueError):
+        cached = None
+    if fetch:
+        import urllib.request
+        try:
+            req = urllib.request.Request(RATES_URL, headers={"User-Agent": "pulsar-menu"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                got = json.load(r)
+            fresh = {"date": got["date"], "rates": got["rates"], "fetched": now}
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + ".tmp", "w") as f:
+                json.dump(fresh, f)
+            os.replace(path + ".tmp", path)
+            return fresh
+        except (OSError, ValueError, KeyError):
+            pass
+    return cached
+
+
+# ---------------------------------------------------------------------------
+# Dates: "in 90 days", "3 weeks ago", "2026-12-25 + 45 days", "6 months from
+# dec 1", "days until dec 25", "days since mar 1", "2026-12-25 - 2026-11-05",
+# or a date alone for its weekday. Dates: today, tomorrow, yesterday,
+# 2026-12-25, dec 25, 25 december 2026, 12/25 or 12/25/2026 (month first).
+# ---------------------------------------------------------------------------
+MONTHS = {m: i + 1 for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
+DATE_UNITS = {"d": "days", "day": "days", "days": "days", "w": "weeks", "wk": "weeks", "week": "weeks",
+              "weeks": "weeks", "month": "months", "months": "months", "mo": "months",
+              "y": "years", "yr": "years", "year": "years", "years": "years"}
+UNIT_RE = r"(d|days?|w|wks?|weeks?|mo|months?|y|yrs?|years?)"
+
+
+def add_months(d, n):
+    import calendar
+    y, m = divmod(d.month - 1 + n, 12)
+    y += d.year
+    return d.replace(year=y, month=m + 1, day=min(d.day, calendar.monthrange(y, m + 1)[1]))
+
+
+def shift(d, n, unit):
+    import datetime
+    unit = DATE_UNITS[unit.lower()]
+    if unit == "days":
+        return d + datetime.timedelta(days=n)
+    if unit == "weeks":
+        return d + datetime.timedelta(weeks=n)
+    return add_months(d, n if unit == "months" else 12 * n)
+
+
+def parse_date(text, today, prefer="next"):
+    """A date, or None. A month and day with no year is the next one on or
+    after today (prefer="next") or the last one on or before it ("last")."""
+    import datetime
+    t = text.strip().lower().rstrip(".")
+    named = {"today": 0, "now": 0, "tomorrow": 1, "yesterday": -1}
+    if t in named:
+        return today + datetime.timedelta(days=named[t])
+    y = None
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", t)
+    if m:
+        y, mo, d = (int(x) for x in m.groups())
+    else:
+        m = (re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", t)
+             or re.fullmatch(r"([a-z]{3})[a-z]*\.? (\d{1,2})(?:st|nd|rd|th)?,?(?: (\d{4}))?", t))
+        if m:
+            mo, d, y = m.group(1), int(m.group(2)), m.group(3)
+        else:
+            m = re.fullmatch(r"(\d{1,2})(?:st|nd|rd|th)? ([a-z]{3})[a-z]*\.?,?(?: (\d{4}))?", t)
+            if not m:
+                return None
+            d, mo, y = int(m.group(1)), m.group(2), m.group(3)
+        mo = MONTHS.get(mo) if not str(mo).isdigit() else int(mo)
+        if mo is None:
+            return None
+        y = int(y) if y else None
+    try:
+        if y is not None:
+            return datetime.date(y, mo, d)
+        when = datetime.date(today.year, mo, d)
+    except ValueError:
+        return None
+    if prefer == "next" and when < today:
+        when = when.replace(year=today.year + 1)
+    elif prefer == "last" and when > today:
+        when = when.replace(year=today.year - 1)
+    return when
+
+
+def long_date(d):
+    return f"{d:%A}, {d:%B} {d.day}, {d.year}"
+
+
+def days_text(n):
+    return f"{n:,} day{'s' if abs(n) != 1 else ''}"
+
+
+def date_calc(query, today=None):
+    """(shown, copied) for date arithmetic, else None."""
+    import datetime
+    today = today or datetime.date.today()
+    q = " ".join(query.strip().split())
+    m = re.fullmatch(r"days? (until|till|to|since|from) (.+)", q, re.I)
+    if m:
+        since = m.group(1).lower() in ("since", "from")
+        d = parse_date(m.group(2), today, "last" if since else "next")
+        if d is None:
+            return None
+        n = (today - d).days if since else (d - today).days
+        return f"{days_text(n)} ({long_date(d)})", str(n)
+    m = re.fullmatch(r"in (\d+) " + UNIT_RE, q, re.I) or re.fullmatch(r"(\d+) " + UNIT_RE + r" ago", q, re.I)
+    if m:
+        n = int(m.group(1)) * (-1 if q.lower().endswith(" ago") else 1)
+        d = shift(today, n, m.group(2))
+        return long_date(d), d.isoformat()
+    m = re.fullmatch(r"(\d+) " + UNIT_RE + r" (from|after|before) (.+)", q, re.I)
+    if m:
+        base = parse_date(m.group(4), today, "next")
+        if base is None:
+            return None
+        d = shift(base, int(m.group(1)) * (-1 if m.group(3).lower() == "before" else 1), m.group(2))
+        return long_date(d), d.isoformat()
+    m = re.fullmatch(r"(.+?) ?([+-]) ?(\d+) ?" + UNIT_RE, q, re.I)
+    if m:
+        base = parse_date(m.group(1), today, "this")
+        if base is not None:
+            d = shift(base, int(m.group(3)) * (1 if m.group(2) == "+" else -1), m.group(4))
+            return long_date(d), d.isoformat()
+    m = re.fullmatch(r"(.+?) - (.+)", q)
+    if m:
+        a, b = parse_date(m.group(1), today, "this"), parse_date(m.group(2), today, "this")
+        if a is not None and b is not None:
+            n = (a - b).days
+            return days_text(n), str(n)
+    # a date alone: its weekday, and how far off it is
+    d = parse_date(q, today, "next") if re.search(r"\d{4}-\d|[a-z]{3}", q, re.I) else None
+    if d is not None:
+        n = (d - today).days
+        when = "today" if n == 0 else (f"in {days_text(n)}" if n > 0 else f"{days_text(-n)} ago")
+        return f"{long_date(d)} \u00b7 {when}", d.isoformat()
+    return None
+
+
 class CalcItem(Item):
-    """The answer row: there only while the search is a sum; Enter copies it."""
+    """The answer row: there only while the search is a sum, a conversion or
+    date arithmetic; Enter copies it. Currency rates come from want_rates,
+    which the window sets: it fetches them off the main thread."""
     def __init__(self):
         super().__init__("calc", "", "", "accessories-calculator-symbolic", [], group="Math")
+        self.rates = None
+        self.rates_failed = False
+        self.want_rates = None
+
+    def _answer(self, shown, copied, note=""):
+        self.answer = copied
+        self.title = f"= {shown}"
+        self.subtitle = f"{note} \u00b7 Enter copies {copied}" if note else f"Enter copies {copied}"
+        self.argv = ["wl-copy", "--", copied]
+        return True
 
     def matches(self, query):
-        got = calc(query)
+        cur = currency_parse(query)
+        if cur is not None:
+            if self.rates is None:
+                self.answer, self.argv = None, []
+                if self.rates_failed:
+                    self.title, self.subtitle = "= ?", "No exchange rates: offline, and none saved yet"
+                    return True
+                if self.want_rates:
+                    self.want_rates()
+                self.title, self.subtitle = "= \u2026", "Getting the exchange rates"
+                return True
+            got = currency_convert(cur, self.rates)
+            if got is None:
+                return False
+            return self._answer(*got, note=f"ECB rate of {self.rates['date']}")
+        got = date_calc(query)
+        if got is None:
+            got = calc(query)
         if got is None:
             return False
-        shown, self.answer = got
-        self.title = f"= {shown}"
-        self.subtitle = f"Enter copies {self.answer}"
-        self.argv = ["wl-copy", "--", self.answer]
-        return True
+        return self._answer(*got)
 
 
 def agent_item(name):
@@ -339,7 +567,10 @@ def window_class():
             self.set_content(self.reveal)
             self.connect("map", lambda *_a: GLib.idle_add(lambda: self.reveal.set_reveal_child(True) and False))
             self.query = ""
-            self.add(CalcItem())
+            self.calc = CalcItem()
+            self.calc.want_rates = self._fetch_rates
+            self.fetching = False
+            self.add(self.calc)
             for it in base_items():
                 self.add(it)
             self.entry.connect("search-changed", self._changed)
@@ -386,6 +617,24 @@ def window_class():
                 row.set_header(None)
             elif row.get_header() is None or row.get_header().get_label() != row.item.group:
                 row.set_header(Gtk.Label(label=row.item.group, xalign=0, css_classes=["group"]))
+
+        def _fetch_rates(self):
+            if self.fetching or self.calc.rates_failed:
+                return
+            self.fetching = True
+            import threading
+
+            def work():
+                got = load_rates()
+                GLib.idle_add(self._got_rates, got)
+            threading.Thread(target=work, daemon=True).start()
+
+        def _got_rates(self, rates):
+            self.fetching = False
+            self.calc.rates = rates
+            self.calc.rates_failed = rates is None
+            self._changed(self.entry)
+            return False
 
         def _changed(self, entry):
             self.query = entry.get_text()
@@ -450,6 +699,8 @@ def window_class():
                 self.close()
 
         def run(self, it):
+            if not it.argv:
+                return   # the answer row while there is no answer yet
             try:
                 run_detached(it.argv)
             except OSError as e:
