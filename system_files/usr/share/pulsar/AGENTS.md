@@ -63,6 +63,21 @@ works there.
   system one; `pulsar setup gamescale --platform steam faugus` repoints it.
 - Other Flatpak launchers: `pulsar setup gamescale --platform <name>`.
 
+## Agent sessions
+
+- `pulsar agent run <agent> --tmux <name>` keeps an agent in a named tmux
+  session on the host, on its own server (`tmux -L pulsar-agents`), apart
+  from the user's own tmux. `--worktree` puts it in
+  `<repo>/.worktrees/<name>` on the branch `<name>`. `pulsar agent sessions`
+  lists them; `pulsar agent usage <name>` shows a Claude session's tokens.
+- A terminal bell in a session the user isn't looking at becomes a desktop
+  notification.
+- Each session start snapshots the project's files under `refs/pulsar/`.
+  `pulsar agent undo <name>` puts them back; that is the user's to run, not
+  yours. Don't delete, rewrite or push `refs/pulsar/`.
+- In a worktree inside a sandbox, its `.git` file, `commondir` and `gitdir`
+  are read-only, like `.git/config`.
+
 ## Sandboxed agents (`PULSAR_SANDBOX=1`)
 
 You are in a container that sees only the project.
