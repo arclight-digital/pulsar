@@ -52,6 +52,23 @@ font-hinting='slight'
 titlebar-font='Host Grotesk Bold 12'
 button-layout='appmenu:minimize,maximize,close'
 
+# Super+F makes the focused window fullscreen, and pressing it again undoes
+# that. GNOME ships the action with no key bound, and Super+F is unbound
+# everywhere in stock GNOME.
+#
+# Games are why it's here. Under Wine's X11 driver, a game whose "windowed
+# fullscreen" is a maximized window with its title bar pushed off screen
+# (World of Warcraft's is) is reported to mutter as MAXIMIZED, never
+# FULLSCREEN: winex11 update_net_wm_states() sends MAXIMIZED for any window
+# that covers the monitor while having WS_MAXIMIZE and a full WS_CAPTION. A
+# maximized window fits the work area, so the game sits under the top bar.
+# Wine's Wayland driver lacks that rule, but launchers such as Battle.net
+# misbehave on it. One press of Super+F makes mutter fullscreen the window;
+# Wine follows, and the window stays fullscreen at the monitor's full size
+# (tested 2026-11-04, GE-Proton11-12, GNOME 51.1).
+[org.gnome.desktop.wm.keybindings]
+toggle-fullscreen=['<Super>f']
+
 # mutter pings every window with _NET_WM_PING and, after this many
 # milliseconds without an answer, decides it is frozen and offers to kill it.
 # GNOME's default is 5000, which is short enough that a game blocking its main

@@ -135,3 +135,21 @@ setup() { cd "${BATS_TEST_DIRNAME}/.." || exit 1; }
     # that fixes it, or the next reader concludes renice is broken.
     grep -q 'pulsar-gamemode-group.service' "$GAMEMODE"
 }
+
+# --- window manager ----------------------------------------------------------
+
+@test "Super+F toggles fullscreen, and no stock GNOME key already holds it" {
+    # A game whose windowed fullscreen Wine reports as maximized sits under
+    # the top bar; Super+F is the one-press way out (see the override).
+    local o="system_files/usr/share/glib-2.0/schemas/zz0-pulsar.gschema.override"
+    awk '/^\[/{s=$0} s=="[org.gnome.desktop.wm.keybindings]" && /^toggle-fullscreen=/' "$o" \
+        | grep -qx "toggle-fullscreen=\['<Super>f'\]"
+    # On a GNOME host, the stock schemas must not bind Super+F anywhere else:
+    # a second owner of the key would make one of them silently dead.
+    local d=/usr/share/glib-2.0/schemas
+    if [ -r "$d/org.gnome.desktop.wm.keybindings.gschema.xml" ]; then
+        grep -q 'key name="toggle-fullscreen"' "$d/org.gnome.desktop.wm.keybindings.gschema.xml"
+        ! grep -lE "'<Super>f'|&lt;Super&gt;f'" "$d"/*.gschema.xml "$d"/*.gschema.override 2>/dev/null \
+            | grep -v pulsar | grep -q . || false
+    fi
+}
