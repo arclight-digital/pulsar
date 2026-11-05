@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- The keys pulsar-shortcuts reads and writes, as GNOME 51 ships them
-     (gnome-settings-daemon's media-keys, mutter's wm keybindings), cut down
+     (gnome-settings-daemon's media-keys, the wm keybindings and input sources), cut down
      to what tests/desktop-commands.bats needs. Compiled per test. -->
 <schemalist>
   <schema id="org.gnome.settings-daemon.plugins.media-keys" path="/org/gnome/settings-daemon/plugins/media-keys/">
@@ -13,8 +13,12 @@
     <key name="binding" type="s"><default>''</default></key>
   </schema>
   <schema id="org.gnome.desktop.wm.keybindings" path="/org/gnome/desktop/wm/keybindings/">
-    <key name="switch-input-source" type="as"><default>['&lt;Super&gt;space']</default></key>
+    <key name="switch-input-source" type="as"><default>['&lt;Super&gt;space', 'XF86Keyboard']</default></key>
+    <key name="switch-input-source-backward" type="as"><default>['&lt;Shift&gt;&lt;Super&gt;space', '&lt;Shift&gt;XF86Keyboard']</default></key>
     <key name="toggle-fullscreen" type="as"><default>[]</default></key>
+  </schema>
+  <schema id="org.gnome.desktop.input-sources" path="/org/gnome/desktop/input-sources/">
+    <key name="sources" type="a(ss)"><default>[]</default></key>
   </schema>
   <schema id="org.gnome.shell.keybindings" path="/org/gnome/shell/keybindings/">
     <key name="show-screenshot-ui" type="as"><default>['Print']</default></key>

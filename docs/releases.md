@@ -39,9 +39,12 @@ Agents you can leave running, a command menu, and GNOME 51.
 
 ### Command menu
 
-- Super+/ opens a search over what Pulsar does: copy text off the screen,
-  themes, updates, agent sessions, a health check, a checkpoint before a
-  risky change, asking your agent.
+- Super+Space opens a search over what Pulsar does: copy text off the
+  screen, themes, updates, agent sessions, a health check, a checkpoint
+  before a risky change, asking your agent. With one keyboard layout,
+  Super+Space switches layouts to no effect, so the menu takes it;
+  Shift+Super+Space still switches if you add a second. With several
+  layouts, the menu is on Super+/.
 - It answers too. Type a sum (`2^10`, `15% of 80`), a conversion
   (`5 mi in km`, `100 f in c`, `2 GiB in MB`, `255 in hex`), money
   (`100 usd in eur`) or a date (`in 90 days`, `days until dec 25`), and

@@ -11,6 +11,13 @@ stays as they left it; one whose keys were taken is not tried again.
 When an existing account gets new shortcuts, one notification names them;
 a new one gets the welcome window instead.
 
+Super+Space, where Spotlight-style launchers live, is GNOME's "switch
+keyboard layout" by default. The command menu takes it only from an account
+with one layout (where switching does nothing) that has not rebound it, and
+leaves the layout switch its other keys (Shift+Super+Space still cycles
+layouts, the other way round). With several layouts, or a binding of the
+person's own, the menu gets Super+/ instead.
+
 The theme picker's Super+T is not here: pulsar-theme binds it with the
 first theme, and its revert removes it.
 
@@ -25,11 +32,16 @@ import time
 from pathlib import Path
 
 LIBEXEC = "/usr/libexec/pulsar"
-# id, name (as Settings shows it), command, keys, how the notification says them
+# id, name (as Settings shows it), command, and the keys to try in order,
+# each with how the notification says them
 SHORTCUTS = (
-    ("pulsar-menu", "Pulsar commands", f"{LIBEXEC}/pulsar-menu", "<Super>slash", "Super+/"),
-    ("pulsar-screen-text", "Copy text from the screen", f"{LIBEXEC}/pulsar-screen text", "<Super>Print", "Super+Print"),
+    ("pulsar-menu", "Pulsar commands", f"{LIBEXEC}/pulsar-menu",
+     (("<Super>space", "Super+Space"), ("<Super>slash", "Super+/"))),
+    ("pulsar-screen-text", "Copy text from the screen", f"{LIBEXEC}/pulsar-screen text",
+     (("<Super>Print", "Super+Print"),)),
 )
+# The one binding a Pulsar shortcut may take over, and when (see claimable)
+LAYOUT_SWITCH = ("org.gnome.desktop.wm.keybindings", "switch-input-source")
 MK = "org.gnome.settings-daemon.plugins.media-keys"
 MK_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings"
 # Every schema whose keys a chord could already belong to (as pulsar-theme's
@@ -86,8 +98,10 @@ def accel_key(a):
 
 
 def taken_by(accel):
-    """What in this account already answers to `accel`, or None."""
+    """Everything in this account that already answers to `accel`, "; "
+    joined, or None."""
     want = accel_key(accel)
+    who = []
     for schema in KEYBINDING_SCHEMAS:
         try:
             out = gsettings("list-recursively", schema)
@@ -99,15 +113,15 @@ def taken_by(accel):
                 continue
             for a in gv_list(parts[2]):
                 if a and accel_key(a) == want:
-                    return f"{schema} {parts[1]}"
+                    who.append(f"{schema} {parts[1]}")
     for path in gv_list(gsettings("get", MK, "custom-keybindings")):
         try:
             b = gv_list(gsettings("get", reloc(path), "binding"))
         except RuntimeError:
             continue
         if b and b[0] and accel_key(b[0]) == want:
-            return f"custom shortcut {path}"
-    return None
+            who.append(f"custom shortcut {path}")
+    return "; ".join(dict.fromkeys(who)) or None
 
 
 def bind(sid, name, command, accel):
@@ -133,22 +147,52 @@ def read_state():
     return done
 
 
+def claimable(accel, who):
+    """Whether `accel`, held by `who`, may be taken: only Super+Space from the
+    layout switch, in an account with at most one layout that left the
+    switch as GNOME ships it."""
+    if who != " ".join(LAYOUT_SWITCH) or accel != "<Super>space":
+        return False
+    if len(re.findall(r"\(", gsettings("get", "org.gnome.desktop.input-sources", "sources"))) > 1:
+        return False
+    cur = gsettings("get", *LAYOUT_SWITCH)
+    default = subprocess.run(["gsettings", "get", *LAYOUT_SWITCH], capture_output=True, text=True,
+                             env=dict(os.environ, GSETTINGS_BACKEND="memory")).stdout.strip()
+    return cur == default
+
+
+def claim(accel):
+    keep = [a for a in gv_list(gsettings("get", *LAYOUT_SWITCH)) if accel_key(a) != accel_key(accel)]
+    gsettings("set", *LAYOUT_SWITCH, "[" + ", ".join(gv_str(a) for a in keep) + "]")
+
+
 def offer():
     if os.getuid() in GREETER_UIDS:
         return 0
     done = read_state()
     bound = []
-    for sid, name, command, accel, said in SHORTCUTS:
+    for sid, name, command, keys in SHORTCUTS:
         if sid in done:
             continue
         try:
-            who = taken_by(accel)
-            if who:
-                done[sid] = f"not bound: {accel} is taken ({who})"
-            else:
+            taken = []
+            for accel, said in keys:
+                who = taken_by(accel)
+                note, result = "", f"bound to {accel}"
+                if who and claimable(accel, who):
+                    claim(accel)
+                    note = " (it was the keyboard-layout switch, which does nothing with one layout)"
+                    result = f"bound to {accel}, taken from {who}"
+                elif who:
+                    taken.append(f"{accel} is taken ({who})")
+                    continue
                 bind(sid, name, command, accel)
-                done[sid] = f"bound to {accel}"
-                bound.append((said, name))
+                # recorded only once bound: a failure is tried again next login
+                done[sid] = result
+                bound.append((said, name + note))
+                break
+            else:
+                done[sid] = "not bound: " + "; ".join(taken)
         except RuntimeError as e:
             # no dconf yet, no session bus: try again at the next login
             print(f"pulsar-shortcuts: {sid}: {e}", file=sys.stderr)
@@ -170,8 +214,8 @@ def offer():
 def main(argv):
     if argv[1:] == ["--list"]:
         done = read_state()
-        for sid, name, _cmd, accel, said in SHORTCUTS:
-            print(f"{said:<12} {name:<28} {done.get(sid, 'not offered yet')}")
+        for sid, name, _cmd, keys in SHORTCUTS:
+            print(f"{name:<28} {done.get(sid, 'not offered yet')}")
         return 0
     if argv[1:]:
         print("usage: pulsar-shortcuts [--list]", file=sys.stderr)

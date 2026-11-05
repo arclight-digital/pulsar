@@ -133,10 +133,11 @@ custom() { gsettings get "org.gnome.settings-daemon.plugins.media-keys.custom-ke
 
 @test "shortcuts: a free chord is bound and named once; a taken one is left alone" {
     shortcuts_env
+    # the person's own layout switch, on Super+Print: Super+Space is free
     gsettings set org.gnome.desktop.wm.keybindings switch-input-source "['<Super>Print']"
     run python3 "$SHORTCUTS"
     [ "$status" -eq 0 ] || fail "$output"
-    [ "$(custom pulsar-menu binding)" = "'<Super>slash'" ]
+    [ "$(custom pulsar-menu binding)" = "'<Super>space'" ]
     [ "$(custom pulsar-menu command)" = "'/usr/libexec/pulsar/pulsar-menu'" ]
     gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | grep -q "/pulsar-menu/"
     # Super+Print was the account's: not bound, not in the list
@@ -146,10 +147,10 @@ custom() { gsettings get "org.gnome.settings-daemon.plugins.media-keys.custom-ke
     [ "$(cat "$NOTIFY_LOG")" = "--app-name=Pulsar
 --icon=input-keyboard-symbolic
 New keyboard shortcuts
-Super+/: Pulsar commands
+Super+Space: Pulsar commands
 Change them in Settings > Keyboard." ] || fail "$(cat "$NOTIFY_LOG")"
     run python3 "$SHORTCUTS" --list
-    [[ "$output" == *"bound to <Super>slash"* ]]
+    [[ "$output" == *"bound to <Super>space"* ]]
     [[ "$output" == *"<Super>Print is taken (org.gnome.desktop.wm.keybindings switch-input-source)"* ]]
 }
 
@@ -171,15 +172,48 @@ Change them in Settings > Keyboard." ] || fail "$(cat "$NOTIFY_LOG")"
 @test "shortcuts: a chord taken by another custom shortcut counts, whatever its modifier spelling" {
     shortcuts_env
     local p=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/
-    gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['$p']"
-    gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$p" binding "'<SUPER>Slash'"
+    local q=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/
+    gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['$p', '$q']"
+    # the person's own Super+Space: not taken from the layout switch, though
+    # the switch alone could have been; and their Super+/ too
+    gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$p" binding "'<SUPER>Space'"
+    gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$q" binding "'<super>slash'"
     python3 "$SHORTCUTS" >/dev/null
     ! gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | grep -q "pulsar-menu" || false
+    [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source)" = "['<Super>space', 'XF86Keyboard']" ]
     run python3 "$SHORTCUTS" --list
-    [[ "$output" == *"taken (custom shortcut $p)"* ]] || fail "$output"
+    [[ "$output" == *"not bound: <Super>space is taken (org.gnome.desktop.wm.keybindings switch-input-source; custom shortcut $p); <Super>slash is taken (custom shortcut $q)"* ]] || fail "$output"
     # the existing list is kept, the new one added after it
     [ "$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)" = \
-      "['$p', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/pulsar-screen-text/']" ]
+      "['$p', '$q', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/pulsar-screen-text/']" ]
+}
+
+@test "shortcuts: one keyboard layout and GNOME's own switch: the menu takes Super+Space from it" {
+    shortcuts_env
+    gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us')]"
+    python3 "$SHORTCUTS" >/dev/null
+    [ "$(custom pulsar-menu binding)" = "'<Super>space'" ]
+    # the switch keeps its other keys, and the way back is untouched
+    [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source)" = "['XF86Keyboard']" ]
+    [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source-backward)" = "['<Shift><Super>space', '<Shift>XF86Keyboard']" ]
+    grep -qx "Super+Space: Pulsar commands (it was the keyboard-layout switch, which does nothing with one layout)" "$NOTIFY_LOG"
+    run python3 "$SHORTCUTS" --list
+    [[ "$output" == *"bound to <Super>space, taken from org.gnome.desktop.wm.keybindings switch-input-source"* ]] || fail "$output"
+}
+
+@test "shortcuts: two layouts, or a switch of the person's own, keep Super+Space; the menu gets Super+/" {
+    shortcuts_env
+    gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'de')]"
+    python3 "$SHORTCUTS" >/dev/null
+    [ "$(custom pulsar-menu binding)" = "'<Super>slash'" ]
+    [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source)" = "['<Super>space', 'XF86Keyboard']" ]
+    grep -qx "Super+/: Pulsar commands" "$NOTIFY_LOG"
+    # one layout, but the switch is theirs (Super+Space alone, no XF86Keyboard)
+    rm -f "$XDG_STATE_HOME/pulsar/shortcuts" "${XDG_CONFIG_HOME}/glib-2.0/settings/keyfile"
+    gsettings set org.gnome.desktop.wm.keybindings switch-input-source "['<Super>space']"
+    python3 "$SHORTCUTS" >/dev/null
+    [ "$(custom pulsar-menu binding)" = "'<Super>slash'" ]
+    [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source)" = "['<Super>space']" ]
 }
 
 @test "shortcuts: a binding already in the list is not listed twice" {
@@ -189,7 +223,7 @@ Change them in Settings > Keyboard." ] || fail "$(cat "$NOTIFY_LOG")"
     python3 "$SHORTCUTS" >/dev/null
     [ "$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)" = \
       "['$p', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/pulsar-screen-text/']" ]
-    [ "$(custom pulsar-menu binding)" = "'<Super>slash'" ]
+    [ "$(custom pulsar-menu binding)" = "'<Super>space'" ]
 }
 
 @test "shortcuts: a new account gets the welcome, not a notification" {
@@ -197,7 +231,7 @@ Change them in Settings > Keyboard." ] || fail "$(cat "$NOTIFY_LOG")"
     mkdir -p "$XDG_STATE_HOME/pulsar-theme"
     touch "$XDG_STATE_HOME/pulsar-theme/welcome.pending"
     python3 "$SHORTCUTS" >/dev/null
-    [ "$(custom pulsar-menu binding)" = "'<Super>slash'" ]
+    [ "$(custom pulsar-menu binding)" = "'<Super>space'" ]
     [ ! -s "$NOTIFY_LOG" ]
 }
 

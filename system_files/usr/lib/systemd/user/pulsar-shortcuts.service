@@ -1,5 +1,6 @@
-# Offers each of Pulsar's keyboard shortcuts to the account once: Super+/ for
-# the command menu, Super+Print to copy text from the screen. A chord the
+# Offers each of Pulsar's keyboard shortcuts to the account once: Super+Space
+# for the command menu (Super+/ with several keyboard layouts; see
+# pulsar-shortcuts), Super+Print to copy text from the screen. A chord the
 # account already uses is left alone; one the person removes or rebinds in
 # Settings > Keyboard stays as they left it. The record is
 # %S/pulsar/shortcuts; `/usr/libexec/pulsar/pulsar-shortcuts --list` reads it.

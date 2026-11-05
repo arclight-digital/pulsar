@@ -1057,9 +1057,12 @@ RUN set -eu; \
 #
 # pulsar-shortcuts.service is --global for the same reason: shortcuts live in
 # each account's dconf. At each login it offers what the account has not been
-# offered yet (Super+/ for the command menu, Super+Print for copying text off
-# the screen), once each, and only on a chord nothing there already answers
-# to. Removing or rebinding one in Settings > Keyboard sticks.
+# offered yet (Super+Space for the command menu, Super+Print for copying
+# text off the screen), once each, and only on a chord nothing there already
+# answers to. The one exception: Super+Space is GNOME's layout switch, and
+# an account with a single layout and GNOME's own binding gives it up to the
+# menu (several layouts, or a binding of the person's own, and the menu gets
+# Super+/). Removing or rebinding one in Settings > Keyboard sticks.
 #
 # pulsar-update-auto.timer is a SYSTEM unit, because staging needs root. It
 # runs `pulsar update --background`: the same staging `sudo pulsar update`

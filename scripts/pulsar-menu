@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-"""pulsar-menu -- Pulsar's own actions, one search away (Super+/).
+"""pulsar-menu -- Pulsar's own actions, one search away (Super+Space, or
+Super+/ in an account with several keyboard layouts).
 
 Type to filter, Up/Down to choose, Enter to run, Esc to close. Pressing the
 shortcut again also closes it. Everything here is something Pulsar already
