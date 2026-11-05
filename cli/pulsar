@@ -3226,6 +3226,7 @@ agent_tmux() {
             "$tname" "$name" >&2
     fi
     session_put "$tname" "$name" "$dir" "$id" "$repo"
+    undo_snapshot_start "$tname" "$dir"
 
     local cli flag=--no-sandbox
     cli=$(realpath "$SELF")
@@ -3239,6 +3240,171 @@ agent_tmux() {
     atmux set-hook -g client-session-changed "set-option -u @pulsar-alert"
     atmux set-hook -g client-attached "set-option -u @pulsar-alert"
     agent_tmux_attach "$tname"
+}
+
+# ---------------------------------------------------------------------------
+# agent undo -- put a project's files back the way they were when a session
+# started. Rollback covers the OS; this covers what an agent did to your work.
+#
+# Each start of a session in a git repository records a snapshot of the
+# working files, tracked and untracked alike, as a commit no branch points
+# at: refs/pulsar/undo/<session>/<time>, the last UNDO_KEEP of them. Built on
+# a copy of the real index, so only what changed is read again, and nothing
+# of the user's index, branches or stash is touched. Not in it: files git
+# ignores (build output, node_modules), which an undo leaves as they are,
+# and untracked files over UNDO_MAX_BYTES, named in the snapshot's message.
+#
+# An undo restores files and deletes the ones added since; it never moves a
+# branch. Commits made since stay, and are named. What the files were just
+# before the undo is kept too (refs/pulsar/undone/<session>/...), so
+# --redo takes the undo back.
+# ---------------------------------------------------------------------------
+UNDO_KEEP=${PULSAR_UNDO_KEEP:-10}
+UNDO_MAX_BYTES=${PULSAR_UNDO_MAX_BYTES:-52428800}
+
+# undo_tree <top> <message> -> a commit of the working files, on stdout
+undo_tree() {
+    local top=$1 msg=$2 gd idx tmp tree head f size
+    gd=$(git -C "$top" rev-parse --path-format=absolute --git-dir) || return 1
+    idx=$(git -C "$top" rev-parse --path-format=absolute --git-path index) || return 1
+    tmp=$(mktemp "${gd}/pulsar-undo-index.XXXXXX") || return 1
+    if [ -f "$idx" ]; then cp "$idx" "$tmp"; else rm -f "$tmp"; fi
+    local -a skip=() skipped=()
+    while IFS= read -r -d '' f; do
+        size=$(stat -c %s -- "${top}/${f}" 2>/dev/null) || continue
+        [ "$size" -le "$UNDO_MAX_BYTES" ] && continue
+        skip+=(":(exclude,literal)${f}"); skipped+=("$f")
+    done < <(git -C "$top" ls-files -z --others --exclude-standard)
+    [ ${#skipped[@]} -eq 0 ] || msg+=$'\n\n'"Not in it (untracked, over $((UNDO_MAX_BYTES / 1048576)) MB):"$'\n'"$(printf '%s\n' "${skipped[@]}")"
+    if ! GIT_INDEX_FILE=$tmp git -C "$top" add -A -- . "${skip[@]}" >/dev/null 2>&1 \
+        || ! tree=$(GIT_INDEX_FILE=$tmp git -C "$top" write-tree); then
+        rm -f "$tmp"; return 1
+    fi
+    rm -f "$tmp"
+    head=$(git -C "$top" rev-parse -q --verify HEAD) || head=""
+    GIT_AUTHOR_NAME=Pulsar GIT_AUTHOR_EMAIL=pulsar@localhost GIT_COMMITTER_NAME=Pulsar GIT_COMMITTER_EMAIL=pulsar@localhost \
+        git -C "$top" commit-tree "$tree" ${head:+-p "$head"} -m "$msg"
+}
+
+undo_top() { git -C "$1" rev-parse --show-toplevel 2>/dev/null; }
+
+undo_snapshot_start() {
+    local s=$1 dir=$2 top c old n=0
+    top=$(undo_top "$dir") || {
+        printf 'note: %s is not in a git repository, so pulsar agent undo has nothing to go back to\n' "${dir/#"$HOME"/\~}" >&2
+        return 0; }
+    if ! c=$(undo_tree "$top" "pulsar: ${s} started $(date '+%Y-%m-%d %H:%M')"); then
+        printf 'note: git could not snapshot %s; pulsar agent undo %s has nothing new to go back to\n' "$top" "$s" >&2
+        return 0
+    fi
+    git -C "$top" update-ref "refs/pulsar/undo/${s}/$(date +%s%N)" "$c"
+    while IFS= read -r old; do
+        n=$((n + 1))
+        [ "$n" -le "$UNDO_KEEP" ] || git -C "$top" update-ref -d "$old"
+    done < <(git -C "$top" for-each-ref --sort=-refname --format='%(refname)' "refs/pulsar/undo/${s}/")
+}
+
+# undo_apply <top> <from commit> <to commit>: make the files match <to>
+undo_apply() {
+    local top=$1 from=$2 to=$3 meta p
+    local -a restore=() remove=()
+    while IFS= read -r -d '' meta && IFS= read -r -d '' p; do
+        # gitlinks (submodules) are their own repositories
+        case "$meta" in :160000\ *|:*\ 160000\ *) continue ;; esac
+        case "${meta##* }" in
+            A) remove+=("$p") ;;
+            *) restore+=("$p") ;;
+        esac
+    done < <(git -C "$top" diff-tree -r -z --no-renames --raw "$to" "$from")
+    if [ ${#restore[@]} -gt 0 ]; then
+        printf '%s\0' "${restore[@]}" | GIT_LITERAL_PATHSPECS=1 git -C "$top" restore --source="$to" --worktree \
+            --pathspec-from-file=- --pathspec-file-nul || return 1
+    fi
+    for p in "${remove[@]}"; do
+        rm -f -- "${top:?}/${p:?}"
+        rmdir -p --ignore-fail-on-non-empty -- "$(dirname -- "${top}/${p}")" 2>/dev/null || true
+    done
+}
+
+agent_undo() {
+    local s="" list=0 to=1 yes=0 redo=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --list) list=1 ;;
+            --to) [ $# -ge 2 ] || die "--to wants a number from --list"; to=$2; shift ;;
+            --yes|-y) yes=1 ;;
+            --redo) redo=1 ;;
+            -h|--help) printf 'usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes]\n'; return 0 ;;
+            -*) die "unknown option: $1 (pulsar agent undo <session> [--list | --to <n> | --redo] [--yes])" ;;
+            *) [ -z "$s" ] || die "one session at a time"; s=$1 ;;
+        esac
+        shift
+    done
+    case "$s" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes]" ;; esac
+    case "$to" in ''|*[!0-9]*|0) die "--to wants a number from --list" ;; esac
+    local dir top
+    dir=$(session_get "$s" dir) || die "no session called ${s} (pulsar agent sessions)"
+    [ -d "$dir" ] || die "${s} ran in ${dir}, which is gone"
+    top=$(undo_top "$dir") || die "${dir} is not in a git repository; there is nothing to undo to"
+    local ns="refs/pulsar/undo/${s}/"
+    [ "$redo" = 0 ] || ns="refs/pulsar/undone/${s}/"
+    local -a refs=()
+    mapfile -t refs < <(git -C "$top" for-each-ref --sort=-refname --format='%(refname)' "$ns")
+    if [ ${#refs[@]} -eq 0 ]; then
+        [ "$redo" = 1 ] && die "there is no undo of ${s} to take back"
+        die "no snapshot of ${s} yet: one is taken each time the session starts"
+    fi
+    if [ "$list" = 1 ]; then
+        local i=0 r
+        for r in "${refs[@]}"; do
+            i=$((i + 1))
+            printf '%3d  %s\n' "$i" "$(git -C "$top" log -1 --format='%cd  %s' --date='format:%Y-%m-%d %H:%M' "$r")"
+        done
+        return 0
+    fi
+    [ "$to" -le ${#refs[@]} ] || die "there are ${#refs[@]} snapshots of ${s} (pulsar agent undo ${s} --list)"
+    if have tmux && atmux_running "$s"; then
+        die "${s} is running, and its agent could write again mid-undo; end it first (pulsar agent sessions --kill ${s})"
+    fi
+    local target now
+    target=$(git -C "$top" rev-parse "${refs[$((to - 1))]}")
+    now=$(undo_tree "$top" "pulsar: ${s} before an undo $(date '+%Y-%m-%d %H:%M')") || die "git could not read the files as they are now"
+    local changes added=0 changed=0
+    changes=$(git -C "$top" diff-tree -r --no-renames --name-status "$target" "$now")
+    if [ -z "$changes" ]; then
+        printf 'nothing to do: the files are as they were %s\n' "$(git -C "$top" log -1 --format=%cr "$target")"
+        return 0
+    fi
+    added=$(grep -c '^A' <<<"$changes" || true)
+    changed=$(( $(wc -l <<<"$changes") - added ))
+    printf '%s, as of %s (%s):\n' "$([ "$redo" = 1 ] && echo 'Takes back the undo' || echo "Puts ${top/#"$HOME"/\~} back")" \
+        "$(git -C "$top" log -1 --format='%cd' --date='format:%Y-%m-%d %H:%M' "$target")" \
+        "$(git -C "$top" log -1 --format=%cr "$target")"
+    [ "$changed" -eq 0 ] || printf '  restores %d file(s)\n' "$changed"
+    [ "$added" -eq 0 ] || printf '  deletes %d file(s) made since\n' "$added"
+    sed 's/^A\t/  - /; s/^[MDT]\t/  ~ /' <<<"$changes" | head -n 20
+    [ "$(wc -l <<<"$changes")" -le 20 ] || printf '  ... and %d more\n' $(( $(wc -l <<<"$changes") - 20 ))
+    local base head
+    base=$(git -C "$top" rev-parse -q --verify "${target}^") || base=""
+    head=$(git -C "$top" rev-parse -q --verify HEAD) || head=""
+    if [ -n "$base" ] && [ -n "$head" ] && [ "$base" != "$head" ] && git -C "$top" merge-base --is-ancestor "$base" "$head"; then
+        printf '  commits made since stay on the branch (%d; git log %s..HEAD)\n' \
+            "$(git -C "$top" rev-list --count "${base}..${head}")" "$(git -C "$top" rev-parse --short "$base")"
+    fi
+    printf '  files git ignores are left as they are\n'
+    if [ "$yes" = 0 ]; then
+        [ -t 0 ] || die "add --yes to do it without a terminal to ask on"
+        local ans; read -r -p "Go ahead? [y/N] " ans
+        case "$ans" in y|Y|yes) ;; *) printf 'nothing changed\n'; return 0 ;; esac
+    fi
+    [ "$redo" = 1 ] || git -C "$top" update-ref "refs/pulsar/undone/${s}/$(date +%s%N)" "$now"
+    undo_apply "$top" "$now" "$target" || die "git could not restore every file; the state before this is ${now}"
+    if [ "$redo" = 1 ]; then
+        git -C "$top" update-ref -d "${refs[$((to - 1))]}"
+        printf 'done: the undo is taken back\n'
+    else
+        printf 'done. pulsar agent undo %s --redo takes it back\n' "$s"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -3366,9 +3532,13 @@ agent_sessions() {
         --forget)
             [ "$running" = 0 ] || die "$2 is running; end it first (pulsar agent sessions --kill $2)"
             [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
-            local repo dir
+            local repo dir top r
             repo=$(session_get "$2" repo) || repo=""
             dir=$(session_get "$2" dir) || dir=""
+            if [ -d "$dir" ] && top=$(undo_top "$dir"); then
+                while IFS= read -r r; do git -C "$top" update-ref -d "$r"; done \
+                    < <(git -C "$top" for-each-ref --format='%(refname)' "refs/pulsar/undo/$2/" "refs/pulsar/undone/$2/")
+            fi
             if [ -n "$repo" ] && [ -d "$dir" ]; then
                 # never forced: what is in it might be the only copy
                 if git -C "$repo" worktree remove "$dir" 2>/dev/null; then
@@ -3612,6 +3782,10 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      looking at, a notification opens it.
                                      --worktree: its own git worktree and branch,
                                      <repo>/.worktrees/<session>
+       pulsar agent undo <session> [--list | --to <n> | --redo] [--yes]
+                                     put the project's files back as they were when
+                                     the session started (git repositories; files git
+                                     ignores stay as they are, commits stay)
        pulsar agent sessions [--kill <name> | --forget <name>]
                                      the tmux sessions; --kill ends one (it can come
                                      back), --forget drops its conversation
@@ -3665,6 +3839,10 @@ cmd_agent() {
             no_json "agent run"
             need_user "agent run"
             agent_run "$@" ;;
+        undo)
+            no_json "agent undo"
+            need_user "agent undo"
+            agent_undo "$@" ;;
         notify)
             need_user "agent notify"
             agent_notify "$@" ;;

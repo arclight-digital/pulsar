@@ -3611,7 +3611,8 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     [ "$status" -eq 0 ] || fail "$output"
     [ "$(sd_arg 1)" = "work: Claude Code is done" ]
     [ "$(sd_arg 2)" = $'It is waiting for your next message.\nIn ~/code/proj' ]
-    [ "$(sd_arg 4)" = claude ] && [ "$(sd_arg 5)" = work ]
+    [ "$(sd_arg 4)" = claude ]
+    [ "$(sd_arg 5)" = work ]
     [ "$(sed -n 2p "${TMUX_LIVE}/.work.opt")" = Stop ]
     # the button: a terminal on that session
     printf '#!/bin/sh\necho attach\n' > "${STUB}/notify-send"
@@ -3763,6 +3764,130 @@ wt_env() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"is not a folder: this is a linked worktree"* ]] || fail "$output"
     [ ! -e "$PODMAN_LOG" ]
+}
+
+# agent undo: each session start snapshots the files; undo puts them back
+undo_env() {
+    tmux_env
+    cd "$PROJ"
+    printf 'build/\n' > .gitignore
+    printf 'one\n' > kept.txt; printf 'two\n' > edited.txt; printf 'three\n' > gone.txt; printf 'x\n' > '[a]'; printf 'y\n' > a
+    git add -A; git commit -q -m base
+    printf 'staged\n' >> kept.txt; git add kept.txt          # the user's own staged change
+    printf 'mine\n' > untracked.txt                           # and untracked work
+}
+# the agent's turn: edits, deletes, adds, and build output git ignores
+agent_works() {
+    printf 'agent\n' >> edited.txt; rm gone.txt '[a]'; printf 'new\n' > added.txt
+    mkdir -p deep/er; printf 'n\n' > deep/er/new.txt; printf 'z\n' > untracked.txt
+    mkdir -p build; printf 'o\n' > build/out.o
+}
+
+@test "agent undo: a session start snapshots tracked and untracked files, and leaves the index alone" {
+    undo_env
+    local before; before=$(git diff --cached)
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    [ "$(git for-each-ref --format=x 'refs/pulsar/undo/work/' | wc -l)" -eq 1 ]
+    local snap; snap=$(git for-each-ref --format='%(refname)' 'refs/pulsar/undo/work/')
+    [ "$(git show "${snap}:untracked.txt")" = mine ]
+    [ "$(git show "${snap}:kept.txt")" = $'one\nstaged' ]
+    [ "$(git diff --cached)" = "$before" ]
+    [ "$(git rev-parse "${snap}^")" = "$(git rev-parse HEAD)" ]
+    [ -z "$(git branch --list 'pulsar*')" ]
+    [ -z "$(ls .git/pulsar-undo-index.* 2>/dev/null)" ]
+}
+
+@test "agent undo: restores, recreates and deletes what the agent did; ignored files and commits stay; --redo takes it back" {
+    undo_env
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    agent_works
+    git commit -q --allow-empty -m "the agent's"
+    run "$PULSAR" agent undo work
+    [ "$status" -ne 0 ]; [[ "$output" == *"work is running"* ]]
+    rm "${TMUX_LIVE}/work"
+    run "$PULSAR" agent undo work </dev/null
+    [ "$status" -ne 0 ]; [[ "$output" == *"add --yes"* ]]
+    [ -f added.txt ]
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"restores 4 file(s)"* ]] || fail "$output"
+    [[ "$output" == *"deletes 2 file(s) made since"* ]]
+    [[ "$output" == *"commits made since stay on the branch (1;"* ]]
+    [ "$(cat edited.txt)" = two ]
+    [ "$(cat gone.txt)" = three ]
+    [ "$(cat '[a]')" = x ]
+    [ "$(cat untracked.txt)" = mine ]
+    [ ! -e added.txt ]
+    [ ! -e deep ]
+    [ -f build/out.o ]
+    [ "$(git log -1 --format=%s)" = "the agent's" ]
+    run "$PULSAR" agent undo work --redo --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(tail -1 edited.txt)" = agent ]
+    [ ! -e gone.txt ]
+    [ -f added.txt ]
+    [ -f deep/er/new.txt ]
+    [ "$(cat untracked.txt)" = z ]
+    run "$PULSAR" agent undo work --redo --yes
+    [[ "$output" == *"no undo of work to take back"* ]]
+}
+
+@test "agent undo: names with glob or pathspec characters are restored as themselves" {
+    undo_env
+    printf 'odd\n' > ':(top)odd'
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    rm '[a]' ':(top)odd'; printf 'agent\n' > a
+    rm "${TMUX_LIVE}/work"
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat '[a]')" = x ]
+    [ "$(cat a)" = y ]
+    [ "$(cat ':(top)odd')" = odd ]
+}
+
+@test "agent undo: the last few starts are kept, --list names them, --to picks one" {
+    undo_env
+    export PULSAR_UNDO_KEEP=2
+    local i
+    for i in 1 2 3; do
+        printf '%s\n' "$i" > counter.txt
+        "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    done
+    run "$PULSAR" agent undo work --list
+    [ "$(wc -l <<<"$output")" -eq 2 ]
+    [[ "$output" == *"  1  "*"pulsar: work started"* ]]
+    printf 'later\n' > counter.txt
+    "$PULSAR" agent undo work --to 2 --yes >/dev/null
+    [ "$(cat counter.txt)" = 2 ]
+    run "$PULSAR" agent undo work --to 3
+    [[ "$output" == *"there are 2 snapshots of work"* ]]
+}
+
+@test "agent undo: an untracked file over the size limit is left out, and named" {
+    undo_env
+    export PULSAR_UNDO_MAX_BYTES=10
+    head -c 100 /dev/zero > big.bin
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    local snap; snap=$(git for-each-ref --format='%(refname)' 'refs/pulsar/undo/work/')
+    ! git cat-file -e "${snap}:big.bin" 2>/dev/null || false
+    git log -1 --format=%B "$snap" | grep -qx big.bin
+    git cat-file -e "${snap}:untracked.txt"
+}
+
+@test "agent undo: nothing to go back to outside git; --forget drops a session's snapshots" {
+    undo_env
+    mkdir -p "${HOME}/plain"; cd "${HOME}/plain"
+    run "$PULSAR" agent run claude --tmux plain
+    [[ "$output" == *"is not in a git repository, so pulsar agent undo has nothing to go back to"* ]]
+    run "$PULSAR" agent undo plain
+    [ "$status" -ne 0 ]; [[ "$output" == *"is not in a git repository"* ]]
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null; rm "${TMUX_LIVE}/work"
+    agent_works
+    "$PULSAR" agent undo work --yes >/dev/null
+    [ -n "$(git for-each-ref 'refs/pulsar/')" ]
+    "$PULSAR" agent sessions --forget work >/dev/null
+    [ -z "$(git for-each-ref 'refs/pulsar/')" ]
 }
 
 # ---------------------------------------------------------------------------
