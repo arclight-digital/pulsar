@@ -3336,6 +3336,226 @@ SH
 }
 
 # ---------------------------------------------------------------------------
+# agent run --tmux: one agent per named session, on the agents' own server.
+# tmux is stubbed: it keeps "running" sessions as files and logs every call,
+# one argument per line, so what is checked is what pulsar asked tmux for.
+# ---------------------------------------------------------------------------
+tmux_env() {
+    sandbox_env
+    export TMUX_LIVE="${BATS_TEST_TMPDIR}/tmux-live" TMUX_CALLS="${BATS_TEST_TMPDIR}/tmux-calls"
+    mkdir -p "$TMUX_LIVE"; : > "$TMUX_CALLS"
+    export PULSAR_AGENT_TMUX_CONF="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/agents-tmux.conf"
+    unset TMUX CLAUDE_CONFIG_DIR
+    cat > "${STUB}/tmux" <<'SH'
+#!/bin/bash
+{ printf '%s\n' "$@"; echo ---; } >> "$TMUX_CALLS"
+[ "$1" = -L ] && [ "$2" = pulsar-agents ] || { echo "wrong server: $1 $2" >&2; exit 9; }
+shift 2
+[ "$1" != -f ] || shift 2
+cmd=$1; shift
+target() { while [ $# -gt 0 ]; do [ "$1" != -t ] || { printf '%s' "${2#=}"; return; }; shift; done; }
+case "$cmd" in
+    has-session) [ -e "${TMUX_LIVE}/$(target "$@")" ] ;;
+    new-session)
+        while [ "$1" != -- ]; do [ "$1" != -s ] || s=$2; [ "$1" != -c ] || c=$2; shift; done; shift
+        printf '%s\n' "$c" "$@" > "${TMUX_LIVE}/${s}"
+        printf '%s\0' "$@" > "${TMUX_LIVE}/.${s}.argv" ;;
+    kill-session) rm "${TMUX_LIVE}/$(target "$@")" ;;
+    list-sessions) ls "$TMUX_LIVE" ;;   # ls skips the .argv files
+    attach-session|switch-client) echo "tmux-env=${TMUX-unset}" >> "$TMUX_CALLS"; echo "attached $(target "$@")" ;;
+    *) exit 9 ;;
+esac
+SH
+    chmod +x "${STUB}/tmux"
+    REC="${HOME}/.local/state/pulsar/agents"
+}
+
+# the pane command of a live session, one argument per line (its folder first)
+pane() { cat "${TMUX_LIVE}/$1"; }
+rec_id() { sed -n 's/^id=//p' "${REC}/$1.session"; }
+
+@test "agent run --tmux: a new session pins a fresh conversation, in this folder, on the agents' server" {
+    tmux_env
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --tmux work -- --model opus
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"work is running; attach with: pulsar agent run claude --tmux work"* ]]
+    local id; id=$(rec_id work)
+    [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || fail "id: $id"
+    grep -qx "agent=claude" "${REC}/work.session"
+    grep -qx "dir=${PROJ}" "${REC}/work.session"
+    # the pane runs pulsar agent run itself, mode decided up front, the
+    # conversation pinned, the user's own arguments after it
+    pane work | tail -n 10 | paste -sd' ' - | grep -qxF "$(realpath "$PULSAR") agent run claude --no-sandbox -- --session-id ${id} --model opus" \
+        || fail "$(pane work)"
+    [ "$(pane work | head -1)" = "$PROJ" ]
+    grep -qxF -- "$PULSAR_AGENT_TMUX_CONF" "$TMUX_CALLS"
+}
+
+@test "agent run --tmux: a session that died comes back on its own conversation, in its own folder" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    local id; id=$(rec_id work)
+    "$PULSAR" agent sessions --kill work >/dev/null
+    # never used: Claude has not written it, so it is started, not resumed
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    pane work | grep -qx -- --session-id
+    pane work | grep -qx -- "$id"
+    rm "${TMUX_LIVE}/work"
+    mkdir -p "${HOME}/.claude/projects/-code-proj"; : > "${HOME}/.claude/projects/-code-proj/${id}.jsonl"
+    cd "$HOME"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    pane work | grep -qx -- --resume
+    pane work | grep -qx -- "$id"
+    pane work | grep -qx -- --session-id && fail "both --resume and --session-id"
+    [ "$(pane work | head -1)" = "$PROJ" ]
+}
+
+@test "agent run --tmux: a sandboxed session looks for its conversation in the sandbox's home" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work --sandbox >/dev/null
+    pane work | grep -qx -- --sandbox
+    local id; id=$(rec_id work)
+    rm "${TMUX_LIVE}/work"
+    local sb="${HOME}/.local/share/pulsar/sandbox/claude/.claude/projects/-p"
+    mkdir -p "$sb"; : > "${sb}/${id}.jsonl"
+    "$PULSAR" agent run claude --tmux work --sandbox >/dev/null
+    pane work | grep -qx -- --resume
+    pane work | grep -qx -- "$id"
+    # unsandboxed, that conversation is out of reach: a new one, and it says so
+    rm "${TMUX_LIVE}/work"
+    run "$PULSAR" agent run claude --tmux work --no-sandbox
+    [[ "$output" == *"conversation was sandboxed; this start is unsandboxed"* ]] || fail "$output"
+    pane work | grep -qx -- --session-id
+    [ "$(rec_id work)" != "$id" ]
+}
+
+@test "agent run --tmux: a running session is attached to, never started twice" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    : > "$TMUX_CALLS"
+    run "$PULSAR" agent run claude --tmux work
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -qx new-session "$TMUX_CALLS" && fail "started twice"
+    run "$PULSAR" agent run codex --tmux work
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"work is running claude, not codex"* ]]
+    run "$PULSAR" agent run claude --tmux work --new
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"end it first (pulsar agent sessions --kill work)"* ]]
+}
+
+@test "agent run --tmux: on a terminal it attaches, and from inside the agents' server it switches" {
+    tmux_env
+    command -v python3 >/dev/null || skip "python3 for a pty"
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    local pty='import pty,sys; pty.spawn(sys.argv[1:])'
+    run python3 -c "$pty" "$PULSAR" agent run claude --tmux work
+    [[ "$output" == *"attached work"* ]] || fail "$output"
+    grep -qx attach-session "$TMUX_CALLS"
+    TMUX="/tmp/tmux-1/pulsar-agents,1,0" run python3 -c "$pty" "$PULSAR" agent run claude --tmux work
+    grep -qx switch-client "$TMUX_CALLS"
+    # another tmux: attach, nested, with TMUX unset so tmux allows it
+    : > "$TMUX_CALLS"
+    TMUX="/tmp/tmux-1/default,1,0" run python3 -c "$pty" "$PULSAR" agent run claude --tmux work
+    grep -qx attach-session "$TMUX_CALLS"
+    grep -qx tmux-env=unset "$TMUX_CALLS"
+}
+
+@test "agent run --tmux: --new is a new conversation; the old folder and claude's own picks are refused" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    local id; id=$(rec_id work)
+    "$PULSAR" agent sessions --kill work >/dev/null
+    run "$PULSAR" agent run claude --tmux work --dir "$HOME"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"work's conversation is in ${PROJ}; --new starts a fresh one in ${HOME}"* ]]
+    for a in --continue -c --resume=x --session-id --fork-session; do
+        run "$PULSAR" agent run claude --tmux work -- "$a"
+        [ "$status" -ne 0 ] || fail "$a was let through"
+        [[ "$output" == *"--tmux picks the conversation itself; drop ${a}"* ]]
+    done
+    [ ! -e "${TMUX_LIVE}/work" ]
+    "$PULSAR" agent run claude --tmux work --new --dir "$HOME" >/dev/null
+    [ "$(rec_id work)" != "$id" ]
+    [ "$(pane work | head -1)" = "$HOME" ]
+    pane work | grep -qx -- "$(rec_id work)"
+}
+
+@test "agent run --tmux: names tmux cannot hold, and --new or --dir without --tmux, are refused" {
+    tmux_env
+    cd "$PROJ"
+    for n in a.b a:b "a b" ""; do
+        run "$PULSAR" agent run claude --tmux "$n"
+        [ "$status" -ne 0 ] || fail "'$n' accepted"
+        [[ "$output" == *"a session name is letters, digits, - and _"* ]]
+    done
+    run "$PULSAR" agent run claude --new
+    [[ "$output" == *"--new and --dir go with --tmux <session>"* ]]
+    run "$PULSAR" agent run claude --dir "$PROJ"
+    [[ "$output" == *"--new and --dir go with --tmux <session>"* ]]
+    [ ! -s "$TMUX_CALLS" ]
+}
+
+@test "agent run --tmux: an agent that cannot be pinned gets the session, and is told it starts fresh" {
+    tmux_env
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/codex"; chmod +x "${STUB}/codex"
+    cd "$PROJ"
+    run "$PULSAR" agent run codex --tmux cx
+    [[ "$output" != *"new codex conversation"* ]]
+    pane cx | grep -q -- --session-id && fail "codex given claude's flag"
+    pane cx | tail -n 1 | grep -qx -- --
+    rm "${TMUX_LIVE}/cx"
+    run "$PULSAR" agent run codex --tmux cx
+    [[ "$output" == *"cx comes back as a new codex conversation"* ]] || fail "$output"
+}
+
+@test "agent run --tmux: the pane keeps a shell after the agent exits" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    printf '#!/bin/sh\necho "the shell, $*"\n' > "${BATS_TEST_TMPDIR}/sh"; chmod +x "${BATS_TEST_TMPDIR}/sh"
+    # the pane's command, with the agent swapped for one that fails
+    mapfile -d '' -t p < "${TMUX_LIVE}/.work.argv"
+    [ "${p[0]}" = bash ] && [ "${p[1]}" = -c ] && [ "${p[3]}" = claude ] || fail "${p[*]}"
+    SHELL="${BATS_TEST_TMPDIR}/sh" run bash -c "${p[2]}" claude sh -c 'echo agent out; exit 3'
+    [[ "$output" == *"agent out"* ]]
+    [[ "$output" == *"[claude exited with status 3."* ]]
+    [[ "$output" == *"the shell, -l"* ]]
+}
+
+@test "agent sessions: lists live and ended, --kill keeps the conversation, --forget drops it" {
+    tmux_env
+    cd "$PROJ"
+    run "$PULSAR" agent sessions
+    [[ "$output" == *"no agent sessions"* ]]
+    "$PULSAR" agent run claude --tmux one >/dev/null
+    "$PULSAR" agent run claude --tmux two >/dev/null
+    touch "${TMUX_LIVE}/mine"     # a session someone started by hand
+    "$PULSAR" agent sessions --kill two >/dev/null
+    run "$PULSAR" agent sessions
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" =~ one\ +claude\ +running\ +${PROJ} ]] || fail "$output"
+    [[ "$output" =~ two\ +claude\ +ended\ +${PROJ} ]] || fail "$output"
+    [[ "$output" =~ mine\ +-\ +running\ +- ]] || fail "$output"
+    run "$PULSAR" agent sessions --kill two
+    [[ "$output" == *"two is not running"* ]]
+    run "$PULSAR" agent sessions --forget one
+    [[ "$output" == *"one is running; end it first"* ]]
+    [ -e "${REC}/one.session" ]
+    run "$PULSAR" agent sessions --forget two
+    [ "$status" -eq 0 ]
+    [ ! -e "${REC}/two.session" ]
+    run "$PULSAR" agent sessions
+    [[ "$output" != *"two"* ]]
+}
+
+# ---------------------------------------------------------------------------
 # /etc/profile.d/pulsar-agents.sh: typing an agent's name goes through
 # `pulsar agent run`, in interactive bash only, unless wrap is off.
 # ---------------------------------------------------------------------------

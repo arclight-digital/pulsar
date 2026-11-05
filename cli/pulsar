@@ -2922,28 +2922,49 @@ sandbox_run() {
     podman "${args[@]}" "$img" "$real" "$@"
 }
 
-# The one place that decides how an agent starts: the shim calls this.
-agent_run() {
-    local name="" mode=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --sandbox) mode=on ;;
-            --no-sandbox) mode=off ;;
-            --) shift; break ;;
-            -*) die "unknown option: $1 (usage: pulsar agent run <name> [--sandbox|--no-sandbox] [-- args])" ;;
-            *) [ -z "$name" ] || break; name=$1 ;;
-        esac
-        shift
-    done
-    [ -n "$name" ] || die "usage: pulsar agent run <name> [--sandbox|--no-sandbox] [-- args]"
-    agent_row "$name" || die "unknown agent: ${name} (known: $(agent_names))"
-    local root eff
-    root=$(project_root)
+# on|off: whether an agent starts sandboxed in project $2, given --sandbox
+# (on), --no-sandbox (off) or neither ("") as $1. A repo that says sandbox
+# beats --no-sandbox. Call as $(...) || exit 1: a refusal dies in the subshell.
+agent_mode() {
+    local mode=$1 root=$2 eff
     eff=$(setting_resolve sandbox "$root")
     if [ "$mode" = off ] && [ "${eff#*$'\t'}" = "this project: .pulsar/agent.toml" ]; then
         die "this project's .pulsar/agent.toml says to sandbox agents; remove that line to run one unsandboxed here"
     fi
     [ -n "$mode" ] || mode=${eff%%$'\t'*}
+    printf '%s\n' "$mode"
+}
+
+AGENT_RUN_USAGE="usage: pulsar agent run <name> [--sandbox|--no-sandbox] [--tmux <session> [--new] [--dir <path>]] [-- args]"
+
+# The one place that decides how an agent starts: the shim calls this.
+agent_run() {
+    local name="" mode="" tname="" fresh=0 dir="" tmux=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --sandbox) mode=on ;;
+            --no-sandbox) mode=off ;;
+            --tmux) [ $# -ge 2 ] || die "--tmux wants a session name"; tmux=1; tname=$2; shift ;;
+            --tmux=*) tmux=1; tname=${1#--tmux=} ;;
+            --new) fresh=1 ;;
+            --dir) [ $# -ge 2 ] || die "--dir wants a folder"; dir=$2; shift ;;
+            --dir=*) dir=${1#--dir=} ;;
+            --) shift; break ;;
+            -*) die "unknown option: $1 (${AGENT_RUN_USAGE})" ;;
+            *) [ -z "$name" ] || break; name=$1 ;;
+        esac
+        shift
+    done
+    [ -n "$name" ] || die "$AGENT_RUN_USAGE"
+    agent_row "$name" || die "unknown agent: ${name} (known: $(agent_names))"
+    if [ "$tmux" = 1 ]; then
+        agent_tmux "$tname" "$name" "$mode" "$fresh" "$dir" "$@"
+        return
+    fi
+    [ "$fresh" = 0 ] && [ -z "$dir" ] || die "--new and --dir go with --tmux <session>"
+    local root
+    root=$(project_root)
+    mode=$(agent_mode "$mode" "$root") || exit 1
     if [ "$mode" = on ]; then
         sandbox_run "$name" "$@"
         return
@@ -2957,6 +2978,225 @@ agent_run() {
         exec toolbox run -c "$AGENT_BOX" env NPM_CONFIG_PREFIX="$AGENT_PREFIX" "${AGENT_PREFIX}/bin/${A_BIN}" "$@"
     fi
     exec "$cmd" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# agent run --tmux -- one agent per named tmux session, on its own server.
+#
+# The server runs on the HOST, on its own socket (-L pulsar-agents) with its
+# own config, so it never shares a server with the user's own tmux or one
+# started in a toolbox (they all share /tmp/tmux-$UID). On the host because
+# that is the one place every kind of start works from: each pane runs
+# `pulsar agent run`, which steps into the agents box, starts the sandbox's
+# podman, or runs a native install, and a toolbox that stops or is recreated
+# takes no session with it.
+#
+# Each name is tied to one conversation, in AGENT_SESSIONS/<name>.session, so
+# a session that died (logout, reboot) comes back on THAT conversation rather
+# than "the most recent in this folder", which two sessions in one project
+# would share. Claude Code only: it is the agent that takes an ID up front
+# (--session-id) and resumes exactly that one (--resume <id>). The others get
+# the tmux session, and a re-created one starts a new conversation.
+# ---------------------------------------------------------------------------
+AGENT_TMUX_SOCKET=${PULSAR_AGENT_TMUX_SOCKET:-pulsar-agents}
+AGENT_TMUX_CONF=${PULSAR_AGENT_TMUX_CONF:-/usr/share/pulsar/agents-tmux.conf}
+AGENT_SESSIONS=${PULSAR_AGENT_SESSIONS:-${XDG_STATE_HOME:-$HOME/.local/state}/pulsar/agents}
+
+# What a pane runs: the agent, then a shell in the same pane, so the
+# scrollback stays and the session ends only when the user exits that shell.
+# shellcheck disable=SC2016  # expanded by the pane's bash, not here
+AGENT_TMUX_PANE='"$@"; s=$?
+printf "\n[%s exited with status %s. This shell keeps the scrollback; exit ends the session.]\n" "$0" "$s"
+exec "${SHELL:-/bin/bash}" -l'
+
+# tmux, on the agents' server. The config only matters when this starts it.
+atmux_argv() {
+    ATMUX=(tmux -L "$AGENT_TMUX_SOCKET")
+    [ ! -r "$AGENT_TMUX_CONF" ] || ATMUX+=(-f "$AGENT_TMUX_CONF")
+}
+atmux() { atmux_argv; "${ATMUX[@]}" "$@"; }
+
+atmux_running() { atmux has-session -t "=$1" 2>/dev/null; }
+
+# session_get <session> <key>: agent, dir or id, from its record.
+session_get() {
+    local f="${AGENT_SESSIONS}/$1.session" k v
+    [ -r "$f" ] || return 1
+    while IFS='=' read -r k v; do
+        [ "$k" != "$2" ] || { printf '%s\n' "$v"; return 0; }
+    done < "$f"
+    return 1
+}
+
+session_put() {
+    local tmp
+    mkdir -p "$AGENT_SESSIONS"
+    tmp=$(mktemp "${AGENT_SESSIONS}/.$1.XXXXXX")
+    printf 'agent=%s\ndir=%s\nid=%s\n' "$2" "$3" "$4" > "$tmp"
+    mv "$tmp" "${AGENT_SESSIONS}/$1.session"
+}
+
+# Whether Claude Code (config dir $1) has conversation $2. It writes the file
+# at the first message, so an ID handed out and never used is not there yet,
+# and --resume on it would fail where --session-id starts it.
+claude_has_conversation() {
+    local f
+    for f in "$1"/projects/*/"$2".jsonl; do
+        [ ! -e "$f" ] || return 0
+    done
+    return 1
+}
+
+agent_tmux() {
+    local tname=$1 name=$2 mode=$3 fresh=$4 dir=$5
+    shift 5
+    case "$tname" in
+        ''|*[!A-Za-z0-9_-]*) die "a session name is letters, digits, - and _ (got: '${tname}')" ;;
+    esac
+    have tmux || die "tmux is not on this system; newer Pulsar images include it (sudo pulsar update)"
+    local saved_agent saved_dir id
+    saved_agent=$(session_get "$tname" agent) || saved_agent=""
+    saved_dir=$(session_get "$tname" dir) || saved_dir=""
+    id=$(session_get "$tname" id) || id=""
+    if [ -n "$dir" ]; then
+        dir=$(cd "$dir" 2>/dev/null && pwd -P) || die "not a folder: ${dir}"
+    fi
+
+    if atmux_running "$tname"; then
+        [ "$fresh" = 0 ] || die "${tname} is running; end it first (pulsar agent sessions --kill ${tname})"
+        [ -z "$saved_agent" ] || [ "$saved_agent" = "$name" ] \
+            || die "${tname} is running ${saved_agent}, not ${name}"
+        [ -z "$dir" ] || [ -z "$saved_dir" ] || [ "$dir" = "$saved_dir" ] \
+            || die "${tname} is running in ${saved_dir}, not ${dir}"
+        [ $# -eq 0 ] || printf 'note: %s is already running; the arguments after -- were not used\n' "$tname" >&2
+        agent_tmux_attach "$tname"
+    fi
+
+    if [ "$fresh" = 1 ]; then
+        id=""
+    else
+        [ -z "$saved_agent" ] || [ "$saved_agent" = "$name" ] \
+            || die "${tname} was a ${saved_agent} session; --new starts it over with ${name}"
+        if [ -n "$saved_dir" ] && [ -n "$dir" ] && [ "$dir" != "$saved_dir" ]; then
+            die "${tname}'s conversation is in ${saved_dir}; --new starts a fresh one in ${dir}"
+        fi
+    fi
+    if [ -z "$dir" ]; then
+        if [ "$fresh" = 0 ] && [ -n "$saved_dir" ]; then
+            [ -d "$saved_dir" ] || die "${tname} ran in ${saved_dir}, which is gone; --new --dir <path> starts it over"
+            dir=$saved_dir
+        else
+            dir=$(pwd -P)
+        fi
+    fi
+    case "$dir" in *$'\n'*) die "a folder name with a newline in it cannot hold a session" ;; esac
+
+    # Decided here, once, so the conversation is looked for in the home the
+    # agent will actually use: the sandbox's own, or the real one.
+    mode=$(agent_mode "$mode" "$(project_root "$dir")") || exit 1
+    local -a conv=()
+    if [ "$name" = claude ]; then
+        local a cfg other
+        for a in "$@"; do
+            case "$a" in
+                -c|--continue|-r|--resume|--resume=*|--session-id|--session-id=*|--fork-session)
+                    die "--tmux picks the conversation itself; drop ${a} (--new for a fresh one)" ;;
+            esac
+        done
+        if [ "$mode" = on ]; then
+            cfg="${SANDBOX_HOMES}/claude/.claude"; other=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+        else
+            cfg=${CLAUDE_CONFIG_DIR:-$HOME/.claude}; other="${SANDBOX_HOMES}/claude/.claude"
+        fi
+        if [ -n "$id" ] && claude_has_conversation "$cfg" "$id"; then
+            conv=(--resume "$id")
+        else
+            if [ -n "$id" ] && claude_has_conversation "$other" "$id"; then
+                printf 'note: %s'"'"'s conversation was %s; this start is %s, so it begins a new one\n' \
+                    "$tname" "$([ "$mode" = on ] && echo unsandboxed || echo sandboxed)" \
+                    "$([ "$mode" = on ] && echo sandboxed || echo unsandboxed)" >&2
+                id=""
+            fi
+            [ -n "$id" ] || id=$(cat /proc/sys/kernel/random/uuid)
+            conv=(--session-id "$id")
+        fi
+    elif [ "$fresh" = 0 ] && [ -n "$saved_agent" ]; then
+        printf 'note: %s comes back as a new %s conversation; only claude resumes the one a session had\n' \
+            "$tname" "$name" >&2
+    fi
+    session_put "$tname" "$name" "$dir" "$id"
+
+    local cli flag=--no-sandbox
+    cli=$(realpath "$SELF")
+    [ "$mode" = off ] || flag=--sandbox
+    atmux new-session -d -s "$tname" -c "$dir" -x "$(tput cols 2>/dev/null || echo 80)" -y "$(tput lines 2>/dev/null || echo 24)" \
+        -- bash -c "$AGENT_TMUX_PANE" "$name" "$cli" agent run "$name" "$flag" -- "${conv[@]}" "$@" \
+        || die "tmux could not start ${tname}"
+    agent_tmux_attach "$tname"
+}
+
+# Onto the session: switch to it from inside the agents' server, attach from
+# anywhere else (inside another tmux too: nested, which is what was asked).
+# Without a terminal it stays running, detached.
+agent_tmux_attach() {
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        printf '%s is running; attach with: pulsar agent run %s --tmux %s\n' \
+            "$1" "$(session_get "$1" agent || echo '<agent>')" "$1"
+        exit 0
+    fi
+    atmux_argv
+    case "${TMUX:-}" in
+        */"$AGENT_TMUX_SOCKET",*) exec "${ATMUX[@]}" switch-client -t "=$1" ;;
+    esac
+    unset TMUX
+    exec "${ATMUX[@]}" attach-session -t "=$1"
+}
+
+agent_sessions() {
+    local usage="usage: pulsar agent sessions [--kill <name> | --forget <name>]"
+    case "${1:-}" in
+        -h|--help) printf '%s\n' "$usage"; return 0 ;;
+        --kill|--forget)
+            [ $# -eq 2 ] || die "$usage"
+            case "$2" in ''|*[!A-Za-z0-9_-]*) die "not a session name: '$2'" ;; esac ;;
+        "") [ $# -eq 0 ] || die "$usage" ;;
+        *) die "$usage" ;;
+    esac
+    local running=0
+    have tmux && atmux_running "${2:-}" && running=1
+    case "${1:-}" in
+        --kill)
+            [ "$running" = 1 ] || die "$2 is not running"
+            atmux kill-session -t "=$2"
+            if [ "$(session_get "$2" agent || true)" = claude ]; then
+                printf 'ended %s; pulsar agent run claude --tmux %s brings it back on the same conversation\n' "$2" "$2"
+            else
+                printf 'ended %s\n' "$2"
+            fi
+            return 0 ;;
+        --forget)
+            [ "$running" = 0 ] || die "$2 is running; end it first (pulsar agent sessions --kill $2)"
+            [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
+            rm -f "${AGENT_SESSIONS}/$2.session"
+            printf 'forgot %s (the conversation itself is still in the agent'"'"'s history)\n' "$2"
+            return 0 ;;
+    esac
+    local live="" names n f
+    ! have tmux || live=$(atmux list-sessions -F '#{session_name}' 2>/dev/null) || live=""
+    names=$( { printf '%s\n' "$live"
+               for f in "$AGENT_SESSIONS"/*.session; do
+                   [ ! -e "$f" ] || basename "$f" .session
+               done; } | sed '/^$/d' | sort -u)
+    if [ -z "$names" ]; then
+        printf 'no agent sessions  (pulsar agent run <name> --tmux <session>)\n'
+        return 0
+    fi
+    printf '%-16s %-9s %-8s %s\n' NAME AGENT STATE FOLDER
+    while IFS= read -r n; do
+        printf '%-16s %-9s %-8s %s\n' "$n" "$(session_get "$n" agent || echo -)" \
+            "$(grep -Fxq -- "$n" <<<"$live" && echo running || echo ended)" \
+            "$(session_get "$n" dir || echo -)"
+    done <<<"$names"
 }
 
 # ---------------------------------------------------------------------------
@@ -3162,6 +3402,14 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      through pulsar agent run (default on)
        pulsar agent run <name> [--sandbox|--no-sandbox] [-- args]
                                      start an agent (its command does this for you)
+       pulsar agent run <name> --tmux <session> [--new] [--dir <path>] [-- args]
+                                     attach to that tmux session, or start the agent
+                                     in it. One server for agents (-L pulsar-agents),
+                                     on the host; a claude session that died comes
+                                     back on its own conversation. --new: a fresh one
+       pulsar agent sessions [--kill <name> | --forget <name>]
+                                     the tmux sessions; --kill ends one (it can come
+                                     back), --forget drops its conversation
        pulsar agent model [on|off] [--model <hf-repo[:quant]>] [--at-login] [--purge]
                                      a local model server (llama.cpp, rootless podman,
                                      127.0.0.1 only) for agents with no cloud account
@@ -3212,6 +3460,10 @@ cmd_agent() {
             no_json "agent run"
             need_user "agent run"
             agent_run "$@" ;;
+        sessions)
+            no_json "agent sessions"
+            need_user "agent sessions"
+            agent_sessions "$@" ;;
         model)
             no_json "agent model"
             need_user "agent model"

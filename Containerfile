@@ -254,6 +254,14 @@ RUN for attempt in 1 2 3; do \
 #                   unit with none. See scripts/flatpak-defaults.sh. The system
 #                   bus stays dbus-broker: the package's dbus-daemon.service
 #                   ships disabled, and that is asserted below.
+#   tmux            for `pulsar agent run --tmux`: one long-lived session per
+#                   coding agent, on its own socket (-L pulsar-agents). The
+#                   server has to be on the HOST: a pane starts the agent in
+#                   the agents box, in the sandbox's podman, or as a native
+#                   install, and only the host reaches all three. A server in
+#                   a toolbox dies with that box and shares /tmp/tmux-$UID
+#                   with every other box's tmux. Its config is
+#                   /usr/share/pulsar/agents-tmux.conf.
 #
 # `gh` was here once, carried as an admitted exception to the rule above so
 # that `pulsar verify` (then `attest`) had its verifier on a fresh install. The exception is
@@ -278,7 +286,8 @@ RUN dnf5 install -y \
       android-tools \
       libvirt \
       qemu-kvm \
-      dbus-daemon && \
+      dbus-daemon \
+      tmux && \
     case "$(readlink /etc/systemd/system/dbus.service)" in \
       */dbus-broker.service) echo "system bus: still dbus-broker" ;; \
       *) echo "FATAL: installing dbus-daemon moved the system bus off dbus-broker ($(readlink /etc/systemd/system/dbus.service))"; exit 1 ;; \
