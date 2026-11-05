@@ -3812,6 +3812,11 @@ agent_works() {
     run "$PULSAR" agent undo work </dev/null
     [ "$status" -ne 0 ]; [[ "$output" == *"add --yes"* ]]
     [ -f added.txt ]
+    run "$PULSAR" agent undo work --dry-run </dev/null
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"deletes 2 file(s) made since"* ]]
+    [ -f added.txt ]
+    [ -z "$(git for-each-ref 'refs/pulsar/undone/')" ]
     run "$PULSAR" agent undo work --yes
     [ "$status" -eq 0 ] || fail "$output"
     [[ "$output" == *"restores 4 file(s)"* ]] || fail "$output"
@@ -3969,6 +3974,44 @@ usage_env() {
     rm "${TMUX_LIVE}/work"
     run "$PULSAR" agent sessions --json
     [ "$(jq -r '.[] | select(.name == "work") | [.state, .started] | @tsv' <<<"$output")" = $'ended\t' ]
+}
+
+# Pulsar Settings' Agents page: what it says about a session
+@test "Settings' Agents page: a session's line, its details, and waiting ones first" {
+    python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Adw' 2>/dev/null \
+        || skip "no PyGObject GTK 4 / libadwaita here"
+    run env HOME=/home/u python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-settings" <<'PY'
+import importlib.machinery, importlib.util, sys
+path = sys.argv[1]; sys.argv = [path]
+loader = importlib.machinery.SourceFileLoader("ps", path)
+spec = importlib.util.spec_from_loader("ps", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+now = 1_000_000
+w = {"name": "fix", "agent": "claude", "state": "waiting", "waiting_for": "Stop", "started": now - 60,
+     "dir": "/home/u/p/.worktrees/fix", "worktree_of": "/home/u/p",
+     "usage": {"model": "claude-opus-5-5", "context": 142310, "read": 4210000, "read_cached": 3980000,
+               "written": 38200, "requests": 41, "subagent_requests": 6}}
+r = {"name": "a", "agent": "codex", "state": "running", "started": now - 7500, "dir": "/srv/x", "usage": None}
+e = {"name": "b", "agent": None, "state": "ended"}
+print(m.session_subtitle(w, now))
+print(m.session_subtitle(dict(w, waiting_for="Notification"), now))
+print(m.session_subtitle(r, now))
+print(m.session_subtitle(e, now))
+for t, sub in m.session_rows(w): print(f"{t}: {sub}")
+print(m.session_rows(r))
+print(" ".join(s["name"] for s in sorted([e, r, w], key=m.session_order)))
+print(m.ago(59), m.ago(3600), m.ago(2 * 86400 + 5), m.tokens(950), m.tokens(2500), m.tokens(3_250_000))
+PY
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "Claude Code · Waiting for you" ]
+    [ "${lines[1]}" = "Claude Code · Needs you" ]
+    [ "${lines[2]}" = "Codex CLI · Running for 2 h 5 min" ]
+    [ "${lines[3]}" = "Started by hand · Ended" ]
+    [ "${lines[4]}" = "Folder: ~/p/.worktrees/fix (worktree of ~/p, branch fix)" ]
+    [ "${lines[5]}" = "Context: 142k tokens now · claude-opus-5-5" ]
+    [ "${lines[6]}" = "Tokens: 4.2M read (4.0M from the cache) · 38k written · 41 requests, and 6 by subagents" ]
+    [ "${lines[7]}" = "[('Folder', '/srv/x')]" ]
+    [ "${lines[8]}" = "fix a b" ]
+    [ "${lines[9]}" = "0 min 1 h 2 days 950 3k 3.2M" ]
 }
 
 # ---------------------------------------------------------------------------

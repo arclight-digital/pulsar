@@ -3327,20 +3327,21 @@ undo_apply() {
 }
 
 agent_undo() {
-    local s="" list=0 to=1 yes=0 redo=0
+    local s="" list=0 to=1 yes=0 redo=0 dry=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --list) list=1 ;;
             --to) [ $# -ge 2 ] || die "--to wants a number from --list"; to=$2; shift ;;
             --yes|-y) yes=1 ;;
             --redo) redo=1 ;;
-            -h|--help) printf 'usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes]\n'; return 0 ;;
-            -*) die "unknown option: $1 (pulsar agent undo <session> [--list | --to <n> | --redo] [--yes])" ;;
+            --dry-run) dry=1 ;;
+            -h|--help) printf 'usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run]\n'; return 0 ;;
+            -*) die "unknown option: $1 (pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run])" ;;
             *) [ -z "$s" ] || die "one session at a time"; s=$1 ;;
         esac
         shift
     done
-    case "$s" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes]" ;; esac
+    case "$s" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run]" ;; esac
     case "$to" in ''|*[!0-9]*|0) die "--to wants a number from --list" ;; esac
     local dir top
     dir=$(session_get "$s" dir) || die "no session called ${s} (pulsar agent sessions)"
@@ -3392,6 +3393,7 @@ agent_undo() {
             "$(git -C "$top" rev-list --count "${base}..${head}")" "$(git -C "$top" rev-parse --short "$base")"
     fi
     printf '  files git ignores are left as they are\n'
+    [ "$dry" = 0 ] || return 0
     if [ "$yes" = 0 ]; then
         [ -t 0 ] || die "add --yes to do it without a terminal to ask on"
         local ans; read -r -p "Go ahead? [y/N] " ans
@@ -3907,7 +3909,7 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      looking at, a notification opens it.
                                      --worktree: its own git worktree and branch,
                                      <repo>/.worktrees/<session>
-       pulsar agent undo <session> [--list | --to <n> | --redo] [--yes]
+       pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run]
                                      put the project's files back as they were when
                                      the session started (git repositories; files git
                                      ignores stay as they are, commits stay)

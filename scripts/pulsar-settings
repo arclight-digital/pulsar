@@ -7,7 +7,7 @@ Everything it shows or does goes through the same `pulsar` CLI and GSettings
 keys a terminal would; it holds no state of its own. What needs root goes
 through pkexec, which asks for the password like any other system change.
 
-`pulsar-settings [appearance | updates]` opens on that page; a second launch
+`pulsar-settings [appearance | updates | agents]` opens on that page; a second launch
 raises the open window and turns to the page asked for.
 """
 import datetime
@@ -48,7 +48,13 @@ EFFECTS = (
 )
 
 PAGES = (("appearance", "Appearance", "applications-graphics-symbolic"),
-         ("updates", "Updates", "software-update-available-symbolic"))
+         ("updates", "Updates", "software-update-available-symbolic"),
+         ("agents", "Agents", "utilities-terminal-symbolic"))
+
+# what `pulsar agent list` calls them
+AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex CLI", "gemini": "Gemini CLI",
+               "opencode": "opencode", "aider": "aider"}
+TMUX_SOCKET = "pulsar-agents"
 
 
 def run(argv, done, *data):
@@ -84,6 +90,67 @@ def day(ts):
     return f"{d:%B} {d.day}"
 
 
+def ago(seconds):
+    """How long, the way a person says it: "4 min", "2 h 5 min", "3 days"."""
+    m = max(0, int(seconds)) // 60
+    if m < 60:
+        return f"{m} min"
+    if m < 24 * 60:
+        return f"{m // 60} h {m % 60} min" if m % 60 else f"{m // 60} h"
+    d = m // (24 * 60)
+    return "1 day" if d == 1 else f"{d} days"
+
+
+def tokens(n):
+    """950, 12k, 273k, 3.3M"""
+    n = int(n or 0)
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{int(n / 1000 + 0.5)}k"
+    return f"{n / 1_000_000:.1f}M"
+
+
+def home(path):
+    h = os.path.expanduser("~")
+    return "~" + path[len(h):] if path and (path == h or path.startswith(h + "/")) else (path or "")
+
+
+def session_subtitle(s, now):
+    """One line under a session's name: who, and what it is doing."""
+    who = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand")
+    if s.get("state") == "waiting":
+        doing = "Needs you" if s.get("waiting_for") == "Notification" else "Waiting for you"
+    elif s.get("state") == "running":
+        doing = f"Running for {ago(now - s['started'])}" if s.get("started") else "Running"
+    else:
+        doing = "Ended"
+    return f"{who} · {doing}"
+
+
+def session_rows(s):
+    """(title, subtitle) for what a session's row shows when opened."""
+    rows = []
+    folder = home(s.get("dir"))
+    if folder:
+        if s.get("worktree_of"):
+            folder += f" (worktree of {home(s['worktree_of'])}, branch {s['name']})"
+        rows.append(("Folder", folder))
+    u = s.get("usage")
+    if u:
+        rows.append(("Context", f"{tokens(u.get('context'))} tokens now" + (f" · {u['model']}" if u.get("model") else "")))
+        req = f"{u.get('requests', 0)} requests"
+        if u.get("subagent_requests"):
+            req += f", and {u['subagent_requests']} by subagents"
+        rows.append(("Tokens", f"{tokens(u.get('read'))} read ({tokens(u.get('read_cached'))} from the cache) · "
+                               f"{tokens(u.get('written'))} written · {req}"))
+    return rows
+
+
+def session_order(s):
+    return ({"waiting": 0, "running": 1}.get(s.get("state"), 2), s.get("name", ""))
+
+
 def button(text, handler, *classes):
     b = Gtk.Button(label=text, valign=Gtk.Align.CENTER, css_classes=list(classes))
     b.connect("clicked", handler)
@@ -116,7 +183,8 @@ class Settings(Adw.ApplicationWindow):
         self.add_breakpoint(bp)
 
         self.pages = {}
-        for slug, page in (("appearance", self.appearance()), ("updates", self.updates())):
+        for slug, page in (("appearance", self.appearance()), ("updates", self.updates()),
+                           ("agents", self.agents())):
             tv = Adw.ToolbarView(content=page)
             tv.add_top_bar(Adw.HeaderBar())
             self.pages[slug] = tv
@@ -137,6 +205,10 @@ class Settings(Adw.ApplicationWindow):
         self.split.set_show_content(True)
         if row.slug == "updates":
             self.refresh_updates()
+        if row.slug == "agents":
+            self.refresh_agents()
+            if not self._agents_timer:
+                self._agents_timer = GLib.timeout_add_seconds(5, self._agents_tick)
 
     # ------------------------------------------------------- appearance ----
 
@@ -376,10 +448,181 @@ class Settings(Adw.ApplicationWindow):
         # read it back either way: a dismissed prompt puts the switch back
         run([PULSAR, "status", "--json"], self._status)
 
+    # ----------------------------------------------------------- agents ----
+    # Every session `pulsar agent run <name> --tmux <session>` started, read
+    # from `pulsar agent sessions --json` and refreshed while the page shows.
+    # Rows are updated in place, so an open row stays open.
+
+    def agents(self):
+        page = Adw.PreferencesPage()
+        self._agents_timer = 0
+        self.session_rows = {}
+        self.sessions = Adw.PreferencesGroup(
+            title="Sessions",
+            description="Each runs one coding agent in a terminal session that keeps going when its window "
+                        "closes. A notification says when one is waiting for you.")
+        self.sessions_empty = Adw.ActionRow(
+            title="No sessions yet", subtitle="Start one in a terminal: pulsar agent run claude --tmux <name>",
+            subtitle_selectable=True)
+        self.sessions.add(self.sessions_empty)
+        page.add(self.sessions)
+        return page
+
+    def _agents_tick(self):
+        row = self.sidebar.get_selected_row()
+        if row is None or row.slug != "agents" or not self.get_visible():
+            self._agents_timer = 0
+            return False
+        self.refresh_agents()
+        return True
+
+    def refresh_agents(self):
+        run([PULSAR, "agent", "sessions", "--json"], self._sessions)
+
+    def _sessions(self, ok, out):
+        found = parse(out) if ok else None
+        if not isinstance(found, list):
+            return
+        found.sort(key=session_order)
+        names = [s["name"] for s in found]
+        for name in list(self.session_rows):
+            if name not in names:
+                self.sessions.remove(self.session_rows.pop(name).row)
+        if [n for n in self.session_rows] != names:
+            # new sessions, or a new order: re-add in order, keeping each row
+            for r in self.session_rows.values():
+                self.sessions.remove(r.row)
+            rows = {n: self.session_rows.get(n) or SessionRow(self, n) for n in names}
+            for n in names:
+                self.sessions.add(rows[n].row)
+            self.session_rows = rows
+        now = GLib.get_real_time() // 1_000_000
+        for s in found:
+            self.session_rows[s["name"]].update(s, now)
+        self.sessions_empty.set_visible(not found)
+
+    def open_session(self, s):
+        if s.get("agent"):
+            argv = [PULSAR, "agent", "run", s["agent"], "--tmux", s["name"]]
+        else:
+            argv = ["tmux", "-L", TMUX_SOCKET, "attach-session", "-t", "=" + s["name"]]
+        try:
+            Gio.Subprocess.new(["ptyxis", "--new-window", "--", *argv], Gio.SubprocessFlags.NONE)
+        except GLib.Error as e:
+            self.alert("Could not open a terminal", e.message)
+            return
+        GLib.timeout_add_seconds(2, lambda: self.refresh_agents() and False)
+
+    def confirm(self, heading, body, action, label, then):
+        d = Adw.AlertDialog(heading=heading, body=body)
+        d.add_response("cancel", "Cancel")
+        d.add_response(action, label)
+        d.set_response_appearance(action, Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("cancel")
+        d.connect("response", lambda _d, r: r == action and then())
+        d.present(self)
+
+    def end_session(self, s):
+        back = " Its conversation is kept: Start brings it back." if s.get("agent") == "claude" else ""
+        self.confirm(f"End {s['name']}?", f"The agent stops, and the session closes.{back}",
+                     "end", "End Session", lambda: self._agent_cmd("Could not end the session",
+                                                                    "sessions", "--kill", s["name"]))
+
+    def forget_session(self, s):
+        body = "Start can no longer bring its conversation back, and its undo snapshots are deleted."
+        if s.get("worktree_of"):
+            body += " Its worktree is removed if nothing in it is uncommitted; the branch stays."
+        self.confirm(f"Forget {s['name']}?", body, "forget", "Forget",
+                     lambda: self._agent_cmd("Could not forget the session", "sessions", "--forget", s["name"]))
+
+    def _agent_cmd(self, failure, *args):
+        def done(ok, out):
+            if not ok:
+                self.alert(failure, out.strip()[-600:])
+            self.refresh_agents()
+        run([PULSAR, "agent", *args], done)
+
+    def undo_session(self, s):
+        """What would change first, from the CLI itself; then do it, with a way back."""
+        name = s["name"]
+
+        def shown(ok, out):
+            text = out.strip()
+            if not ok or text.startswith("nothing to do"):
+                self.alert("Nothing to undo" if ok else "Could not undo", text[-600:])
+                return
+            self.confirm(f"Undo what changed in {name}?", text[-1200:], "undo", "Put Files Back",
+                         lambda: run([PULSAR, "agent", "undo", name, "--yes"], undone))
+
+        def undone(ok, out):
+            if not ok:
+                self.alert("Could not undo", out.strip()[-600:])
+                return
+            d = Adw.AlertDialog(heading="Files put back",
+                                body="They are as they were when the session started. Take Back returns them "
+                                     "to how they were a moment ago.")
+            d.add_response("close", "Close")
+            d.add_response("redo", "Take Back")
+            d.connect("response", lambda _d, r: r == "redo" and self._agent_cmd(
+                "Could not take the undo back", "undo", name, "--redo", "--yes"))
+            d.present(self)
+        run([PULSAR, "agent", "undo", name, "--dry-run"], shown)
+
     def alert(self, heading, body):
         d = Adw.AlertDialog(heading=heading, body=body)
         d.add_response("close", "Close")
         d.present(self)
+
+
+class SessionRow:
+    """One session: its name and state, Open or Start, and when opened, where
+    it works, what it has used, and Undo, End or Forget."""
+
+    def __init__(self, win, name):
+        self.win, self.s = win, {"name": name}
+        self.row = Adw.ExpanderRow(title=name)
+        self.go = button("Open", lambda *_: win.open_session(self.s))
+        self.row.add_suffix(self.go)
+        self.info = []
+        self.undo_row = Adw.ActionRow(title="Undo the agent's changes")
+        self.undo_button = button("Undo…", lambda *_: win.undo_session(self.s))
+        self.undo_row.add_suffix(self.undo_button)
+        self.end_row = Adw.ActionRow()
+        self.end_button = button("End…", lambda *_: self._end(), "destructive-action")
+        self.end_row.add_suffix(self.end_button)
+        self.row.add_row(self.undo_row)
+        self.row.add_row(self.end_row)
+
+    def _end(self):
+        (self.win.end_session if self.s.get("state") != "ended" else self.win.forget_session)(self.s)
+
+    def update(self, s, now):
+        self.s = s
+        live = s.get("state") != "ended"
+        self.row.set_subtitle(session_subtitle(s, now))
+        self.go.set_label("Open" if live else "Start")
+        self.go.set_visible(live or bool(s.get("agent")))
+        rows = session_rows(s)
+        while len(self.info) < len(rows):
+            r = Adw.ActionRow(subtitle_selectable=True, css_classes=["property"])
+            self.info.append(r)
+            self.row.remove(self.undo_row)
+            self.row.remove(self.end_row)
+            self.row.add_row(r)
+            self.row.add_row(self.undo_row)
+            self.row.add_row(self.end_row)
+        for r, (title, sub) in zip(self.info, rows + [("", "")] * len(self.info)):
+            r.set_title(title)
+            r.set_subtitle(sub)
+            r.set_visible(bool(title))
+        snaps = s.get("snapshots") or 0
+        self.undo_row.set_visible(snaps > 0)
+        self.undo_button.set_sensitive(not live)
+        self.undo_row.set_subtitle("End the session first: its agent could write again mid-undo" if live else
+                                   "Puts the files back as they were when the session started")
+        self.end_row.set_title("End this session" if live else "Forget this session")
+        self.end_row.set_subtitle("" if live else "Stops tracking it, and drops its undo snapshots")
+        self.end_button.set_label("End…" if live else "Forget…")
 
 
 def main(argv):
