@@ -257,3 +257,56 @@ print(m.accel_label(\"<Super>slash\"), m.accel_label(\"<Super>Print\"), m.accel_
     [ "${lines[2]}" = "Ask Claude Code about this machine" ]
     [ "${lines[3]}" = "Super+/ Super+Print Ctrl+Super+T" ]
 }
+
+@test "menu: arithmetic and conversions in the search, worked out without eval" {
+    run menu '
+for q in ("2^10", "3x4", "(1920*1080)/4", "1/3", "15% of 80", "80 + 15%", "80 - 25%",
+          "5 mi in km", "100 f in c", "-40 c to f", "2 GiB in MB", "90 min in h",
+          "255 in hex", "-10 in hex", "0xff", "1,000*3", "123456789012345/1"):
+    print(q, "=", " | ".join(m.calc(q)))
+for q in ("42", "-5", "theme", "box 3x4", "10/0", "9^9^9", "__import__(\"os\").getcwd()",
+          "(1).__class__", "5 km in kg", "2.5 in hex", "sqrt()+1", "foo*2", "2^5000", "((9^999)^999)^999"):
+    print(q, "=", m.calc(q))
+it = m.CalcItem()
+print(it.matches("2^10"), it.title, "|", it.subtitle, "|", it.argv, it.matches("theme"))'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "2^10 = 1024 | 1024"
+        "3x4 = 12 | 12"
+        "(1920*1080)/4 = 518400 | 518400"
+        "1/3 = 0.333333333333 | 0.333333333333"
+        "15% of 80 = 12 | 12"
+        "80 + 15% = 92 | 92"
+        "80 - 25% = 60 | 60"
+        "5 mi in km = 8.04672 km | 8.04672"
+        "100 f in c = 37.7777777778 °C | 37.7777777778"
+        "-40 c to f = -40 °F | -40"
+        "2 GiB in MB = 2147.483648 MB | 2147.483648"
+        "90 min in h = 1.5 h | 1.5"
+        "255 in hex = 0xff | 0xff"
+        "-10 in hex = -0xa | -0xa"
+        "0xff = 255 | 255"
+        "1,000*3 = 3000 | 3000"
+        "123456789012345/1 = 123456789012345 | 123456789012345"
+        # a lone number is a search; words, nonsense and anything but arithmetic are not sums
+        "42 = None"
+        "-5 = None"
+        "theme = None"
+        "box 3x4 = None"
+        "10/0 = None"
+        "9^9^9 = None"
+        "__import__(\"os\").getcwd() = None"
+        "(1).__class__ = None"
+        "5 km in kg = None"
+        "2.5 in hex = None"
+        "sqrt()+1 = None"
+        "foo*2 = None"
+        # too big to be worth working out
+        "2^5000 = None"
+        "((9^999)^999)^999 = None"
+        "True = 1024 | Enter copies 1024 | ['wl-copy', '--', '1024'] False"
+    )
+    for i in "${!expected[@]}"; do
+        [ "${lines[$i]}" = "${expected[$i]}" ] || fail "line $i: '${lines[$i]}' != '${expected[$i]}'"
+    done
+}

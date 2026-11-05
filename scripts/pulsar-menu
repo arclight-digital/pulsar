@@ -5,6 +5,8 @@ Type to filter, Up/Down to choose, Enter to run, Esc to close. Pressing the
 shortcut again also closes it. Everything here is something Pulsar already
 does from the CLI or its own apps; the menu only finds it for you:
 
+  - sums and conversions typed into the search: "2^10", "15% of 80",
+    "5 mi in km", "255 in hex"; Enter copies the answer
   - copy text or a QR code from the screen (pulsar-screen)
   - themes (the picker, or the next one)
   - updates and agent sessions in Pulsar Settings, and each running session
@@ -13,8 +15,12 @@ does from the CLI or its own apps; the menu only finds it for you:
 Commands that print run in a new terminal window that stays open; a
 checkpoint asks for your password there, never here.
 """
+import ast
 import json
+import math
+import operator
 import os
+import re
 import subprocess
 import sys
 
@@ -34,8 +40,9 @@ def terminal(*argv, hold=True):
 
 
 class Item:
-    def __init__(self, key, title, subtitle, icon, argv, words=""):
+    def __init__(self, key, title, subtitle, icon, argv, words="", group=""):
         self.key, self.title, self.subtitle, self.icon, self.argv = key, title, subtitle, icon, argv
+        self.group = group
         self.haystack = " ".join((title, subtitle, words)).lower()
         self.accel = ""
 
@@ -46,27 +53,27 @@ class Item:
 def base_items():
     return [
         Item("screen-text", "Copy text from the screen", "Pick an area; its text goes on the clipboard",
-             "edit-copy-symbolic", [f"{LIBEXEC}/pulsar-screen", "text"], "ocr read recognize screenshot"),
+             "edit-copy-symbolic", [f"{LIBEXEC}/pulsar-screen", "text"], "ocr read recognize screenshot", "Screen"),
         Item("screen-qr", "Read a QR code", "Pick an area with a QR code; what it says goes on the clipboard",
-             "camera-photo-symbolic", [f"{LIBEXEC}/pulsar-screen", "qr"], "qr code barcode scan link url"),
+             "camera-photo-symbolic", [f"{LIBEXEC}/pulsar-screen", "qr"], "qr code barcode scan link url", "Screen"),
         Item("themes", "Themes", "Switch the whole desktop's colors",
              "applications-graphics-symbolic", [f"{LIBEXEC}/pulsar-theme-picker"],
-             "theme color colour palette dark light wallpaper look appearance"),
+             "theme color colour palette dark light wallpaper look appearance", "Look"),
         Item("theme-next", "Next theme", "Try the next theme in the list",
-             "media-skip-forward-symbolic", [PULSAR, "theme", "next"], "theme color colour cycle"),
-        Item("updates", "Updates", "Check for a new Pulsar image, in Pulsar Settings",
-             "software-update-available-symbolic", [f"{LIBEXEC}/pulsar-settings", "updates"],
-             "update upgrade version release"),
+             "media-skip-forward-symbolic", [PULSAR, "theme", "next"], "theme color colour cycle", "Look"),
         Item("sessions", "Agent sessions", "The coding agents running in sessions, in Pulsar Settings",
              "utilities-terminal-symbolic", [f"{LIBEXEC}/pulsar-settings", "agents"],
-             "agent claude codex tmux session usage undo"),
+             "agent claude codex tmux session usage undo", "Agents"),
+        Item("updates", "Updates", "Check for a new Pulsar image, in Pulsar Settings",
+             "software-update-available-symbolic", [f"{LIBEXEC}/pulsar-settings", "updates"],
+             "update upgrade version release", "System"),
         Item("doctor", "Health check", "Run pulsar doctor in a terminal",
-             "emblem-ok-symbolic", terminal(PULSAR, "doctor"), "doctor health status problem broken check"),
+             "emblem-ok-symbolic", terminal(PULSAR, "doctor"), "doctor health status problem broken check", "System"),
         Item("checkpoint", "Make a checkpoint", "Snapshot /etc and your settings before a risky change (asks for your password)",
              "document-save-symbolic", terminal("sudo", PULSAR, "checkpoint"),
-             "checkpoint snapshot backup restore undo etc"),
+             "checkpoint snapshot backup restore undo etc", "System"),
         Item("settings", "Pulsar Settings", "Appearance, updates and agents",
-             "preferences-system-symbolic", [f"{LIBEXEC}/pulsar-settings"], "settings preferences options"),
+             "preferences-system-symbolic", [f"{LIBEXEC}/pulsar-settings"], "settings preferences options", "System"),
     ]
 
 
@@ -83,15 +90,155 @@ def session_items(sessions):
                         " · ".join(x for x in (agent, state, where) if x),
                         "utilities-terminal-symbolic",
                         terminal(PULSAR, "agent", "run", s["agent"], "--tmux", s["name"], hold=False),
-                        f"agent session tmux attach {s['agent']}"))
+                        f"agent session tmux attach {s['agent']}", "Agents"))
     return out
+
+
+# Arithmetic typed into the search: parsed, never eval'd. Numbers, + - * /
+# // % and ^ or ** for powers, x between numbers, parentheses, a few names
+# and functions; "15% of 80", "80 + 15%"; "5 mi in km", "100 f in c",
+# "2 GiB in MB"; "255 in hex", and "0xff" alone in decimal.
+CALC_NAMES = {"pi": math.pi, "e": math.e, "tau": math.tau}
+CALC_FUNCS = {"sqrt": math.sqrt, "abs": abs, "round": round, "floor": math.floor, "ceil": math.ceil,
+              "log": math.log10, "ln": math.log, "sin": math.sin, "cos": math.cos, "tan": math.tan}
+CALC_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
+            ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow}
+
+
+def _calc(node):
+    if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in CALC_NAMES:
+        return CALC_NAMES[node.id]
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        v = _calc(node.operand)
+        return v if isinstance(node.op, ast.UAdd) else -v
+    if isinstance(node, ast.BinOp) and type(node.op) in CALC_OPS:
+        a, b = _calc(node.left), _calc(node.right)
+        # 9^9^9 would take the machine with it
+        if isinstance(node.op, ast.Pow) and (abs(b) > 1000 or abs(a) > 1e100):
+            raise ValueError("too big")
+        return CALC_OPS[type(node.op)](a, b)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in CALC_FUNCS
+            and len(node.args) == 1 and not node.keywords):
+        return CALC_FUNCS[node.func.id](_calc(node.args[0]))
+    raise ValueError("not arithmetic")
+
+
+# Units, by dimension: how many of the dimension's base unit one of them is.
+# Temperatures are not a factor apart, so they are worked out on their own.
+UNITS = {
+    "length": {"mm": .001, "cm": .01, "m": 1, "km": 1000, "in": .0254, "inch": .0254, "inches": .0254,
+               "ft": .3048, "foot": .3048, "feet": .3048, "yd": .9144, "mi": 1609.344, "mile": 1609.344,
+               "miles": 1609.344},
+    "mass": {"mg": .001, "g": 1, "kg": 1000, "oz": 28.349523125, "lb": 453.59237, "lbs": 453.59237},
+    "time": {"ms": .001, "s": 1, "sec": 1, "min": 60, "h": 3600, "hr": 3600, "hours": 3600,
+             "day": 86400, "days": 86400, "week": 604800, "weeks": 604800},
+    "data": {"b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12,
+             "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4},
+    "volume": {"ml": .001, "l": 1, "gal": 3.785411784, "floz": .0295735295625, "cup": .2365882365,
+               "cups": .2365882365},
+    "speed": {"m/s": 1, "km/h": 1 / 3.6, "kmh": 1 / 3.6, "kph": 1 / 3.6, "mph": .44704},
+}
+TEMPS = {"c": "c", "°c": "c", "celsius": "c", "f": "f", "°f": "f", "fahrenheit": "f", "k": "k", "kelvin": "k"}
+BASES = {"hex": (16, "0x"), "bin": (2, "0b"), "binary": (2, "0b"), "oct": (8, "0o"), "octal": (8, "0o"),
+         "dec": (10, ""), "decimal": (10, "")}
+CONVERT = re.compile(r"^(.+?)\s*([a-z°/]+)\s+(?:in|to|as)\s+([a-z°/]+)$", re.I)
+TO_BASE = re.compile(r"^(.+?)\s+(?:in|to|as)\s+(hex|bin|binary|oct|octal|dec|decimal)$", re.I)
+PERCENT_OF = re.compile(r"^(.+?)\s*%\s*of\s+(.+)$", re.I)
+PLUS_PERCENT = re.compile(r"^(.+?)\s*([+-])\s*([\d.]+)\s*%$")
+
+
+def number(v):
+    """A result as text: whole numbers exactly, the rest to 12 digits."""
+    if isinstance(v, float):
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError("not a number")
+        if v.is_integer() and abs(v) < 1e15:
+            return str(int(v))
+        return f"{v:.12g}"
+    return str(v)
+
+
+def evaluate(q):
+    q = q.strip().replace("^", "**").replace("\u00d7", "*").replace("\u00f7", "/").replace(",", "")
+    # "3x4", "3 x 4": x between numbers is a times sign
+    q = re.sub(r"(?<=[\d)])\s*x\s*(?=[\d(])", "*", q)
+    # 15% alone is 0.15 once it is part of a sum
+    q = re.sub(r"(\d(?:[\d.]*))\s*%", r"(\1/100)", q)
+    return _calc(ast.parse(q, mode="eval").body)
+
+
+def calc(query):
+    """The answer to `query` as (shown, copied), or None when it is not a
+    sum: a lone number, a word, or anything that does not work out."""
+    q = query.strip()
+    if not q or not any(c.isdigit() for c in q) or len(q) > 200:
+        return None
+    try:
+        m = TO_BASE.match(q)
+        if m:
+            v = evaluate(m.group(1))
+            if not float(v).is_integer():
+                return None
+            base, prefix = BASES[m.group(2).lower()]
+            digits = {16: "x", 2: "b", 8: "o", 10: "d"}[base]
+            text = (("-" if v < 0 else "") + prefix + format(abs(int(v)), digits))
+            return text, text
+        m = CONVERT.match(q)
+        if m:
+            v, a, b = evaluate(m.group(1)), m.group(2).lower(), m.group(3).lower()
+            if a in TEMPS and b in TEMPS:
+                c = {"c": v, "f": (v - 32) * 5 / 9, "k": v - 273.15}[TEMPS[a]]
+                out = {"c": c, "f": c * 9 / 5 + 32, "k": c + 273.15}[TEMPS[b]]
+                n = number(out)
+                return f"{n} {({'c': '°C', 'f': '°F', 'k': 'K'})[TEMPS[b]]}", n
+            else:
+                dim = next((d for d, u in UNITS.items() if a in u and b in u), None)
+                if dim is None:
+                    return None
+                out = v * UNITS[dim][a] / UNITS[dim][b]
+            n = number(out)
+            return f"{n} {m.group(3)}", n
+        m = PERCENT_OF.match(q)
+        if m:
+            n = number(evaluate(m.group(1)) / 100 * evaluate(m.group(2)))
+            return n, n
+        m = PLUS_PERCENT.match(q)
+        if m:
+            base, pct = evaluate(m.group(1)), float(m.group(3))
+            n = number(base * (1 + (pct if m.group(2) == "+" else -pct) / 100))
+            return n, n
+        # "42" is a search, not a sum; "0xff" is a question (what is it in decimal)
+        if re.fullmatch(r"[+-]?[\d.,]+", q):
+            return None
+        n = number(evaluate(q))
+        return n, n
+    except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError, RecursionError):
+        return None
+
+
+class CalcItem(Item):
+    """The answer row: there only while the search is a sum; Enter copies it."""
+    def __init__(self):
+        super().__init__("calc", "", "", "accessories-calculator-symbolic", [], group="Math")
+
+    def matches(self, query):
+        got = calc(query)
+        if got is None:
+            return False
+        shown, self.answer = got
+        self.title = f"= {shown}"
+        self.subtitle = f"Enter copies {self.answer}"
+        self.argv = ["wl-copy", "--", self.answer]
+        return True
 
 
 def agent_item(name):
     agent = AGENT_NAMES.get(name, name)
     return Item("ask", f"Ask {agent} about this machine", "Starts it on a private report of this machine",
                 "dialog-question-symbolic", terminal(PULSAR, "agent", "ask", hold=False),
-                "agent ask help question report diagnose")
+                "agent ask help question report diagnose", "Agents")
 
 
 # Shortcut hints, from pulsar-shortcuts' custom bindings (when the person kept them)
@@ -99,11 +246,41 @@ SHORTCUT_IDS = {"screen-text": "pulsar-screen-text"}
 
 
 def accel_label(accel):
-    import re
     mods = re.findall(r"<([^>]+)>", accel)
     key = re.sub(r"<[^>]+>", "", accel)
     key = {"slash": "/", "Print": "Print", "period": "."}.get(key, key.upper() if len(key) == 1 else key)
     return "+".join([m.capitalize() for m in mods] + [key])
+
+
+# Pulsar's look: light, not weight. Hairlines and the accent's glow for what
+# is chosen; the rest of the window stays quiet.
+CSS = """
+.pulsar-menu .search { font-size: 1.3em; min-height: 46px; background: none; box-shadow: none;
+                       outline: none; padding: 0 4px; caret-color: @accent_color; }
+.pulsar-menu .search > image { color: @accent_color; -gtk-icon-size: 20px; }
+.pulsar-menu .spectrum { min-height: 1px; margin: 0 14px;
+    background-image: linear-gradient(to right, alpha(@accent_color, 0), alpha(@accent_color, .6) 35%,
+                                      alpha(@accent_color, .6) 65%, alpha(@accent_color, 0)); }
+.pulsar-menu list { background: none; }
+.pulsar-menu row { border-radius: 12px; margin: 1px 8px; transition: background-color 120ms ease-out; }
+.pulsar-menu row:selected { background-color: alpha(@accent_color, .13); }
+.pulsar-menu row:selected:hover { background-color: alpha(@accent_color, .17); }
+.pulsar-menu .tile { min-width: 34px; min-height: 34px; border-radius: 10px;
+                     background-color: alpha(currentColor, .06); color: alpha(currentColor, .75);
+                     transition: all 140ms ease-out; }
+.pulsar-menu row:selected .tile { background-color: alpha(@accent_color, .2); color: @accent_color;
+                                  box-shadow: 0 0 12px alpha(@accent_color, .35); }
+.pulsar-menu .item-title { font-weight: 600; }
+.pulsar-menu row:selected .item-title { text-shadow: 0 0 8px alpha(@accent_color, .55); }
+.pulsar-menu .answer { font-size: 1.45em; font-weight: 700; font-feature-settings: "tnum"; }
+.pulsar-menu .group { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45);
+                      margin: 12px 22px 4px; }
+.pulsar-menu .accel, .pulsar-menu .key { font-family: monospace; font-size: .82em; }
+.pulsar-menu .key { border: 1px solid alpha(currentColor, .18); border-radius: 5px; padding: 1px 6px;
+                    color: alpha(currentColor, .7); }
+.pulsar-menu .footer { border-top: 1px solid alpha(currentColor, .07); padding: 9px 18px; }
+.pulsar-menu .footer label { font-size: .85em; color: alpha(currentColor, .5); }
+"""
 
 
 def run_detached(argv):
@@ -116,28 +293,53 @@ def window_class():
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Gdk, Gio, GLib, Gtk, Pango
+    gi.require_version("Gdk", "4.0")
+    gi.require_version("Pango", "1.0")
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
-    class Menu(Gtk.ApplicationWindow):
+    def hint(box, keys, what):
+        for k in keys:
+            lab = Gtk.Label(label=k)
+            lab.add_css_class("key")
+            box.append(lab)
+        box.append(Gtk.Label(label=what, margin_end=14))
+
+    # Adw's window: rounded corners and the shadow, with no title bar
+    class Menu(Adw.ApplicationWindow):
         def __init__(self, app):
-            super().__init__(application=app, title="Pulsar commands", decorated=False,
-                             resizable=False, default_width=600, default_height=460)
+            super().__init__(application=app, title="Pulsar commands",
+                             resizable=False, default_width=620, default_height=520)
             self.add_css_class("pulsar-menu")
+            css = Gtk.CssProvider()
+            css.load_from_string(CSS)
+            Gtk.StyleContext.add_provider_for_display(self.get_display(), css,
+                                                      Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             self.entry = Gtk.SearchEntry(placeholder_text="Search Pulsar", hexpand=True,
-                                         margin_top=12, margin_bottom=8, margin_start=12, margin_end=12)
+                                         margin_top=10, margin_bottom=8, margin_start=14, margin_end=14)
+            self.entry.add_css_class("search")
             box.append(self.entry)
-            self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.BROWSE)
-            self.list.add_css_class("navigation-sidebar")
+            box.append(Gtk.Box(css_classes=["spectrum"]))
+            self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.BROWSE, margin_top=2, margin_bottom=8)
             self.list.set_filter_func(self._filter)
+            self.list.set_header_func(self._header)
             self.list.connect("row-activated", lambda _l, row: self.run(row.item))
-            scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER,
-                                        margin_bottom=8, margin_start=6, margin_end=6)
+            scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
             scroll.set_child(self.list)
             self.scroll = scroll
             box.append(scroll)
-            self.set_child(box)
+            foot = Gtk.Box(css_classes=["footer"], spacing=5)
+            hint(foot, ["\u2191", "\u2193"], "choose")
+            hint(foot, ["\u21b5"], "run")
+            hint(foot, ["Esc"], "close")
+            box.append(foot)
+            # a quick fade in, so it arrives rather than appears
+            self.reveal = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.CROSSFADE,
+                                       transition_duration=160, child=box)
+            self.set_content(self.reveal)
+            self.connect("map", lambda *_a: GLib.idle_add(lambda: self.reveal.set_reveal_child(True) and False))
             self.query = ""
+            self.add(CalcItem())
             for it in base_items():
                 self.add(it)
             self.entry.connect("search-changed", self._changed)
@@ -158,17 +360,19 @@ def window_class():
         def add(self, it, position=-1):
             row = Gtk.ListBoxRow()
             row.item = it
-            h = Gtk.Box(spacing=12, margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
-            h.append(Gtk.Image(icon_name=it.icon, pixel_size=16))
-            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-            v.append(Gtk.Label(label=it.title, xalign=0))
+            h = Gtk.Box(spacing=12, margin_top=7, margin_bottom=7, margin_start=8, margin_end=10)
+            h.append(Gtk.Image(icon_name=it.icon, pixel_size=16, css_classes=["tile"], valign=Gtk.Align.CENTER))
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+            row.title = Gtk.Label(label=it.title, xalign=0, selectable=False,
+                                  css_classes=["item-title"] + (["answer"] if it.key == "calc" else []))
+            v.append(row.title)
             sub = Gtk.Label(label=it.subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.END)
             sub.add_css_class("dim-label")
             sub.add_css_class("caption")
             v.append(sub)
+            row.sub = sub
             h.append(v)
-            row.accel = Gtk.Label(label=it.accel)
-            row.accel.add_css_class("dim-label")
+            row.accel = Gtk.Label(label=it.accel, css_classes=["accel", "dim-label"])
             h.append(row.accel)
             row.set_child(h)
             self.list.insert(row, position)
@@ -176,9 +380,21 @@ def window_class():
         def _filter(self, row):
             return row.item.matches(self.query)
 
+        def _header(self, row, before):
+            # a group's name over its first row that is showing
+            if before is not None and before.item.group == row.item.group:
+                row.set_header(None)
+            elif row.get_header() is None or row.get_header().get_label() != row.item.group:
+                row.set_header(Gtk.Label(label=row.item.group, xalign=0, css_classes=["group"]))
+
         def _changed(self, entry):
             self.query = entry.get_text()
+            row = self.list.get_row_at_index(0)
+            if row.item.matches(self.query):
+                row.title.set_label(row.item.title)
+                row.sub.set_label(row.item.subtitle)
             self.list.invalidate_filter()
+            self.list.invalidate_headers()
             self._select_first()
 
         def _visible_rows(self):
@@ -269,7 +485,9 @@ def window_class():
         def _got_agent(self, out):
             name = out.strip().split()[0] if out.strip() else ""
             if name:
-                self.add(agent_item(name), len(self._all_rows()) - 1)
+                rows = self._all_rows()
+                at = max(i for i, r in enumerate(rows) if r.item.group == "Agents") + 1
+                self.add(agent_item(name), at)
 
         def _all_rows(self):
             i, rows = 0, []
