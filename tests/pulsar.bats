@@ -3499,9 +3499,9 @@ rec_id() { sed -n 's/^id=//p' "${REC}/$1.session"; }
         [[ "$output" == *"a session name is letters, digits, - and _"* ]]
     done
     run "$PULSAR" agent run claude --new
-    [[ "$output" == *"--new and --dir go with --tmux <session>"* ]]
+    [[ "$output" == *"--new, --dir and --worktree go with --tmux <session>"* ]]
     run "$PULSAR" agent run claude --dir "$PROJ"
-    [[ "$output" == *"--new and --dir go with --tmux <session>"* ]]
+    [[ "$output" == *"--new, --dir and --worktree go with --tmux <session>"* ]]
     [ ! -s "$TMUX_CALLS" ]
 }
 
@@ -3661,6 +3661,108 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     printf '{"hook_event_name":"Notification","message":"from the sandbox"}' > "${sb}/${ID}.json"
     "$PULSAR" agent notify work
     [[ "$(sd_arg 2)" == "from the sandbox"* ]]
+}
+
+# --worktree: a session of its own in the repository, sandbox included
+wt_env() {
+    tmux_env
+    git -C "$PROJ" commit -q --allow-empty -m one
+    cd "$PROJ"
+    WT="${PROJ}/.worktrees/fix"
+}
+
+@test "agent run --worktree: its own worktree and branch inside the repo, out of git status, kept across restarts" {
+    wt_env
+    run "$PULSAR" agent run claude --tmux fix --worktree
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"worktree: ~/code/proj/.worktrees/fix, on the branch fix"* ]]
+    [ "$(git -C "$WT" rev-parse --abbrev-ref HEAD)" = fix ]
+    [ "$(git -C "$WT" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse HEAD)" ]
+    [ -z "$(git -C "$PROJ" status --porcelain)" ]
+    [ "$(pane fix | head -1)" = "$WT" ]
+    grep -qx "repo=${PROJ}" "${REC}/fix.session"
+    # back after it died, from anywhere, without saying --worktree again
+    rm "${TMUX_LIVE}/fix"; cd "$HOME"
+    "$PULSAR" agent run claude --tmux fix >/dev/null
+    [ "$(pane fix | head -1)" = "$WT" ]
+    grep -qx "repo=${PROJ}" "${REC}/fix.session"
+    [ "$(grep -c '^/.worktrees/$' "${PROJ}/.git/info/exclude")" -eq 1 ]
+}
+
+@test "agent run --worktree: a branch that exists is checked out, not made again" {
+    wt_env
+    git -C "$PROJ" branch fix
+    git -C "$PROJ" commit -q --allow-empty -m two
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    [ "$(git -C "$WT" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse fix)" ]
+    [ "$(git -C "$WT" rev-parse HEAD)" != "$(git -C "$PROJ" rev-parse main)" ]
+}
+
+@test "agent run --worktree: refused outside a repository, without --tmux, and on a session that has none" {
+    wt_env
+    mkdir -p "${HOME}/plain"; cd "${HOME}/plain"
+    run "$PULSAR" agent run claude --tmux fix --worktree
+    [ "$status" -ne 0 ]; [[ "$output" == *"--worktree needs a git repository"* ]]
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --worktree
+    [[ "$output" == *"--new, --dir and --worktree go with --tmux <session>"* ]]
+    "$PULSAR" agent run claude --tmux plain >/dev/null
+    rm "${TMUX_LIVE}/plain"
+    run "$PULSAR" agent run claude --tmux plain --worktree
+    [ "$status" -ne 0 ]; [[ "$output" == *"--new --worktree starts it over in one"* ]]
+    mkdir -p "${PROJ}/.worktrees/squat"
+    run "$PULSAR" agent run claude --tmux squat --worktree
+    [ "$status" -ne 0 ]; [[ "$output" == *"is not one of this repository's worktrees"* ]]
+}
+
+@test "agent sessions --forget: a clean worktree goes, the branch stays; one with work in it stays" {
+    wt_env
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux dirty --worktree >/dev/null 2>&1
+    echo work > "${PROJ}/.worktrees/dirty/new.txt"
+    rm "${TMUX_LIVE}/fix" "${TMUX_LIVE}/dirty"
+    run "$PULSAR" agent sessions --forget fix
+    [[ "$output" == *"removed the worktree ~/code/proj/.worktrees/fix; the branch fix stays"* ]] || fail "$output"
+    [ ! -e "$WT" ]
+    git -C "$PROJ" show-ref --verify --quiet refs/heads/fix
+    run "$PULSAR" agent sessions --forget dirty
+    [[ "$output" == *"kept the worktree ~/code/proj/.worktrees/dirty"* ]] || fail "$output"
+    [ -f "${PROJ}/.worktrees/dirty/new.txt" ]
+}
+
+@test "a sandboxed agent in a session worktree sees the checkout; its git pointers are read-only" {
+    wt_env
+    git -C "$PROJ" worktree add -q "${PROJ}/.worktrees/other" -b other
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    "$PULSAR" agent sandbox on --here >/dev/null
+    local adm="${PROJ}/.git/worktrees/fix"
+    cd "$WT"
+    run "$PULSAR" agent run claude --sandbox -- --version
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"sandboxed: only ${PROJ} is visible"* ]]
+    grep -qx "${PROJ}:${PROJ}" "$PODMAN_LOG"
+    grep -qx "${adm}:${adm}" "$PODMAN_LOG"
+    local f
+    for f in commondir gitdir config.worktree; do grep -qx "${adm}/${f}:${adm}/${f}:ro" "$PODMAN_LOG" || fail "$f"; done
+    grep -qx "${WT}/.git:${WT}/.git:ro" "$PODMAN_LOG"
+    grep -qx "${PROJ}/.worktrees/other/.git:${PROJ}/.worktrees/other/.git:ro" "$PODMAN_LOG"
+    grep -A1 -x -- -w "$PODMAN_LOG" | grep -qx "$WT"
+    # the project's own setting reaches its worktree
+    run "$PULSAR" agent sandbox
+    [[ "$output" == *"project  ${PROJ}"* ]]
+    [[ "$output" == *"sandbox  on  (this project, yours)"* ]]
+}
+
+@test "a worktree whose pointers were bent is not let into the sandbox" {
+    wt_env
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    mkdir -p "${PROJ}/fake"
+    printf 'gitdir: %s\n' "${PROJ}/fake" > "${WT}/.git"
+    cd "$WT"
+    run "$PULSAR" agent run claude --sandbox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is not a folder: this is a linked worktree"* ]] || fail "$output"
+    [ ! -e "$PODMAN_LOG" ]
 }
 
 # ---------------------------------------------------------------------------

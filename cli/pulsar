@@ -2477,7 +2477,7 @@ agent_sandbox() {
     for a in "$@"; do
         case "$a" in --here) here=1 ;; --rw) rw=1 ;; *) rest+=("$a") ;; esac
     done
-    root=$(project_root)
+    root=$(settings_root)
     case "$sub" in
         "")
             local sb push mirror
@@ -2706,9 +2706,22 @@ sandbox_git_mounts() {
     [ ! -e "${g}/config" ] || printf '%s:%s:ro\n' "${g}/config" "${g}/config"
     mkdir -p "${g}/hooks"
     printf '%s:%s:ro\n' "${g}/hooks" "${g}/hooks"
-    # linked worktrees live outside the project; their git side is not the
-    # agent's to change
+    # linked worktrees: their git side is not the agent's to change, nor is
+    # the .git file in one that lives in the project, which your git follows
     [ ! -d "${g}/worktrees" ] || printf '%s:%s:ro\n' "${g}/worktrees" "${g}/worktrees"
+    local w
+    for w in "${g}"/worktrees/*/gitdir; do
+        [ -f "$w" ] || continue
+        w=$(realpath -m "$(head -n 1 "$w")")
+        case "$w" in "${root}/"*/.git) [ ! -f "$w" ] || [ -L "$w" ] || printf '%s:%s:ro\n' "$w" "$w" ;; esac
+    done
+    # The worktree the agent works in (sandbox_run): its index, HEAD and logs
+    # are its to write; the files that say where its repository is are not.
+    if [ -n "${2:-}" ]; then
+        printf '%s:%s\n' "$2" "$2"
+        [ -e "${2}/config.worktree" ] || : > "${2}/config.worktree"
+        for w in commondir gitdir config.worktree; do printf '%s:%s:ro\n' "${2}/${w}" "${2}/${w}"; done
+    fi
     if [ -d "${g}/modules" ]; then
         while IFS= read -r -d '' p; do
             d=$(dirname "$p")
@@ -2790,13 +2803,40 @@ sandbox_defuse() {
     done
 }
 
+# <wt>: "main checkout <TAB> git directory", when wt is a linked worktree that
+# lives INSIDE its main checkout (where `agent run --worktree` puts them), so
+# the sandbox can show that checkout and start the agent in the worktree.
+# Read from the files, not by asking git, and every link checked both ways:
+# a worktree whose pointers have been bent is not one.
+worktree_main() {
+    local wt=$1 line gd common main back
+    [ -f "${wt}/.git" ] && [ ! -L "${wt}/.git" ] || return 1
+    line=$(head -n 1 "${wt}/.git"); gd=${line#gitdir: }
+    [ "$gd" != "$line" ] || return 1
+    case "$gd" in /*) ;; *) gd="${wt}/${gd}" ;; esac
+    gd=$(realpath -e "$gd" 2>/dev/null) || return 1
+    [ -f "${gd}/commondir" ] && [ -f "${gd}/gitdir" ] || return 1
+    common=$(head -n 1 "${gd}/commondir")
+    case "$common" in /*) ;; *) common="${gd}/${common}" ;; esac
+    common=$(realpath -e "$common" 2>/dev/null) || return 1
+    [ "$(basename "$common")" = .git ] && [ "$(dirname "$gd")" = "${common}/worktrees" ] || return 1
+    back=$(head -n 1 "${gd}/gitdir")
+    [ "$(realpath -m "$back")" = "${wt}/.git" ] || return 1
+    main=$(dirname "$common")
+    [ -d "${main}/.git" ] && [ ! -L "${main}/.git" ] || return 1
+    case "${wt}/" in "${main}/"?*) printf '%s\t%s\n' "$main" "$gd" ;; *) return 1 ;; esac
+}
+
 sandbox_run() {
     local name=$1; shift
-    local root cmd real
+    local root cmd real wt="" wtgit="" m
     root=$(project_root)
     [ "$root" != "$HOME" ] && [ "$root" != / ] \
         || die "the sandbox shows the agent one project; start it inside one, not in ${root}"
     need podman; need python3; need git
+    if m=$(worktree_main "$root"); then
+        wt=$root; root=${m%%$'\t'*}; wtgit=${m#*$'\t'}
+    fi
     # before anything here runs git in the project
     sandbox_git_check "$root"
     [ -r "$GATE_TOOL" ] || die "the push gate is not staged in this image (${GATE_TOOL})"
@@ -2832,7 +2872,7 @@ sandbox_run() {
     [ ! -t 0 ] || args+=(-t)
     while IFS= read -r p; do
         [ -z "$p" ] || args+=(-v "$p")
-    done < <(sandbox_git_mounts "$root")
+    done < <(sandbox_git_mounts "$root" "$wtgit")
     local gitstate="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gitstate-${id}"
     mkdir -p "$(dirname "$gitstate")"
     sandbox_git_state "$root" > "$gitstate"
@@ -2922,6 +2962,14 @@ sandbox_run() {
     podman "${args[@]}" "$img" "$real" "$@"
 }
 
+# The project whose settings apply here: the git root, or for one of its
+# worktrees inside it, the main checkout, so `sandbox on --here` covers both.
+settings_root() {
+    local r m
+    r=$(project_root "${1:-$PWD}")
+    if m=$(worktree_main "$r"); then printf '%s\n' "${m%%$'\t'*}"; else printf '%s\n' "$r"; fi
+}
+
 # on|off: whether an agent starts sandboxed in project $2, given --sandbox
 # (on), --no-sandbox (off) or neither ("") as $1. A repo that says sandbox
 # beats --no-sandbox. Call as $(...) || exit 1: a refusal dies in the subshell.
@@ -2935,11 +2983,11 @@ agent_mode() {
     printf '%s\n' "$mode"
 }
 
-AGENT_RUN_USAGE="usage: pulsar agent run <name> [--sandbox|--no-sandbox] [--tmux <session> [--new] [--dir <path>]] [-- args]"
+AGENT_RUN_USAGE="usage: pulsar agent run <name> [--sandbox|--no-sandbox] [--tmux <session> [--new] [--dir <path>] [--worktree]] [-- args]"
 
 # The one place that decides how an agent starts: the shim calls this.
 agent_run() {
-    local name="" mode="" tname="" fresh=0 dir="" tmux=0
+    local name="" mode="" tname="" fresh=0 dir="" tmux=0 worktree=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --sandbox) mode=on ;;
@@ -2947,6 +2995,7 @@ agent_run() {
             --tmux) [ $# -ge 2 ] || die "--tmux wants a session name"; tmux=1; tname=$2; shift ;;
             --tmux=*) tmux=1; tname=${1#--tmux=} ;;
             --new) fresh=1 ;;
+            --worktree) worktree=1 ;;
             --dir) [ $# -ge 2 ] || die "--dir wants a folder"; dir=$2; shift ;;
             --dir=*) dir=${1#--dir=} ;;
             --) shift; break ;;
@@ -2958,13 +3007,11 @@ agent_run() {
     [ -n "$name" ] || die "$AGENT_RUN_USAGE"
     agent_row "$name" || die "unknown agent: ${name} (known: $(agent_names))"
     if [ "$tmux" = 1 ]; then
-        agent_tmux "$tname" "$name" "$mode" "$fresh" "$dir" "$@"
+        agent_tmux "$tname" "$name" "$mode" "$fresh" "$dir" "$worktree" "$@"
         return
     fi
-    [ "$fresh" = 0 ] && [ -z "$dir" ] || die "--new and --dir go with --tmux <session>"
-    local root
-    root=$(project_root)
-    mode=$(agent_mode "$mode" "$root") || exit 1
+    [ "$fresh" = 0 ] && [ -z "$dir" ] && [ "$worktree" = 0 ] || die "--new, --dir and --worktree go with --tmux <session>"
+    mode=$(agent_mode "$mode" "$(settings_root)") || exit 1
     if [ "$mode" = on ]; then
         sandbox_run "$name" "$@"
         return
@@ -3028,12 +3075,47 @@ session_get() {
     return 1
 }
 
+# session_put <session> <agent> <dir> <conversation> [<repo, for a worktree>]
 session_put() {
     local tmp
     mkdir -p "$AGENT_SESSIONS"
     tmp=$(mktemp "${AGENT_SESSIONS}/.$1.XXXXXX")
     printf 'agent=%s\ndir=%s\nid=%s\n' "$2" "$3" "$4" > "$tmp"
+    [ -z "${5:-}" ] || printf 'repo=%s\n' "$5" >> "$tmp"
     mv "$tmp" "${AGENT_SESSIONS}/$1.session"
+}
+
+# agent_worktree <session> <folder in the repo>: "main checkout <TAB> worktree".
+# A git worktree of its own for the session, so agents working on one
+# repository at once never edit each other's files: <main>/.worktrees/<name>,
+# on the branch <name> (made from this checkout's HEAD if it is new). Inside
+# the main checkout because that is the only place a sandboxed agent can
+# have one (see worktree_main), and kept out of `git status` through
+# .git/info/exclude, which is yours, not the repository's.
+agent_worktree() {
+    local s=$1 base=$2 main common wt excl
+    common=$(git -C "$base" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+        || die "--worktree needs a git repository, and ${base} is not in one"
+    [ "$(basename "$common")" = .git ] || die "--worktree needs a repository with a checkout (${common} is bare)"
+    main=$(dirname "$common")
+    wt="${main}/.worktrees/${s}"
+    if [ -e "$wt" ]; then
+        [ "$(worktree_main "$wt" | cut -f1)" = "$main" ] \
+            || die "${wt} exists and is not one of this repository's worktrees"
+    else
+        excl=$(git -C "$main" rev-parse --path-format=absolute --git-path info/exclude)
+        mkdir -p "$(dirname "$excl")"
+        grep -qxF '/.worktrees/' "$excl" 2>/dev/null || printf '/.worktrees/\n' >> "$excl"
+        if git -C "$main" show-ref --verify --quiet "refs/heads/${s}"; then
+            git -C "$main" worktree add --quiet "$wt" "$s" >&2 \
+                || die "git could not check out the branch ${s} in ${wt}"
+        else
+            git -C "$base" worktree add --quiet -b "$s" "$wt" >&2 \
+                || die "git could not make the worktree ${wt}"
+        fi
+        printf 'worktree: %s, on the branch %s\n' "${wt/#"$HOME"/\~}" "$s" >&2
+    fi
+    printf '%s\t%s\n' "$main" "$wt"
 }
 
 # Whether Claude Code (config dir $1) has conversation $2. It writes the file
@@ -3048,16 +3130,17 @@ claude_has_conversation() {
 }
 
 agent_tmux() {
-    local tname=$1 name=$2 mode=$3 fresh=$4 dir=$5
-    shift 5
+    local tname=$1 name=$2 mode=$3 fresh=$4 dir=$5 worktree=$6
+    shift 6
     case "$tname" in
         ''|*[!A-Za-z0-9_-]*) die "a session name is letters, digits, - and _ (got: '${tname}')" ;;
     esac
     have tmux || die "tmux is not on this system; newer Pulsar images include it (sudo pulsar update)"
-    local saved_agent saved_dir id
+    local saved_agent saved_dir id repo
     saved_agent=$(session_get "$tname" agent) || saved_agent=""
     saved_dir=$(session_get "$tname" dir) || saved_dir=""
     id=$(session_get "$tname" id) || id=""
+    repo=$(session_get "$tname" repo) || repo=""
     if [ -n "$dir" ]; then
         dir=$(cd "$dir" 2>/dev/null && pwd -P) || die "not a folder: ${dir}"
     fi
@@ -3072,8 +3155,17 @@ agent_tmux() {
         agent_tmux_attach "$tname"
     fi
 
+    if [ "$worktree" = 1 ] && { [ "$fresh" = 1 ] || [ -z "$saved_dir" ]; }; then
+        local wtline
+        wtline=$(agent_worktree "$tname" "${dir:-$(pwd -P)}") || exit 1
+        repo=${wtline%%$'\t'*}; dir=${wtline#*$'\t'}
+        saved_dir=$dir
+    elif [ "$worktree" = 1 ] && [ -z "$repo" ]; then
+        die "${tname} runs in ${saved_dir}, not in a worktree; --new --worktree starts it over in one"
+    fi
     if [ "$fresh" = 1 ]; then
         id=""
+        [ "$worktree" = 1 ] || repo=""
     else
         [ -z "$saved_agent" ] || [ "$saved_agent" = "$name" ] \
             || die "${tname} was a ${saved_agent} session; --new starts it over with ${name}"
@@ -3093,7 +3185,7 @@ agent_tmux() {
 
     # Decided here, once, so the conversation is looked for in the home the
     # agent will actually use: the sandbox's own, or the real one.
-    mode=$(agent_mode "$mode" "$(project_root "$dir")") || exit 1
+    mode=$(agent_mode "$mode" "$(settings_root "$dir")") || exit 1
     local -a conv=()
     if [ "$name" = claude ]; then
         local a cfg other
@@ -3133,7 +3225,7 @@ agent_tmux() {
         printf 'note: %s comes back as a new %s conversation; only claude resumes the one a session had\n' \
             "$tname" "$name" >&2
     fi
-    session_put "$tname" "$name" "$dir" "$id"
+    session_put "$tname" "$name" "$dir" "$id" "$repo"
 
     local cli flag=--no-sandbox
     cli=$(realpath "$SELF")
@@ -3173,7 +3265,7 @@ agent_alert_settings() {
     # quiet on stdout and always exit 0: a Stop hook's output and exit code
     # are instructions to Claude
     # shellcheck disable=SC2016  # expanded by the hook's sh
-    cmd='d="$HOME/'"${AGENT_ALERTS_REL}"'"; mkdir -p "$d" && cat > "$d/'"${id}"'.json"; printf "\a" > "/proc/${CLAUDE_PID:-$PPID}/fd/1" 2>/dev/null; exit 0'
+    cmd='d="$HOME/'"${AGENT_ALERTS_REL}"'"; mkdir -p "$d" && cat > "$d/'"${id}"'.json"; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 0'
     jq -cn --arg c "$cmd" '{hooks: {Stop: [{hooks: [{type: "command", command: $c}]}],
         Notification: [{hooks: [{type: "command", command: $c}]}]}}'
 }
@@ -3274,6 +3366,18 @@ agent_sessions() {
         --forget)
             [ "$running" = 0 ] || die "$2 is running; end it first (pulsar agent sessions --kill $2)"
             [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
+            local repo dir
+            repo=$(session_get "$2" repo) || repo=""
+            dir=$(session_get "$2" dir) || dir=""
+            if [ -n "$repo" ] && [ -d "$dir" ]; then
+                # never forced: what is in it might be the only copy
+                if git -C "$repo" worktree remove "$dir" 2>/dev/null; then
+                    printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2"
+                else
+                    printf 'kept the worktree %s: it has changes git has not committed (git worktree remove --force %s drops them)\n' \
+                        "${dir/#"$HOME"/\~}" "$dir"
+                fi
+            fi
             rm -f "${AGENT_SESSIONS}/$2.session"
             printf 'forgot %s (the conversation itself is still in the agent'"'"'s history)\n' "$2"
             return 0 ;;
@@ -3499,13 +3603,15 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      through pulsar agent run (default on)
        pulsar agent run <name> [--sandbox|--no-sandbox] [-- args]
                                      start an agent (its command does this for you)
-       pulsar agent run <name> --tmux <session> [--new] [--dir <path>] [-- args]
+       pulsar agent run <name> --tmux <session> [--new] [--dir <path>] [--worktree] [-- args]
                                      attach to that tmux session, or start the agent
                                      in it. One server for agents (-L pulsar-agents),
                                      on the host; a claude session that died comes
                                      back on its own conversation. --new: a fresh one.
                                      When it waits for you in a session you are not
-                                     looking at, a notification opens it
+                                     looking at, a notification opens it.
+                                     --worktree: its own git worktree and branch,
+                                     <repo>/.worktrees/<session>
        pulsar agent sessions [--kill <name> | --forget <name>]
                                      the tmux sessions; --kill ends one (it can come
                                      back), --forget drops its conversation
