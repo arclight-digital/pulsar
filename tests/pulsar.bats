@@ -3363,6 +3363,9 @@ case "$cmd" in
     kill-session) rm "${TMUX_LIVE}/$(target "$@")" ;;
     list-sessions) ls "$TMUX_LIVE" ;;   # ls skips the .argv files
     attach-session|switch-client) echo "tmux-env=${TMUX-unset}" >> "$TMUX_CALLS"; echo "attached $(target "$@")" ;;
+    set-hook) ;;
+    set-option) t=$(target "$@"); t=${t%:}; [ -e "${TMUX_LIVE}/${t}" ] || exit 1; printf '%s\n' "${@: -2}" > "${TMUX_LIVE}/.${t}.opt" ;;
+    list-clients) t=$(target "$@"); cat "${TMUX_LIVE}/.${t}.clients" 2>/dev/null; true ;;
     *) exit 9 ;;
 esac
 SH
@@ -3386,7 +3389,7 @@ rec_id() { sed -n 's/^id=//p' "${REC}/$1.session"; }
     grep -qx "dir=${PROJ}" "${REC}/work.session"
     # the pane runs pulsar agent run itself, mode decided up front, the
     # conversation pinned, the user's own arguments after it
-    pane work | tail -n 10 | paste -sd' ' - | grep -qxF "$(realpath "$PULSAR") agent run claude --no-sandbox -- --session-id ${id} --model opus" \
+    pane work | grep -vx -- "--settings\|{.*}" | tail -n 10 | paste -sd' ' - | grep -qxF "$(realpath "$PULSAR") agent run claude --no-sandbox -- --session-id ${id} --model opus" \
         || fail "$(pane work)"
     [ "$(pane work | head -1)" = "$PROJ" ]
     grep -qxF -- "$PULSAR_AGENT_TMUX_CONF" "$TMUX_CALLS"
@@ -3553,6 +3556,111 @@ rec_id() { sed -n 's/^id=//p' "${REC}/$1.session"; }
     [ ! -e "${REC}/two.session" ]
     run "$PULSAR" agent sessions
     [[ "$output" != *"two"* ]]
+}
+
+# "your agent is waiting": the hook Claude runs, and what the host does with the bell
+notify_env() {
+    tmux_env
+    export SD_ARGS="${BATS_TEST_TMPDIR}/systemd-run.args"
+    printf '#!/bin/sh\nprintf "%%s\\0" "$@" > "$SD_ARGS"\n' > "${STUB}/systemd-run"
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/systemctl"
+    printf '#!/bin/sh\necho "plain notify-send $*" >> "$SD_ARGS.plain"\n' > "${STUB}/notify-send"
+    chmod +x "${STUB}/systemd-run" "${STUB}/systemctl" "${STUB}/notify-send"
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null
+    ID=$(rec_id work)
+    ALERTS="${HOME}/.local/state/pulsar/agent-alerts"
+}
+# what systemd-run was asked to run: title, body, cli, agent, session
+sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[@]}"; do [ "${a[$i]}" = sh ] && [ "${a[$((i - 1))]}" != -- ] && { printf '%s' "${a[$((i + $1))]}"; return; }; done; }
+
+@test "agent notify: Claude's hooks ring the bell on its own terminal, say why in a file, and stay quiet to Claude" {
+    notify_env
+    local settings
+    settings=$(pane work | grep -x '{.*hooks.*}')
+    [ "$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$settings")" = "$(jq -r '.hooks.Notification[0].hooks[0].command' <<<"$settings")" ]
+    local cmd; cmd=$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$settings")
+    # a stand-in Claude whose terminal is a file
+    local tty="${BATS_TEST_TMPDIR}/tty"
+    sleep 30 > "$tty" & local pid=$!
+    run env CLAUDE_PID="$pid" sh -c "$cmd" <<<'{"hook_event_name":"Stop","session_id":"x"}'
+    kill "$pid"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(od -An -c "$tty" | tr -d ' ')" = '\a' ]
+    [ "$(jq -r .hook_event_name "${ALERTS}/${ID}.json")" = Stop ]
+    # no terminal to ring: still exit 0 and silent, or Claude reads it as a "keep going"
+    run env CLAUDE_PID=999999999 sh -c "$cmd" <<<'{}'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "agent notify: the user's own --settings wins, and says what it costs" {
+    notify_env
+    rm "${TMUX_LIVE}/work"
+    run "$PULSAR" agent run claude --tmux work -- --settings mine.json
+    [[ "$output" == *"your --settings replaces the hooks that notify you when work waits"* ]]
+    [ "$(pane work | grep -c 'hooks')" -eq 0 ]
+    pane work | grep -qx mine.json
+}
+
+@test "agent notify: a finished Claude in a session you are not looking at gets a notification that opens it" {
+    notify_env
+    mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
+    run "$PULSAR" agent notify work
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(sd_arg 1)" = "work: Claude Code is done" ]
+    [ "$(sd_arg 2)" = $'It is waiting for your next message.\nIn ~/code/proj' ]
+    [ "$(sd_arg 4)" = claude ] && [ "$(sd_arg 5)" = work ]
+    [ "$(sed -n 2p "${TMUX_LIVE}/.work.opt")" = Stop ]
+    # the button: a terminal on that session
+    printf '#!/bin/sh\necho attach\n' > "${STUB}/notify-send"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\n' "${BATS_TEST_TMPDIR}/ptyxis.args" > "${STUB}/ptyxis"
+    chmod +x "${STUB}/ptyxis"
+    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)"
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+}
+
+@test "agent notify: a permission prompt says what Claude asked; its 60-second 'still waiting' does not repeat Stop" {
+    notify_env
+    mkdir -p "$ALERTS"
+    printf '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}' > "${ALERTS}/${ID}.json"
+    "$PULSAR" agent notify work
+    [ "$(sd_arg 1)" = "work: Claude Code needs you" ]
+    [[ "$(sd_arg 2)" == "Claude needs your permission to use Bash"* ]]
+    rm "$SD_ARGS"
+    printf '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}' > "${ALERTS}/${ID}.json"
+    "$PULSAR" agent notify work
+    [ ! -e "$SD_ARGS" ]
+}
+
+@test "agent notify: nothing while you look at it; an old note or none is just a bell" {
+    notify_env
+    mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
+    printf 'attached,focused,UTF-8\n' > "${TMUX_LIVE}/.work.clients"
+    "$PULSAR" agent notify work
+    [ ! -e "$SD_ARGS" ]
+    # attached, but the terminal is in the background
+    printf 'attached,UTF-8\n' > "${TMUX_LIVE}/.work.clients"
+    "$PULSAR" agent notify work
+    [ "$(sd_arg 1)" = "work: Claude Code is done" ]
+    touch -d '-2 minutes' "${ALERTS}/${ID}.json"
+    "$PULSAR" agent notify work
+    [ "$(sd_arg 1)" = "work: Claude Code wants your attention" ]
+    # a session that is not running: nothing
+    rm "$SD_ARGS"; rm "${TMUX_LIVE}/work"
+    "$PULSAR" agent notify work
+    [ ! -e "$SD_ARGS" ]
+}
+
+@test "agent notify: a sandboxed Claude's note is read from the sandbox's home" {
+    notify_env
+    local sb="${HOME}/.local/share/pulsar/sandbox/claude/.local/state/pulsar/agent-alerts"
+    mkdir -p "$ALERTS" "$sb"
+    printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"; touch -d '-5 seconds' "${ALERTS}/${ID}.json"
+    printf '{"hook_event_name":"Notification","message":"from the sandbox"}' > "${sb}/${ID}.json"
+    "$PULSAR" agent notify work
+    [[ "$(sd_arg 2)" == "from the sandbox"* ]]
 }
 
 # ---------------------------------------------------------------------------

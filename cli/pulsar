@@ -3120,6 +3120,15 @@ agent_tmux() {
             [ -n "$id" ] || id=$(cat /proc/sys/kernel/random/uuid)
             conv=(--session-id "$id")
         fi
+        # Hooks that say "look at me" to the host's tmux (see agent_notify),
+        # added beside the user's own settings, never written into them.
+        local own=0
+        for a in "$@"; do case "$a" in --settings|--settings=*) own=1 ;; esac; done
+        if [ "$own" = 1 ]; then
+            printf 'note: your --settings replaces the hooks that notify you when %s waits\n' "$tname" >&2
+        elif have jq; then
+            conv+=(--settings "$(agent_alert_settings "$id")")
+        fi
     elif [ "$fresh" = 0 ] && [ -n "$saved_agent" ]; then
         printf 'note: %s comes back as a new %s conversation; only claude resumes the one a session had\n' \
             "$tname" "$name" >&2
@@ -3132,7 +3141,95 @@ agent_tmux() {
     atmux new-session -d -s "$tname" -c "$dir" -x "$(tput cols 2>/dev/null || echo 80)" -y "$(tput lines 2>/dev/null || echo 24)" \
         -- bash -c "$AGENT_TMUX_PANE" "$name" "$cli" agent run "$name" "$flag" -- "${conv[@]}" "$@" \
         || die "tmux could not start ${tname}"
+    # A bell in any agent's session is the agent asking for you; the notice
+    # goes away once you look. Set on every start: the CLI's path can move.
+    atmux set-hook -g alert-bell "run-shell -b '$(sq "$cli") agent notify #{session_name}'"
+    atmux set-hook -g client-session-changed "set-option -u @pulsar-alert"
+    atmux set-hook -g client-attached "set-option -u @pulsar-alert"
     agent_tmux_attach "$tname"
+}
+
+# ---------------------------------------------------------------------------
+# "Your agent is waiting": a desktop notification when an agent in a session
+# you are not looking at needs you, with a button that opens a terminal on it.
+#
+# The signal is the terminal bell, because it is the one thing that reaches
+# the host's tmux from wherever the agent runs: the agents box, the sandbox
+# (which has no session bus and no way to the tmux socket, on purpose) or a
+# native install. Any agent that rings the bell gets the notification.
+#
+# Claude Code gets hooks for it (--settings, beside the user's own): Stop
+# (it finished) and Notification (it wants a permission or an answer). Claude
+# runs a hook with no terminal of its own, so the hook rings the bell on
+# Claude's: /proc/$CLAUDE_PID/fd/1. It also leaves what Claude said in
+# ~/.local/state/pulsar/agent-alerts/<conversation>.json (the sandbox's home,
+# when sandboxed), so the notification can say why. Claude's own "still
+# waiting after 60 s" (idle_prompt) is skipped: Stop already said so.
+# ---------------------------------------------------------------------------
+AGENT_ALERTS_REL=.local/state/pulsar/agent-alerts
+
+agent_alert_settings() {
+    local id=$1 cmd
+    # quiet on stdout and always exit 0: a Stop hook's output and exit code
+    # are instructions to Claude
+    # shellcheck disable=SC2016  # expanded by the hook's sh
+    cmd='d="$HOME/'"${AGENT_ALERTS_REL}"'"; mkdir -p "$d" && cat > "$d/'"${id}"'.json"; printf "\a" > "/proc/${CLAUDE_PID:-$PPID}/fd/1" 2>/dev/null; exit 0'
+    jq -cn --arg c "$cmd" '{hooks: {Stop: [{hooks: [{type: "command", command: $c}]}],
+        Notification: [{hooks: [{type: "command", command: $c}]}]}}'
+}
+
+# agent notify <session>: tmux's alert-bell hook runs this, on the host.
+agent_notify() {
+    local tname=${1:-}
+    case "$tname" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent notify <session> (tmux runs this)" ;; esac
+    have tmux || return 0
+    atmux_running "$tname" || return 0
+    # looking at it already: a client on this session, in a focused terminal
+    if atmux list-clients -t "=${tname}" -F '#{client_flags}' 2>/dev/null | grep -q 'focused'; then
+        return 0
+    fi
+    local agent dir id f="" c event="" msg="" title body
+    agent=$(session_get "$tname" agent) || agent=""
+    dir=$(session_get "$tname" dir) || dir=""
+    id=$(session_get "$tname" id) || id=""
+    if [ "$agent" = claude ] && [ -n "$id" ] && have jq; then
+        for c in "${HOME}/${AGENT_ALERTS_REL}/${id}.json" "${SANDBOX_HOMES}/claude/${AGENT_ALERTS_REL}/${id}.json"; do
+            [ -f "$c" ] || continue
+            if [ -z "$f" ] || [ "$c" -nt "$f" ]; then f=$c; fi
+        done
+        if [ -n "$f" ] && [ $(( $(date +%s) - $(stat -c %Y "$f") )) -le 30 ]; then
+            event=$(jq -r '.hook_event_name // empty' "$f" 2>/dev/null) || event=""
+            [ "$(jq -r '.notification_type // empty' "$f" 2>/dev/null)" != idle_prompt ] || return 0
+            msg=$(jq -r '.message // empty' "$f" 2>/dev/null) || msg=""
+        fi
+    fi
+    local who="The agent"
+    if [ -n "$agent" ] && agent_row "$agent"; then who=${A_DESC%% (*}; fi
+    case "$event" in
+        Stop)         title="${tname}: ${who} is done"; body="It is waiting for your next message." ;;
+        Notification) title="${tname}: ${who} needs you"; body=${msg:-"It is waiting for you."} ;;
+        *)            title="${tname}: ${who} wants your attention"; body="It rang the terminal bell." ;;
+    esac
+    [ -z "$dir" ] || body+=$'\n'"In ${dir/#"$HOME"/\~}"
+    atmux set-option -t "=${tname}:" @pulsar-alert "${event:-bell}" 2>/dev/null || true
+
+    have notify-send || return 0
+    export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+    if ! have systemd-run || [ -z "$agent" ]; then
+        notify-send --app-name=Pulsar --icon=utilities-terminal "$title" "$body" || true
+        return 0
+    fi
+    # One notification per session at a time: a newer one replaces the
+    # button of the last (its click would only attach again anyway).
+    local unit="pulsar-agent-${tname}" self script
+    self=$(realpath "$SELF")
+    systemctl --user stop "${unit}.service" 2>/dev/null || true
+    # shellcheck disable=SC2016  # expanded by the transient unit's sh
+    script='a=$(notify-send --app-name=Pulsar --icon=utilities-terminal --action=attach=Open "$1" "$2") || exit 0
+[ "$a" = attach ] || exit 0
+exec ptyxis --new-window -- "$3" agent run "$4" --tmux "$5"'
+    systemd-run --user --collect --quiet --unit="$unit" \
+        -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" 2>/dev/null || true
 }
 
 # Onto the session: switch to it from inside the agents' server, attach from
@@ -3406,7 +3503,9 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      attach to that tmux session, or start the agent
                                      in it. One server for agents (-L pulsar-agents),
                                      on the host; a claude session that died comes
-                                     back on its own conversation. --new: a fresh one
+                                     back on its own conversation. --new: a fresh one.
+                                     When it waits for you in a session you are not
+                                     looking at, a notification opens it
        pulsar agent sessions [--kill <name> | --forget <name>]
                                      the tmux sessions; --kill ends one (it can come
                                      back), --forget drops its conversation
@@ -3460,6 +3559,9 @@ cmd_agent() {
             no_json "agent run"
             need_user "agent run"
             agent_run "$@" ;;
+        notify)
+            need_user "agent notify"
+            agent_notify "$@" ;;
         sessions)
             no_json "agent sessions"
             need_user "agent sessions"
