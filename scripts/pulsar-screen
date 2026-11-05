@@ -1,0 +1,174 @@
+#!/usr/bin/python3
+"""pulsar-screen -- copy the text, or the QR code, in a part of the screen.
+
+    pulsar-screen text      pick an area; its text goes on the clipboard
+    pulsar-screen qr        pick an area; the QR code's contents do
+
+Run by `pulsar screen`, the command menu and the Super+Print shortcut.
+GNOME's own screenshot UI picks the area, asked for through the desktop
+portal: on Wayland that is the one way a program may ask to see the screen.
+tesseract reads the text (English: the image carries one language pack), zbar
+reads the code, wl-copy puts it on the clipboard, and a notification says
+what was copied. The screenshot itself is deleted: what was asked for is the
+text, not a file in Pictures.
+
+PULSAR_SCREEN_IMAGE=<png> reads that file instead of asking the portal (the
+tests, and trying it without a desktop).
+"""
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.parse
+
+USAGE = "usage: pulsar screen text | qr   (pick an area; its text or QR code goes on the clipboard)"
+PREVIEW = 120
+
+
+def capture():
+    """Ask the portal for an interactive screenshot. Returns its path, or
+    None if the person cancelled."""
+    import gi
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+    token = f"pulsar_screen_{os.getpid()}"
+    sender = bus.get_unique_name()[1:].replace(".", "_")
+    handle = f"/org/freedesktop/portal/desktop/request/{sender}/{token}"
+    loop = GLib.MainLoop()
+    got = {}
+
+    def response(_conn, _sender, _path, _iface, _signal, params):
+        code, results = params.unpack()
+        got["code"], got["uri"] = code, results.get("uri")
+        loop.quit()
+
+    # subscribed before the call: the portal may answer before call_sync returns
+    sub = bus.signal_subscribe("org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request",
+                               "Response", handle, None, Gio.DBusSignalFlags.NONE, response)
+    try:
+        bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                      "org.freedesktop.portal.Screenshot", "Screenshot",
+                      GLib.Variant("(sa{sv})", ("", {"handle_token": GLib.Variant("s", token),
+                                                     "interactive": GLib.Variant("b", True)})),
+                      GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, -1, None)
+        loop.run()
+    finally:
+        bus.signal_unsubscribe(sub)
+    # 0 taken, 1 cancelled, 2 failed
+    if got.get("code") == 1:
+        return None
+    if got.get("code") != 0 or not got.get("uri"):
+        raise RuntimeError("the screenshot portal did not return a picture")
+    return urllib.parse.unquote(urllib.parse.urlparse(got["uri"]).path)
+
+
+def read_text(path):
+    r = subprocess.run(["tesseract", path, "-", "-l", "eng"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"tesseract failed: {r.stderr.strip()[:200]}")
+    # tesseract ends paragraphs with blank lines and the page with a form
+    # feed, which splitlines() treats as a line break
+    lines = [ln.rstrip() for ln in r.stdout.splitlines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    while lines and not lines[0]:
+        lines.pop(0)
+    return "\n".join(lines)
+
+
+def read_qr(path):
+    # exit 4: no code found
+    r = subprocess.run(["zbarimg", "--quiet", "--raw", path], capture_output=True, text=True)
+    if r.returncode == 4:
+        return ""
+    if r.returncode != 0:
+        raise RuntimeError(f"zbarimg failed: {r.stderr.strip()[:200]}")
+    return r.stdout.rstrip("\n")
+
+
+def copy(text):
+    # wl-copy stays behind to serve the clipboard, so it must not hold our pipes
+    subprocess.run(["wl-copy"], input=text, text=True, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def notify(title, body="", url=None):
+    if not shutil.which("notify-send"):
+        print(f"{title}\n{body}".rstrip())
+        return
+    argv = ["notify-send", "--app-name=Pulsar", "--icon=edit-copy-symbolic", title, body]
+    if url:
+        # waits for the click, which is all this process has left to do
+        argv[1:1] = ["--action=open=Open link"]
+        a = subprocess.run(argv, capture_output=True, text=True).stdout.strip()
+        if a == "open":
+            subprocess.Popen(["xdg-open", url], start_new_session=True)
+        return
+    subprocess.run(argv)
+
+
+def preview(text):
+    one = " ".join(text.split())
+    return one if len(one) <= PREVIEW else one[:PREVIEW - 1] + "…"
+
+
+def missing(kind):
+    tool = {"text": "tesseract", "qr": "zbarimg"}[kind]
+    return None if shutil.which(tool) else tool
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] not in ("text", "qr"):
+        print(USAGE, file=sys.stderr)
+        return 2
+    kind = argv[1]
+    tool = missing(kind)
+    if tool:
+        notify("Can't read the screen", f"{tool} is not installed here.")
+        return 1
+    started = time.time()
+    path = os.environ.get("PULSAR_SCREEN_IMAGE")
+    ours = False
+    if not path:
+        try:
+            path = capture()
+        except Exception as e:  # no portal, no session bus
+            notify("Can't take a screenshot", str(e))
+            return 1
+        if path is None:
+            return 0
+        # ours if the portal just made it; never a file that was already there
+        try:
+            ours = os.stat(path).st_mtime >= started - 1
+        except OSError:
+            ours = False
+    try:
+        found = read_text(path) if kind == "text" else read_qr(path)
+    except Exception as e:
+        notify("Can't read the screen", str(e))
+        return 1
+    finally:
+        if ours:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    if not found:
+        notify("No text found" if kind == "text" else "No QR code found",
+               "Nothing was copied. Pick an area with less around it, or zoom in first.")
+        return 0
+    copy(found)
+    if kind == "text":
+        n = found.count("\n") + 1
+        notify(f"Copied {n} line{'s' if n != 1 else ''} of text", preview(found))
+    else:
+        url = found if urllib.parse.urlparse(found).scheme in ("http", "https") else None
+        notify("Copied the QR code", preview(found), url=url)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

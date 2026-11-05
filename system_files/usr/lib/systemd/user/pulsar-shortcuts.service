@@ -1,0 +1,20 @@
+# Offers each of Pulsar's keyboard shortcuts to the account once: Super+/ for
+# the command menu, Super+Print to copy text from the screen. A chord the
+# account already uses is left alone; one the person removes or rebinds in
+# Settings > Keyboard stays as they left it. The record is
+# %S/pulsar/shortcuts; `/usr/libexec/pulsar/pulsar-shortcuts --list` reads it.
+[Unit]
+Description=Pulsar: offer keyboard shortcuts
+ConditionUser=!@system
+# after init, whose welcome.pending says this is a new account (the welcome
+# window shows instead of a notification)
+After=pulsar-theme-init.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/pulsar-shortcuts
+TimeoutStartSec=60
+
+[Install]
+WantedBy=graphical-session.target

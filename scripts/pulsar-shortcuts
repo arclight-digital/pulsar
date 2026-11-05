@@ -1,0 +1,183 @@
+#!/usr/bin/python3
+"""pulsar-shortcuts -- offer Pulsar's keyboard shortcuts to an account, once each.
+
+Run at login by pulsar-shortcuts.service. Each shortcut is offered once per
+account: bound as a GNOME custom shortcut (Settings > Keyboard > Custom
+Shortcuts, where it can be changed or removed) if nothing in the account
+already answers to its keys, and remembered either way in
+~/.local/state/pulsar/shortcuts. A shortcut the person removed, or rebound,
+stays as they left it; one whose keys were taken is not tried again.
+
+When an existing account gets new shortcuts, one notification names them;
+a new one gets the welcome window instead.
+
+The theme picker's Super+T is not here: pulsar-theme binds it with the
+first theme, and its revert removes it.
+
+    pulsar-shortcuts            offer what this account has not been offered
+    pulsar-shortcuts --list     each shortcut, its keys, and what happened
+"""
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+LIBEXEC = "/usr/libexec/pulsar"
+# id, name (as Settings shows it), command, keys, how the notification says them
+SHORTCUTS = (
+    ("pulsar-menu", "Pulsar commands", f"{LIBEXEC}/pulsar-menu", "<Super>slash", "Super+/"),
+    ("pulsar-screen-text", "Copy text from the screen", f"{LIBEXEC}/pulsar-screen text", "<Super>Print", "Super+Print"),
+)
+MK = "org.gnome.settings-daemon.plugins.media-keys"
+MK_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings"
+# Every schema whose keys a chord could already belong to (as pulsar-theme's
+# picker checks: the Shell, mutter and settings-daemon).
+KEYBINDING_SCHEMAS = ("org.gnome.desktop.wm.keybindings", "org.gnome.shell.keybindings",
+                      "org.gnome.mutter.keybindings", "org.gnome.mutter.wayland.keybindings", MK)
+# The login screen's own accounts (GDM's dynamic greeter users): never a person's.
+GREETER_UIDS = range(60578, 60706)
+
+
+def state_base():
+    return Path(os.environ.get("XDG_STATE_HOME") or os.path.join(os.environ.get("HOME", "/nonexistent"), ".local/state"))
+
+
+def state_file():
+    return state_base() / "pulsar" / "shortcuts"
+
+
+def new_account():
+    """A first login: the welcome window is coming, or just came, and it is
+    the one greeting (see pulsar-welcome.service)."""
+    if (state_base() / "pulsar-theme" / "welcome.pending").exists():
+        return True
+    try:
+        return time.time() - (state_base() / "pulsar-welcome" / "shown.json").stat().st_mtime < 600
+    except OSError:
+        return False
+
+
+def gsettings(*args):
+    r = subprocess.run(["gsettings", *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"gsettings {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def gv_list(text):
+    """A GVariant string list as gsettings prints it: "@as []" or "['a', 'b']"."""
+    return re.findall(r"'((?:[^'\\]|\\.)*)'", text)
+
+
+def gv_str(s):
+    return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def reloc(path):
+    return f"{MK}.custom-keybinding:{path}"
+
+
+def accel_key(a):
+    # Pulsar's shortcuts use Super alone; a Ctrl one would need <Primary> and
+    # <Control> folded together here
+    return frozenset(m.lower() for m in re.findall(r"<([^>]+)>", a)), re.sub(r"<[^>]+>", "", a).lower()
+
+
+def taken_by(accel):
+    """What in this account already answers to `accel`, or None."""
+    want = accel_key(accel)
+    for schema in KEYBINDING_SCHEMAS:
+        try:
+            out = gsettings("list-recursively", schema)
+        except RuntimeError:
+            continue   # a schema this GNOME does not have
+        for ln in out.splitlines():
+            parts = ln.split(None, 2)
+            if len(parts) < 3:
+                continue
+            for a in gv_list(parts[2]):
+                if a and accel_key(a) == want:
+                    return f"{schema} {parts[1]}"
+    for path in gv_list(gsettings("get", MK, "custom-keybindings")):
+        try:
+            b = gv_list(gsettings("get", reloc(path), "binding"))
+        except RuntimeError:
+            continue
+        if b and b[0] and accel_key(b[0]) == want:
+            return f"custom shortcut {path}"
+    return None
+
+
+def bind(sid, name, command, accel):
+    path = f"{MK_PATH}/{sid}/"
+    cur = gv_list(gsettings("get", MK, "custom-keybindings"))
+    # the shortcut's own keys first, the list last: a list entry with no
+    # binding yet is harmless, a binding outside the list is never seen
+    gsettings("set", reloc(path), "name", gv_str(name))
+    gsettings("set", reloc(path), "command", gv_str(command))
+    gsettings("set", reloc(path), "binding", gv_str(accel))
+    if path not in cur:
+        gsettings("set", MK, "custom-keybindings", "[" + ", ".join(gv_str(p) for p in cur + [path]) + "]")
+
+
+def read_state():
+    f = state_file()
+    done = {}
+    if f.exists():
+        for ln in f.read_text().splitlines():
+            sid, _, rest = ln.partition("\t")
+            if sid:
+                done[sid] = rest
+    return done
+
+
+def offer():
+    if os.getuid() in GREETER_UIDS:
+        return 0
+    done = read_state()
+    bound = []
+    for sid, name, command, accel, said in SHORTCUTS:
+        if sid in done:
+            continue
+        try:
+            who = taken_by(accel)
+            if who:
+                done[sid] = f"not bound: {accel} is taken ({who})"
+            else:
+                bind(sid, name, command, accel)
+                done[sid] = f"bound to {accel}"
+                bound.append((said, name))
+        except RuntimeError as e:
+            # no dconf yet, no session bus: try again at the next login
+            print(f"pulsar-shortcuts: {sid}: {e}", file=sys.stderr)
+            continue
+        print(f"pulsar-shortcuts: {sid}: {done[sid]}")
+    f = state_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text("".join(f"{k}\t{v}\n" for k, v in done.items()))
+    tmp.replace(f)
+    if bound and not new_account():
+        body = "\n".join(f"{keys}: {name}" for keys, name in bound)
+        subprocess.run(["notify-send", "--app-name=Pulsar", "--icon=input-keyboard-symbolic",
+                        "New keyboard shortcuts", body + "\nChange them in Settings > Keyboard."],
+                       stderr=subprocess.DEVNULL)
+    return 0
+
+
+def main(argv):
+    if argv[1:] == ["--list"]:
+        done = read_state()
+        for sid, name, _cmd, accel, said in SHORTCUTS:
+            print(f"{said:<12} {name:<28} {done.get(sid, 'not offered yet')}")
+        return 0
+    if argv[1:]:
+        print("usage: pulsar-shortcuts [--list]", file=sys.stderr)
+        return 2
+    return offer()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

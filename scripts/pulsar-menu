@@ -1,0 +1,314 @@
+#!/usr/bin/python3
+"""pulsar-menu -- Pulsar's own actions, one search away (Super+/).
+
+Type to filter, Up/Down to choose, Enter to run, Esc to close. Pressing the
+shortcut again also closes it. Everything here is something Pulsar already
+does from the CLI or its own apps; the menu only finds it for you:
+
+  - copy text or a QR code from the screen (pulsar-screen)
+  - themes (the picker, or the next one)
+  - updates and agent sessions in Pulsar Settings, and each running session
+  - a health check, a checkpoint before a risky change, asking your agent
+
+Commands that print run in a new terminal window that stays open; a
+checkpoint asks for your password there, never here.
+"""
+import json
+import os
+import subprocess
+import sys
+
+PULSAR = os.environ.get("PULSAR_CLI", "/usr/bin/pulsar")
+LIBEXEC = os.environ.get("PULSAR_LIBEXEC", "/usr/libexec/pulsar")
+AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex CLI", "gemini": "Gemini CLI",
+               "opencode": "opencode", "aider": "aider"}
+
+
+def terminal(*argv, hold=True):
+    """A new Ptyxis window running argv. hold: it waits for a key afterwards,
+    so what it printed can be read."""
+    if hold:
+        script = '"$@"; echo; read -rsn1 -p "Press any key to close this window."'
+        return ["ptyxis", "--new-window", "--", "bash", "-c", script, "pulsar-menu", *argv]
+    return ["ptyxis", "--new-window", "--", *argv]
+
+
+class Item:
+    def __init__(self, key, title, subtitle, icon, argv, words=""):
+        self.key, self.title, self.subtitle, self.icon, self.argv = key, title, subtitle, icon, argv
+        self.haystack = " ".join((title, subtitle, words)).lower()
+        self.accel = ""
+
+    def matches(self, query):
+        return all(w in self.haystack for w in query.lower().split())
+
+
+def base_items():
+    return [
+        Item("screen-text", "Copy text from the screen", "Pick an area; its text goes on the clipboard",
+             "edit-copy-symbolic", [f"{LIBEXEC}/pulsar-screen", "text"], "ocr read recognize screenshot"),
+        Item("screen-qr", "Read a QR code", "Pick an area with a QR code; what it says goes on the clipboard",
+             "camera-photo-symbolic", [f"{LIBEXEC}/pulsar-screen", "qr"], "qr code barcode scan link url"),
+        Item("themes", "Themes", "Switch the whole desktop's colors",
+             "applications-graphics-symbolic", [f"{LIBEXEC}/pulsar-theme-picker"],
+             "theme color colour palette dark light wallpaper look appearance"),
+        Item("theme-next", "Next theme", "Try the next theme in the list",
+             "media-skip-forward-symbolic", [PULSAR, "theme", "next"], "theme color colour cycle"),
+        Item("updates", "Updates", "Check for a new Pulsar image, in Pulsar Settings",
+             "software-update-available-symbolic", [f"{LIBEXEC}/pulsar-settings", "updates"],
+             "update upgrade version release"),
+        Item("sessions", "Agent sessions", "The coding agents running in sessions, in Pulsar Settings",
+             "utilities-terminal-symbolic", [f"{LIBEXEC}/pulsar-settings", "agents"],
+             "agent claude codex tmux session usage undo"),
+        Item("doctor", "Health check", "Run pulsar doctor in a terminal",
+             "emblem-ok-symbolic", terminal(PULSAR, "doctor"), "doctor health status problem broken check"),
+        Item("checkpoint", "Make a checkpoint", "Snapshot /etc and your settings before a risky change (asks for your password)",
+             "document-save-symbolic", terminal("sudo", PULSAR, "checkpoint"),
+             "checkpoint snapshot backup restore undo etc"),
+        Item("settings", "Pulsar Settings", "Appearance, updates and agents",
+             "preferences-system-symbolic", [f"{LIBEXEC}/pulsar-settings"], "settings preferences options"),
+    ]
+
+
+def session_items(sessions):
+    """One item per session that is running or waiting, from
+    `pulsar agent sessions --json`; waiting ones first."""
+    out = []
+    live = [s for s in sessions if s.get("state") in ("running", "waiting") and s.get("agent")]
+    for s in sorted(live, key=lambda s: (s["state"] != "waiting", s["name"])):
+        agent = AGENT_NAMES.get(s["agent"], s["agent"])
+        where = (s.get("dir") or "").replace(os.environ.get("HOME", "\0"), "~", 1)
+        state = "Waiting for you" if s["state"] == "waiting" else "Running"
+        out.append(Item(f"session:{s['name']}", f"Open session “{s['name']}”",
+                        " · ".join(x for x in (agent, state, where) if x),
+                        "utilities-terminal-symbolic",
+                        terminal(PULSAR, "agent", "run", s["agent"], "--tmux", s["name"], hold=False),
+                        f"agent session tmux attach {s['agent']}"))
+    return out
+
+
+def agent_item(name):
+    agent = AGENT_NAMES.get(name, name)
+    return Item("ask", f"Ask {agent} about this machine", "Starts it on a private report of this machine",
+                "dialog-question-symbolic", terminal(PULSAR, "agent", "ask", hold=False),
+                "agent ask help question report diagnose")
+
+
+# Shortcut hints, from pulsar-shortcuts' custom bindings (when the person kept them)
+SHORTCUT_IDS = {"screen-text": "pulsar-screen-text"}
+
+
+def accel_label(accel):
+    import re
+    mods = re.findall(r"<([^>]+)>", accel)
+    key = re.sub(r"<[^>]+>", "", accel)
+    key = {"slash": "/", "Print": "Print", "period": "."}.get(key, key.upper() if len(key) == 1 else key)
+    return "+".join([m.capitalize() for m in mods] + [key])
+
+
+def run_detached(argv):
+    subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def window_class():
+    """The window, built on first use: the logic above runs without GTK."""
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Gdk, Gio, GLib, Gtk, Pango
+
+    class Menu(Gtk.ApplicationWindow):
+        def __init__(self, app):
+            super().__init__(application=app, title="Pulsar commands", decorated=False,
+                             resizable=False, default_width=600, default_height=460)
+            self.add_css_class("pulsar-menu")
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self.entry = Gtk.SearchEntry(placeholder_text="Search Pulsar", hexpand=True,
+                                         margin_top=12, margin_bottom=8, margin_start=12, margin_end=12)
+            box.append(self.entry)
+            self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.BROWSE)
+            self.list.add_css_class("navigation-sidebar")
+            self.list.set_filter_func(self._filter)
+            self.list.connect("row-activated", lambda _l, row: self.run(row.item))
+            scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                        margin_bottom=8, margin_start=6, margin_end=6)
+            scroll.set_child(self.list)
+            self.scroll = scroll
+            box.append(scroll)
+            self.set_child(box)
+            self.query = ""
+            for it in base_items():
+                self.add(it)
+            self.entry.connect("search-changed", self._changed)
+            self.entry.connect("activate", lambda _e: self._activate_selected())
+            self.entry.connect("stop-search", lambda _e: self.close())
+            keys = Gtk.EventControllerKey()
+            keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            keys.connect("key-pressed", self._key)
+            self.add_controller(keys)
+            self.was_active = False
+            self.connect("notify::is-active", self._active)
+            self._select_first()
+            self._load_accels()
+            # the slow ones after the window is up
+            self._async([PULSAR, "agent", "sessions", "--json"], self._got_sessions)
+            self._async([PULSAR, "agent", "default"], self._got_agent)
+
+        def add(self, it, position=-1):
+            row = Gtk.ListBoxRow()
+            row.item = it
+            h = Gtk.Box(spacing=12, margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
+            h.append(Gtk.Image(icon_name=it.icon, pixel_size=16))
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+            v.append(Gtk.Label(label=it.title, xalign=0))
+            sub = Gtk.Label(label=it.subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.END)
+            sub.add_css_class("dim-label")
+            sub.add_css_class("caption")
+            v.append(sub)
+            h.append(v)
+            row.accel = Gtk.Label(label=it.accel)
+            row.accel.add_css_class("dim-label")
+            h.append(row.accel)
+            row.set_child(h)
+            self.list.insert(row, position)
+
+        def _filter(self, row):
+            return row.item.matches(self.query)
+
+        def _changed(self, entry):
+            self.query = entry.get_text()
+            self.list.invalidate_filter()
+            self._select_first()
+
+        def _visible_rows(self):
+            return [r for r in self._all_rows() if r.item.matches(self.query)]
+
+        def _select_first(self):
+            rows = self._visible_rows()
+            self.list.select_row(rows[0] if rows else None)
+
+        def _move(self, step):
+            rows = self._visible_rows()
+            if not rows:
+                return
+            cur = self.list.get_selected_row()
+            i = rows.index(cur) if cur in rows else -1
+            row = rows[max(0, min(len(rows) - 1, i + step))]
+            self.list.select_row(row)
+            # keep it in view; focus stays in the search field
+            ok, b = row.compute_bounds(self.list)
+            adj = self.scroll.get_vadjustment()
+            if ok:
+                top, bottom = b.get_y(), b.get_y() + b.get_height()
+                if top < adj.get_value():
+                    adj.set_value(top)
+                elif bottom > adj.get_value() + adj.get_page_size():
+                    adj.set_value(bottom - adj.get_page_size())
+
+        def _key(self, _c, keyval, _code, _state):
+            if keyval == Gdk.KEY_Escape:
+                self.close()
+                return True
+            if keyval in (Gdk.KEY_Down, Gdk.KEY_Tab):
+                self._move(1)
+                return True
+            if keyval in (Gdk.KEY_Up, Gdk.KEY_ISO_Left_Tab):
+                self._move(-1)
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                self._activate_selected()
+                return True
+            return False
+
+        def _activate_selected(self):
+            row = self.list.get_selected_row()
+            if row is not None and row.item.matches(self.query):
+                self.run(row.item)
+
+        def _active(self, *_a):
+            # clicked away: close, as a menu does
+            if self.is_active():
+                self.was_active = True
+            elif self.was_active:
+                self.close()
+
+        def run(self, it):
+            try:
+                run_detached(it.argv)
+            except OSError as e:
+                print(f"pulsar-menu: {it.key}: {e}", file=sys.stderr)
+            self.close()
+
+        def _async(self, argv, done):
+            try:
+                p = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE)
+            except GLib.Error:
+                return
+
+            def finished(proc, res):
+                try:
+                    _ok, out, _err = proc.communicate_utf8_finish(res)
+                except GLib.Error:
+                    return
+                if proc.get_successful():
+                    done(out or "")
+            p.communicate_utf8_async(None, None, finished)
+
+        def _got_sessions(self, out):
+            try:
+                items = session_items(json.loads(out))
+            except (ValueError, TypeError, KeyError):
+                return
+            # after "Agent sessions"
+            at = next(i for i, it in enumerate(base_items()) if it.key == "sessions") + 1
+            for n, it in enumerate(items):
+                self.add(it, at + n)
+            self._select_first()
+
+        def _got_agent(self, out):
+            name = out.strip().split()[0] if out.strip() else ""
+            if name:
+                self.add(agent_item(name), len(self._all_rows()) - 1)
+
+        def _all_rows(self):
+            i, rows = 0, []
+            while (row := self.list.get_row_at_index(i)) is not None:
+                rows.append(row)
+                i += 1
+            return rows
+
+        def _load_accels(self):
+            for row in self._all_rows():
+                sid = SHORTCUT_IDS.get(row.item.key)
+                if not sid:
+                    continue
+                path = f"/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/{sid}/"
+                try:
+                    s = Gio.Settings.new_with_path("org.gnome.settings-daemon.plugins.media-keys.custom-keybinding", path)
+                    if s.get_string("command").startswith(row.item.argv[0]) and s.get_string("binding"):
+                        row.accel.set_label(accel_label(s.get_string("binding")))
+                except Exception:  # no such schema here
+                    pass
+
+    return Menu
+
+
+def main(argv):
+    Menu = window_class()
+    from gi.repository import Adw
+    app = Adw.Application(application_id="digital.arclight.Pulsar.Menu")
+
+    def activate(a):
+        w = a.get_active_window()
+        if w is not None:
+            # the shortcut again: close, like a toggle
+            w.close()
+            return
+        Menu(a).present()
+    app.connect("activate", activate)
+    return app.run(argv[:1])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

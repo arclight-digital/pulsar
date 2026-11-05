@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The keys pulsar-shortcuts reads and writes, as GNOME 51 ships them
+     (gnome-settings-daemon's media-keys, mutter's wm keybindings), cut down
+     to what tests/desktop-commands.bats needs. Compiled per test. -->
+<schemalist>
+  <schema id="org.gnome.settings-daemon.plugins.media-keys" path="/org/gnome/settings-daemon/plugins/media-keys/">
+    <key name="custom-keybindings" type="as"><default>[]</default></key>
+    <key name="screensaver" type="as"><default>['&lt;Super&gt;l']</default></key>
+  </schema>
+  <schema id="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding">
+    <key name="name" type="s"><default>''</default></key>
+    <key name="command" type="s"><default>''</default></key>
+    <key name="binding" type="s"><default>''</default></key>
+  </schema>
+  <schema id="org.gnome.desktop.wm.keybindings" path="/org/gnome/desktop/wm/keybindings/">
+    <key name="switch-input-source" type="as"><default>['&lt;Super&gt;space']</default></key>
+    <key name="toggle-fullscreen" type="as"><default>[]</default></key>
+  </schema>
+  <schema id="org.gnome.shell.keybindings" path="/org/gnome/shell/keybindings/">
+    <key name="show-screenshot-ui" type="as"><default>['Print']</default></key>
+  </schema>
+</schemalist>

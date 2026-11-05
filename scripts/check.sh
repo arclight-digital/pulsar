@@ -75,9 +75,12 @@ echo "pulsar-signer: compiles"
 
 # The theme engine runs at every first login, and a syntax error there is a
 # desktop that stays stock forever (the unit fails, the stamp is never
-# written, it fails again next login). The rest are build and gate tooling.
+# written, it fails again next login). pulsar-shortcuts runs at every login
+# too; the screen reader and the command menu are a shortcut away. The rest
+# are build and gate tooling.
 say "compile-check the theme engine and its tooling"
 for f in scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar-settings scripts/pulsar_theme_engine.py scripts/build-themes.py \
+         scripts/pulsar-screen scripts/pulsar-menu scripts/pulsar-shortcuts \
          scripts/render-theme-wallpapers.py tests/theme-gate/scenario.py \
          tests/theme-gate/fixtures/notes.py; do
   python3 - "$f" <<'PY'

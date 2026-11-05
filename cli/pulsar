@@ -5422,6 +5422,28 @@ cmd_theme() {
     exec "$THEME_ENGINE" "$@"
 }
 
+# pulsar screen text|qr -- the text or QR code in a part of the screen, onto
+# the clipboard. GNOME's screenshot UI picks the area; see
+# /usr/libexec/pulsar/pulsar-screen.
+SCREEN_TOOL=${PULSAR_SCREEN_TOOL:-/usr/libexec/pulsar/pulsar-screen}
+
+cmd_screen() {
+    case "${1:-}" in
+        text|qr) [ $# -eq 1 ] || die "usage: pulsar screen text | qr" ;;
+        -h|--help|help|"")
+            cat <<'EOF'
+usage: pulsar screen text    pick an area of the screen; its text goes on
+                             the clipboard (English). Super+Print does this.
+       pulsar screen qr      pick an area; the QR code's contents go on the
+                             clipboard, and a link can be opened
+EOF
+            return 0 ;;
+        *) die "usage: pulsar screen text | qr" ;;
+    esac
+    [ -x "$SCREEN_TOOL" ] || die "not found: ${SCREEN_TOOL}"
+    exec "$SCREEN_TOOL" "$1"
+}
+
 # ---------------------------------------------------------------------------
 # checkpoint -- "undo what just happened to the system" as one command.
 #
@@ -5925,6 +5947,8 @@ Desktop
   pulsar theme <command>   recolor the whole desktop: list | set <theme> |
                            revert | ...
   pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
+  pulsar screen text|qr    the text or QR code in an area of the screen,
+                           onto the clipboard (Super+Print: text)
 
 Agents
   pulsar agent             what this machine gives a coding agent:
@@ -6034,6 +6058,7 @@ main() {
         pin)        cmd_pin "$@" ;;
         checkpoint) cmd_checkpoint "$@" ;;
         crashes)    cmd_crashes "$@" ;;
+        screen)     cmd_screen "$@" ;;
         setup)      cmd_setup "$@" ;;
         agent)      cmd_agent "$@" ;;
         mcp)        cmd_mcp "$@" ;;

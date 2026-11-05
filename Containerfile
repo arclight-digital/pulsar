@@ -262,6 +262,15 @@ RUN for attempt in 1 2 3; do \
 #                   a toolbox dies with that box and shares /tmp/tmux-$UID
 #                   with every other box's tmux. Its config is
 #                   /usr/share/pulsar/agents-tmux.conf.
+#   tesseract, zbar for `pulsar screen text|qr` (Super+Print, the command
+#                   menu): the text or QR code in an area of the screen, onto
+#                   the clipboard. A desktop shortcut runs it in the host
+#                   session, so the readers have to be on the host: a toolbox
+#                   is not there at login, and an OCR app from Flathub (Frog)
+#                   is a window to open, not a key to press. English only
+#                   (tesseract-langpack-eng, 4 MB): each other language is
+#                   1-15 MB more in every update. With zbar's GraphicsMagick,
+#                   about 15 MB in all.
 #
 # `gh` was here once, carried as an admitted exception to the rule above so
 # that `pulsar verify` (then `attest`) had its verifier on a fresh install. The exception is
@@ -287,7 +296,10 @@ RUN dnf5 install -y \
       libvirt \
       qemu-kvm \
       dbus-daemon \
-      tmux && \
+      tmux \
+      tesseract \
+      tesseract-langpack-eng \
+      zbar && \
     case "$(readlink /etc/systemd/system/dbus.service)" in \
       */dbus-broker.service) echo "system bus: still dbus-broker" ;; \
       *) echo "FATAL: installing dbus-daemon moved the system bus off dbus-broker ($(readlink /etc/systemd/system/dbus.service))"; exit 1 ;; \
@@ -699,6 +711,9 @@ COPY scripts/alive-timeout.sh /usr/libexec/pulsar/alive-timeout.sh
 COPY scripts/pulsar-agent-gate /usr/libexec/pulsar/pulsar-agent-gate
 COPY scripts/pulsar-mcp /usr/libexec/pulsar/pulsar-mcp
 COPY scripts/steam-gpu-watch.sh /usr/libexec/pulsar/steam-gpu-watch.sh
+# The screen reader, the command menu and the shortcuts that open them (see
+# the tesseract/zbar entry in the package list, and pulsar-shortcuts.service).
+COPY scripts/pulsar-screen scripts/pulsar-menu scripts/pulsar-shortcuts /usr/libexec/pulsar/
 COPY scripts/doc-portal-watch.sh /usr/libexec/pulsar/doc-portal-watch.sh
 COPY scripts/steam-grants.sh /usr/libexec/pulsar/steam-grants.sh
 COPY scripts/pulsar-esp-fallback /usr/libexec/pulsar/pulsar-esp-fallback
@@ -709,6 +724,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/pulsar-agent-gate \
       /usr/libexec/pulsar/pulsar-mcp \
       /usr/libexec/pulsar/steam-gpu-watch.sh \
+      /usr/libexec/pulsar/pulsar-screen /usr/libexec/pulsar/pulsar-menu /usr/libexec/pulsar/pulsar-shortcuts \
       /usr/libexec/pulsar/doc-portal-watch.sh \
       /usr/libexec/pulsar/steam-grants.sh \
       /usr/libexec/pulsar/pulsar-esp-fallback && \
@@ -1039,6 +1055,12 @@ RUN set -eu; \
 # place of the notice, and the welcome stamps itself shown. An existing
 # account that gets this in an update is never greeted.
 #
+# pulsar-shortcuts.service is --global for the same reason: shortcuts live in
+# each account's dconf. At each login it offers what the account has not been
+# offered yet (Super+/ for the command menu, Super+Print for copying text off
+# the screen), once each, and only on a chord nothing there already answers
+# to. Removing or rebinding one in Settings > Keyboard sticks.
+#
 # pulsar-update-auto.timer is a SYSTEM unit, because staging needs root. It
 # runs `pulsar update --background`: the same staging `sudo pulsar update`
 # does, layers carried forward, but only on AC power and an unmetered
@@ -1096,6 +1118,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-theme-init.service && \
     systemctl --global enable pulsar-theme-notice.service && \
     systemctl --global enable pulsar-welcome.service && \
+    systemctl --global enable pulsar-shortcuts.service && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in greenboot-healthcheck.service pulsar-flatpaks.service \
              pulsar-gamemode-group.service pulsar-steam-grants.service pulsar-update-auto.timer; do \
@@ -1104,7 +1127,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
              pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-gpu-fault-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
-             pulsar-welcome.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer; do \
+             pulsar-welcome.service pulsar-shortcuts.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \
