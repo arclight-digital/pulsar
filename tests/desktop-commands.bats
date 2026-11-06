@@ -403,8 +403,8 @@ print(m.nothing_found("  my wife left me ")[0])'
 print(m.scrub_ms(10), m.scrub_ms(229), m.scrub_ms(700))
 print(m.SCRUB_DELAY_MS >= 400, m.SCRUB_HOLD_MS >= 1000)'
     [ "$status" -eq 0 ] || fail "$output"
-    # never a jump (700 ms at least), else 70 px a second
-    [ "${lines[0]}" = "700 3271 10000" ]
+    # never a jump (500 ms at least), else 110 px a second
+    [ "${lines[0]}" = "500 2081 6363" ]
     # arrowing past a row does not set it moving; the end stays up long enough to read
     [ "${lines[1]}" = "True True" ]
 }

@@ -502,12 +502,12 @@ APP_LIMIT = 5
 SCRUB_DELAY_MS = 600
 SCRUB_HOLD_MS = 1500
 SCRUB_BACK_MS = 350
-SCRUB_PX_PER_S = 70
+SCRUB_PX_PER_S = 110
 
 
 def scrub_ms(overflow_px):
     """How long the slide to a name's end takes: reading pace, never a jump."""
-    return max(700, int(overflow_px / SCRUB_PX_PER_S * 1000))
+    return max(500, int(overflow_px / SCRUB_PX_PER_S * 1000))
 
 
 FILE_LIMIT = 6
@@ -735,10 +735,10 @@ def window_class():
                 return False
             self.timer = GLib.timeout_add(ms, fire)
 
-        def _slide(self, to, ms, then):
+        def _slide(self, to, ms, then, easing):
             target = Adw.CallbackAnimationTarget.new(self._move)
             self.anim = Adw.TimedAnimation.new(self, self.offset, to, ms, target)
-            self.anim.set_easing(Adw.Easing.EASE_IN_OUT_SINE)
+            self.anim.set_easing(easing)
             self.anim.connect("done", lambda _a: then())
             self.anim.play()
 
@@ -756,8 +756,11 @@ def window_class():
             if over <= 1:
                 self.label.set_ellipsize(Pango.EllipsizeMode.END)
                 return
+            # along at an even pace (an eased end crawls for the last
+            # stretch), back with a quick ease
             self._slide(over, scrub_ms(over), lambda: self._later(
-                SCRUB_HOLD_MS, lambda: self._slide(0, SCRUB_BACK_MS, self.stop)))
+                SCRUB_HOLD_MS, lambda: self._slide(0, SCRUB_BACK_MS, self.stop, Adw.Easing.EASE_OUT_CUBIC)),
+                Adw.Easing.LINEAR)
 
         def stop(self):
             if self.timer:
