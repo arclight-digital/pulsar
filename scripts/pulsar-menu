@@ -47,13 +47,21 @@ class Item:
         self.group = group
         self.haystack = " ".join((title, subtitle, words)).lower()
         self.accel = ""
+        # runs only once the menu is off the screen: the screen readers, whose
+        # screenshot would otherwise catch the menu fading out over the text
+        self.settle = False
 
     def matches(self, query):
         return all(w in self.haystack for w in query.lower().split())
 
 
+# how long the menu is gone before a screen reader starts: GNOME's
+# close animation is 150 ms, and its screenshot UI freezes the frame it opens on
+SETTLE_MS = 300
+
+
 def base_items():
-    return [
+    items = [
         Item("screen-text", "Copy text from the screen", "Pick an area; its text goes on the clipboard",
              "edit-copy-symbolic", [f"{LIBEXEC}/pulsar-screen", "text"], "ocr read recognize screenshot", "Screen"),
         Item("screen-qr", "Read a QR code", "Pick an area with a QR code; what it says goes on the clipboard",
@@ -77,6 +85,9 @@ def base_items():
         Item("settings", "Pulsar Settings", "Appearance, updates and agents",
              "preferences-system-symbolic", [f"{LIBEXEC}/pulsar-settings"], "settings preferences options", "System"),
     ]
+    for it in items:
+        it.settle = it.key in ("screen-text", "screen-qr")
+    return items
 
 
 def session_items(sessions):
@@ -582,6 +593,7 @@ def window_class():
             keys.connect("key-pressed", self._key)
             self.add_controller(keys)
             self.was_active = False
+            self.leaving = False
             self.connect("notify::is-active", self._active)
             self._select_first()
             self._load_accels()
@@ -693,7 +705,10 @@ def window_class():
                 self.run(row.item)
 
         def _active(self, *_a):
-            # clicked away: close, as a menu does
+            # clicked away: close, as a menu does (not while it is hiding to
+            # start a screen reader: closing would end the app first)
+            if self.leaving:
+                return
             if self.is_active():
                 self.was_active = True
             elif self.was_active:
@@ -702,6 +717,15 @@ def window_class():
         def run(self, it):
             if not it.argv:
                 return   # the answer row while there is no answer yet
+            if it.settle:
+                # hidden, not closed: the app lives until the reader has started
+                self.leaving = True
+                self.set_visible(False)
+                GLib.timeout_add(SETTLE_MS, lambda: self._start(it) and False)
+                return
+            self._start(it)
+
+        def _start(self, it):
             try:
                 run_detached(it.argv)
             except OSError as e:

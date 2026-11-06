@@ -91,6 +91,30 @@ qr() {
     grep -qx "No QR code found" "$NOTIFY_LOG"
 }
 
+@test "screen: closing the screenshot UI is silent; only a real failure is said" {
+    # GNOME's portal answers 2, not 1, when the person presses Esc
+    run python3 - "$SCREEN" <<'PY'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("ps", sys.argv[1])
+spec = importlib.util.spec_from_loader("ps", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+sys.stderr = sys.stdout   # in order
+for code, uri in ((1, None), (2, None), (0, "file:///home/u/Pictures/Screenshots/Screenshot%20From%20x.png"),
+                  (0, None), (0, ""), (3, "file:///x.png")):
+    try:
+        print(code, repr(m.portal_result(code, uri)))
+    except RuntimeError as e:
+        print(code, "error:", e)
+PY
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "1 None" ]
+    [ "${lines[1]}" = "pulsar-screen: the portal answered 2 (closed, or failed)" ]
+    [ "${lines[2]}" = "2 None" ]
+    [ "${lines[3]}" = "0 '/home/u/Pictures/Screenshots/Screenshot From x.png'" ]
+    [ "${lines[4]}" = "0 error: the screenshot portal did not return a picture" ]
+    [ "${lines[5]}" = "0 error: the screenshot portal did not return a picture" ]
+    [ "${lines[6]}" = "3 error: the screenshot portal did not return a picture" ]
+}
+
 @test "screen: a missing reader is said in words, and a bad call is a usage error" {
     # a PATH with nothing on it but the stubs: no tesseract
     run env PATH="$STUB" "$(command -v python3)" "$SCREEN" text
@@ -290,6 +314,16 @@ print(m.accel_label(\"<Super>slash\"), m.accel_label(\"<Super>Print\"), m.accel_
     [ "${lines[1]}" = "['/usr/libexec/pulsar/pulsar-screen', 'text']" ]
     [ "${lines[2]}" = "Ask Claude Code about this machine" ]
     [ "${lines[3]}" = "Super+/ Super+Print Ctrl+Super+T" ]
+}
+
+@test "menu: the screen readers wait until the menu is off the screen, nothing else does" {
+    # else GNOME's screenshot UI freezes a frame with the menu fading out over the text
+    run menu '
+print(",".join(it.key for it in m.base_items() if it.settle))
+print(m.SETTLE_MS >= 150)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "screen-text,screen-qr" ]
+    [ "${lines[1]}" = "True" ]
 }
 
 @test "menu: arithmetic and conversions in the search, worked out without eval" {

@@ -57,12 +57,24 @@ def capture():
         loop.run()
     finally:
         bus.signal_unsubscribe(sub)
-    # 0 taken, 1 cancelled, 2 failed
-    if got.get("code") == 1:
+    return portal_result(got.get("code"), got.get("uri"))
+
+
+def portal_result(code, uri):
+    """The screenshot's path from the portal's answer, None when there is
+    nothing to read and nothing to say. 0 taken, 1 cancelled, 2 failed; but
+    GNOME's portal answers 2 when the person closes the screenshot UI
+    ("InteractiveScreenshot didn't return a file" in the journal), so 2 is a
+    cancel too: "can't take a screenshot" to someone who just pressed Esc is
+    wrong. A real failure leaves the portal's own line in the journal, and
+    this one beside it."""
+    if code in (1, 2):
+        if code == 2:
+            print("pulsar-screen: the portal answered 2 (closed, or failed)", file=sys.stderr)
         return None
-    if got.get("code") != 0 or not got.get("uri"):
+    if code != 0 or not uri:
         raise RuntimeError("the screenshot portal did not return a picture")
-    return urllib.parse.unquote(urllib.parse.urlparse(got["uri"]).path)
+    return urllib.parse.unquote(urllib.parse.urlparse(uri).path)
 
 
 def read_text(path):
