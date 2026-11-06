@@ -496,6 +496,20 @@ def agent_item(name):
 # words inside music tags.
 # ---------------------------------------------------------------------------
 APP_LIMIT = 5
+# a chosen row's name too long to fit slides along to show the rest: after
+# a moment on the row (not while arrowing past), at a reading pace, held at
+# the end long enough to read, then back
+SCRUB_DELAY_MS = 600
+SCRUB_HOLD_MS = 1500
+SCRUB_BACK_MS = 350
+SCRUB_PX_PER_S = 70
+
+
+def scrub_ms(overflow_px):
+    """How long the slide to a name's end takes: reading pace, never a jump."""
+    return max(700, int(overflow_px / SCRUB_PX_PER_S * 1000))
+
+
 FILE_LIMIT = 6
 # Pulsar's own apps the menu already lists as actions, and the menu itself
 APPS_LISTED = {"digital.arclight.Pulsar.Menu.desktop", "digital.arclight.Pulsar.Settings.desktop",
@@ -662,7 +676,9 @@ def window_class():
     gi.require_version("Adw", "1")
     gi.require_version("Gdk", "4.0")
     gi.require_version("Pango", "1.0")
-    from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
+    gi.require_version("Gsk", "4.0")
+    gi.require_version("Graphene", "1.0")
+    from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango
     try:   # GLib 2.86 moved it to GioUnix, and warns on the old name
         gi.require_version("GioUnix", "2.0")
         from gi.repository import GioUnix
@@ -676,6 +692,84 @@ def window_class():
             lab.add_css_class("key")
             box.append(lab)
         box.append(Gtk.Label(label=what, margin_end=14))
+
+    class Scrub(Gtk.Widget):
+        """A title that, while its row is chosen, slides along to show the
+        rest of a name too long to fit, holds there, and slides back.
+        Asks for no width of its own, so a long name never widens the menu."""
+        def __init__(self, label):
+            super().__init__(hexpand=True, overflow=Gtk.Overflow.HIDDEN)
+            self.label = label
+            label.set_parent(self)
+            self.offset = 0.0
+            self.anim = None
+            self.timer = 0
+
+        def do_measure(self, orientation, for_size):
+            mn, nat, mb, nb = self.label.measure(orientation, -1)
+            if orientation == Gtk.Orientation.HORIZONTAL:
+                return 0, 0, -1, -1
+            return mn, nat, mb, nb
+
+        def do_size_allocate(self, width, height, baseline):
+            w = width
+            if self.label.get_ellipsize() == Pango.EllipsizeMode.NONE:
+                w = max(width, self.label.measure(Gtk.Orientation.HORIZONTAL, -1)[1])
+            t = Gsk.Transform.new().translate(Graphene.Point().init(-self.offset, 0))
+            self.label.allocate(w, height, baseline, t)
+
+        def do_dispose(self):
+            self.stop()
+            if self.label is not None:
+                self.label.unparent()
+                self.label = None
+
+        def _move(self, value):
+            self.offset = value
+            self.queue_allocate()
+
+        def _later(self, ms, then):
+            def fire():
+                self.timer = 0
+                then()
+                return False
+            self.timer = GLib.timeout_add(ms, fire)
+
+        def _slide(self, to, ms, then):
+            target = Adw.CallbackAnimationTarget.new(self._move)
+            self.anim = Adw.TimedAnimation.new(self, self.offset, to, ms, target)
+            self.anim.set_easing(Adw.Easing.EASE_IN_OUT_SINE)
+            self.anim.connect("done", lambda _a: then())
+            self.anim.play()
+
+        def start(self, delay=SCRUB_DELAY_MS):
+            """After a moment on the row: slide to the end, hold, slide back."""
+            self.stop()
+            self._later(delay, self._go)
+
+        def _go(self):
+            if self.label is None:
+                return
+            self.label.set_ellipsize(Pango.EllipsizeMode.NONE)
+            full = self.label.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+            over = full - self.get_width()
+            if over <= 1:
+                self.label.set_ellipsize(Pango.EllipsizeMode.END)
+                return
+            self._slide(over, scrub_ms(over), lambda: self._later(
+                SCRUB_HOLD_MS, lambda: self._slide(0, SCRUB_BACK_MS, self.stop)))
+
+        def stop(self):
+            if self.timer:
+                GLib.source_remove(self.timer)
+                self.timer = 0
+            if self.anim is not None:
+                a, self.anim = self.anim, None
+                a.reset()
+            self.offset = 0.0
+            if self.label is not None:
+                self.label.set_ellipsize(Pango.EllipsizeMode.END)
+            self.queue_allocate()
 
     # Adw's window: rounded corners and the shadow, with no title bar
     class Menu(Adw.ApplicationWindow):
@@ -750,6 +844,7 @@ def window_class():
             self.add_controller(keys)
             self.was_active = False
             self.leaving = False
+            self.scrubbing = None
             self.connect("notify::is-active", self._active)
             self._select_first()
             self._load_accels()
@@ -776,7 +871,8 @@ def window_class():
             row.title = Gtk.Label(label=it.title, xalign=0, selectable=False, max_width_chars=1,
                                   ellipsize=Pango.EllipsizeMode.END,
                                   css_classes=["item-title"] + (["answer"] if it.key == "calc" else []))
-            v.append(row.title)
+            row.scrub = Scrub(row.title)
+            v.append(row.scrub)
             # a file's folder loses its middle: its first and last folders say where
             sub = Gtk.Label(label=it.subtitle, xalign=0, max_width_chars=1,
                             ellipsize=Pango.EllipsizeMode.MIDDLE if it.reveal else Pango.EllipsizeMode.END)
@@ -959,6 +1055,12 @@ def window_class():
         def _footer(self):
             row = self.list.get_selected_row()
             self.folder_hint.set_visible(row is not None and bool(row.item.reveal))
+            # the chosen row's name, in full, a moment after it is chosen
+            if self.scrubbing is not None and self.scrubbing is not row:
+                self.scrubbing.scrub.stop()
+            self.scrubbing = row
+            if row is not None:
+                row.scrub.start()
 
         def _apps(self, query):
             if not query.strip():

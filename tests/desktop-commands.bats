@@ -398,6 +398,17 @@ print(m.nothing_found("  my wife left me ")[0])'
     [ "${lines[9]}" = "Nothing matches “my wife left me”" ]
 }
 
+@test "menu: a long name slides at a reading pace, only once the row is settled on" {
+    run menu '
+print(m.scrub_ms(10), m.scrub_ms(229), m.scrub_ms(700))
+print(m.SCRUB_DELAY_MS >= 400, m.SCRUB_HOLD_MS >= 1000)'
+    [ "$status" -eq 0 ] || fail "$output"
+    # never a jump (700 ms at least), else 70 px a second
+    [ "${lines[0]}" = "700 3271 10000" ]
+    # arrowing past a row does not set it moving; the end stays up long enough to read
+    [ "${lines[1]}" = "True True" ]
+}
+
 @test "menu: arithmetic and conversions in the search, worked out without eval" {
     run menu '
 for q in ("2^10", "3x4", "(1920*1080)/4", "1/3", "15% of 80", "80 + 15%", "80 - 25%",
