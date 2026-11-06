@@ -73,6 +73,9 @@ Agents you can leave running, a command menu, and GNOME 51.
   the background no longer counts as stuck.
 - An NVIDIA driver update for Flatpak apps waits until no app is using the
   driver, instead of swapping it under a running Steam or Discord.
+- Super+F makes any window fullscreen, and pressing it again puts it back.
+  A Windows game whose borderless fullscreen sits under the top bar fills
+  the screen with one press.
 
 ### Desktop
 
