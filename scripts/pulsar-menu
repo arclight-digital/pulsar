@@ -590,6 +590,8 @@ def rank_files(rows, query, home, own=(), limit=FILE_LIMIT):
 def where(path, home):
     """A file's folder, with home as ~."""
     folder = os.path.dirname(path)
+    if home and folder == home.rstrip("/"):
+        return "Home folder"
     if home and (folder == home or folder.startswith(home.rstrip("/") + "/")):
         folder = "~" + folder[len(home.rstrip("/")):]
     return folder
@@ -661,6 +663,12 @@ def window_class():
     gi.require_version("Gdk", "4.0")
     gi.require_version("Pango", "1.0")
     from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
+    try:   # GLib 2.86 moved it to GioUnix, and warns on the old name
+        gi.require_version("GioUnix", "2.0")
+        from gi.repository import GioUnix
+        AppInfo = GioUnix.DesktopAppInfo
+    except (ValueError, ImportError):
+        AppInfo = Gio.DesktopAppInfo
 
     def hint(box, keys, what):
         for k in keys:
@@ -762,10 +770,16 @@ def window_class():
             icon.set_valign(Gtk.Align.CENTER)
             h.append(icon)
             v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
-            row.title = Gtk.Label(label=it.title, xalign=0, selectable=False,
+            # the window keeps its width: a long name is cut short, never
+            # the reason the menu grows (a non-resizable window takes its
+            # rows' natural width, so they are given none of their own)
+            row.title = Gtk.Label(label=it.title, xalign=0, selectable=False, max_width_chars=1,
+                                  ellipsize=Pango.EllipsizeMode.END,
                                   css_classes=["item-title"] + (["answer"] if it.key == "calc" else []))
             v.append(row.title)
-            sub = Gtk.Label(label=it.subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.END)
+            # a file's folder loses its middle: its first and last folders say where
+            sub = Gtk.Label(label=it.subtitle, xalign=0, max_width_chars=1,
+                            ellipsize=Pango.EllipsizeMode.MIDDLE if it.reveal else Pango.EllipsizeMode.END)
             sub.add_css_class("dim-label")
             sub.add_css_class("caption")
             v.append(sub)
@@ -953,7 +967,7 @@ def window_class():
 
             def shown(i):
                 try:
-                    a = Gio.DesktopAppInfo.new(i)
+                    a = AppInfo.new(i)
                 except TypeError:
                     a = None
                 if a is None or not a.should_show():
@@ -961,7 +975,7 @@ def window_class():
                 infos[i] = a
                 return True
             out = []
-            for i in pick_apps(Gio.DesktopAppInfo.search(query), shown):
+            for i in pick_apps(AppInfo.search(query), shown):
                 a = infos[i]
                 it = Found(query, f"app:{i}", a.get_display_name() or a.get_name(),
                            a.get_description() or a.get_generic_name() or "", "Apps")

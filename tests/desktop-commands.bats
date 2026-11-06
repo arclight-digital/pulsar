@@ -394,7 +394,7 @@ print(m.nothing_found("  my wife left me ")[0])'
     [ "${lines[6]}" = "['/home/u/Pictures/Screenshots', '/home/u/Pictures/Screenshots/Screenshot new.png']" ]
     # the name itself first, wherever it is; yours before nearer; then starts-with
     [ "${lines[7]}" = "['/home/u/Downloads/x/y/notes.md', '/home/u/a/notes', '/home/u/notesy', '/home/u/z/notes app']" ]
-    [ "${lines[8]}" = "~/Downloads ~ /home/user2 /srv" ]
+    [ "${lines[8]}" = "~/Downloads Home folder /home/user2 /srv" ]
     [ "${lines[9]}" = "Nothing matches “my wife left me”" ]
 }
 
