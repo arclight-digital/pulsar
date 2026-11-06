@@ -1,11 +1,14 @@
 #!/usr/bin/python3
-"""pulsar-menu -- Pulsar's own actions, one search away (Super+Space, or
-Super+/ in an account with several keyboard layouts).
+"""pulsar-menu -- apps, files and Pulsar's own actions, one search away
+(Super+Space, or Super+/ in an account with several keyboard layouts).
 
 Type to filter, Up/Down to choose, Enter to run, Esc to close. Pressing the
-shortcut again also closes it. Everything here is something Pulsar already
-does from the CLI or its own apps; the menu only finds it for you:
+shortcut again also closes it. Ctrl+Enter on a file shows it in its folder.
 
+  - apps, by name or what they are for, as GNOME's own search finds them
+  - files and folders in your home, by name, from GNOME's file index
+    (LocalSearch: nothing is indexed twice); off when file search is off in
+    Settings > Search
   - sums, conversions, currency and dates typed into the search: "2^10",
     "15% of 80", "5 mi in km", "255 in hex", "100 usd in eur",
     "days until dec 25", "in 90 days"; Enter copies the answer
@@ -50,6 +53,10 @@ class Item:
         # runs only once the menu is off the screen: the screen readers, whose
         # screenshot would otherwise catch the menu fading out over the text
         self.settle = False
+        self.gicon = None       # an app's or a file's own icon, in place of icon
+        self.full_color = False # an app icon: shown as it is, not in a tile
+        self.launch = None      # launch(context) in place of argv: apps and files
+        self.reveal = None      # a file's URI: Ctrl+Enter shows it in its folder
 
     def matches(self, query):
         return all(w in self.haystack for w in query.lower().split())
@@ -481,6 +488,120 @@ def agent_item(name):
                 "agent ask help question report diagnose", "Agents")
 
 
+# ---------------------------------------------------------------------------
+# Apps and files: rows that belong to one search. Apps come from GNOME's own
+# app search (Gio.DesktopAppInfo.search), files from LocalSearch, the file
+# index GNOME already keeps; file names only, as Files' own search does
+# first: matching file contents is seconds, not milliseconds, and finds
+# words inside music tags.
+# ---------------------------------------------------------------------------
+APP_LIMIT = 5
+FILE_LIMIT = 6
+# Pulsar's own apps the menu already lists as actions, and the menu itself
+APPS_LISTED = {"digital.arclight.Pulsar.Menu.desktop", "digital.arclight.Pulsar.Settings.desktop",
+               "digital.arclight.Pulsar.ThemePicker.desktop"}
+FILES_QUERY = """
+SELECT DISTINCT ?url (fts:rank(?f) AS ?rank) ?modified {
+  GRAPH tracker:FileSystem {
+    ?f fts:match ~terms ; nie:url ?url ; nfo:fileLastModified ?modified .
+  }
+} ORDER BY DESC(?rank) DESC(?modified) LIMIT 200
+"""
+
+
+class Found(Item):
+    """An app or a file found for one search: it matches that search only."""
+    def __init__(self, query, key, title, subtitle, group):
+        super().__init__(key, title, subtitle, "", [], group=group)
+        self.for_query = query
+
+    def matches(self, query):
+        return query == self.for_query
+
+
+def pick_apps(groups, shown, limit=APP_LIMIT):
+    """App IDs from Gio.DesktopAppInfo.search's groups (best first), without
+    repeats, hidden apps (shown(id) is False) or the ones listed already."""
+    out = []
+    for group in groups:
+        for i in group:
+            if i in out or i in APPS_LISTED or not shown(i):
+                continue
+            out.append(i)
+            if len(out) == limit:
+                return out
+    return out
+
+
+def file_terms(query):
+    """The index's search for a typed query: each word as a prefix, all of
+    them needed; "" for one letter, which would match half the disk. Only
+    letters, digits and _: the index reads quotes, * and - as its own syntax."""
+    words = re.findall(r"\w+", query.lower())
+    if sum(len(w) for w in words) < 2:
+        return ""
+    return " ".join(w + "*" for w in words)
+
+
+def files_allowed(disable_external, disabled):
+    """File search, unless it is off in Settings > Search: all search there
+    (disable-external), or Files' own row (the Nautilus provider)."""
+    return not disable_external and "org.gnome.Nautilus.desktop" not in disabled
+
+
+def rank_files(rows, query, home, own=(), limit=FILE_LIMIT):
+    """The paths to show from the index's (path, rank, modified) rows.
+
+    The index stems words ("settings" finds "Setup"), so every typed word
+    must be in the name as typed. Inside a Wine prefix (drive_c) is
+    Windows' own tree, not your files: left out. Then: the name itself
+    (pulsar, pulsar.md), then a name that starts with the search, then one
+    that only has it; your own folders (home,
+    Documents, Downloads, Pictures...) before the rest, so ~/Pictures/
+    Screenshots comes before a game's copy five folders down; nearer the
+    top of home; newer."""
+    words = re.findall(r"\w+", query.casefold())
+    home = home.rstrip("/")
+
+    def inside(path, folder):
+        return bool(folder) and path.startswith(folder.rstrip("/") + "/")
+
+    def key(row):
+        path = row[0]
+        name = os.path.basename(path).casefold()
+        stem = os.path.splitext(name)[0] if not name.startswith(".") else name
+        start = (0 if " ".join(re.findall(r"\w+", stem)) == " ".join(words) else
+                 1 if words and name.startswith(words[0]) else 2)
+        mine = 0 if os.path.dirname(path) == home or any(inside(path, d) for d in own) else 1
+        rel = path[len(home):] if inside(path, home) else path
+        return (start, mine, rel.strip("/").count("/"))
+
+    out = []
+    for path, _rank, _mod in sorted(sorted(rows, key=lambda r: r[2] or "", reverse=True), key=key):
+        name = os.path.basename(path).casefold()
+        if path in out or "/drive_c/" in path + "/" or not all(w in name for w in words):
+            continue
+        out.append(path)
+        if len(out) == limit:
+            break
+    return out
+
+
+def where(path, home):
+    """A file's folder, with home as ~."""
+    folder = os.path.dirname(path)
+    if home and (folder == home or folder.startswith(home.rstrip("/") + "/")):
+        folder = "~" + folder[len(home.rstrip("/")):]
+    return folder
+
+
+def nothing_found(query):
+    """The words over an empty list."""
+    return (f"Nothing matches “{query.strip()}”",
+            "Search by the name of an app, a file or a Pulsar action, "
+            "or type a sum like 15% of 80")
+
+
 # Shortcut hints, from pulsar-shortcuts' custom bindings (when the person kept them)
 SHORTCUT_IDS = {"screen-text": "pulsar-screen-text"}
 
@@ -520,6 +641,10 @@ CSS = """
                     color: alpha(currentColor, .7); }
 .pulsar-menu .footer { border-top: 1px solid alpha(currentColor, .07); padding: 9px 18px; }
 .pulsar-menu .footer label { font-size: .85em; color: alpha(currentColor, .5); }
+.pulsar-menu .app-icon { min-width: 34px; min-height: 34px; }
+.pulsar-menu .empty { margin: 56px 40px; }
+.pulsar-menu .empty-title { font-weight: 600; font-size: 1.05em; }
+.pulsar-menu .empty image { color: alpha(currentColor, .35); }
 """
 
 
@@ -547,7 +672,7 @@ def window_class():
     # Adw's window: rounded corners and the shadow, with no title bar
     class Menu(Adw.ApplicationWindow):
         def __init__(self, app):
-            super().__init__(application=app, title="Pulsar commands",
+            super().__init__(application=app, title="Pulsar Commands",
                              resizable=False, default_width=620, default_height=520)
             self.add_css_class("pulsar-menu")
             css = Gtk.CssProvider()
@@ -555,7 +680,7 @@ def window_class():
             Gtk.StyleContext.add_provider_for_display(self.get_display(), css,
                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            self.entry = Gtk.SearchEntry(placeholder_text="Search Pulsar", hexpand=True,
+            self.entry = Gtk.SearchEntry(placeholder_text="Search apps, files and Pulsar", hexpand=True,
                                          margin_top=10, margin_bottom=8, margin_start=14, margin_end=14)
             self.entry.add_css_class("search")
             box.append(self.entry)
@@ -563,6 +688,17 @@ def window_class():
             self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.BROWSE, margin_top=2, margin_bottom=8)
             self.list.set_filter_func(self._filter)
             self.list.set_header_func(self._header)
+            # what an empty list says, rather than nothing at all
+            empty = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, css_classes=["empty"],
+                            valign=Gtk.Align.CENTER)
+            empty.append(Gtk.Image(icon_name="system-search-symbolic", pixel_size=32))
+            self.empty_title = Gtk.Label(css_classes=["empty-title"], wrap=True, justify=Gtk.Justification.CENTER)
+            self.empty_hint = Gtk.Label(css_classes=["dim-label", "caption"], wrap=True,
+                                        justify=Gtk.Justification.CENTER)
+            empty.append(self.empty_title)
+            empty.append(self.empty_hint)
+            self.list.set_placeholder(empty)
+            self.list.connect("row-selected", lambda *_a: self._footer())
             self.list.connect("row-activated", lambda _l, row: self.run(row.item))
             scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
             scroll.set_child(self.list)
@@ -571,6 +707,10 @@ def window_class():
             foot = Gtk.Box(css_classes=["footer"], spacing=5)
             hint(foot, ["\u2191", "\u2193"], "choose")
             hint(foot, ["\u21b5"], "run")
+            # only while a file is chosen
+            self.folder_hint = Gtk.Box(spacing=5, visible=False)
+            hint(self.folder_hint, ["Ctrl", "\u21b5"], "show in folder")
+            foot.append(self.folder_hint)
             hint(foot, ["Esc"], "close")
             box.append(foot)
             # a quick fade in, so it arrives rather than appears
@@ -582,6 +722,14 @@ def window_class():
             self.calc = CalcItem()
             self.calc.want_rates = self._fetch_rates
             self.fetching = False
+            self.home = os.path.realpath(os.path.expanduser("~"))
+            self.own = [d for d in (GLib.get_user_special_dir(getattr(GLib.UserDirectory, n)) for n in
+                        ("DIRECTORY_DESKTOP", "DIRECTORY_DOCUMENTS", "DIRECTORY_DOWNLOAD", "DIRECTORY_MUSIC",
+                         "DIRECTORY_PICTURES", "DIRECTORY_VIDEOS", "DIRECTORY_PUBLIC_SHARE",
+                         "DIRECTORY_TEMPLATES")) if d and os.path.realpath(d) != self.home]
+            self.files = None        # the index's prepared search, made on first use
+            self.files_off = None    # why there is no file search, once known
+            self.file_cancel = None
             self.add(self.calc)
             for it in base_items():
                 self.add(it)
@@ -605,7 +753,14 @@ def window_class():
             row = Gtk.ListBoxRow()
             row.item = it
             h = Gtk.Box(spacing=12, margin_top=7, margin_bottom=7, margin_start=8, margin_end=10)
-            h.append(Gtk.Image(icon_name=it.icon, pixel_size=16, css_classes=["tile"], valign=Gtk.Align.CENTER))
+            if it.full_color:
+                icon = Gtk.Image(gicon=it.gicon, pixel_size=32, css_classes=["app-icon"])
+            elif it.gicon is not None:
+                icon = Gtk.Image(gicon=it.gicon, pixel_size=16, css_classes=["tile"])
+            else:
+                icon = Gtk.Image(icon_name=it.icon, pixel_size=16, css_classes=["tile"])
+            icon.set_valign(Gtk.Align.CENTER)
+            h.append(icon)
             v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
             row.title = Gtk.Label(label=it.title, xalign=0, selectable=False,
                                   css_classes=["item-title"] + (["answer"] if it.key == "calc" else []))
@@ -655,6 +810,15 @@ def window_class():
             if row.item.matches(self.query):
                 row.title.set_label(row.item.title)
                 row.sub.set_label(row.item.subtitle)
+            # rows from the last search go; apps come straight after the answer
+            for r in self._all_rows():
+                if isinstance(r.item, Found) and r.item.for_query != self.query:
+                    self.list.remove(r)
+            for n, it in enumerate(self._apps(self.query)):
+                self.add(it, 1 + n)
+            self._search_files(self.query)
+            self.empty_title.set_label(nothing_found(self.query)[0])
+            self.empty_hint.set_label(nothing_found(self.query)[1])
             self.list.invalidate_filter()
             self.list.invalidate_headers()
             self._select_first()
@@ -695,6 +859,11 @@ def window_class():
                 self._move(-1)
                 return True
             if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                row = self.list.get_selected_row()
+                if (_state & Gdk.ModifierType.CONTROL_MASK and row is not None
+                        and row.item.reveal and row.item.matches(self.query)):
+                    self._show_in_folder(row.item.reveal)
+                    return True
                 self._activate_selected()
                 return True
             return False
@@ -715,6 +884,14 @@ def window_class():
                 self.close()
 
         def run(self, it):
+            if it.launch is not None:
+                ctx = self.get_display().get_app_launch_context()
+                try:
+                    it.launch(ctx)
+                except GLib.Error as e:
+                    print(f"pulsar-menu: {it.key}: {e.message}", file=sys.stderr)
+                self.close()
+                return
             if not it.argv:
                 return   # the answer row while there is no answer yet
             if it.settle:
@@ -752,8 +929,8 @@ def window_class():
                 items = session_items(json.loads(out))
             except (ValueError, TypeError, KeyError):
                 return
-            # after "Agent sessions"
-            at = next(i for i, it in enumerate(base_items()) if it.key == "sessions") + 1
+            # after "Agent sessions", wherever the rows are now
+            at = next(i for i, r in enumerate(self._all_rows()) if r.item.key == "sessions") + 1
             for n, it in enumerate(items):
                 self.add(it, at + n)
             self._select_first()
@@ -764,6 +941,116 @@ def window_class():
                 rows = self._all_rows()
                 at = max(i for i, r in enumerate(rows) if r.item.group == "Agents") + 1
                 self.add(agent_item(name), at)
+
+        def _footer(self):
+            row = self.list.get_selected_row()
+            self.folder_hint.set_visible(row is not None and bool(row.item.reveal))
+
+        def _apps(self, query):
+            if not query.strip():
+                return []
+            infos = {}
+
+            def shown(i):
+                try:
+                    a = Gio.DesktopAppInfo.new(i)
+                except TypeError:
+                    a = None
+                if a is None or not a.should_show():
+                    return False
+                infos[i] = a
+                return True
+            out = []
+            for i in pick_apps(Gio.DesktopAppInfo.search(query), shown):
+                a = infos[i]
+                it = Found(query, f"app:{i}", a.get_display_name() or a.get_name(),
+                           a.get_description() or a.get_generic_name() or "", "Apps")
+                it.gicon = a.get_icon() or Gio.ThemedIcon.new("application-x-executable")
+                it.full_color = True
+                it.launch = lambda ctx, a=a: a.launch([], ctx)
+                out.append(it)
+            return out
+
+        def _file_search(self):
+            """The index's prepared search, or None (and why) when there is none."""
+            if self.files is not None or self.files_off is not None:
+                return self.files
+            try:
+                s = Gio.Settings.new("org.gnome.desktop.search-providers")
+                if not files_allowed(s.get_boolean("disable-external"), s.get_strv("disabled")):
+                    self.files_off = "off in Settings"
+                    return None
+            except Exception:  # no such schema: nothing to honor
+                pass
+            try:
+                gi.require_version("Tsparql", "3.0")
+                from gi.repository import Tsparql
+                conn = Tsparql.SparqlConnection.bus_new("org.freedesktop.LocalSearch3", None, None)
+                self.files = conn.query_statement(FILES_QUERY, None)
+            except (ValueError, ImportError, GLib.Error) as e:
+                self.files_off = str(e)
+                print(f"pulsar-menu: no file search: {e}", file=sys.stderr)
+            return self.files
+
+        def _search_files(self, query):
+            if self.file_cancel is not None:
+                self.file_cancel.cancel()
+                self.file_cancel = None
+            terms = file_terms(query)
+            stmt = self._file_search() if terms else None
+            if stmt is None:
+                return
+            cancel = Gio.Cancellable()
+            self.file_cancel = cancel
+            stmt.bind_string("terms", terms)
+
+            def done(st, res):
+                try:
+                    cur = st.execute_finish(res)
+                    rows = []
+                    while cur.next(cancel):
+                        url, rank, mod = cur.get_string(0)[0], cur.get_double(1), cur.get_string(2)[0]
+                        path = Gio.File.new_for_uri(url).get_path()
+                        if path:
+                            rows.append((path, rank, mod))
+                    cur.close()
+                except GLib.Error:
+                    return   # cancelled: a newer search is on its way
+                if cancel.is_cancelled() or query != self.query:
+                    return
+                self.file_cancel = None
+                self._got_files(query, rank_files(rows, query, self.home, self.own))
+            stmt.execute_async(cancel, done)
+
+        def _got_files(self, query, paths):
+            for path in paths:
+                f = Gio.File.new_for_path(path)
+                try:
+                    info = f.query_info("standard::display-name,standard::symbolic-icon",
+                                        Gio.FileQueryInfoFlags.NONE, None)
+                except GLib.Error:
+                    continue   # gone since it was indexed
+                it = Found(query, f"file:{path}", info.get_display_name(), where(path, self.home), "Files")
+                it.gicon = info.get_symbolic_icon()
+                uri = f.get_uri()
+                it.launch = lambda ctx, uri=uri: Gio.AppInfo.launch_default_for_uri(uri, ctx)
+                it.reveal = uri
+                self.add(it)
+            self.list.invalidate_headers()
+            # the first row only if nothing was chosen: files arrive while you type
+            row = self.list.get_selected_row()
+            if row is None or not row.item.matches(self.query):
+                self._select_first()
+
+        def _show_in_folder(self, uri):
+            try:
+                Gio.bus_get_sync(Gio.BusType.SESSION).call_sync(
+                    "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1", "ShowItems",
+                    GLib.Variant("(ass)", ([uri], "")), None, Gio.DBusCallFlags.NONE, 3000, None)
+            except GLib.Error as e:
+                print(f"pulsar-menu: show in folder: {e.message}", file=sys.stderr)
+            self.close()
 
         def _all_rows(self):
             i, rows = 0, []

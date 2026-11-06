@@ -326,6 +326,78 @@ print(m.SETTLE_MS >= 150)'
     [ "${lines[1]}" = "True" ]
 }
 
+@test "menu: apps in GNOME's order, once each, without hidden ones or Pulsar's listed ones" {
+    run menu '
+groups = [["b.desktop", "digital.arclight.Pulsar.Settings.desktop", "hidden.desktop"],
+          ["a.desktop", "b.desktop", "digital.arclight.Pulsar.Welcome.desktop",
+           "digital.arclight.Pulsar.Menu.desktop", "digital.arclight.Pulsar.ThemePicker.desktop"],
+          ["c.desktop", "d.desktop", "e.desktop", "f.desktop"]]
+shown = lambda i: i != "hidden.desktop"
+print(m.pick_apps(groups, shown))
+print(m.pick_apps(groups, shown, limit=2))
+f = m.Found("fire", "app:x", "Firefox", "", "Apps")
+print(f.matches("fire"), f.matches("fir"), f.matches(""))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['b.desktop', 'a.desktop', 'digital.arclight.Pulsar.Welcome.desktop', 'c.desktop', 'd.desktop']" ]
+    [ "${lines[1]}" = "['b.desktop', 'a.desktop']" ]
+    [ "${lines[2]}" = "True False False" ]
+}
+
+@test "menu: the file index is asked for each word as a prefix, in words it cannot misread" {
+    run menu '
+for q in ("invoice", "bl4-fix", "  Pulsar  Menu ", "it'"'"'s \"x\" OR*", "a", "", "*-\"", "ab"):
+    print(repr(m.file_terms(q)))
+print(m.files_allowed(False, []), m.files_allowed(True, []),
+      m.files_allowed(False, ["org.gnome.Nautilus.desktop"]), m.files_allowed(False, ["org.gnome.Calculator.desktop"]))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "'invoice*'" ]
+    [ "${lines[1]}" = "'bl4* fix*'" ]
+    [ "${lines[2]}" = "'pulsar* menu*'" ]
+    [ "${lines[3]}" = "'it* s* x* or*'" ]
+    [ "${lines[4]}" = "''" ]
+    [ "${lines[5]}" = "''" ]
+    [ "${lines[6]}" = "''" ]
+    [ "${lines[7]}" = "'ab*'" ]
+    [ "${lines[8]}" = "True False False True" ]
+}
+
+@test "menu: files: the name as typed, yours first, nearer and newer next, no Wine prefixes" {
+    run menu '
+H = "/home/u"
+own = ["/home/u/Pictures", "/home/u/Downloads"]
+rows = [
+    ("/home/u/Faugus/game/drive_c/users/steamuser/Pictures/Screenshots", 9.0, "2026-11-05"),
+    ("/home/u/opt/tool/docs/screenshots", 9.0, "2026-11-04"),
+    ("/home/u/Pictures/Screenshots", 6.0, "2026-01-01"),
+    ("/home/u/Pictures/Screenshots/Screenshot old.png", 6.0, "2026-10-01"),
+    ("/home/u/Pictures/Screenshots/Screenshot new.png", 6.0, "2026-11-05"),
+    ("/home/u/Pictures/Screenshots/Screenshot new.png", 6.0, "2026-11-05"),
+    ("/home/u/Downloads/my screenshots.zip", 6.0, "2026-11-05"),
+    ("/home/u/Downloads/Setup.exe", 9.9, "2026-11-05"),
+]
+for p in m.rank_files(rows, "screensh", H, own):
+    print(p)
+print("--")
+print(m.rank_files(rows, "screensh", H, own, limit=2))
+print(m.rank_files([("/home/u/a/notes", 1, "x"), ("/home/u/Downloads/x/y/notes.md", 1, "x"), ("/home/u/z/notes app", 1, "x"),
+                    ("/home/u/notesy", 1, "x")], "notes", H, own))
+print(m.where("/home/u/Downloads/x.png", H), m.where("/home/u/x", H), m.where("/home/user2/x", H), m.where("/srv/x", H))
+print(m.nothing_found("  my wife left me ")[0])'
+    [ "$status" -eq 0 ] || fail "$output"
+    # yours first (Pictures before ~/opt), shallower first, then newer; no Setup (stemmed), no drive_c
+    [ "${lines[0]}" = "/home/u/Pictures/Screenshots" ]
+    [ "${lines[1]}" = "/home/u/Pictures/Screenshots/Screenshot new.png" ]
+    [ "${lines[2]}" = "/home/u/Pictures/Screenshots/Screenshot old.png" ]
+    [ "${lines[3]}" = "/home/u/opt/tool/docs/screenshots" ]
+    [ "${lines[4]}" = "/home/u/Downloads/my screenshots.zip" ]
+    [ "${lines[5]}" = "--" ]
+    [ "${lines[6]}" = "['/home/u/Pictures/Screenshots', '/home/u/Pictures/Screenshots/Screenshot new.png']" ]
+    # the name itself first, wherever it is; yours before nearer; then starts-with
+    [ "${lines[7]}" = "['/home/u/Downloads/x/y/notes.md', '/home/u/a/notes', '/home/u/notesy', '/home/u/z/notes app']" ]
+    [ "${lines[8]}" = "~/Downloads ~ /home/user2 /srv" ]
+    [ "${lines[9]}" = "Nothing matches “my wife left me”" ]
+}
+
 @test "menu: arithmetic and conversions in the search, worked out without eval" {
     run menu '
 for q in ("2^10", "3x4", "(1920*1080)/4", "1/3", "15% of 80", "80 + 15%", "80 - 25%",
