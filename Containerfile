@@ -271,6 +271,12 @@ RUN for attempt in 1 2 3; do \
 #                   (tesseract-langpack-eng, 4 MB): each other language is
 #                   1-15 MB more in every update. With zbar's GraphicsMagick,
 #                   about 15 MB in all.
+#   fuse, fuse-libs FUSE 2, for AppImages: most still in circulation (the
+#                   CurseForge app, for one) load libfuse.so.2 to mount
+#                   themselves, and without it they stop at "AppImages require
+#                   FUSE to run". Fedora ships only FUSE 3. fuse-libs is the
+#                   library; fuse is the setuid fusermount it mounts with.
+#                   Both are asserted below.
 #
 # `gh` was here once, carried as an admitted exception to the rule above so
 # that `pulsar verify` (then `attest`) had its verifier on a fresh install. The exception is
@@ -299,7 +305,11 @@ RUN dnf5 install -y \
       tmux \
       tesseract \
       tesseract-langpack-eng \
-      zbar && \
+      zbar \
+      fuse \
+      fuse-libs && \
+    { [ -e /usr/lib64/libfuse.so.2 ] && [ -u /usr/bin/fusermount ] || \
+      { echo "FATAL: AppImages need libfuse.so.2 and a setuid /usr/bin/fusermount" >&2; ls -l /usr/lib64/libfuse.so.2* /usr/bin/fusermount* >&2; exit 1; }; } && \
     case "$(readlink /etc/systemd/system/dbus.service)" in \
       */dbus-broker.service) echo "system bus: still dbus-broker" ;; \
       *) echo "FATAL: installing dbus-daemon moved the system bus off dbus-broker ($(readlink /etc/systemd/system/dbus.service))"; exit 1 ;; \
