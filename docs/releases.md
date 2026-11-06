@@ -86,7 +86,6 @@ Agents you can leave running, a command menu, and GNOME 51.
 - Opening a file in a Flatpak app no longer hangs when the document portal
   has deadlocked: Pulsar restarts it within a minute and offers to reopen
   the apps it cut off.
-- Host Grotesk is the interface font again under Fedora 45's fontconfig.
 - The welcome opens on a new account's first login again; on Fedora 45 it
   never did. And after an update to a new release, a notification offers
   what's new in it, as Welcome to Pulsar shows here.
