@@ -506,8 +506,9 @@ SCRUB_PX_PER_S = 110
 
 
 def scrub_ms(overflow_px):
-    """How long the slide to a name's end takes: reading pace, never a jump."""
-    return max(500, int(overflow_px / SCRUB_PX_PER_S * 1000))
+    """How long the slide to a name's end takes: the same pace for every
+    name, a few letters over or a whole line (a floor made short ones crawl)."""
+    return max(1, round(overflow_px / SCRUB_PX_PER_S * 1000))
 
 
 FILE_LIMIT = 6
