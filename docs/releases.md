@@ -55,6 +55,8 @@ Agents you can leave running, a command menu, and GNOME 51.
   it. Files come from GNOME's own file index, by name: Enter opens one,
   Ctrl+Enter shows it in its folder. A long name scrolls into view when its
   row is picked.
+- It's made of the same glass as the Shell's menus, lit from its top left.
+- It has a few easter eggs.
 
 ### Screen
 
@@ -90,9 +92,18 @@ Agents you can leave running, a command menu, and GNOME 51.
 ### Desktop
 
 - GNOME 51, on Fedora 45. Themes, glass and the top bar carry over.
-- Glass sits closer to the theme's own color: a bright wallpaper or page
-  behind a menu, the top bar or a window shows through as shape and hue,
-  without lifting the glass far above the theme.
+- Menus, Quick Settings, notifications and the on-screen displays have new
+  glass. What's behind them is redrawn in the theme's own colors and
+  softly blurred, so a menu keeps its theme over any page or wallpaper,
+  and a colored window behind tints it a little. The button that opened a
+  menu lights the glass nearest it.
+- Glass on windows and the top bar sits closer to the theme's own color: a
+  bright wallpaper or page behind shows through as shape and hue, without
+  lifting the glass far above the theme.
+- A window's glass no longer sits off to one side after you unmaximize it.
+- The clock shows one highlight while the date menu is open, not two.
+- The calendar's weekday names and "No Notifications" are easier to read,
+  and meet WCAG AA contrast over the glass.
 - The kernel's own scheduler is the default again. On hybrid Intel CPUs the
   one Pulsar shipped kept GNOME Shell on efficiency cores, and animations
   stuttered. `scx.service` is still there to turn on.
