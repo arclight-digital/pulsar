@@ -819,11 +819,15 @@ def window_class():
             foot.append(self.folder_hint)
             hint(foot, ["Esc"], "close")
             box.append(foot)
-            # a quick fade in, so it arrives rather than appears
-            self.reveal = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.CROSSFADE,
-                                       transition_duration=160, child=box)
-            self.set_content(self.reveal)
-            self.connect("map", lambda *_a: GLib.idle_add(lambda: self.reveal.set_reveal_child(True) and False))
+            # a quick fade in, so it arrives rather than appears. Opacity, not a
+            # Gtk.Revealer: a revealer hides its child until the fade starts, so
+            # the search field could not take the focus and the first keys were lost
+            box.set_opacity(0)
+            self.set_content(box)
+            self.fade_in = Adw.TimedAnimation.new(box, 0, 1, 160, Adw.PropertyAnimationTarget.new(box, "opacity"))
+            self.connect("map", lambda *_a: self.fade_in.play())
+            # type as soon as it opens
+            self.set_focus(self.entry)
             self.query = ""
             self.calc = CalcItem()
             self.calc.want_rates = self._fetch_rates
