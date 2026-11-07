@@ -51,6 +51,10 @@ Agents you can leave running, a command menu, and GNOME 51.
   Enter copies the answer. Exchange rates are the European Central Bank's,
   fetched from frankfurter.dev only when you type a conversion, and kept
   for 12 hours.
+- It finds apps and files too. Type part of an app's name and Enter opens
+  it. Files come from GNOME's own file index, by name: Enter opens one,
+  Ctrl+Enter shows it in its folder. A long name scrolls into view when its
+  row is picked.
 
 ### Screen
 
@@ -95,6 +99,8 @@ Agents you can leave running, a command menu, and GNOME 51.
 - Opening a file in a Flatpak app no longer hangs when the document portal
   has deadlocked: Pulsar restarts it within a minute and offers to reopen
   the apps it cut off.
+- AppImages run. Most still need FUSE 2, which Fedora no longer installs,
+  and stopped at "AppImages require FUSE to run".
 - The welcome opens on a new account's first login again; on Fedora 45 it
   never did. And after an update to a new release, a notification offers
   what's new in it, as Welcome to Pulsar shows here.
