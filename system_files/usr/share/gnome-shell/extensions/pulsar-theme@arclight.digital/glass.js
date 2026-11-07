@@ -144,6 +144,14 @@ const SURFACE_LENS = [28, 14, 0.12, 0.63];
 // blur at 1.33x, 3.5% now), and big bright text behind showed it.
 const SURFACE_LEVELS = 3;
 const SURFACE_OFFSET = 1.6;
+// Palette glass blurs with the 12px kernel Nick picked in the lab (a
+// Gaussian, sigma 12 logical px). Two levels 1.85 apart measure 12px on
+// screen at 1x (a headless Shell over a backdrop of squares, fitted against
+// Gaussian blurs of it); blur_kernel.py, which leaves out the last upscale,
+// says 11.0 at 1x, 10.5 at 1.25x, 11.2 at 2x (width x 2 / scale).
+// SURFACE_LEVELS/OFFSET above measure 21px on screen and stay for windows.
+const PALETTE_LEVELS = 2;
+const PALETTE_OFFSET = 1.85;
 const WINDOW_LENS = [10, 4, 0, 0];
 // What is beneath, lifted so its color reads through a light tint and text
 // on the glass stays readable: darker behind a dark surface, lighter behind
@@ -188,6 +196,35 @@ function windowGrade() {
 // bright wallpaper on Pulsar dark went from luminance 0.26 to 0.15, over a
 // dark window from 0.09 to 0.06, against the theme's 0.04.
 const GLASS_PULL = 0.5;
+// Palette glass (Nick, 2026-11-06, tuned in the glass lab): a floating
+// surface is the theme's own color, and what is beneath shows only as the
+// theme's ramp -- dark shapes sink toward its deep ground, bright ones rise
+// toward its accent -- mixed in OKLab, so it never goes grey or takes on a
+// color the theme does not have. The frost clears toward the light's source
+// and deepens away from it, and the source tints the glass near it.
+//   detail: how strongly shapes beneath show, around the theme's lightness
+//   ambient: how far a large bright or dark area beneath moves the whole glass
+//   color: how far a colored backdrop turns the hue (chroma only ever added)
+//   within: how far (OKLab distance) the glass may stray from the solid
+//     surface's color, eased toward it rather than cut off
+//   light: how strongly the source tints the glass near it
+// Windows and the top bar keep the graded path below for now.
+const PALETTE = {detail: 0.4, ambient: 0.2, color: 0.33, within: 0.08, light: 0.7};
+// the ramp's reach either side of the theme's lightness, in OKLab L
+const PALETTE_RANGE = 0.12;
+
+// sRGB (0..1) to OKLab, for the ramp's colors (the shader does the pixels)
+function oklab([r, g, b]) {
+    const lin = u => u <= 0.04045 ? u / 12.92 : ((u + 0.055) / 1.055) ** 2.4;
+    [r, g, b] = [lin(r), lin(g), lin(b)];
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+        1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+        0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
+}
+const mixLab = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
 // The theme's ground, read off the top bar's glass (as windowGrade does),
 // for glass whose tint GTK or St paints rather than the shader: windows and
 // the bar itself. The last answer stands while the bar is transparent.
@@ -222,6 +259,43 @@ uniform vec4 tint;
 uniform vec4 pull;
 uniform sampler2D cut;
 uniform vec4 cutRect;
+uniform vec4 pal;
+uniform vec4 pal2;
+uniform vec3 pSurf;
+uniform vec3 pLo;
+uniform vec3 pHi;
+uniform vec3 pGlow;
+uniform vec4 src;
+vec3 toLinear(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+}
+vec3 toSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+}
+vec3 toLab(vec3 c) {
+  vec3 q = toLinear(c);
+  float l = pow(max(0.4122214708 * q.r + 0.5363325363 * q.g + 0.0514459929 * q.b, 0.0), 1.0 / 3.0);
+  float m = pow(max(0.2119034982 * q.r + 0.6806995451 * q.g + 0.1073969566 * q.b, 0.0), 1.0 / 3.0);
+  float s = pow(max(0.0883024619 * q.r + 0.2817188376 * q.g + 0.6299787005 * q.b, 0.0), 1.0 / 3.0);
+  return vec3(0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+              1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+              0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s);
+}
+vec3 fromLab(vec3 c) {
+  float l = c.x + 0.3963377774 * c.y + 0.2158037573 * c.z;
+  float m = c.x - 0.1055613458 * c.y - 0.0638541728 * c.z;
+  float s = c.x - 0.0894841775 * c.y - 1.2914855480 * c.z;
+  l = l * l * l; m = m * m * m; s = s * s * s;
+  return toSrgb(vec3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                     -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                     -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s));
+}
+float softLimit(float x) {
+  float e = exp(2.0 * clamp(x, -9.0, 9.0));
+  return (e - 1.0) / (e + 1.0);
+}
 float sd(vec2 p, vec2 b, float r) {
   vec2 q = abs(p) - b + r;
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
@@ -258,9 +332,50 @@ if (t > 0.0) {
 } else {
   raw = unpremul(texture2D(tex, uv * uvScale));
 }
+vec3 rgb;
+if (pal.x > 0.0) {
+/* Palette glass (PALETTE in glass.js; pal: on, detail, ambient, within;
+   pal2: color, light, ramp range; src: the light's source, whether it is a
+   line along an edge, how far its tint reaches). */
+  float dl = src.z > 0.5 ? abs(f.y - src.y) : distance(f, src.xy);
+  /* the wide average around this point, that shapes are measured against */
+  vec3 mean = unpremul(texture2D(tex, uv * uvScale));
+  for (int i = 0; i < 8; i++) {
+    float an = float(i) * 0.7853982 + 0.3926991;
+    vec2 o = vec2(cos(an), sin(an)) * 48.0 / size;
+    mean += unpremul(texture2D(tex, clamp(uv + o, 0.0, 1.0) * uvScale));
+  }
+  vec3 bl = toLab(raw), ml = toLab(mean / 9.0);
+  float range = pal2.z;
+  float v = pSurf.x + pal.z * (ml.x - pSurf.x) + range * softLimit(pal.y * (bl.x - ml.x) / range);
+  /* that lightness read along the theme's own ramp */
+  float u = clamp((v - pSurf.x) / range, -1.0, 1.0);
+  vec3 c = mix(pSurf, u < 0.0 ? pLo : pHi, abs(u));
+  /* a colored backdrop pulls the glass's color part way toward its own, in
+     a and b. Not by turning the hue: a color opposite the theme's (orange
+     behind blue) turned it one way and its neighbors the other, a hard
+     pink/teal edge where they met (Nick, 2026-11-07, picked this) */
+  if (pal2.x > 0.0) {
+    float w = clamp((length(bl.yz) - 0.02) / 0.06, 0.0, 1.0);
+    c.yz = mix(c.yz, bl.yz, pal2.x * w);
+  }
+  /* never far from the solid surface: the distance eased toward the limit */
+  vec3 dv = c - pSurf;
+  float de = length(dv);
+  if (de > 1e-6) c = pSurf + dv * (pal.w * softLimit(de / pal.w) / de);
+  /* the source tints the glass near it, fading over a third of the frost's
+     reach (210px across the lab's 470px-tall panel) */
+  if (pal2.y > 0.0 && src.w > 0.0) c = mix(c, pGlow, min(1.0, pal2.y * 0.45 * exp(-dl / (src.w / 3.0))));
+  rgb = fromLab(c);
+} else {
 float l = dot(raw, vec3(0.2126, 0.7152, 0.0722));
-vec3 rgb = mix(vec3(l), raw, grade.x);
-rgb = (rgb - 0.5) * grade.y + 0.5;
+rgb = mix(vec3(l), raw, grade.x);
+/* contrast pivots on the theme's own lightness where the glass knows it
+   (pull.rgb), else mid-grey: pivoting on mid-grey lifted a dark backdrop
+   toward grey, so glass over a dark window read lighter than the theme
+   (Nick, 2026-11-06). Shapes beneath keep their light and dark. */
+float pivot = pull.a > 0.0 ? dot(pull.rgb, vec3(0.2126, 0.7152, 0.0722)) : 0.5;
+rgb = (rgb - pivot) * grade.y + pivot;
 rgb = clamp(rgb * grade.z, 0.0, 1.0);
 /* toward the theme's own lightness (pull: its color, how far), hue kept:
    scaled down to it, or lifted to it with grey, never scaled up from black */
@@ -268,6 +383,7 @@ if (pull.a > 0.0) {
   float lb = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
   float lg = mix(lb, dot(pull.rgb, vec3(0.2126, 0.7152, 0.0722)), pull.a);
   rgb = lg < lb ? rgb * (lg / lb) : clamp(rgb + (lg - lb), 0.0, 1.0);
+}
 }
 /* the darkened edge: a thin band just inside the rim, under the surface's
    own border -- the separation iOS 27 gives its glass instead of a shadow */
@@ -294,7 +410,8 @@ float ds = sd(f - (rect.xy + rect.zw * 0.5) - vec2(0.0, shadowGeom.x), rect.zw *
 float s = shadow.a * (1.0 - smoothstep(-shadowGeom.y * 0.3, shadowGeom.y, ds)) * smoothstep(-0.5, 0.5, d);
 /* the surface's own tint, painted here inside the rounded mask rather than
    by St, whose translucent rounded fills are pieced from separate corners */
-rgb = mix(rgb, tint.rgb, tint.a);
+/* (palette glass is the surface's color already) */
+if (pal.x <= 0.0) rgb = mix(rgb, tint.rgb, tint.a);
 /* a triangular dither of about half an 8-bit step, so the smooth dark
    gradients of a blur do not band on the screen */
 vec2 q = gl_FragCoord.xy;
@@ -654,7 +771,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._mask = pipeline(MASK_DECL, MASK_CODE);
         this._loc = {};
         for (const u of ['tex', 'size', 'rect', 'radius', 'grade', 'shadow', 'shadowGeom', 'gradeEdge', 'opacity', 'soft',
-            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'tint', 'pull', 'cut', 'cutRect'])
+            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'tint', 'pull', 'cut', 'cutRect',
+            'pal', 'pal2', 'pSurf', 'pLo', 'pHi', 'pGlow', 'src'])
             this._loc[u] = this._mask.get_uniform_location(u);
         this._mask.set_uniform_1i(this._loc.tex, 0);
         this._mask.set_uniform_1i(this._loc.sharp, 1);
@@ -677,6 +795,9 @@ class PulsarLiveBlur extends Clutter.Effect {
         this.setEdgeDark(0);
         this.setTint(0, 0, 0, 0);
         this.setPull(0, 0, 0, 0);
+        this.setPalette(null);
+        this._source = null;
+        this._f('src', 0, 0, 0, 0);
         this._shape = null;
         // per stage view (by framebuffer): the kept copy and its blur
         this._states = new Map();
@@ -732,6 +853,33 @@ class PulsarLiveBlur extends Clutter.Effect {
     // the color whose lightness what is beneath is drawn toward, and how far
     setPull(r, g, b, k) {
         this._f('pull', r, g, b, k);
+        this.queue_repaint();
+    }
+
+    // Palette glass ({surf, lo, hi, glow} in OKLab, and the light's
+    // strength), or null for the graded path.
+    setPalette(p, light = 0) {
+        if (!p) {
+            this._f('pal', 0, 0, 0, 0);
+        } else {
+            this._f('pal', 1, PALETTE.detail, PALETTE.ambient, PALETTE.within);
+            this._f('pal2', PALETTE.color, light, PALETTE_RANGE, 0);
+            this._f('pSurf', ...p.surf);
+            this._f('pLo', ...p.lo);
+            this._f('pHi', ...p.hi);
+            this._f('pGlow', ...p.glow);
+        }
+        this.queue_repaint();
+    }
+
+    // Where the light comes from, in the actor's coordinates: [x, y, line,
+    // reach] (line: a whole edge, at height y; reach: how far its tint
+    // spreads, a third of it to 1/e), or null for none.
+    setSource(v) {
+        const o = this._source;
+        if (o === v || (o && v && o.every((x, i) => x === v[i])))
+            return;
+        this._source = v;
         this.queue_repaint();
     }
 
@@ -1189,6 +1337,11 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._f('sharpScale', rw / sharp.W, rh / sharp.H);
         this._f('size', w, h);
         this._f('rect', sh[0] - x0, sh[1] - y0, sh[2], sh[3]);
+        const src = this._source;
+        if (src)
+            this._f('src', src[0] - x0, src[1] - y0, src[2], src[3]);
+        else
+            this._f('src', 0, 0, 0, 0);
         this._f('opacity', opacity / 255);
         fb.draw_textured_rectangle(this._mask, x0, y0, x0 + w, y0 + h, 0, 0, rw / out.W, rh / out.H);
     }
@@ -1733,7 +1886,7 @@ class Surface {
         this._under = new Mirror(follow);
         this._under.connect('destroy', () => (this._under = null));
         this._backdrop = new St.Widget({width: 1, height: 1});
-        this._blur = new LiveBlur({lens: SURFACE_LENS, levels: SURFACE_LEVELS, offset: SURFACE_OFFSET});
+        this._blur = new LiveBlur({lens: SURFACE_LENS, levels: PALETTE_LEVELS, offset: PALETTE_OFFSET});
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         this._under.add_child(this._backdrop);
         parent.insert_child_below(this._under, host);
@@ -1850,6 +2003,7 @@ class Surface {
             this._blur.setTint(...(hasTint ? [...rgb(tint), tint.alpha / 255] : [0, 0, 0, 0]));
             this._blur.setPull(...(hasTint ? [...rgb(tint), GLASS_PULL] : [0, 0, 0, 0]));
             const tone = this._opts.tone?.() ?? null;
+            this._paletteTone = tone;
             const pick = name => {
                 const [ok, c] = node.lookup_color(name, true);
                 return ok ? c : null;
@@ -1858,6 +2012,20 @@ class Surface {
                 (tone === 'warn' && pick('-pulsar-light-warn')) ||
                 pick('-pulsar-light') || node.get_foreground_color();
             this._light.set('acc', ...rgb(accent));
+            if (hasTint) {
+                // the theme's ramp: deep ground below the surface, the
+                // accent above (dark); on a light theme a tinted shade
+                // below, the surface itself on top
+                const surf = oklab(rgb(tint)), acc = oklab(rgb(accent));
+                deepShadow(this._lt);   // reads the bar's deep ground
+                const lo = this._lt
+                    ? mixLab(surf, mixLab(oklab(rgb(node.get_foreground_color())), acc, 0.5), 0.45)
+                    : oklab(lastDeep ?? [0, 0, 0]);
+                const hi = this._lt ? surf : mixLab(surf, acc, 0.45);
+                this._blur.setPalette({surf, lo, hi, glow: acc}, this._owner.lighting ? PALETTE.light : 0);
+            } else {
+                this._blur.setPalette(null);
+            }
             this._light.set('alarm', tone ? 1 : 0);
             this._light.set('neu', ...rgb(tone ? accent : pick('-pulsar-light-neutral') ?? accent));
             this._light.set('lt', this._lt);
@@ -1969,6 +2137,10 @@ class Surface {
         const [spot, line] = lightSpot(src && [src[0] - lx0, src[1] - ly0], w, h, r,
             this._opts.full);
         const light = line ? spot : holdBack(spot, [LIGHT_PAD, LIGHT_PAD, w, h], r);
+        // the same spot for the palette glass's frost and tint (its actor
+        // is padded by BLUR_PAD, the light's by LIGHT_PAD)
+        const [bx, by] = [light[0] - LIGHT_PAD + BLUR_PAD, light[1] - LIGHT_PAD + BLUR_PAD];
+        this._blur.setSource([bx, by, line ? 1 : 0, line ? h + LIGHT_MIN_DISTANCE : Math.hypot(w, h + LIGHT_MIN_DISTANCE)]);
         const column = this._opts.divider?.();
         // stock draws no line there, only a gap (the column's margin); light its middle
         const divx = column
