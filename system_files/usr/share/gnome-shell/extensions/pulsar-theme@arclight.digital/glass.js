@@ -204,12 +204,17 @@ const GLASS_PULL = 0.5;
 // and deepens away from it, and the source tints the glass near it.
 //   detail: how strongly shapes beneath show, around the theme's lightness
 //   ambient: how far a large bright or dark area beneath moves the whole glass
-//   color: how far a colored backdrop turns the hue (chroma only ever added)
+//   color: how far a colored backdrop pulls the glass's color toward its own
 //   within: how far (OKLab distance) the glass may stray from the solid
 //     surface's color, eased toward it rather than cut off
-//   light: how strongly the source tints the glass near it
-// Windows and the top bar keep the graded path below for now.
-const PALETTE = {detail: 0.4, ambient: 0.2, color: 0.33, within: 0.08, light: 0.7};
+//   light: how strongly the source tints the glass near it (fading over a
+//     third of the panel's diagonal)
+//   darken: how much of the tint's average lift over the panel the whole
+//     glass gives back, so the light reads as a gradient and the far side
+//     sits nearer the solid surface (1 puts the average back on it)
+// Nick's values from the lab, 2026-11-07. Windows and the top bar keep the
+// graded path below for now.
+const PALETTE = {detail: 0.4, ambient: 0.2, color: 0.33, within: 0.08, light: 0.8, darken: 0.3};
 // the ramp's reach either side of the theme's lightness, in OKLab L
 const PALETTE_RANGE = 0.12;
 
@@ -335,7 +340,7 @@ if (t > 0.0) {
 vec3 rgb;
 if (pal.x > 0.0) {
 /* Palette glass (PALETTE in glass.js; pal: on, detail, ambient, within;
-   pal2: color, light, ramp range; src: the light's source, whether it is a
+   pal2: color, light, ramp range, darkening; src: the light's source, whether it is a
    line along an edge, how far its tint reaches). */
   float dl = src.z > 0.5 ? abs(f.y - src.y) : distance(f, src.xy);
   /* the wide average around this point, that shapes are measured against */
@@ -365,7 +370,11 @@ if (pal.x > 0.0) {
   if (de > 1e-6) c = pSurf + dv * (pal.w * softLimit(de / pal.w) / de);
   /* the source tints the glass near it, fading over a third of the frost's
      reach (210px across the lab's 470px-tall panel) */
-  if (pal2.y > 0.0 && src.w > 0.0) c = mix(c, pGlow, min(1.0, pal2.y * 0.45 * exp(-dl / (src.w / 3.0))));
+  if (pal2.y > 0.0 && src.w > 0.0) {
+    c = mix(c, pGlow, min(1.0, pal2.y * 0.45 * exp(-dl / (src.w / 3.0))));
+    /* the whole glass gives back part of the tint's average lift (pal2.w) */
+    c.x -= pal2.w;
+  }
   rgb = fromLab(c);
 } else {
 float l = dot(raw, vec3(0.2126, 0.7152, 0.0722));
@@ -859,28 +868,56 @@ class PulsarLiveBlur extends Clutter.Effect {
     // Palette glass ({surf, lo, hi, glow} in OKLab, and the light's
     // strength), or null for the graded path.
     setPalette(p, light = 0) {
+        this._palette = p ? {lift: p.glow[0] - p.surf[0], light} : null;
         if (!p) {
             this._f('pal', 0, 0, 0, 0);
         } else {
             this._f('pal', 1, PALETTE.detail, PALETTE.ambient, PALETTE.within);
-            this._f('pal2', PALETTE.color, light, PALETTE_RANGE, 0);
             this._f('pSurf', ...p.surf);
             this._f('pLo', ...p.lo);
             this._f('pHi', ...p.hi);
             this._f('pGlow', ...p.glow);
         }
+        this._darken();
         this.queue_repaint();
     }
 
     // Where the light comes from, in the actor's coordinates: [x, y, line,
     // reach] (line: a whole edge, at height y; reach: how far its tint
-    // spreads, a third of it to 1/e), or null for none.
-    setSource(v) {
+    // spreads, a third of it to 1/e), or null for none; `rect`, the panel
+    // it lights, for the tint's average over it.
+    setSource(v, rect = null) {
         const o = this._source;
         if (o === v || (o && v && o.every((x, i) => x === v[i])))
             return;
         this._source = v;
+        this._sourceRect = rect;
+        this._darken();
         this.queue_repaint();
+    }
+
+    // pal2: color, light, ramp range, and what the darkening takes off the
+    // lightness: PALETTE.darken of the tint's average lift over the panel,
+    // the shader's tint averaged on a grid (glow L - surface L, times the
+    // share of the glow mixed in).
+    _darken() {
+        const p = this._palette;
+        let off = 0;
+        const v = this._source, r = this._sourceRect;
+        if (p && p.light > 0 && v && r && PALETTE.darken > 0) {
+            const [x0, y0, w, h] = r;
+            const step = Math.max(8, Math.max(w, h) / 64);
+            let sum = 0, n = 0;
+            for (let y = y0 + step / 2; y < y0 + h; y += step) {
+                for (let x = x0 + step / 2; x < x0 + w; x += step) {
+                    const dl = v[2] ? Math.abs(y - v[1]) : Math.hypot(x - v[0], y - v[1]);
+                    sum += Math.min(1, p.light * 0.45 * Math.exp(-dl / (v[3] / 3)));
+                    n++;
+                }
+            }
+            off = PALETTE.darken * (n ? sum / n : 0) * p.lift;
+        }
+        this._f('pal2', PALETTE.color, p ? p.light : 0, PALETTE_RANGE, off);
     }
 
     // Hold the blur it has instead of copying what is beneath. Let go, the
@@ -2140,7 +2177,8 @@ class Surface {
         // the same spot for the palette glass's frost and tint (its actor
         // is padded by BLUR_PAD, the light's by LIGHT_PAD)
         const [bx, by] = [light[0] - LIGHT_PAD + BLUR_PAD, light[1] - LIGHT_PAD + BLUR_PAD];
-        this._blur.setSource([bx, by, line ? 1 : 0, line ? h + LIGHT_MIN_DISTANCE : Math.hypot(w, h + LIGHT_MIN_DISTANCE)]);
+        this._blur.setSource([bx, by, line ? 1 : 0, line ? h + LIGHT_MIN_DISTANCE : Math.hypot(w, h + LIGHT_MIN_DISTANCE)],
+            [BLUR_PAD, BLUR_PAD, w, h]);
         const column = this._opts.divider?.();
         // stock draws no line there, only a gap (the column's margin); light its middle
         const divx = column
