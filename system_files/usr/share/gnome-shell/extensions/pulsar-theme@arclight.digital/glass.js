@@ -169,6 +169,8 @@ const WINDOW_GRADE = SURFACE_GRADE;
 // the vibrancy fades out too (WINDOW_GRADE_EDGE), so the window's own
 // antialiased edge shows what is beneath as it is, not a lifted halo.
 const WINDOW_RADIUS = 16;
+// Pulsar's command menu: a window with a menu's glass (Glass._trackCommandMenu)
+const COMMAND_MENU = 'digital.arclight.Pulsar.Menu';
 const WINDOW_PAD = 48;
 const WINDOW_GRADE_EDGE = 4;
 // A window's grade (WINDOW_GRADE) follows the scheme the theme is in, as
@@ -3623,8 +3625,42 @@ export class Glass {
             this);
     }
 
+    // Pulsar's command menu (Super+Space) is a GTK window that should read
+    // as one of the Shell's menus, so it gets their glass, not a window's:
+    // a Surface on the window actor, its colors and shape off a stand-in box
+    // styled as a menu (never painted) over the window's frame, lit from a
+    // point above the top edge a little in from the left. The window itself
+    // paints no ground (scripts/pulsar-menu drops its .background).
+    _trackCommandMenu(actor) {
+        if (this._surfaces.has(actor))
+            return;
+        // its id can come after window-created took a first look: a
+        // window's glass made then gives way
+        this.forgetWindow(actor);
+        const win = actor.meta_window;
+        const box = new St.Widget({style_class: 'popup-menu-content', reactive: false, opacity: 0,
+            style: `border-radius: ${WINDOW_RADIUS}px;`});
+        actor.add_child(box);
+        const place = () => {
+            const f = win.get_frame_rect(), b = win.get_buffer_rect();
+            box.set_position(f.x - b.x, f.y - b.y);
+            box.set_size(f.width, f.height);
+        };
+        place();
+        win.connectObject('size-changed', place, this);
+        actor.connectObject('notify::width', place, 'notify::height', place, this);
+        this._add(actor, {
+            box: () => box,
+            source: (x, y, w) => [x + w * 0.15, y - LIGHT_MIN_DISTANCE],
+        });
+    }
+
     // `glassy`: one that opened translucent, kept whatever the switch says
     _trackWindow(actor, glassy = false, gtkPids = undefined) {
+        if (actor?.meta_window?.get_gtk_application_id?.() === COMMAND_MENU) {
+            this._trackCommandMenu(actor);
+            return;
+        }
         if (!(this.windows || (glassy && this._session)) || !actor || this._windows.has(actor) ||
             !WindowGlass.wanted(actor, gtkPids))
             return;
