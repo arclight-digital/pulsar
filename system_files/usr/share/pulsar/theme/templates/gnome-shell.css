@@ -765,7 +765,6 @@ stage {
 .audio-device-selection-dialog .audio-selection-box .audio-selection-device:insensitive,
 .button.flat:insensitive,
 .button:insensitive,
-.calendar .calendar-day-heading:insensitive,
 .calendar .calendar-day:insensitive,
 .calendar .calendar-month-header .calendar-month-label:insensitive,
 .calendar .calendar-month-header .pager-button:insensitive,
@@ -1138,6 +1137,12 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .datemenu-today-button, .datemenu-today-button .date-label { color: {{foreground}}; }
 .calendar .calendar-month-header .calendar-month-label { color: {{foreground}} !important; }
 .calendar .calendar-day-heading, .datemenu-today-button .day-label { color: rgba({{foreground_rgb}}, 0.68); }
+/* The weekday headings are insensitive labels, so the stock-states block's
+   50% insensitive dim won over the line above. Over palette glass that
+   measured 2.9:1 (WCAG AA wants 4.5 for their 13pt). 0.75 is the least that
+   passes over the worst glass pixel on a dark terminal, a white page,
+   colored shapes and a photo, dark and light (2026-11-07, headless). */
+.calendar .calendar-day-heading, .calendar .calendar-day-heading:insensitive { color: rgba({{foreground_rgb}}, 0.75); }
 
 /* Stock also hard-codes its secondary text as fixed greys (#b2b2b4,
    #9b9b9d, #afafb1, white at 50%) rather than dimming the foreground, so
@@ -1166,6 +1171,10 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .device-subtitle, StEntry StLabel.hint-text, .message-media-control:insensitive,
 .message-list .message-list-placeholder {
   color: rgba({{foreground_rgb}}, 0.45); }
+/* "No Notifications" is large text (3:1 under AA): at 0.45 it measured 2.75
+   on the solid light panel and 2.54 over glass; 0.52 is the least that
+   passes everywhere measured. */
+.message-list .message-list-placeholder { color: rgba({{foreground_rgb}}, 0.55); }
 .end-session-dialog .end-session-dialog-battery-warning, .end-session-dialog .dialog-list-title,
 .prompt-dialog .prompt-dialog-error-label, .caps-lock-warning-label,
 .conflicting-session-dialog-content .conflicting-session-dialog-desc-warning {
@@ -1384,7 +1393,7 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .pulsar-lit #panel .panel-button:active, .pulsar-lit #panel .panel-button:checked {
   background-color: rgba({{accent_rgb}}, 0.14); box-shadow: 0 0 10px rgba({{accent_rgb}}, 0.22); }
 .pulsar-lit #panel .panel-button.clock-display:active, .pulsar-lit #panel .panel-button.clock-display:checked {
-  box-shadow: none; }
+  background-color: transparent; box-shadow: none; }
 .pulsar-lit #panel .panel-button.clock-display:active .clock, .pulsar-lit #panel .panel-button.clock-display:checked .clock {
   background-color: rgba({{accent_rgb}}, 0.16); box-shadow: 0 0 10px rgba({{accent_rgb}}, 0.25); }
 .pulsar-lit .calendar .calendar-day.calendar-today { box-shadow: 0 0 8px rgba({{accent_rgb}}, 0.2); }
