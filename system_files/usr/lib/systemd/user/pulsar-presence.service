@@ -1,0 +1,18 @@
+# Shows the game being played in Flatpak Discord, as Discord does by itself
+# on Windows: its sandbox hides every other process from it, so this watches
+# for it and tells it through its socket. Idle while Discord is not running.
+# See /usr/libexec/pulsar/pulsar-presence.
+[Unit]
+Description=Show the game being played in Discord
+ConditionUser=!@system
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/libexec/pulsar/pulsar-presence
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=graphical-session.target

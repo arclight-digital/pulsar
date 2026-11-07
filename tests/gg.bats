@@ -301,7 +301,7 @@ image_path() {
     )
 }
 
-@test "steam-grants: merges host-os, gamescale's grants and sandbox-bin into Steam's and Faugus's system overrides" {
+@test "steam-grants: merges host-os, gamescale's grants, Discord's socket and sandbox-bin into Steam's and Faugus's system overrides" {
     export FLATPAK_LOG="${BATS_TEST_TMPDIR}/flatpak"
     printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "$FLATPAK_LOG"\n' > "${BIN}/flatpak"
     chmod +x "${BIN}/flatpak"
@@ -311,6 +311,7 @@ image_path() {
 --system
 --filesystem=host-os:ro
 --filesystem=~/.local/state/gamescale:create
+--filesystem=xdg-run/app/com.discordapp.Discord:create
 --talk-name=org.freedesktop.Flatpak'
     want="${grants}
 --env=PATH=/app/bin:/app/utils/bin:/usr/bin:/run/host/usr/lib/pulsar/sandbox-bin

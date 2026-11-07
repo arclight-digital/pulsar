@@ -728,6 +728,8 @@ COPY docs/releases.md /usr/share/pulsar/releases.md
 # the tesseract/zbar entry in the package list, and pulsar-shortcuts.service).
 COPY scripts/pulsar-screen scripts/pulsar-menu scripts/pulsar-shortcuts /usr/libexec/pulsar/
 COPY scripts/doc-portal-watch.sh /usr/libexec/pulsar/doc-portal-watch.sh
+# Discord presence for Flatpak Discord (see pulsar-presence.service).
+COPY scripts/pulsar-presence /usr/libexec/pulsar/pulsar-presence
 COPY scripts/steam-grants.sh /usr/libexec/pulsar/steam-grants.sh
 COPY scripts/pulsar-esp-fallback /usr/libexec/pulsar/pulsar-esp-fallback
 RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
@@ -739,6 +741,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
       /usr/libexec/pulsar/steam-gpu-watch.sh \
       /usr/libexec/pulsar/pulsar-screen /usr/libexec/pulsar/pulsar-menu /usr/libexec/pulsar/pulsar-shortcuts \
       /usr/libexec/pulsar/doc-portal-watch.sh \
+      /usr/libexec/pulsar/pulsar-presence \
       /usr/libexec/pulsar/steam-grants.sh \
       /usr/libexec/pulsar/pulsar-esp-fallback && \
     grep -qvE '^\s*(#|$)' /usr/share/pulsar/flatpaks.list || \
@@ -1083,6 +1086,17 @@ RUN set -eu; \
 # menu (several layouts, or a binding of the person's own, and the menu gets
 # Super+/). Removing or rebinding one in Settings > Keyboard sticks.
 #
+# pulsar-presence.service is --global because Discord runs in the user's
+# session. On Windows, Discord shows "Playing <game>" by watching the running
+# programs; the Flatpak's sandbox hides them, so it never could here. This
+# watches for it: Steam games by app id, others by program path, against
+# Discord's own list of known games, and tells Discord through its socket,
+# as a game with Rich Presence would. Only while Flatpak Discord runs: no
+# scan and no network otherwise. Discord's Activity Privacy settings still
+# decide who sees it. /usr/share/user-tmpfiles.d/pulsar-discord-ipc.conf
+# links the same socket where host programs look for it, and
+# steam-grants.sh gives Steam's and Faugus's games the folder it lives in.
+#
 # pulsar-update-auto.timer is a SYSTEM unit, because staging needs root. It
 # runs `pulsar update --background`: the same staging `sudo pulsar update`
 # does, layers carried forward, but only on AC power and an unmetered
@@ -1142,6 +1156,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-welcome.service && \
     systemctl --global enable pulsar-whats-new.service && \
     systemctl --global enable pulsar-shortcuts.service && \
+    systemctl --global enable pulsar-presence.service && \
     systemctl disable NetworkManager-wait-online.service && \
     for u in greenboot-healthcheck.service pulsar-flatpaks.service \
              pulsar-gamemode-group.service pulsar-steam-grants.service pulsar-update-auto.timer; do \
@@ -1150,7 +1165,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
              pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-gpu-fault-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
-             pulsar-welcome.service pulsar-whats-new.service pulsar-shortcuts.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer; do \
+             pulsar-welcome.service pulsar-whats-new.service pulsar-shortcuts.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer pulsar-presence.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

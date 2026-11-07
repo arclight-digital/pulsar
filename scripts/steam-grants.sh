@@ -28,6 +28,13 @@
 # went, a Faugus game with `gamescale` in it died on "command not found"
 # behind a splash that never closed.
 #
+# DISCORD'S SOCKET TOO. Flatpak Discord listens in
+# $XDG_RUNTIME_DIR/app/com.discordapp.Discord, and Windows games reach it
+# through the Discord bridge GE-Proton puts in each prefix, which looks there.
+# Flathub's Steam already asks for that folder; Faugus does not, so its
+# games' Rich Presence went nowhere. Granted to both, so Steam keeps it if
+# its manifest drops it.
+#
 # A user override's PATH beats this one. A home that ran the old installer
 # keeps its ~/.local/bin PATH, and its copies, until
 # `pulsar setup gamescale --platform steam faugus` moves it over.
@@ -47,6 +54,7 @@ grant() {
     "$flatpak" override --system \
         --filesystem=host-os:ro \
         --filesystem='~/.local/state/gamescale:create' \
+        --filesystem=xdg-run/app/com.discordapp.Discord:create \
         --talk-name=org.freedesktop.Flatpak \
         --env=PATH="$2" \
         "$1"

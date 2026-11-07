@@ -1,0 +1,297 @@
+#!/usr/bin/python3
+"""pulsar-presence -- show the game being played in Flatpak Discord.
+
+On Windows, Discord shows "Playing <game>" by itself: it watches the running
+programs and matches them against its list of known games. The Flatpak can't:
+its sandbox shows it no other process, Steam or game. This does the watching
+for it, on the host, and tells Discord through its own socket what an app
+with Rich Presence would: "Playing <game>", under that game's own Discord
+entry, so the name and icon are Discord's.
+
+    Steam games   matched by Steam app id (Steam's reaper carries AppId=N),
+                  against the Steam ids in Discord's list
+    other games   matched by program path, the way Discord does: the end of
+                  the path against the executables in Discord's list (Wine
+                  paths too, so Faugus, Heroic and Lutris games count)
+
+Only for Flatpak Discord: a Discord installed any other way sees processes
+and does this itself. Discord's own Activity Privacy settings still decide
+whether anyone sees it. Idle while Discord is not running: no scan and no
+network. Discord's list of known games (discord.com/api/v9/applications/
+detectable, public) is fetched at most once a week and kept as a small index
+in $XDG_CACHE_HOME/pulsar/presence.
+
+Run by pulsar-presence.service. PULSAR_PRESENCE_PROC, _SOCKETS, _INDEX and
+_DB_URL point it at test fixtures; --once scans once and exits (tests).
+"""
+import json
+import os
+import socket
+import struct
+import sys
+import time
+import urllib.request
+import uuid
+
+DB_URL = os.environ.get("PULSAR_PRESENCE_DB_URL", "https://discord.com/api/v9/applications/detectable")
+PROC = os.environ.get("PULSAR_PRESENCE_PROC", "/proc")
+CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "pulsar", "presence")
+INDEX = os.environ.get("PULSAR_PRESENCE_INDEX", os.path.join(CACHE, "index.json"))
+REFRESH_S = 7 * 24 * 3600
+RETRY_S = (300, 6 * 3600)  # after a failed fetch: with no list yet, with an old one
+SCAN_S = 5
+# Flatpak Discord's socket folders, relative to $XDG_RUNTIME_DIR
+FLATPAK_DISCORD = ("app/com.discordapp.Discord", "app/com.discordapp.DiscordCanary")
+# Wine's own programs, never a game
+WINE_SYSTEM = ("windows/system32/", "windows/syswow64/")
+
+
+def log(msg):
+    print(f"pulsar-presence: {msg}", file=sys.stderr, flush=True)
+
+
+# --- Discord's list of known games -----------------------------------------
+
+def build_index(apps):
+    """The few fields this needs, out of Discord's ~13 MB list: app id ->
+    name, Steam id -> app id, executable path -> app id. Launchers are left
+    out, as Discord leaves them out."""
+    names, steam, exes = {}, {}, {}
+    for a in apps:
+        aid = str(a.get("id") or "")
+        if not aid or not a.get("name"):
+            continue
+        names[aid] = a["name"]
+        for sku in a.get("third_party_skus") or []:
+            if sku.get("distributor") == "steam" and sku.get("id"):
+                steam.setdefault(str(sku["id"]), aid)
+        for e in a.get("executables") or []:
+            if e.get("is_launcher") or e.get("os") not in ("win32", "linux"):
+                continue
+            n = (e.get("name") or "").lower().replace("\\", "/")
+            if n:
+                exes.setdefault(n, aid)
+    return {"fetched": int(time.time()), "names": names, "steam": steam, "exes": exes}
+
+
+def load_index():
+    """The cached index, refreshed when a week old. When the fetch fails, the
+    old one (or None, with none cached); main() decides when to try again."""
+    idx = None
+    try:
+        with open(INDEX) as f:
+            idx = json.load(f)
+    except (OSError, ValueError):
+        pass
+    if idx and time.time() - idx.get("fetched", 0) < REFRESH_S:
+        return idx
+    try:
+        req = urllib.request.Request(DB_URL, headers={"User-Agent": "Pulsar presence (https://getpulsar.dev)"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            fresh = build_index(json.load(r))
+    except Exception as e:  # offline, Discord down, a changed format
+        log(f"can't fetch Discord's game list: {e}")
+        return idx
+    write_index(fresh)
+    return fresh
+
+
+def write_index(idx):
+    os.makedirs(os.path.dirname(INDEX), exist_ok=True)
+    tmp = INDEX + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(idx, f)
+    os.replace(tmp, INDEX)
+
+
+# --- what is running --------------------------------------------------------
+
+def path_keys(path):
+    """The ends of a program path that Discord compares with its list:
+    "s:\\steamapps\\common\\x\\bin\\game.exe" -> "game.exe", "bin/game.exe",
+    ... each also without "64", as Discord tries them."""
+    parts = path.lower().replace("\\", "/").split("/")
+    if parts and (parts[0] == "" or (len(parts[0]) == 2 and parts[0][1] == ":")):
+        parts = parts[1:]
+    keys = []
+    for i in range(1, len(parts) + 1):
+        k = "/".join(parts[-i:])
+        keys.append(k)
+        for strip in (".x64", "_64", "x64", "64"):
+            if strip in k:
+                keys.append(k.replace(strip, "", 1))
+    return keys
+
+
+def match_exe(path, exes):
+    norm = path.lower().replace("\\", "/")
+    if any(s in norm for s in WINE_SYSTEM):
+        return None
+    keys = path_keys(path)
+    for k in keys:
+        if k in exes:
+            return exes[k]
+    # a ">name" entry is the program's own name, exactly
+    return exes.get(">" + keys[0]) if keys else None
+
+
+def started_ms(pid):
+    """When the process started, in ms since the epoch."""
+    try:
+        with open(os.path.join(PROC, str(pid), "stat")) as f:
+            ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+        with open(os.path.join(PROC, "stat")) as f:
+            boot = next(int(ln.split()[1]) for ln in f if ln.startswith("btime "))
+        return int((boot + ticks / os.sysconf("SC_CLK_TCK")) * 1000)
+    except (OSError, ValueError, IndexError, StopIteration):
+        return int(time.time() * 1000)
+
+
+def scan(idx, uid=None):
+    """{app id: pid} for this user's games that Discord knows."""
+    uid = os.getuid() if uid is None else uid
+    found = {}
+    # oldest first: of a game's processes, the first one stands for it
+    for pid in sorted((p for p in os.listdir(PROC) if p.isdigit()), key=int):
+        d = os.path.join(PROC, pid)
+        try:
+            if os.stat(d).st_uid != uid:
+                continue
+            with open(os.path.join(d, "cmdline"), "rb") as f:
+                argv = [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
+        except OSError:
+            continue
+        if not argv:
+            continue
+        aid = None
+        if os.path.basename(argv[0]) == "reaper":  # Steam's: reaper SteamLaunch AppId=N -- game
+            for a in argv[1:]:
+                if a.startswith("AppId="):
+                    aid = idx["steam"].get(a[6:])
+                    break
+                if a == "--":
+                    break
+        else:
+            aid = match_exe(argv[0], idx["exes"])
+        if aid and aid not in found:
+            found[aid] = int(pid)
+    return found
+
+
+# --- telling Discord --------------------------------------------------------
+
+def discord_sockets():
+    """Flatpak Discord's sockets, if it is running."""
+    if os.environ.get("PULSAR_PRESENCE_SOCKETS"):
+        return [p for p in os.environ["PULSAR_PRESENCE_SOCKETS"].split(":") if os.path.exists(p)]
+    run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return [os.path.join(run, d, f"discord-ipc-{i}") for d in FLATPAK_DISCORD for i in range(10)
+            if os.path.exists(os.path.join(run, d, f"discord-ipc-{i}"))]
+
+
+def frame(op, obj):
+    b = json.dumps(obj).encode()
+    return struct.pack("<II", op, len(b)) + b
+
+
+def read_frame(s):
+    head = b""
+    while len(head) < 8:
+        chunk = s.recv(8 - len(head))
+        if not chunk:
+            raise ConnectionError("Discord closed the connection")
+        head += chunk
+    op, n = struct.unpack("<II", head)
+    body = b""
+    while len(body) < n:
+        chunk = s.recv(n - len(body))
+        if not chunk:
+            raise ConnectionError("Discord closed the connection")
+        body += chunk
+    return op, json.loads(body)
+
+
+class Presence:
+    """One connection per game shown, under that game's Discord app id:
+    Discord shows the activity while the connection is open and clears it
+    when it closes."""
+
+    def __init__(self, path, app_id, pid):
+        self.app_id = app_id
+        self.s = socket.socket(socket.AF_UNIX)
+        self.s.settimeout(5)
+        try:
+            self.s.connect(path)
+            self.s.sendall(frame(0, {"v": 1, "client_id": app_id}))
+            op, msg = read_frame(self.s)
+            if msg.get("evt") != "READY":
+                raise ConnectionError(f"handshake refused: {msg.get('data', msg)}")
+            self.s.sendall(frame(1, {"cmd": "SET_ACTIVITY", "nonce": str(uuid.uuid4()),
+                                     "args": {"pid": pid, "activity": {"timestamps": {"start": started_ms(pid)}}}}))
+            op, msg = read_frame(self.s)
+            if msg.get("evt") == "ERROR":
+                raise ConnectionError(f"activity refused: {msg.get('data')}")
+        except Exception:
+            self.s.close()
+            raise
+        self.s.setblocking(False)
+
+    def alive(self):
+        """False once Discord has gone (quit or restarted)."""
+        try:
+            while True:
+                if not self.s.recv(4096):
+                    return False
+        except BlockingIOError:
+            return True
+        except OSError:
+            return False
+
+    def close(self):
+        self.s.close()
+
+
+def tick(idx, shown, sock):
+    """One pass: show what started, clear what stopped."""
+    games = scan(idx)
+    for aid in list(shown):
+        if aid not in games or not shown[aid].alive():
+            shown.pop(aid).close()
+            log(f"cleared {idx['names'].get(aid, aid)}")
+    for aid, pid in games.items():
+        if aid in shown:
+            continue
+        try:
+            shown[aid] = Presence(sock, aid, pid)
+            log(f"playing {idx['names'].get(aid, aid)} (pid {pid})")
+        except (OSError, ValueError) as e:
+            log(f"can't show {idx['names'].get(aid, aid)}: {e}")
+    return games
+
+
+def main(argv):
+    once = "--once" in argv[1:]
+    shown, idx, tried = {}, None, 0.0
+    while True:
+        socks = discord_sockets()
+        if not socks:
+            for p in shown.values():
+                p.close()
+            shown.clear()
+        else:
+            now = time.time()
+            stale = idx is None or now - idx.get("fetched", 0) > REFRESH_S
+            if stale and (once or now - tried > RETRY_S[idx is not None]):
+                tried = now
+                idx = load_index() or idx
+            if idx:
+                tick(idx, shown, socks[0])
+        if once:
+            for p in shown.values():
+                p.close()
+            return 0
+        time.sleep(SCAN_S)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
