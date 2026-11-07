@@ -76,6 +76,12 @@ Agents you can leave running, a command menu, and GNOME 51.
 - Super+F makes any window fullscreen, and pressing it again puts it back.
   A Windows game whose borderless fullscreen sits under the top bar fills
   the screen with one press.
+- Discord shows the game you're playing, as it does on Windows. The Discord
+  Flatpak's sandbox hides other programs from it, so it never could here.
+  Now Pulsar spots the game (a Steam game by its Steam ID, any other by its
+  program) and tells Discord. Your Activity Privacy settings in Discord
+  still decide who sees it. Windows games with their own Discord status
+  reach it too, from Faugus as well as Steam.
 
 ### Desktop
 
