@@ -57,6 +57,9 @@ ALLOW = [
     (r"#LookingGlass|\.lg-", "Looking Glass: the developer console, stock by design"),
     (r"login-dialog|unlock-dialog|#lockDialogGroup|#unlockDialog",
      "the login and lock screens: extensions do not run there, so neither does the theme"),
+    (r"\.web-login-|\.qr-code",
+     "web login (GNOME 51): gdm/webLogin.js inside the auth prompt, so on the login and lock screens only; "
+     "its QR code is the only user of .qr-code and stays dark on white so a phone can read it"),
     (r"parental-controls-shield",
      "the parental-controls shield: it stands in for the unlock prompt (gdm/authPrompt.js), on the lock screen"),
     (r"\.toggle-switch \.handle", "the switch knob: a near-white disc in both schemes, as libadwaita's"),
