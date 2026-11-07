@@ -11,4 +11,10 @@ export XDG_RUNTIME_DIR=/tmp/rt-$$; mkdir -m 700 "$XDG_RUNTIME_DIR"
 export NO_AT_BRIDGE=1 GSK_RENDERER=cairo
 dbus-daemon --session --address="unix:path=$XDG_RUNTIME_DIR/system_bus" --fork --nopidfile
 export DBUS_SYSTEM_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/system_bus"
+# FAKE_CLOCK="2026-11-11 11:11:00": every process in the session reads that
+# wall-clock time, held still, so pictures taken minutes apart show the same
+# clock. Only the wall clock: monotonic time runs, or no timer would fire.
+if [ -n "${FAKE_CLOCK:-}" ]; then
+  export LD_PRELOAD=/usr/lib64/libfaketime.so.1 FAKETIME="${FAKE_CLOCK}" FAKETIME_DONT_FAKE_MONOTONIC=1
+fi
 exec dbus-run-session -- python3 /gate/scenario.py "$@"

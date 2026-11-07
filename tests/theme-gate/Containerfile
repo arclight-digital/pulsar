@@ -8,10 +8,11 @@ FROM ${IMAGE}
 
 # Text Editor and the demos are Flatpaks (or absent) on a real Pulsar; the gate
 # wants them as host GTK apps reading the host gtk.css, which is the thing
-# under test. dbus-daemon for the private buses, procps for pgrep.
+# under test. dbus-daemon for the private buses, procps for pgrep;
+# libfaketime holds the clock still for pictures (FAKE_CLOCK, session.sh).
 RUN dnf5 install -y --setopt=install_weak_deps=False \
       gnome-text-editor gtk4-devel-tools gtk3-devel btop libadwaita-demo \
-      python3-gobject dbus-daemon procps-ng && \
+      python3-gobject dbus-daemon procps-ng libfaketime && \
     dnf5 clean all
 
 COPY gate-harness@local /usr/share/gnome-shell/extensions/gate-harness@local
