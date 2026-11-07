@@ -2558,6 +2558,12 @@ class WindowGlass {
             'destroy', () => owner.forgetWindow(actor),
             // a new or replaced surface (a subsurface, a new buffer role)
             'damaged', () => this._uncull(),
+            // The actor is the buffer: the frame plus the client's shadow.
+            // Unmaximized, GTK puts its shadow back in a later buffer, with
+            // the frame's size unchanged, so no size-changed comes, and the
+            // blur sat a shadow's width off the window until the next resize.
+            'notify::width', () => this._layout(),
+            'notify::height', () => this._layout(),
             this);
         this._layout();
         this._uncull();
