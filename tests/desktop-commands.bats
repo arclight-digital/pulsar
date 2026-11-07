@@ -464,6 +464,30 @@ print(it.matches("2^10"), it.title, "|", it.subtitle, "|", it.argv, it.matches("
     done
 }
 
+@test "menu: easter eggs answer whole phrases only, in any case, and run nothing" {
+    run menu '
+it = m.CalcItem()
+for q in ("SOMEONE SET US UP THE BOMB", "my wife left me!", "rm -rf /", "  Make  it  SO. "):
+    print(it.matches(q), it.title, "|", it.argv, "|", it.group, "|", it.icon)
+for q in ("someone set us up", "my wife", "make", "bomb", "firefox"):
+    print(q, m.egg(q))
+print(it.matches("2+2"), it.title, it.group, it.icon)'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "True All your base are belong to Pulsar. | [] |  | face-smile-big-symbolic"
+        "True Pulsar can roll back an update. Not that. | [] |  | face-smile-big-symbolic"
+        "True Nice try. | [] |  | face-smile-big-symbolic"
+        "True Engage. | [] |  | face-smile-big-symbolic"
+        "someone set us up None"
+        "my wife None"
+        "make None"
+        "bomb None"
+        "firefox None"
+        "True = 4 Math accessories-calculator-symbolic"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
 @test "menu: date math, from a fixed today" {
     run menu '
 import datetime

@@ -440,6 +440,33 @@ def date_calc(query, today=None):
     return None
 
 
+# A few things to type for no reason, answered in the answer row. Whole
+# phrases only, matched ignoring case and punctuation, so an app's name
+# typed on the way never trips one. Enter does nothing with them.
+EGGS = {
+    "someone set us up the bomb": "All your base are belong to Pulsar.",
+    "my wife left me": "Pulsar can roll back an update. Not that.",
+    "rm rf": "Nice try.",
+    "sudo make me a sandwich": "Okay.",
+    "do a barrel roll": "Press Z or R twice.",
+    "the cake is a lie": "The cake is a nightly build.",
+    "hello world": "Hello, world.",
+    "i use arch btw": "We know.",
+    "what is the meaning of life": "42",
+    "have you tried turning it off and on again": "Have you tried rolling it back?",
+    "up up down down left right left right b a": "+30 lives",
+    "make it so": "Engage.",
+    "open the pod bay doors": "I'm sorry, Dave.",
+    "your lighthouse in the sky": "Keep it lit.",
+}
+
+
+def egg(query):
+    """The reply to an easter-egg phrase, or None."""
+    words = re.sub(r"[^a-z0-9]+", " ", query.lower()).split()
+    return EGGS.get(" ".join(words))
+
+
 class CalcItem(Item):
     """The answer row: there only while the search is a sum, a conversion or
     date arithmetic; Enter copies it. Currency rates come from want_rates,
@@ -451,6 +478,7 @@ class CalcItem(Item):
         self.want_rates = None
 
     def _answer(self, shown, copied, note=""):
+        self.group, self.icon = "Math", "accessories-calculator-symbolic"
         self.answer = copied
         self.title = f"= {shown}"
         self.subtitle = f"{note} \u00b7 Enter copies {copied}" if note else f"Enter copies {copied}"
@@ -458,6 +486,13 @@ class CalcItem(Item):
         return True
 
     def matches(self, query):
+        said = egg(query)
+        if said is not None:
+            self.group, self.icon = "", "face-smile-big-symbolic"
+            self.answer, self.argv = None, []
+            self.title, self.subtitle = said, ""
+            return True
+        self.group, self.icon = "Math", "accessories-calculator-symbolic"
         cur = currency_parse(query)
         if cur is not None:
             if self.rates is None:
@@ -875,6 +910,7 @@ def window_class():
             else:
                 icon = Gtk.Image(icon_name=it.icon, pixel_size=16, css_classes=["tile"])
             icon.set_valign(Gtk.Align.CENTER)
+            row.icon = icon
             h.append(icon)
             v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
             # the window keeps its width: a long name is cut short, never
@@ -903,7 +939,9 @@ def window_class():
 
         def _header(self, row, before):
             # a group's name over its first row that is showing
-            if before is not None and before.item.group == row.item.group:
+            if not row.item.group:
+                row.set_header(None)
+            elif before is not None and before.item.group == row.item.group:
                 row.set_header(None)
             elif row.get_header() is None or row.get_header().get_label() != row.item.group:
                 row.set_header(Gtk.Label(label=row.item.group, xalign=0, css_classes=["group"]))
@@ -932,6 +970,7 @@ def window_class():
             if row.item.matches(self.query):
                 row.title.set_label(row.item.title)
                 row.sub.set_label(row.item.subtitle)
+                row.icon.set_from_icon_name(row.item.icon)
             # rows from the last search go; apps come straight after the answer
             for r in self._all_rows():
                 if isinstance(r.item, Found) and r.item.for_query != self.query:
