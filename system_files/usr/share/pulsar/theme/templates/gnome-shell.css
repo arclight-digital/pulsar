@@ -1328,9 +1328,10 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
   background-color: {{glass_card_second}}; box-shadow: inset 0 0 0 1px rgba({{blue_rgb}}, 0.07); }
 .pulsar-glass .message:lower-in-stack {
   background-color: {{glass_card_lower}}; box-shadow: inset 0 0 0 1px rgba({{blue_rgb}}, 0.05); }
-/* The top bar over its blurred wallpaper. The overview's own transparent
+/* The top bar over its blurred wallpaper: glass.js paints its color, on
+   the theme's palette like every glass. The overview's own transparent
    bar is restated, or this rule would win on order. */
-.pulsar-glass #panel { background-color: {{glass_panel}}; }
+.pulsar-glass #panel { background-color: transparent; -pulsar-glass-tint: {{glass_panel}}; }
 /* a ledge: a lit hairline where the bar ends, one device pixel at any scale,
    drawn by glass.js in these colors (CSS can only say one logical pixel) */
 .pulsar-panel-hairline { color: {{foreground}}; -pulsar-light: {{accent}}; }
@@ -1340,6 +1341,12 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
   background-gradient-start: {{panel_shadow}};
   background-gradient-end: transparent; }
 .pulsar-glass #panel:overview { background-color: transparent; }
+/* GTK's grounds, for the glass glass.js draws in GTK windows (gtk.css
+   leaves a window's ground to it) and their popovers (painted at this
+   alpha by GTK, which glass.js takes back out). Never shown. */
+.pulsar-glass-colors {
+  color: {{foreground}}; -pulsar-light: {{accent}};
+  -pulsar-window: {{window}}; -pulsar-popover: rgba({{popover_rgb}}, {{popup_ground}}); }
 
 /* The OSDs (volume, brightness) and notification banners are glass too.
    Restated after the .message card above: a banner is a .message. */

@@ -72,16 +72,19 @@ import * as WorkspaceSwitcherPopup from 'resource:///org/gnome/shell/ui/workspac
 // on a 2x screen, so it is as wide in logical pixels), each step spreading
 // its taps BLUR_OFFSET texels apart, and brought back up the same steps. A
 // deep pyramid is both wide and smooth: a Gaussian as wide at one size
-// needs taps so far apart that its kernel shows as ghosted copies. Then
-// saturation to keep the color of what is behind, and contrast under 1 so
-// a bright line of text behind cannot streak through.
-const BLUR_LEVELS = 3;
-const BLUR_OFFSET = 3;
+// needs taps so far apart that its kernel shows as ghosted copies. Every
+// glass surface -- menus, windows, the top bar -- blurs with the same
+// kernel and is drawn on the theme's palette (PALETTE below): one glass.
+//
+// The 12px kernel Nick picked in the lab (a Gaussian, sigma 12 logical px).
+// Two levels 1.85 apart measure 12px on screen at 1x (a headless Shell over
+// a backdrop of squares, fitted against Gaussian blurs of it);
+// blur_kernel.py, which leaves out the last upscale, says 11.0 at 1x, 10.5
+// at 1.25x, 11.2 at 2x (width x 2 / scale).
+const BLUR_LEVELS = 2;
+const BLUR_OFFSET = 1.85;
 // how finely a partial redraw is probed, in logical pixels
 const TILE = 32;
-const SATURATE = 1.5;
-const CONTRAST = 0.8;
-const BRIGHTNESS = 1.06;
 // The blurred copy reaches this far past a surface on every side, so the
 // blur has real pixels to draw on at the edge, and the shadow has room.
 const BLUR_PAD = 64;
@@ -107,9 +110,9 @@ const EDGE_DARK = [0.14, 0.32];
 let lastDeep = null;
 function deepShadow(lt) {
     try {
-        const bg = Main.panel.get_theme_node().get_background_color();
-        if (bg.alpha > 0)
-            lastDeep = [bg.red / 255, bg.green / 255, bg.blue / 255];
+        const bg = panelTint();
+        if (bg)
+            lastDeep = rgb(bg);
     } catch {}
     const c = lastDeep ?? [0, 0, 0];
     const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
@@ -135,75 +138,21 @@ const POWER_ON_MS = 300;
 // Menus, OSDs and banners are thick glass; windows are a thin pane, bent a
 // little and never sharp (no copy kept for them).
 const SURFACE_LENS = [28, 14, 0.12, 0.63];
-// Menus, OSDs, banners and the dash are liquid glass: blurred less than a
-// window, under a lighter tint (the sheet's surface_alpha), so what is
-// behind them keeps its shapes, soft, and bends at the rim. Three levels
-// with close taps, not two with wide ones: the same width (within 3% at 1x,
-// 1.33x and 2x), but two levels 3.5 apart blurred a bright point into a
-// diamond (the up-pass's eight taps, spread far: 145% uneven around the
-// blur at 1.33x, 3.5% now), and big bright text behind showed it.
-const SURFACE_LEVELS = 3;
-const SURFACE_OFFSET = 1.6;
-// Palette glass blurs with the 12px kernel Nick picked in the lab (a
-// Gaussian, sigma 12 logical px). Two levels 1.85 apart measure 12px on
-// screen at 1x (a headless Shell over a backdrop of squares, fitted against
-// Gaussian blurs of it); blur_kernel.py, which leaves out the last upscale,
-// says 11.0 at 1x, 10.5 at 1.25x, 11.2 at 2x (width x 2 / scale).
-// SURFACE_LEVELS/OFFSET above measure 21px on screen and stay for windows.
-const PALETTE_LEVELS = 2;
-const PALETTE_OFFSET = 1.85;
 const WINDOW_LENS = [10, 4, 0, 0];
-// What is beneath, lifted so its color reads through a light tint and text
-// on the glass stays readable: darker behind a dark surface, lighter behind
-// a light one (saturate, contrast, brightness).
-// A clearer surface needs less of its contrast taken: text behind it now
-// shows as shapes, and 0.75 flattened them to a wash.
-const SURFACE_GRADE = {dark: [1.6, 0.85, 0.85], light: [1.45, 0.85, 1.1]};
-// Windows match the panels 1:1 (Nick, 2026-10-02): the same grade, and the
-// same blur below. They keep only their own thin lens (WINDOW_LENS): the
-// panels' thick refracting rim would bend the window's own edge.
-const WINDOW_GRADE = SURFACE_GRADE;
 // libadwaita's window shape, measured on GNOME 50: the frame rect, its 1px
 // border included, with 16px corners (15 inside the border). The mask
-// follows it exactly and fades across the border; over the last few pixels
-// the vibrancy fades out too (WINDOW_GRADE_EDGE), so the window's own
-// antialiased edge shows what is beneath as it is, not a lifted halo.
+// follows it exactly and fades across the border.
 const WINDOW_RADIUS = 16;
 // Pulsar's command menu: a window with a menu's glass (Glass._trackCommandMenu)
 const COMMAND_MENU = 'digital.arclight.Pulsar.Menu';
 const WINDOW_PAD = 48;
-const WINDOW_GRADE_EDGE = 4;
-// A window's grade (WINDOW_GRADE) follows the scheme the theme is in, as
-// the menus' does. A fixed [1.9, 0.9, 1.35] made what is beneath a window loud,
-// bright blobs beside a menu. The scheme is read off the top bar's glass,
-// which the same sheet colors for the same mode the GTK theme is in -- a
-// single-mode theme included, where Dark Style says nothing about it. The
-// bar goes transparent in the overview and on the lock screen; then it says
-// nothing either, and the last answer stands.
-let lastWindowGrade = WINDOW_GRADE.dark;
-function windowGrade() {
-    try {
-        const bg = Main.panel.get_theme_node().get_background_color();
-        if (bg.alpha > 0)
-            lastWindowGrade = luminance(bg) > 0.5 ? WINDOW_GRADE.light : WINDOW_GRADE.dark;
-    } catch {}
-    return lastWindowGrade;
-}
-// How far what is beneath is pulled toward the theme's own lightness before
-// the tint goes on, keeping its hue and shapes: 0 leaves it as graded, 1
-// flattens it to the theme's lightness. The grade lifts dark backdrops
-// (its contrast pivots on mid-grey) and a bright wallpaper or page shows
-// through the tint, so glass read lighter than the theme it wears (Nick,
-// 2026-11-05: "closer to the typical theme color"). Halfway: a menu over a
-// bright wallpaper on Pulsar dark went from luminance 0.26 to 0.15, over a
-// dark window from 0.09 to 0.06, against the theme's 0.04.
-const GLASS_PULL = 0.5;
-// Palette glass (Nick, 2026-11-06, tuned in the glass lab): a floating
+// The glass (Nick, 2026-11-06, tuned in the glass lab), on every surface: a
 // surface is the theme's own color, and what is beneath shows only as the
 // theme's ramp -- dark shapes sink toward its deep ground, bright ones rise
 // toward its accent -- mixed in OKLab, so it never goes grey or takes on a
-// color the theme does not have. The frost clears toward the light's source
-// and deepens away from it, and the source tints the glass near it.
+// color the theme does not have. A surface with a light (a menu, from the
+// widget that opened it) is tinted near its source; one with none (a
+// window, the top bar) is not lit at all.
 //   detail: how strongly shapes beneath show, around the theme's lightness
 //   ambient: how far a large bright or dark area beneath moves the whole glass
 //   color: how far a colored backdrop pulls the glass's color toward its own
@@ -214,8 +163,8 @@ const GLASS_PULL = 0.5;
 //   darken: how much of the tint's average lift over the panel the whole
 //     glass gives back, so the light reads as a gradient and the far side
 //     sits nearer the solid surface (1 puts the average back on it)
-// Nick's values from the lab, 2026-11-07. Windows and the top bar keep the
-// graded path below for now.
+// Nick's values from the lab, 2026-11-07. Windows and the top bar joined
+// the menus on 2026-11-07: one glass, no other blur (Nick).
 const PALETTE = {detail: 0.4, ambient: 0.2, color: 0.33, within: 0.08, light: 0.8, darken: 0.3};
 // the ramp's reach either side of the theme's lightness, in OKLab L
 const PALETTE_RANGE = 0.12;
@@ -232,17 +181,29 @@ function oklab([r, g, b]) {
         0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
 }
 const mixLab = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
-// The theme's ground, read off the top bar's glass (as windowGrade does),
-// for glass whose tint GTK or St paints rather than the shader: windows and
-// the bar itself. The last answer stands while the bar is transparent.
-let lastGround = null;
-function groundPull() {
-    try {
-        const bg = Main.panel.get_theme_node().get_background_color();
-        if (bg.alpha > 0)
-            lastGround = [bg.red / 255, bg.green / 255, bg.blue / 255];
-    } catch {}
-    return lastGround ? [...lastGround, GLASS_PULL] : [0, 0, 0, 0];
+
+// A surface's ramp, all in OKLab: its own color (surf, sRGB 0..1), below
+// it the deep ground on a dark theme (`deep`, sRGB) or a tinted shade on a
+// light one, above it the accent (dark) or the surface itself (light); the
+// light's color is the accent.
+function paletteFor(surf, fg, accent, lt, deep) {
+    const s = oklab(surf), acc = oklab(accent);
+    const lo = lt ? mixLab(s, mixLab(oklab(fg), acc, 0.5), 0.45) : oklab(deep);
+    const hi = lt ? s : mixLab(s, acc, 0.45);
+    return {surf: s, lo, hi, glow: acc};
+}
+
+// The top bar's own color, which the sheet gives it as -pulsar-glass-tint
+// under glass (the shader paints it) and as its background without: the
+// theme's deep ground on dark, its ground lifted toward white on light.
+// The bar goes transparent in the overview; then this says nothing.
+function panelTint() {
+    const node = Main.panel.get_theme_node();
+    const [ok, tint] = node.lookup_color('-pulsar-glass-tint', false);
+    if (ok && tint.alpha > 0)
+        return tint;
+    const bg = node.get_background_color();
+    return bg.alpha > 0 ? bg : null;
 }
 const ENGINE = '/usr/libexec/pulsar/pulsar-theme';
 
@@ -251,10 +212,8 @@ uniform sampler2D tex;
 uniform vec2 size;
 uniform vec4 rect;
 uniform float radius;
-uniform vec3 grade;
 uniform vec4 shadow;
 uniform vec2 shadowGeom;
-uniform float gradeEdge;
 uniform float opacity;
 uniform float soft;
 uniform vec2 uvScale;
@@ -262,8 +221,7 @@ uniform sampler2D sharp;
 uniform vec2 sharpScale;
 uniform vec4 lens;
 uniform float edgeDark;
-uniform vec4 tint;
-uniform vec4 pull;
+uniform float under;
 uniform sampler2D cut;
 uniform vec4 cutRect;
 uniform vec4 pal;
@@ -339,9 +297,9 @@ if (t > 0.0) {
 } else {
   raw = unpremul(texture2D(tex, uv * uvScale));
 }
-vec3 rgb;
+vec3 rgb = raw;
 if (pal.x > 0.0) {
-/* Palette glass (PALETTE in glass.js; pal: on, detail, ambient, within;
+/* The glass (PALETTE in glass.js; pal: on, detail, ambient, within;
    pal2: color, light, ramp range, darkening; src: the light's source, whether it is a
    line along an edge, how far its tint reaches). */
   float dl = src.z > 0.5 ? abs(f.y - src.y) : distance(f, src.xy);
@@ -378,30 +336,14 @@ if (pal.x > 0.0) {
     c.x -= pal2.w;
   }
   rgb = fromLab(c);
-} else {
-float l = dot(raw, vec3(0.2126, 0.7152, 0.0722));
-rgb = mix(vec3(l), raw, grade.x);
-/* contrast pivots on the theme's own lightness where the glass knows it
-   (pull.rgb), else mid-grey: pivoting on mid-grey lifted a dark backdrop
-   toward grey, so glass over a dark window read lighter than the theme
-   (Nick, 2026-11-06). Shapes beneath keep their light and dark. */
-float pivot = pull.a > 0.0 ? dot(pull.rgb, vec3(0.2126, 0.7152, 0.0722)) : 0.5;
-rgb = (rgb - pivot) * grade.y + pivot;
-rgb = clamp(rgb * grade.z, 0.0, 1.0);
-/* toward the theme's own lightness (pull: its color, how far), hue kept:
-   scaled down to it, or lifted to it with grey, never scaled up from black */
-if (pull.a > 0.0) {
-  float lb = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
-  float lg = mix(lb, dot(pull.rgb, vec3(0.2126, 0.7152, 0.0722)), pull.a);
-  rgb = lg < lb ? rgb * (lg / lb) : clamp(rgb + (lg - lb), 0.0, 1.0);
-}
+  /* what GTK paints over a popup's glass (its body at alpha under, in
+     the surface's own color, which shows the popup's shape: see cut),
+     taken back out here, so the popup ends as the same glass a menu is */
+  if (under > 0.0) rgb = clamp((rgb - under * fromLab(pSurf)) / (1.0 - under), 0.0, 1.0);
 }
 /* the darkened edge: a thin band just inside the rim, under the surface's
    own border -- the separation iOS 27 gives its glass instead of a shadow */
 if (edgeDark > 0.0 && d < 0.0) rgb *= 1.0 - edgeDark * exp(d / 2.2);
-/* where the surface's own antialiased edge lets this through, show plain
-   blur, not the graded one: a lifted edge reads as a halo */
-if (gradeEdge > 0.0) rgb = mix(raw, rgb, 1.0 - smoothstep(-gradeEdge, -1.0, d));
 /* out to the surface's edge, fading across its 1px border: stop short and
    what is beneath shows unblurred through the tint as a second ring. A
    surface with no border on whole pixels (the top bar) gets a hard edge:
@@ -410,7 +352,8 @@ float a = soft > 0.0 ? 1.0 - smoothstep(-soft, 0.0, d) : step(d, 0.0);
 /* a popup's own shape (cutRect: where its buffer lies, from here): only
    where it draws its body -- the rounded box and the arrow -- not the soft
    shadow and hairline border around them, whose alpha stays near 0.25. A
-   glass popover's body is 0.47 at the clearest tint, so it is all in. */
+   glass popover's body is painted at -pulsar-popover's alpha (0.5), so it
+   is all in. */
 if (cutRect.z > 0.0) {
   vec2 cu = (f + cutRect.xy) / cutRect.zw;
   vec2 in2 = step(vec2(0.0), cu) * step(cu, vec2(1.0));
@@ -419,10 +362,6 @@ if (cutRect.z > 0.0) {
 /* the shadow: the same shape, dropped and softened, showing only outside it */
 float ds = sd(f - (rect.xy + rect.zw * 0.5) - vec2(0.0, shadowGeom.x), rect.zw * 0.5, radius);
 float s = shadow.a * (1.0 - smoothstep(-shadowGeom.y * 0.3, shadowGeom.y, ds)) * smoothstep(-0.5, 0.5, d);
-/* the surface's own tint, painted here inside the rounded mask rather than
-   by St, whose translucent rounded fills are pieced from separate corners */
-/* (palette glass is the surface's color already) */
-if (pal.x <= 0.0) rgb = mix(rgb, tint.rgb, tint.a);
 /* a triangular dither of about half an 8-bit step, so the smooth dark
    gradients of a blur do not band on the screen */
 vec2 q = gl_FragCoord.xy;
@@ -431,7 +370,8 @@ float n2 = fract(sin(dot(q + 17.31, vec2(39.3468, 11.135))) * 24634.6345);
 rgb += (n1 + n2 - 1.0) / 255.0;
 /* shadow is straight color and alpha, and s carries its alpha already:
    premultiplied once, here */
-cogl_color_out = vec4(rgb * a + shadow.rgb * s, a + s) * opacity;
+/* nothing until its colors have come: there is no other glass to show */
+cogl_color_out = vec4(rgb * a + shadow.rgb * s, a + s) * opacity * step(0.5, pal.x);
 `;
 
 // Nothing below makes a boxed value (a matrix, a rect, a point) while it
@@ -781,8 +721,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._up.set_uniform_1i(this._upLoc.tex, 0);
         this._mask = pipeline(MASK_DECL, MASK_CODE);
         this._loc = {};
-        for (const u of ['tex', 'size', 'rect', 'radius', 'grade', 'shadow', 'shadowGeom', 'gradeEdge', 'opacity', 'soft',
-            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'tint', 'pull', 'cut', 'cutRect',
+        for (const u of ['tex', 'size', 'rect', 'radius', 'shadow', 'shadowGeom', 'opacity', 'soft',
+            'uvScale', 'sharp', 'sharpScale', 'lens', 'edgeDark', 'under', 'cut', 'cutRect',
             'pal', 'pal2', 'pSurf', 'pLo', 'pHi', 'pGlow', 'src'])
             this._loc[u] = this._mask.get_uniform_location(u);
         this._mask.set_uniform_1i(this._loc.tex, 0);
@@ -804,8 +744,7 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._offset = params.offset ?? BLUR_OFFSET;
         this._f('lens', ...this._lens);
         this.setEdgeDark(0);
-        this.setTint(0, 0, 0, 0);
-        this.setPull(0, 0, 0, 0);
+        this.setUnder(0);
         this.setPalette(null);
         this._source = null;
         this._f('src', 0, 0, 0, 0);
@@ -816,10 +755,8 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._levels = [];
         this._v2 = [0, 0];
         this._v4 = [0, 0, 0, 0];
-        this.setGrade(SATURATE, CONTRAST, BRIGHTNESS);
         this.setShadowGeom(SHADOW.y, SHADOW.blur);
         this.setShadow(0, 0, 0, 0);
-        this.setGradeEdge(0);
         this.setSoft(1);
     }
 
@@ -842,28 +779,14 @@ class PulsarLiveBlur extends Clutter.Effect {
         this._f('shadowGeom', y, blur);
     }
 
-    setGrade(saturate, contrast, brightness) {
-        this._f('grade', saturate, contrast, brightness);
-        this.queue_repaint();
-    }
-
-    setGradeEdge(px) {
-        this._f('gradeEdge', px);
-    }
-
     setEdgeDark(v) {
         this._f('edgeDark', v);
     }
 
-    // straight (not premultiplied) color and alpha, painted over the blur
-    setTint(r, g, b, a) {
-        this._f('tint', r, g, b, a);
-        this.queue_repaint();
-    }
-
-    // the color whose lightness what is beneath is drawn toward, and how far
-    setPull(r, g, b, k) {
-        this._f('pull', r, g, b, k);
+    // how opaque the ground GTK paints over this glass in the surface's
+    // own color is (a popup's body), so the shader can take it back out
+    setUnder(a) {
+        this._f('under', a);
         this.queue_repaint();
     }
 
@@ -1925,7 +1848,7 @@ class Surface {
         this._under = new Mirror(follow);
         this._under.connect('destroy', () => (this._under = null));
         this._backdrop = new St.Widget({width: 1, height: 1});
-        this._blur = new LiveBlur({lens: SURFACE_LENS, levels: PALETTE_LEVELS, offset: PALETTE_OFFSET});
+        this._blur = new LiveBlur({lens: SURFACE_LENS});
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         this._under.add_child(this._backdrop);
         parent.insert_child_below(this._under, host);
@@ -2039,8 +1962,6 @@ class Surface {
             const bg = hasTint ? tint : node.get_background_color();
             // A light surface wants the light laid over, not added.
             this._lt = bg.alpha > 0 && luminance(bg) > 0.5 ? 1 : 0;
-            this._blur.setTint(...(hasTint ? [...rgb(tint), tint.alpha / 255] : [0, 0, 0, 0]));
-            this._blur.setPull(...(hasTint ? [...rgb(tint), GLASS_PULL] : [0, 0, 0, 0]));
             const tone = this._opts.tone?.() ?? null;
             this._paletteTone = tone;
             const pick = name => {
@@ -2051,17 +1972,10 @@ class Surface {
                 (tone === 'warn' && pick('-pulsar-light-warn')) ||
                 pick('-pulsar-light') || node.get_foreground_color();
             this._light.set('acc', ...rgb(accent));
-            if (hasTint) {
-                // the theme's ramp: deep ground below the surface, the
-                // accent above (dark); on a light theme a tinted shade
-                // below, the surface itself on top
-                const surf = oklab(rgb(tint)), acc = oklab(rgb(accent));
+            if (bg.alpha > 0) {
                 deepShadow(this._lt);   // reads the bar's deep ground
-                const lo = this._lt
-                    ? mixLab(surf, mixLab(oklab(rgb(node.get_foreground_color())), acc, 0.5), 0.45)
-                    : oklab(lastDeep ?? [0, 0, 0]);
-                const hi = this._lt ? surf : mixLab(surf, acc, 0.45);
-                this._blur.setPalette({surf, lo, hi, glow: acc}, this._owner.lighting ? PALETTE.light : 0);
+                this._blur.setPalette(paletteFor(rgb(bg), rgb(node.get_foreground_color()), rgb(accent),
+                    this._lt, lastDeep ?? [0, 0, 0]), this._owner.lighting ? PALETTE.light : 0);
             } else {
                 this._blur.setPalette(null);
             }
@@ -2074,7 +1988,6 @@ class Surface {
             this._blur.setShadow(...deepShadow(this._lt), SHADOW.alpha[i]);
             this._blur.setEdgeDark(0);
             this._light.set('darkEdge', EDGE_DARK[i]);
-            this._blur.setGrade(...(this._lt ? SURFACE_GRADE.light : SURFACE_GRADE.dark));
             this._radius = node.get_border_radius(St.Corner.TOPLEFT);
         }
         this._queue();
@@ -2291,9 +2204,8 @@ class PanelGlass {
         this._actor.add_constraint(new Clutter.BindConstraint({source: panelBox, coordinate: Clutter.BindCoordinate.ALL}));
         this._blur = new LiveBlur();
         this._blur.setSoft(0);
-        // the bar's tint is St's; draw what is beneath toward its color
-        this._blur.setPull(...groundPull());
-        Main.panel.connectObject('style-changed', () => this._blur.setPull(...groundPull()), this);
+        // the bar's color is the shader's (the sheet clears St's)
+        Main.panel.connectObject('style-changed', () => this._palette(), this);
         this._actor.add_effect_with_name('pulsar-blur', this._blur);
         Main.layoutManager.uiGroup.insert_child_below(this._actor, panelBox);
 
@@ -2319,6 +2231,7 @@ class PanelGlass {
         panelBox.connectObject('notify::allocation', () => this._shape(), this);
         Main.layoutManager.connectObject('monitors-changed', () => this._shape(), this);
         this._shape();
+        this._palette();
     }
 
     _shape() {
@@ -2345,6 +2258,21 @@ class PanelGlass {
         // dark text: a light theme, where the light is laid over, not added
         this._brow.set('lt', luminance(fg) < 0.5 ? 1 : 0);
         this._line.queue_redraw();
+        this._palette();
+    }
+
+    // The bar's glass, on its own color: below it on a dark theme the deep
+    // ground's darker ink (the bar is the deep ground itself). No light:
+    // nothing opened it. Transparent (the overview), it keeps the last.
+    _palette() {
+        const tint = panelTint();
+        if (!tint || !this._line)
+            return;
+        const node = this._line.get_theme_node();
+        const [ok, acc] = node.lookup_color('-pulsar-light', true);
+        const fg = node.get_foreground_color();
+        const lt = luminance(tint) > 0.5;
+        this._blur.setPalette(paletteFor(rgb(tint), rgb(fg), rgb(ok ? acc : fg), lt, deepShadow(false)));
     }
 
     set lit(v) {
@@ -2559,13 +2487,8 @@ class WindowGlass {
         this._win = actor.meta_window;
         this._popup = popup;
         this._backdrop = new St.Widget({reactive: false, width: 1, height: 1});
-        this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS,
-            levels: SURFACE_LEVELS, offset: SURFACE_OFFSET});
-        // vibrancy: what is beneath lifted, so its color reads through the
-        // window's tint instead of muddying it
-        this._blur.setGrade(...windowGrade());
-        this._blur.setPull(...groundPull());
-        this._blur.setGradeEdge(popup ? 0 : WINDOW_GRADE_EDGE);
+        this._blur = new LiveBlur({lens: popup ? [0, 0, 0, 0] : WINDOW_LENS});
+        this._palette();
         if (popup) {
             this._blur.setCut(() => {
                 // one plane: an RGBA buffer, which a GTK popup always is
@@ -2579,11 +2502,8 @@ class WindowGlass {
                 return [tex, b.x, b.y, buffer.width, buffer.height];
             });
         }
-        // a new sheet (a theme, a Dark Style flip) may be the other scheme
-        Main.panel.connectObject('style-changed', () => {
-            this._blur.setGrade(...windowGrade());
-            this._blur.setPull(...groundPull());
-        }, this);
+        // a new sheet (a theme, a Dark Style flip) brings new colors
+        owner.colors.connectObject('style-changed', () => this._palette(), this);
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         actor.insert_child_at_index(this._backdrop, 0);
         this._backdrop.connect('destroy', () => (this._backdrop = null));
@@ -2607,6 +2527,26 @@ class WindowGlass {
             this);
         this._layout();
         this._uncull();
+    }
+
+    // The glass in the window's own color, which GTK leaves to it (gtk.css
+    // clears the window ground), or a popup's in the popover's: GTK paints
+    // a popup's body at the alpha the sheet gives -pulsar-popover, for the
+    // cut to find its shape, and the shader takes that back out. No light:
+    // nothing opened a window, and a popup is not lit yet.
+    _palette() {
+        const node = this._owner.colors.get_theme_node();
+        const [ok, c] = node.lookup_color(this._popup ? '-pulsar-popover' : '-pulsar-window', false);
+        if (!ok) {
+            this._blur.setPalette(null);
+            return;
+        }
+        const [okAcc, acc] = node.lookup_color('-pulsar-light', false);
+        const fg = node.get_foreground_color();
+        const lt = luminance(c) > 0.5;
+        deepShadow(lt);   // reads the bar's deep ground
+        this._blur.setPalette(paletteFor(rgb(c), rgb(fg), rgb(okAcc ? acc : fg), lt, lastDeep ?? [0, 0, 0]));
+        this._blur.setUnder(this._popup ? c.alpha / 255 : 0);
     }
 
     // GTK tells the compositor which parts of a window are opaque (cards,
@@ -2711,7 +2651,7 @@ class WindowGlass {
     destroy() {
         this._win.disconnectObject(this);
         this._actor.disconnectObject(this);
-        Main.panel.disconnectObject(this);
+        this._owner.colors.disconnectObject(this);
         this._recull();
         this._cull.destroy();
         this._backdrop?.destroy();
@@ -3625,6 +3565,17 @@ export class Glass {
             this);
     }
 
+    // GTK's colors for the windows' glass, off the sheet's
+    // .pulsar-glass-colors: a stand-in that is never seen.
+    get colors() {
+        if (!this._colors) {
+            this._colors = new St.Widget({style_class: 'pulsar-glass-colors', reactive: false,
+                opacity: 0, width: 0, height: 0});
+            Main.layoutManager.uiGroup.add_child(this._colors);
+        }
+        return this._colors;
+    }
+
     // Pulsar's command menu (Super+Space) is a GTK window that should read
     // as one of the Shell's menus, so it gets their glass, not a window's:
     // a Surface on the window actor, its colors and shape off a stand-in box
@@ -3800,6 +3751,8 @@ export class Glass {
         // nothing sees windows close while this is off (a lock): their
         // pids may be other processes' by the next Glass
         GTK4.clear();
+        this._colors?.destroy();
+        this._colors = null;
         for (const [a, cull] of this._popups ?? []) {
             a.disconnectObject(this);
             cull.recull();

@@ -970,23 +970,26 @@ print("" if d is None else d)' "$1" "$2"; }
     grep -q 'pulsar-theme (managed' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
 }
 
-@test "glass windows follow the Glass tint slider, a step more opaque than the Shell's glass" {
+@test "glass windows: GTK paints no window ground, the Shell's glass is the window's color" {
     fake_dconf
     setkey /org/gnome/shell/extensions/pulsar-theme/glass true
     setkey /org/gnome/shell/extensions/pulsar-theme/window-glass true
     setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
-    # clear: the Shell's glass at 0.35, windows at 0.42
-    setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint 0.0
-    python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.42)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
-    # the default: 0.72, as windows had before they followed the slider
-    setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint 0.5
-    python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.72)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
-    # fully tinted: capped at 0.95, never opaque, or the blur would be pointless
-    setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint 1.0
-    python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.95)' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    # clear at any tint: the extension draws the ground on the theme's palette
+    for tint in 0.0 0.5 1.0; do
+        setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint "$tint"
+        python3 "$ENGINE" set pulsar --no-restart >/dev/null
+        grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0);' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    done
+    # the Shell's sheet carries GTK's grounds for that glass, the popover's
+    # at the alpha GTK paints its body
+    for mode in dark light; do
+        sheet="$XDG_STATE_HOME/pulsar-theme/shell/gnome-shell-$mode.css"
+        grep -A3 '^\.pulsar-glass-colors {$' "$sheet" | grep -q -- '-pulsar-window: #[0-9a-f]\{6\};'
+        grep -A3 '^\.pulsar-glass-colors {$' "$sheet" | grep -q -- '-pulsar-popover: rgba([0-9, ]*, 0\.5);'
+        # the bar's color is the glass's too: St paints none
+        grep -q -- '^\.pulsar-glass #panel { background-color: transparent; -pulsar-glass-tint: rgba(' "$sheet"
+    done
 }
 
 # Stock-grey leaks: a state stock styles with its own grey (`.button:active:hover`)
@@ -1076,8 +1079,10 @@ print("" if d is None else d)' "$1" "$2"; }
     setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     css="$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
-    # a step more opaque than the window ground (0.72 at the default tint)
-    grep -q -- '--popover-bg-color: alpha(#[0-9a-f]*, 0.77)' "$css"
+    # a popover's body at POPUP_GROUND, which the Shell finds its shape by
+    # and takes back out of the glass
+    grep -q -- '--popover-bg-color: alpha(#[0-9a-f]*, 0.5);' "$css"
+    # a floating dialog: a step more opaque than the Shell's glass (0.77 at the default tint)
     grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0.77)' "$css"
     # every GTK: the in-window sheet solid, inside each variant's block
     grep -q '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css"

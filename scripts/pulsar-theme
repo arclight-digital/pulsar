@@ -286,6 +286,10 @@ PALETTE_KEYS = [
     "bright_red", "bright_yellow", "bright_green", "bright_cyan", "bright_blue", "bright_magenta",
 ]
 SURFACE_KEYS = ["window", "view", "headerbar", "sidebar", "card", "popover"]
+# How opaque GTK paints a glass popover's body (see popover_bg): enough for
+# the Shell extension to tell it from the popup's shadow (about 0.25; it
+# takes 0.3 to 0.42 as the edge), little enough to take back out cleanly.
+POPUP_GROUND = 0.5
 
 
 class Variant:
@@ -403,6 +407,7 @@ class Variant:
         # dash) is clearer than the bar and the windows: what is behind
         # should read through as soft shapes, not only as color.
         c["surface_alpha"] = round(max(0.2, self.glass_alpha - 0.08), 3)
+        c["popup_ground"] = POPUP_GROUND
         if self.mode == "dark":
             c["glass_panel"] = f"rgba({self.p['background_deep'].rgb}, {self.glass_alpha})"
             c["panel_shadow"] = "rgba(0, 0, 0, 0.3)"
@@ -428,10 +433,10 @@ class Variant:
         g = self.window_glass
         def glass(k, a):
             return f"alpha({self.p[k].hex}, {a})" if g else self.p[k].hex
-        # The window ground follows the Glass tint slider like the Shell's
-        # glass does, a step more opaque for text read on it: 0.72 at the
-        # slider's default (0.65), 0.95 at most.
-        c["window_bg"] = glass("window", round(min(0.95, self.glass_alpha + 0.07), 3))
+        # The window ground is the glass's: the extension draws it in the
+        # window's own color, on the theme's palette, the same glass as the
+        # Shell's menus (Nick 2026-11-07: one glass), so GTK paints none.
+        c["window_bg"] = glass("window", 0)
         c["view_bg"] = glass("view", round(min(0.95, self.glass_alpha + 0.07), 3))
         c["headerbar_bg"] = glass("headerbar", 0.35)
         c["sidebar_bg"] = glass("sidebar", 0.35)
@@ -441,7 +446,11 @@ class Variant:
         # dialog with no parent window). Mostly text over an app's busy
         # content: a step more opaque again than the window ground.
         pa = round(min(0.95, self.glass_alpha + 0.12), 3)
-        c["popover_bg"] = glass("popover", pa)
+        # A popover's body is the glass's too, but GTK must still paint it
+        # at POPUP_GROUND: the extension finds a popup's shape (its body and
+        # arrow, not its shadow) by alpha, and takes this paint back out
+        # under it (the Shell sheet's -pulsar-popover carries the alpha).
+        c["popover_bg"] = glass("popover", POPUP_GROUND)
         c["dialog_bg"] = glass("popover", pa)
         # A libadwaita dialog inside its window (preferences, about, an alert)
         # is drawn into the window's own buffer, over the page it covers,
