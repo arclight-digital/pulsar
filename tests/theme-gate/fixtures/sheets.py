@@ -1,8 +1,10 @@
 #!/usr/bin/python3
 """HARNESS FIXTURE: a libadwaita window over a busy page, with a dialog
 inside it (an in-window sheet, which only GTK's own backdrop-filter can
-blur) and, with --float, an alert of its own (a dialog with no parent: a
-window, so the Shell's glass is behind it). The sheets scenario shoots it.
+blur) and, with --float, a floating alert: libadwaita floats a dialog in
+a window of its own when its parent is a plain GtkWindow (the "Tool"
+window here), so Mutter makes it a dialog and the Shell's glass is behind
+it. The sheets scenario shoots it.
 
   sheets.py [--float]
 """
@@ -61,11 +63,14 @@ class SheetsApp(Adw.Application):
         sheet.set_child(st)
         sheet.present(win)
         if self.floating:
-            alert = Adw.AlertDialog(heading="Discard changes?", body="A dialog with no parent window floats on its own.")
+            alert = Adw.AlertDialog(heading="Discard changes?", body="A floating dialog: a window of its own over its parent.")
             alert.add_response("cancel", "Cancel")
             alert.add_response("discard", "Discard")
             alert.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE)
-            alert.present(None)
+            tool = Gtk.Window(application=self, title="Tool", default_width=640, default_height=420)
+            tool.set_child(Gtk.Label(label="A plain window, the alert's parent"))
+            tool.present()
+            alert.present(tool)
 
 
 if __name__ == "__main__":

@@ -2107,19 +2107,20 @@ def sheets(only):
                      SHEETS_APP: [W // 2 + 20, 80, W // 2 - 60, H - 160]}
             eval_js("let c=" + json.dumps(cells) + "; for (const a of global.get_window_actors()) { const w=a.meta_window; "
                     "const id=w.get_gtk_application_id?.(), r=c[id]; "
-                    # the floating alert shares the fixture's app id: its main window is the one titled Sheets
+                    # the fixture's other windows share its app id: its main one is titled Sheets
                     "if (r && !w.get_transient_for() && (id !== '" + SHEETS_APP + "' || w.get_title() === 'Sheets')) "
                     "w.move_resize_frame(false, ...r); } 1")
-            # the floating alert over the editor's view, not behind the fixture
-            eval_js("for (const a of global.get_window_actors()) { const w=a.meta_window; "
-                    # a dialog with no parent has no application id of its own
-                    "if ((w.get_gtk_application_id?.() ?? '" + SHEETS_APP + "') === '" + SHEETS_APP + "' && "
-                    "w.get_title() !== 'Sheets' && !w.get_transient_for()) { "
-                    "const f=w.get_frame_rect(); w.move_frame(false, " + str(W // 4) + " - f.width / 2, " + str(H // 10) + "); "
-                    "w.raise(); } } 1")
+            # the alert's parent over the editor's code, the alert centered on it
+            eval_js("const ws=global.get_window_actors().map(a => a.meta_window); "
+                    "const tool=ws.find(w => w.get_title() === 'Tool'); "
+                    "if (tool) { const f=tool.get_frame_rect(); tool.move_frame(false, " + str(W // 4) + " - f.width / 2, " + str(H // 10) + "); "
+                    "for (const w of ws) if (w.get_transient_for() === tool) { const p=tool.get_frame_rect(), r=w.get_frame_rect(); "
+                    "w.move_frame(false, p.x + (p.width - r.width) / 2, p.y + (p.height - r.height) / 2); w.raise(); } } 1")
             time.sleep(2.5)
             screenshot(f"{slug}-{mode}-sheets")
-            print(f"  {slug:12} {mode:5} shot", flush=True)
+            types = eval_js("global.get_window_actors().map(a => a.meta_window).filter(w => w.get_transient_for())"
+                            ".map(w => w.get_title() + ':' + w.get_window_type()).join(',')")[1]
+            print(f"  {slug:12} {mode:5} shot (transient windows: {types})", flush=True)
     kill_apps()
     subprocess.run(["pkill", "-f", "fixtures/sheets.py"], capture_output=True)
     stop_shell()

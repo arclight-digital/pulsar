@@ -2675,6 +2675,8 @@ class Uncull {
 
 // Popovers, menus and tooltips: GTK's are windows of their own, opaque, and
 // they open over glass windows.
+// floating dialogs: Mutter makes a window with a parent one of these
+const DIALOG_TYPES = [Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
 const POPUP_TYPES = [Meta.WindowType.DROPDOWN_MENU, Meta.WindowType.POPUP_MENU, Meta.WindowType.COMBO,
     Meta.WindowType.TOOLTIP, Meta.WindowType.MENU];
 
@@ -2736,6 +2738,8 @@ class WindowGlass {
             'notify::fullscreen', () => this._layout(),
             'notify::maximized-horizontally', () => this._layout(),
             'notify::maximized-vertically', () => this._layout(),
+            // a parent set after it mapped makes it a dialog
+            'notify::window-type', () => this._palette(),
             this);
         actor.connectObject(
             'destroy', () => owner.forgetWindow(actor),
@@ -2755,11 +2759,14 @@ class WindowGlass {
     // The glass in the window's own color, which GTK leaves to it (gtk.css
     // clears the window ground), or a popup's in the popover's: GTK paints
     // a popup's body at the alpha the sheet gives -pulsar-popover, for the
-    // cut to find its shape, and the shader takes that back out. No light:
-    // nothing opened a window, and a popup is not lit yet.
+    // cut to find its shape, and the shader takes that back out. A dialog
+    // is in the popover's color too (gtk.css clears its ground; Nick
+    // 2026-11-08: lighter, like the popover), with nothing to take out. No
+    // light: nothing opened a window, and a popup is not lit yet.
     _palette() {
         const node = this._owner.colors.get_theme_node();
-        const [ok, c] = node.lookup_color(this._popup ? '-pulsar-popover' : '-pulsar-window', false);
+        const dialog = DIALOG_TYPES.includes(this._win.get_window_type());
+        const [ok, c] = node.lookup_color(this._popup || dialog ? '-pulsar-popover' : '-pulsar-window', false);
         if (!ok) {
             this._blur.setPalette(null);
             return;

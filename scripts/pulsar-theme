@@ -442,21 +442,23 @@ class Variant:
         # window's own color, on the theme's palette, the same glass as the
         # Shell's menus (Nick 2026-11-07: one glass), so GTK paints none.
         c["window_bg"] = glass("window", 0)
-        c["view_bg"] = glass("view", round(min(0.95, self.glass_alpha + 0.07), 3))
+        # Views too (Nick 2026-11-08: clear views and dialogs): the content
+        # pane is the window's glass.
+        c["view_bg"] = glass("view", 0)
         c["headerbar_bg"] = glass("headerbar", 0.35)
         c["sidebar_bg"] = glass("sidebar", 0.35)
         c["window_backdrop"] = glass("window", 0.35)
         # Menus and popovers are windows of their own, and the extension blurs
-        # what is beneath each one; so are dialogs that float (an alert, a
-        # dialog with no parent window). Mostly text over an app's busy
-        # content: a step more opaque again than the window ground.
-        pa = round(min(0.95, self.glass_alpha + 0.12), 3)
+        # what is beneath each one; so are dialogs that float. Their ground is
+        # the glass's (Nick 2026-11-08), drawn in the popover's color, lighter
+        # than a window's as libadwaita has its dialogs (glass.js WindowGlass
+        # takes it for dialog windows), so GTK paints none.
         # A popover's body is the glass's too, but GTK must still paint it
         # at POPUP_GROUND: the extension finds a popup's shape (its body and
         # arrow, not its shadow) by alpha, and takes this paint back out
         # under it (the Shell sheet's -pulsar-popover carries the alpha).
         c["popover_bg"] = glass("popover", POPUP_GROUND)
-        c["dialog_bg"] = glass("popover", pa)
+        c["dialog_bg"] = glass("popover", 0)
         # A libadwaita dialog inside its window (preferences, about, an alert)
         # is drawn into the window's own buffer, over the page it covers,
         # where the Shell's blur cannot reach: its sheet is a .background, at
@@ -475,15 +477,16 @@ class Variant:
             ("window-bg", "window"), ("view-bg", "view"), ("headerbar-bg", "headerbar"),
             ("headerbar-backdrop", "window"), ("sidebar-bg", "sidebar"), ("sidebar-backdrop", "window")))
         if g:
-            c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['window'].hex};\n}}\n"
+            # in the popover's color, as the floating dialogs' glass is
+            c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
                                  f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
                                  f"window.fullscreen {{\n{full}}}\n")
             # the glass is the filter's (backdrop_svg): it paints the
             # whole sheet, so GTK paints none over it
             c["sheet_glass"] = "".join(
                 f"{sel} {{\n  background-color: transparent;\n"
-                f"  backdrop-filter: blur({SHEET_BLUR}px) url(\"{BACKDROP_SVG}#{self.mode}-{k}\");\n}}\n"
-                for sel, k in ((sheet, "window"), (alert, "popover"), ("toast", "popover")))
+                f"  backdrop-filter: blur({SHEET_BLUR}px) url(\"{BACKDROP_SVG}#{self.mode}-popover\");\n}}\n"
+                for sel in (sheet, alert, "toast"))
         else:
             c["glass_sheets"] = c["sheet_glass"] = ""
         # Over the blur the ground is close in value to the cards on it, and
@@ -1495,7 +1498,7 @@ def sheet_palettes(v):
     above, toward the accent on dark, the surface itself on light."""
     fg, acc, lt = v.p["foreground"], v.p["accent"], v.mode == "light"
     out = {}
-    for k in ("window", "popover"):
+    for k in ("popover",):
         sf = v.p[k]
         sl, al, fl = sf.oklab(), acc.oklab(), fg.oklab()
         mix = lambda a, b, t: [x + (y - x) * t for x, y in zip(a, b)]

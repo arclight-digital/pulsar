@@ -1133,27 +1133,28 @@ print("" if d is None else d)' "$1" "$2"; }
     # a popover's body at POPUP_GROUND, which the Shell finds its shape by
     # and takes back out of the glass
     grep -q -- '--popover-bg-color: alpha(#[0-9a-f]*, 0.5);' "$css"
-    # a floating dialog: a step more opaque than the Shell's glass (0.77 at the default tint)
-    grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0.77)' "$css"
-    # every GTK: the in-window sheet solid, inside each variant's block
-    grep -q '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css"
+    # a floating dialog and a view: no ground of their own, the glass is it
+    # (a dialog's in the popover's color: glass.js WindowGlass)
+    grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
+    grep -q -- '--view-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
+    # every GTK: the in-window sheet solid, in the popover's color, inside each variant's block
+    grep -A1 '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css" |
+        grep -q '^  background-color: #ffffff;$'   # Pulsar light's popover
     grep -q '^toast { background-color: #[0-9a-f]*; color: #[0-9a-f]*; }$' "$css"
     # fullscreen has no blur behind it: its grounds solid
     grep -A1 '^window.fullscreen {$' "$css" | grep -q -- '^  --window-bg-color: #[0-9a-f]*;$'
     # GTK 4.22: glass, in top-level blocks only a GTK that knows reduced motion keeps
     [ "$(grep -c '^@media (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: no-preference), (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: reduce) {$' "$css")" -eq 2 ]
-    # each the palette glass of its own surface and scheme, painting the whole sheet
-    [ "$(grep -c 'backdrop-filter: blur(12px) url("pulsar-backdrop.svg#\(light\|dark\)-\(window\|popover\)");' "$css")" -eq 6 ]
+    # each the palette glass of the popover's color in its scheme, painting the whole sheet
+    [ "$(grep -c 'backdrop-filter: blur(12px) url("pulsar-backdrop.svg#\(light\|dark\)-popover");' "$css")" -eq 6 ]
     [ "$(grep -B1 'backdrop-filter: blur(12px)' "$css" | grep -c '^  background-color: transparent;$')" -eq 6 ]
-    # the sheet in the window's color; the alert and the toast in the popover's
-    [ "$(grep -c 'url("pulsar-backdrop.svg#\(light\|dark\)-popover")' "$css")" -eq 4 ]
     # the gated blocks come last, so they win over the solid ones
     last_solid=$(grep -n '^toast { background-color' "$css" | tail -1 | cut -d: -f1)
     first_gate=$(grep -n 'prefers-reduced-motion' "$css" | head -1 | cut -d: -f1)
     [ "$last_solid" -lt "$first_gate" ]
-    # and the filters they name sit beside gtk.css, one per surface and scheme
+    # and the filters they name sit beside gtk.css, one per scheme
     svg="$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg"
-    for f in light-window light-popover dark-window dark-popover; do grep -q "<filter id=\"$f\"" "$svg"; done
+    for f in light-popover dark-popover; do grep -q "<filter id=\"$f\"" "$svg"; done
     run python3 "${REPO}/tests/fixtures/sheet-filter-check.py" "$svg" "$css"
     [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
