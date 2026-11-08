@@ -463,10 +463,9 @@ class Variant:
         # the window ground's alpha, and the page read through it sharp. So
         # is a toast. Solid for every GTK; sheet_glass (see the gtk4 target)
         # gives GTK 4.22 and later, which can blur what is behind a widget
-        # themselves (backdrop-filter), their glass back. GTK lays that blur
-        # over the page rather than in its place, and the page is only as
-        # opaque as the window ground, so the page stayed readable under it;
-        # BACKDROP_SVG makes the blur opaque first.
+        # themselves (backdrop-filter), their glass back: the Shell's
+        # palette glass, as an SVG filter (backdrop_svg), opaque, so the
+        # page is not read through it.
         sheet = "dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet"
         alert = "dialog-host > dialog.alert sheet"
         # A fullscreen window has no blur behind it (the extension drops it,
@@ -479,9 +478,11 @@ class Variant:
             c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['window'].hex};\n}}\n"
                                  f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
                                  f"window.fullscreen {{\n{full}}}\n")
+            # the glass is the filter's (backdrop_svg): it paints the
+            # whole sheet, so GTK paints none over it
             c["sheet_glass"] = "".join(
-                f"{sel} {{\n  background-color: alpha({self.p[k].hex}, {pa});\n"
-                f"  backdrop-filter: blur(20px) url(\"{BACKDROP_SVG}#opaque\");\n}}\n"
+                f"{sel} {{\n  background-color: transparent;\n"
+                f"  backdrop-filter: blur({SHEET_BLUR}px) url(\"{BACKDROP_SVG}#{self.mode}-{k}\");\n}}\n"
                 for sel, k in ((sheet, "window"), (alert, "popover"), ("toast", "popover")))
         else:
             c["glass_sheets"] = c["sheet_glass"] = ""
@@ -1395,19 +1396,122 @@ def window_glass():
 # nested inside a variant's block might take that block down with it.
 MOTION = ("(prefers-reduced-motion: no-preference)", "(prefers-reduced-motion: reduce)")
 
-# The filter sheet_glass runs after the blur: every pixel of it opaque, so it
-# covers the page it was made from instead of being laid over it. Beside
-# gtk.css, where its url() resolves, and where the Flatpak override reaches.
+# The filters sheet_glass runs after the blur: the Shell's glass (glass.js,
+# PALETTE and the mask shader) redone as an SVG filter, so an in-window
+# sheet is the same glass as a menu or the window around it. Beside gtk.css,
+# where its url() resolves, and where the Flatpak override reaches.
 BACKDROP_SVG = "pulsar-backdrop.svg"
-BACKDROP_SVG_TEXT = """<svg xmlns="http://www.w3.org/2000/svg">
-  <!-- written by pulsar-theme: gtk.css's in-window glass needs it -->
-  <filter id="opaque" color-interpolation-filters="sRGB">
-    <feComponentTransfer>
-      <feFuncA type="linear" slope="0" intercept="1"/>
+# glass.js's PALETTE, as the sheets take it: the shapes beneath (detail)
+# measured against their wide average (MEAN, about the shader's 48px ring),
+# which moves the whole glass a little (ambient); the ramp's reach (range)
+# and the cap on how far the glass strays from the surface (within), in
+# OKLab; and a colored backdrop's pull, at the Glass tint slider's default.
+SHEET_PALETTE = {"detail": 0.4, "ambient": 0.2, "range": 0.12, "within": 0.08, "pull": 0.2}
+SHEET_BLUR, SHEET_MEAN = 12, 24
+# Table points. GTK's GPU renderers hold 32 per feComponentTransfer, all
+# channels together, and refuse more ("tables too big in component
+# transfer"), dropping the filter: the lightness steps run on red alone, 31
+# points; the ramp's colors take 9 a channel, odd so the surface is one.
+SHEET_STEPS, SHEET_RAMP = 31, 9
+
+
+def _tanh(x):
+    return math.tanh(max(-9.0, min(9.0, x)))
+
+
+def sheet_filter(fid, surf, lo, hi, ground):
+    """One surface's glass as an SVG filter, in sRGB values (the shader's
+    OKLab steps become lookup tables). What GTK hands it is the page beneath
+    the sheet, blurred; where the page is clear, the window's glass is
+    beneath, so it goes over the window's color first. Then, as the shader:
+    each point's lightness against its wide average, eased (softLimit), plus
+    a little of that average, read along the surface's ramp (lo, surf, hi)
+    and kept within reach of the surface; then part of the backdrop's own
+    color. Every channel is coded around 0.5 so differences survive the
+    filter's clamp to 0..1."""
+    P = SHEET_PALETTE
+    sL = surf.oklab()[0]
+    pts = [i / (SHEET_STEPS - 1) for i in range(SHEET_STEPS)]
+    rpts = [i / (SHEET_RAMP - 1) for i in range(SHEET_RAMP)]
+    num = lambda v: f"{v:.4f}".rstrip("0").rstrip(".") if v else "0"
+    table = lambda vals: " ".join(num(v) for v in vals)
+    # gray sRGB value -> OKLab L (a gray's L is the cube root of its linear value)
+    lin = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    to_l = table(lin(g) ** (1 / 3) for g in pts)
+    # d = 0.5 + (local - mean) / 2  ->  0.5 + softLimit(detail * (local - mean) / range) / 2
+    detail = table(0.5 + _tanh(P["detail"] * (2 * d - 1) / P["range"]) / 2 for d in pts)
+    # the average's share: 0.5 + ambient * (mean - surf) / range / 2, a line
+    slope = P["ambient"] / P["range"] / 2
+    # the coded lightness -> the ramp's color, capped as the shader caps it
+    s, l_, h_ = surf.oklab(), lo.oklab(), hi.oklab()
+    ramp = []
+    for e in rpts:
+        u = 2 * e - 1
+        end = l_ if u < 0 else h_
+        c = [a + (b - a) * abs(u) for a, b in zip(s, end)]
+        dv = [a - b for a, b in zip(c, s)]
+        de = math.sqrt(sum(v * v for v in dv))
+        if de > 1e-6:
+            k = P["within"] * _tanh(de / P["within"]) / de
+            c = [b + v * k for b, v in zip(s, dv)]
+        ramp.append(from_oklab(*c))
+    luma = "0.2126 0.7152 0.0722 0 0"
+    # the backdrop's color less its lightness, coded around 0.5
+    chroma = "\n".join(
+        " ".join(num((0.5 if i == j else 0) - 0.5 * w) for j, w in enumerate((0.2126, 0.7152, 0.0722))) + " 0 0.5"
+        for i in range(3))
+    pull = P["pull"]
+    return f"""  <filter id="{fid}" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1">
+    <feFlood flood-color="{ground.hex}" result="ground"/>
+    <feComposite in="SourceGraphic" in2="ground" operator="over" result="back"/>
+    <feColorMatrix in="back" type="matrix" result="gray" values="{luma} {luma} {luma} 0 0 0 1 0"/>
+    <feComponentTransfer in="gray" result="local">
+      <feFuncR type="table" tableValues="{to_l}"/>
     </feComponentTransfer>
+    <feGaussianBlur in="local" stdDeviation="{SHEET_MEAN}" edgeMode="duplicate" result="mean"/>
+    <feComposite in="local" in2="mean" operator="arithmetic" k2="0.5" k3="-0.5" k4="0.5" result="diff"/>
+    <feComponentTransfer in="diff" result="shape">
+      <feFuncR type="table" tableValues="{detail}"/>
+    </feComponentTransfer>
+    <feComponentTransfer in="mean" result="ambient">
+      <feFuncR type="linear" slope="{num(slope)}" intercept="{num(0.5 - slope * sL)}"/>
+    </feComponentTransfer>
+    <feComposite in="shape" in2="ambient" operator="arithmetic" k2="1" k3="1" k4="-0.5" result="sum"/>
+    <feColorMatrix in="sum" type="matrix" result="light" values="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 1 0"/>
+    <feComponentTransfer in="light" result="glass">
+      <feFuncR type="table" tableValues="{table(c.r for c in ramp)}"/>
+      <feFuncG type="table" tableValues="{table(c.g for c in ramp)}"/>
+      <feFuncB type="table" tableValues="{table(c.b for c in ramp)}"/>
+    </feComponentTransfer>
+    <feColorMatrix in="back" type="matrix" result="hue" values="{chroma.replace(chr(10), ' ')} 0 0 0 1 0"/>
+    <feComposite in="glass" in2="hue" operator="arithmetic" k2="1" k3="{num(2 * pull)}" k4="{num(-pull)}"/>
   </filter>
-</svg>
 """
+
+
+def sheet_palettes(v):
+    """A variant's sheet surfaces, as glass.js's paletteFor ramps them:
+    below, the deep ground on a dark theme or a tinted shade on a light one;
+    above, toward the accent on dark, the surface itself on light."""
+    fg, acc, lt = v.p["foreground"], v.p["accent"], v.mode == "light"
+    out = {}
+    for k in ("window", "popover"):
+        sf = v.p[k]
+        sl, al, fl = sf.oklab(), acc.oklab(), fg.oklab()
+        mix = lambda a, b, t: [x + (y - x) * t for x, y in zip(a, b)]
+        if lt:
+            lo, hi = from_oklab(*mix(sl, mix(fl, al, 0.5), 0.45)), sf
+        else:
+            lo, hi = v.p["background_deep"], from_oklab(*mix(sl, al, 0.45))
+        out[k] = (sf, lo, hi)
+    return out
+
+
+def backdrop_svg(theme):
+    body = "".join(sheet_filter(f"{m}-{k}", sf, lo, hi, v.p["window"])
+                   for m, v in theme.variants.items() for k, (sf, lo, hi) in sheet_palettes(v).items())
+    return ('<svg xmlns="http://www.w3.org/2000/svg">\n'
+            "  <!-- written by pulsar-theme: gtk.css's in-window glass needs it -->\n" + body + "</svg>\n")
 
 
 def sheet_glass_blocks(theme, vm):
@@ -1445,7 +1549,7 @@ class Gtk4(Target):
         # GTK reads the url() as it parses, and without the file it drops the
         # blur and keeps the see-through tint.
         if glass:
-            tx.write(CONFIG / "gtk-4.0" / BACKDROP_SVG, BACKDROP_SVG_TEXT)
+            tx.write(CONFIG / "gtk-4.0" / BACKDROP_SVG, backdrop_svg(theme))
         p = CONFIG / "gtk-4.0" / "gtk.css"
         tx.edit(p, managed(p, block), {"kind": "block"})
 

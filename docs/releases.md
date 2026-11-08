@@ -105,6 +105,8 @@ Agents you can leave running, a command menu, and GNOME 51.
   on any wallpaper. The login panel fades in when you go to log in.
 - The Glass tint slider now sets how much of the color behind the glass
   comes through. All the way up, the glass is the theme's color alone.
+- Dialogs inside a window (preferences, an alert, a toast) are the same
+  glass as menus and windows, in the theme's colors, on GTK 4.22 and later.
 - If the glass extension fails to load (after a GNOME update, say), apps
   open with solid windows instead of see-through ones with no glass behind.
 - A window's glass no longer sits off to one side after you unmaximize it.

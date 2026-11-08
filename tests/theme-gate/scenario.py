@@ -2077,13 +2077,61 @@ def lockscreen(only):
     return 1 if failed else 0
 
 
+# In-window sheets and floating dialogs, beside an editor's view: pictures
+# for judging their glass (fixtures/sheets.py). SHEETS_GSK picks the GTK
+# renderer for the fixture (default: the gate's cairo).
+SHEETS_APP = "digital.arclight.GateSheets"
+
+
+def sheets(only):
+    for k in ("glass", "window-glass", "lighting", "power-on"):
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    start_shell()
+    env = dict(ENV, GSK_RENDERER=os.environ.get("SHEETS_GSK") or ENV.get("GSK_RENDERER", "cairo"))
+    for slug, modes in theme_list().items():
+        if slug not in (only or ["pulsar"]):
+            continue
+        for mode in modes:
+            kill_apps()
+            subprocess.run(["pkill", "-f", "fixtures/sheets.py"], capture_output=True)
+            pt("set", slug, "--no-restart")
+            if len(modes) == 2:
+                dconf("/org/gnome/desktop/interface/color-scheme", "'prefer-dark'" if mode == "dark" else "'default'")
+            time.sleep(1.5)
+            procs.append(subprocess.Popen(APPS["org.gnome.TextEditor"][0], env=ENV, stdout=LOG, stderr=LOG, cwd=str(GATE)))
+            procs.append(subprocess.Popen(["python3", "/gate/fixtures/sheets.py", "--float"], env=env, stdout=LOG, stderr=LOG))
+            wait_for("['org.gnome.TextEditor','" + SHEETS_APP + "'].every(id => global.get_window_actors()"
+                     ".some(a => a.meta_window.get_gtk_application_id?.() === id))", secs=30)
+            time.sleep(1.0)
+            cells = {"org.gnome.TextEditor": [40, 80, W // 2 - 60, H - 160],
+                     SHEETS_APP: [W // 2 + 20, 80, W // 2 - 60, H - 160]}
+            eval_js("let c=" + json.dumps(cells) + "; for (const a of global.get_window_actors()) { const w=a.meta_window; "
+                    "const id=w.get_gtk_application_id?.(), r=c[id]; "
+                    # the floating alert shares the fixture's app id: its main window is the one titled Sheets
+                    "if (r && !w.get_transient_for() && (id !== '" + SHEETS_APP + "' || w.get_title() === 'Sheets')) "
+                    "w.move_resize_frame(false, ...r); } 1")
+            # the floating alert over the editor's view, not behind the fixture
+            eval_js("for (const a of global.get_window_actors()) { const w=a.meta_window; "
+                    # a dialog with no parent has no application id of its own
+                    "if ((w.get_gtk_application_id?.() ?? '" + SHEETS_APP + "') === '" + SHEETS_APP + "' && "
+                    "w.get_title() !== 'Sheets' && !w.get_transient_for()) { "
+                    "const f=w.get_frame_rect(); w.move_frame(false, " + str(W // 4) + " - f.width / 2, " + str(H // 10) + "); "
+                    "w.raise(); } } 1")
+            time.sleep(2.5)
+            screenshot(f"{slug}-{mode}-sheets")
+            print(f"  {slug:12} {mode:5} shot", flush=True)
+    kill_apps()
+    subprocess.run(["pkill", "-f", "fixtures/sheets.py"], capture_output=True)
+    stop_shell()
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "gate"
     rc = 0
     try:
         rc = {"gate": lambda: gate(sys.argv[2:]), "firstlogin": firstlogin, "restart": restart,
               "picker": picker, "desktops": lambda: desktops(sys.argv[2:]), "glass": glass, "switchers": switchers, "overview-glass": overview_glass,
-              "lockscreen": lambda: lockscreen(sys.argv[2:]),
+              "lockscreen": lambda: lockscreen(sys.argv[2:]), "sheets": lambda: sheets(sys.argv[2:]),
               "leaks": lambda: leaks(sys.argv[2:])}[mode]() or 0
     finally:
         kill_apps()

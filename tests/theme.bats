@@ -1142,13 +1142,20 @@ print("" if d is None else d)' "$1" "$2"; }
     grep -A1 '^window.fullscreen {$' "$css" | grep -q -- '^  --window-bg-color: #[0-9a-f]*;$'
     # GTK 4.22: glass, in top-level blocks only a GTK that knows reduced motion keeps
     [ "$(grep -c '^@media (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: no-preference), (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: reduce) {$' "$css")" -eq 2 ]
-    [ "$(grep -c 'backdrop-filter: blur(20px) url("pulsar-backdrop.svg#opaque");' "$css")" -eq 6 ]
+    # each the palette glass of its own surface and scheme, painting the whole sheet
+    [ "$(grep -c 'backdrop-filter: blur(12px) url("pulsar-backdrop.svg#\(light\|dark\)-\(window\|popover\)");' "$css")" -eq 6 ]
+    [ "$(grep -B1 'backdrop-filter: blur(12px)' "$css" | grep -c '^  background-color: transparent;$')" -eq 6 ]
+    # the sheet in the window's color; the alert and the toast in the popover's
+    [ "$(grep -c 'url("pulsar-backdrop.svg#\(light\|dark\)-popover")' "$css")" -eq 4 ]
     # the gated blocks come last, so they win over the solid ones
     last_solid=$(grep -n '^toast { background-color' "$css" | tail -1 | cut -d: -f1)
     first_gate=$(grep -n 'prefers-reduced-motion' "$css" | head -1 | cut -d: -f1)
     [ "$last_solid" -lt "$first_gate" ]
-    # and the filter they name sits beside gtk.css
-    grep -q 'feFuncA type="linear" slope="0" intercept="1"' "$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg"
+    # and the filters they name sit beside gtk.css, one per surface and scheme
+    svg="$XDG_CONFIG_HOME/gtk-4.0/pulsar-backdrop.svg"
+    for f in light-window light-popover dark-window dark-popover; do grep -q "<filter id=\"$f\"" "$svg"; done
+    run python3 "${REPO}/tests/fixtures/sheet-filter-check.py" "$svg" "$css"
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
 @test "glass off: popovers and dialogs opaque, toasts still themed, no sheet glass" {
