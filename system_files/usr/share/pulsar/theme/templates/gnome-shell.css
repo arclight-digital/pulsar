@@ -1301,10 +1301,10 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .button.default:hover, .calendar .calendar-day.calendar-today:selected:hover { background-color: {{accent_hover}}; color: {{accent_fg}}; }
 
 /* Glass and light. The extension adds .pulsar-glass and .pulsar-lit to the
-   Shell's UI group while each is on (its settings; never on the lock screen
-   or in high contrast), and draws the blur and the light itself -- see
+   Shell's UI group while each is on (its settings; never on the lock screen,
+   which has its own pane, .pulsar-lock-glass below, or in high contrast), and draws the blur and the light itself -- see
    glass.js. This sheet owns only the material: the same elevated tint the
-   solid menu paints, at the Glass tint slider's alpha, over a blur glass.js darkens (or on a light
+   solid menu paints, over a blur glass.js darkens (or on a light
    theme lightens), so text on it stays readable. Inner cards become a faint lift instead of a
    solid step. */
 /* The edge stays the theme's own (the border above), so glass and solid
@@ -1347,6 +1347,45 @@ StEntry:insensitive { background-color: rgba({{foreground_rgb}}, 0.05); color: r
 .pulsar-glass-colors {
   color: {{foreground}}; -pulsar-light: {{accent}};
   -pulsar-window: {{window}}; -pulsar-popover: rgba({{popover_rgb}}, {{popup_ground}}); }
+
+/* The lock screen is the glass too (glass.js LockGlass): the theme's
+   ground with the wallpaper's shapes in it, so everything on it is lettered
+   in the theme's text color, which the engine checks against that ground.
+   Stock letters the lock screen white, for its dimmed blur. The login
+   pane's corners and padding are .pulsar-lock-panel (never drawn itself). */
+.pulsar-lock-panel { border-radius: 28px; padding: 32px 48px; }
+.unlock-dialog.pulsar-lock-glass,
+.pulsar-lock-glass .unlock-dialog-clock,
+.pulsar-lock-glass .login-dialog-prompt-layout,
+.pulsar-lock-glass .caps-lock-warning-label,
+.pulsar-lock-glass .login-dialog-message-warning,
+.pulsar-lock-glass .unlock-dialog-notifications-container .message,
+.pulsar-lock-glass .unlock-dialog-notifications-container .unlock-dialog-notification-source,
+.pulsar-lock-glass .unlock-dialog-notifications-container .message .message-header,
+.pulsar-lock-glass .unlock-dialog-notifications-container .unlock-dialog-notification-source .message-header {
+  color: {{foreground}}; }
+.pulsar-lock-glass .unlock-dialog-notifications-container .message,
+.pulsar-lock-glass .unlock-dialog-notifications-container .unlock-dialog-notification-source,
+.pulsar-lock-glass .unlock-dialog-notifications-container .message:active,
+.pulsar-lock-glass .unlock-dialog-notifications-container .unlock-dialog-notification-source:active {
+  background-color: rgba({{foreground_rgb}}, 0.08); }
+.pulsar-lock-glass .unlock-dialog-notifications-container .message.critical,
+.pulsar-lock-glass .unlock-dialog-notifications-container .unlock-dialog-notification-source.critical {
+  background-color: rgba({{foreground_rgb}}, 0.14); }
+.pulsar-lock-glass .login-dialog-prompt-entry {
+  background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}}; }
+.pulsar-lock-glass .login-dialog-prompt-entry:hover {
+  background-color: rgba({{foreground_rgb}}, 0.11); color: {{foreground}}; }
+.pulsar-lock-glass .login-dialog-prompt-entry:focus {
+  background-color: rgba({{foreground_rgb}}, 0.08); color: {{foreground}};
+  box-shadow: inset 0 0 0 2px rgba({{accent_rgb}}, 0.85) !important; }
+.pulsar-lock-glass .login-dialog-prompt-entry StLabel.hint-text { color: rgba({{foreground_rgb}}, 0.6); }
+.pulsar-lock-glass .button, .pulsar-lock-glass .login-dialog-button {
+  background-color: rgba({{foreground_rgb}}, 0.1); color: {{foreground}}; }
+.pulsar-lock-glass .button:hover, .pulsar-lock-glass .login-dialog-button:hover {
+  background-color: rgba({{foreground_rgb}}, 0.15); color: {{foreground}}; }
+.pulsar-lock-glass .button:focus, .pulsar-lock-glass .login-dialog-button:focus {
+  color: {{foreground}}; box-shadow: inset 0 0 0 2px rgba({{accent_rgb}}, 0.85) !important; }
 
 /* The OSDs (volume, brightness) and notification banners are glass too.
    Restated after the .message card above: a banner is a .message. */

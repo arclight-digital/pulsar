@@ -166,6 +166,18 @@ const WINDOW_PAD = 48;
 // Nick's values from the lab, 2026-11-07. Windows and the top bar joined
 // the menus on 2026-11-07: one glass, no other blur (Nick).
 const PALETTE = {detail: 0.4, ambient: 0.2, color: 0.33, within: 0.08, light: 0.8, darken: 0.3};
+// The Glass tint slider (Nick, 2026-11-08: color strength): how far a
+// colored backdrop pulls the glass's color, from twice the lab's at Clear
+// (0) to none at Tinted (1), the theme's color alone; the lab's at the
+// default (0.5). Every live blur takes it at once (setTint).
+const tintPull = t => 2 * PALETTE.color * (1 - Math.min(Math.max(t, 0), 1));
+let colorPull = PALETTE.color;
+const LIVE_BLURS = new Set();
+export function setTint(t) {
+    colorPull = tintPull(t);
+    for (const b of LIVE_BLURS)
+        b._darken();
+}
 // the ramp's reach either side of the theme's lightness, in OKLab L
 const PALETTE_RANGE = 0.12;
 
@@ -793,11 +805,13 @@ class PulsarLiveBlur extends Clutter.Effect {
     // Palette glass ({surf, lo, hi, glow} in OKLab, and the light's
     // strength), or null for the graded path.
     setPalette(p, light = 0) {
-        this._palette = p ? {lift: p.glow[0] - p.surf[0], light} : null;
+        // (a palette may carry its own reach: within, range; the lock
+        // screen's ground does)
+        this._palette = p ? {lift: p.glow[0] - p.surf[0], light, range: p.range ?? PALETTE_RANGE} : null;
         if (!p) {
             this._f('pal', 0, 0, 0, 0);
         } else {
-            this._f('pal', 1, PALETTE.detail, PALETTE.ambient, PALETTE.within);
+            this._f('pal', 1, PALETTE.detail, PALETTE.ambient, p.within ?? PALETTE.within);
             this._f('pSurf', ...p.surf);
             this._f('pLo', ...p.lo);
             this._f('pHi', ...p.hi);
@@ -842,7 +856,8 @@ class PulsarLiveBlur extends Clutter.Effect {
             }
             off = PALETTE.darken * (n ? sum / n : 0) * p.lift;
         }
-        this._f('pal2', PALETTE.color, p ? p.light : 0, PALETTE_RANGE, off);
+        this._f('pal2', colorPull, p ? p.light : 0, p?.range ?? PALETTE_RANGE, off);
+        this.queue_repaint();
     }
 
     // Hold the blur it has instead of copying what is beneath. Let go, the
@@ -949,6 +964,10 @@ class PulsarLiveBlur extends Clutter.Effect {
     }
 
     vfunc_set_actor(actor) {
+        if (actor)
+            LIVE_BLURS.add(this);
+        else
+            LIVE_BLURS.delete(this);
         if (!actor && this._redrawPending) {
             GLib.source_remove(this._redrawPending);
             this._redrawPending = 0;
@@ -2379,6 +2398,210 @@ class OverviewGround {
     }
 }
 
+// The lock screen (Nick, 2026-11-08): one glass over the whole wallpaper,
+// in place of GNOME's dimmed 90px blur. Whatever the wallpaper, everything
+// on the lock screen -- the clock, the notifications, the buttons, the
+// prompt -- has to read on it, and a sharp wallpaper cannot promise that.
+// The glass does, the way it does for every menu: what is beneath shows
+// only as the theme's ramp, inside a band of lightness worked out from
+// the contrast the text needs (LOCK_CONTRAST), so the wallpaper's shapes
+// get all the room the text can spare and never more. So the lock screen is the theme's ground with the wallpaper's
+// shapes in it, and its text is the theme's (the sheet's .pulsar-lock-glass
+// rules; stock letters it white, for its dark blur). Unlit: nothing opened
+// it. GNOME's layout and crossfade stay as they are.
+//
+// When it is time to log in, a pane of the same glass fades in behind the
+// password prompt with the stock crossfade, in the menus' color, its size
+// the screen's (LOCK_PANE of the monitor, never smaller than the prompt and
+// the sheet's padding), centered where the prompt comes to rest.
+//
+// The lock screen lives in the unlock dialog, which the Shell builds as the
+// screen locks and destroys once it has slid away at unlock: everything
+// here hangs off that dialog.
+const LOCK_PANE = {width: 0.3, height: 0.55};
+// GNOME's AUTH_PROMPT_VERTICAL_CENTER_OFFSET (ui/unlockDialog.js): the
+// prompt rests this far below the middle
+const LOCK_PROMPT_OFFSET = 50;
+// The ground's band (LockGlass._palette): the contrast its text keeps over
+// any wallpaper (WCAG asks 4.5:1 of small text), and how far past the
+// theme's color, away from the text, the wallpaper may take it (a share of
+// the way to black on a dark theme, to white on a light one). The menus'
+// cap on how far glass strays (PALETTE.within) is the band's job here, and
+// the ramp reaches further (PALETTE_RANGE), so shapes use all of it.
+const LOCK_CONTRAST = 5;
+const LOCK_DEPTH = 0.7;
+const LOCK_WITHIN = 0.5;
+const LOCK_RANGE = 0.16;
+// WCAG relative luminance of an sRGB (0..1) color
+const linear = u => u <= 0.04045 ? u / 12.92 : ((u + 0.055) / 1.055) ** 2.4;
+const gamma = u => u <= 0.0031308 ? u * 12.92 : 1.055 * u ** (1 / 2.4) - 0.055;
+const wcagY = c => 0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2]);
+// `c` taken in linear light toward white or black until its luminance is
+// `y`: exactly y, since luminance is linear there
+function toLuminance(c, y) {
+    const l = c.map(linear), yc = wcagY(c);
+    if (y >= yc) {
+        const t = yc >= 1 ? 0 : (y - yc) / (1 - yc);
+        return l.map(v => gamma(v + (1 - v) * t));
+    }
+    const t = yc <= 0 ? 0 : y / yc;
+    return l.map(v => gamma(v * t));
+}
+
+export class LockGlass {
+    constructor(settings) {
+        const d = Main.screenShield?._dialog;
+        const a11y = new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.interface'});
+        if (!d?._backgroundGroup || !d._stack || !d._clock || !d._promptBox ||
+            !settings.get_boolean('glass') || a11y.get_boolean('high-contrast'))
+            return;
+        this._dialog = d;
+        setTint(settings.get_double('glass-tint'));
+        // the blur's note of each screen; the desktop's glass, gone for the
+        // lock, stopped it (and starts it again at unlock)
+        Views.watch();
+        Main.layoutManager.connectObject('monitors-changed', () => Views.clear(), this);
+        this._unblur();
+        // monitors-changed rebuilds the wallpapers, each with a new blur
+        d._backgroundGroup.connectObject('child-added', () => this._unblur(), this);
+        d.add_style_class_name('pulsar-lock-glass');
+
+        // the ground: every screen, over the wallpapers
+        this._ground = new St.Widget({reactive: false});
+        this._groundBlur = new LiveBlur();
+        this._groundBlur.setSoft(0);
+        this._ground.add_effect_with_name('pulsar-blur', this._groundBlur);
+        d.insert_child_above(this._ground, d._backgroundGroup);
+        // the login pane, over the ground
+        this._actor = new St.Widget({reactive: false});
+        this._blur = new LiveBlur({lens: SURFACE_LENS});
+        this._actor.add_effect_with_name('pulsar-blur', this._blur);
+        d.insert_child_above(this._actor, this._ground);
+        // the pane's own style (its size, its corners), never drawn
+        this._pane = new St.Widget({style_class: 'pulsar-lock-panel', reactive: false, opacity: 0});
+        d.add_child(this._pane);
+        this._colors = new St.Widget({style_class: 'pulsar-glass-colors', opacity: 0, width: 0, height: 0});
+        d.add_child(this._colors);
+        this._colors.connectObject('style-changed', () => this._palette(), this);
+        this._pane.connectObject('style-changed', () => this._shape(), this);
+        for (const a of [d, d._stack, d._stack.get_parent()])
+            a.connectObject('notify::allocation', () => this._shape(), this);
+        d._adjustment?.connectObject('notify::value', () => this._shape(), this);
+        d.connectObject('destroy', () => this.destroy(), this);
+        this._palette();
+        this._shape();
+    }
+
+    _unblur() {
+        for (const w of this._dialog._backgroundGroup) {
+            const e = w.get_effect('blur');
+            if (e)
+                e.enabled = false;
+        }
+    }
+
+    _palette() {
+        const node = this._colors.get_theme_node();
+        const [okW, win] = node.lookup_color('-pulsar-window', false);
+        const [okP, pop] = node.lookup_color('-pulsar-popover', false);
+        if (!okW || !okP)
+            return;
+        const [okAcc, acc] = node.lookup_color('-pulsar-light', false);
+        const fg = rgb(node.get_foreground_color()), light = rgb(okAcc ? acc : node.get_foreground_color());
+        const lt = luminance(win) > 0.5;
+        // The ground's band, from the contrast its text needs: on a dark
+        // theme (light text) it may darken toward black and lighten only
+        // until the text would fall to LOCK_CONTRAST; on a light one the
+        // other way round. What is beneath spreads over all of that band,
+        // and no wallpaper can take the text below it.
+        const away = c => {
+            const sf = rgb(c), ys = wcagY(sf), yf = wcagY(fg);
+            let lo, hi;
+            if (yf > ys) {
+                hi = toLuminance(sf, Math.max(ys, (yf + 0.05) / LOCK_CONTRAST - 0.05));
+                lo = toLuminance(sf, ys * (1 - LOCK_DEPTH));
+            } else {
+                lo = toLuminance(sf, Math.min(ys, LOCK_CONTRAST * (yf + 0.05) - 0.05));
+                hi = toLuminance(sf, ys + (1 - ys) * LOCK_DEPTH);
+            }
+            return {surf: oklab(sf), lo: oklab(lo), hi: oklab(hi), glow: oklab(light),
+                within: LOCK_WITHIN, range: LOCK_RANGE};
+        };
+        this._groundBlur.setPalette(away(win));
+        this._blur.setPalette(away(pop));
+        this._blur.setShadow(...deepShadow(lt), SHADOW.alpha[lt ? 0 : 1]);
+        this._blur.setEdgeDark(0);
+    }
+
+    // The ground over the whole dialog (every screen); the pane laid out as
+    // the dialog's layout puts the prompt once it has come in
+    // (UnlockDialogLayout): centered, LOCK_PROMPT_OFFSET low, kept above
+    // the notifications.
+    _shape() {
+        const d = this._dialog, box = d._stack.get_parent();
+        const [dw, dh] = d.get_size();
+        this._ground.set_position(0, 0);
+        this._ground.set_size(dw, dh);
+        this._groundBlur.setShape([0, 0, dw, dh], 0);
+        const t = d._adjustment?.value ?? d._stack.progress ?? 0;
+        this._actor.visible = t > 0;
+        this._actor.opacity = Math.round(255 * Math.min(Math.max(t, 0), 1));
+        if (!box.has_allocation())
+            return;
+        const node = this._pane.get_theme_node();
+        const r = node.get_border_radius(St.Corner.TOPLEFT);
+        const px = node.get_padding(St.Side.LEFT), py = node.get_padding(St.Side.TOP);
+        const b = box.get_allocation_box();
+        const bw = b.get_width(), bh = b.get_height();
+        const [, promptW] = d._promptBox.get_preferred_width(-1);
+        const [, promptH] = d._promptBox.get_preferred_height(promptW);
+        const [, notesH] = d._notificationsBox?.get_preferred_height(-1) ?? [0, 0];
+        const notes = Math.min(notesH, bh - bh / 10 - promptH);
+        const promptY = Math.min(Math.floor(bh / 2 - promptH / 2) + LOCK_PROMPT_OFFSET, bh - promptH - notes);
+        const w = Math.round(Math.max(LOCK_PANE.width * bw, promptW + 2 * px));
+        const h = Math.round(Math.max(LOCK_PANE.height * bh, promptH + 2 * py));
+        const x = Math.round(b.x1 + (bw - w) / 2);
+        const y = Math.round(b.y1 + promptY + promptH / 2 - h / 2);
+        this._actor.set_position(x - BLUR_PAD, y - BLUR_PAD);
+        this._actor.set_size(w + 2 * BLUR_PAD, h + 2 * BLUR_PAD);
+        this._blur.setShape([BLUR_PAD, BLUR_PAD, w, h], r);
+    }
+
+    // Unlocked: the dialog slides away with the glass on it, and its
+    // destroy takes the glass along.
+    release() {
+    }
+
+    // last: the extension is going (not merely unlocked), and nothing else
+    // will stop the blur's note of each screen
+    destroy(last = false) {
+        if (last)
+            Views.unwatch();
+        const d = this._dialog;
+        if (!d)
+            return;
+        this._dialog = null;
+        Main.layoutManager.disconnectObject(this);
+        d._adjustment?.disconnectObject(this);
+        d.disconnectObject(this);
+        d._backgroundGroup?.disconnectObject(this);
+        d._stack?.disconnectObject(this);
+        d._stack?.get_parent()?.disconnectObject(this);
+        this._colors.disconnectObject(this);
+        this._pane.disconnectObject(this);
+        for (const w of d._backgroundGroup ?? []) {
+            const e = w.get_effect('blur');
+            if (e)
+                e.enabled = true;
+        }
+        d.remove_style_class_name('pulsar-lock-glass');
+        this._ground.destroy();
+        this._actor.destroy();
+        this._pane.destroy();
+        this._colors.destroy();
+    }
+}
+
 // Mutter skips painting whatever is beneath a surface's opaque region, but
 // only under a surface at full opacity. Glass beneath or inside such a
 // window then blurs that window's own last frame back in around its edges.
@@ -2850,6 +3073,7 @@ function fillGlow(bar) {
 export class Glass {
     constructor(settings, injections) {
         this._settings = settings;
+        setTint(settings.get_double('glass-tint'));
         Views.watch();
         this._surfaces = new Map();     // host (or opts.key) -> Surface
         this._panel = null;
@@ -2945,17 +3169,16 @@ export class Glass {
                     }
                 });
         settings.connectObject(
-            // not for the tint: nothing _sync sets reads it (the Shell's half
-            // comes back in the re-rendered sheet), and a slider drag sends
-            // a change per step
+            // not for the tint: nothing _sync sets reads it, and a slider
+            // drag sends a change per step
             'changed', (_s, key) => key !== 'glass-tint' && this._sync(),
             // the other half of Glass windows is the engine's gtk.css
             'changed::window-glass', () => this._engine('window-glass'),
             'changed::glass', () => this._engine('window-glass'),
             // and so is Glow's: the Shell's half is the class _sync sets
             'changed::glow', () => this._engine('window-glass'),
-            // the tint is the theme sheet's; the engine re-renders it
-            'changed::glass-tint', () => this._tintSoon(),
+            // the tint is the shader's, live on every glass
+            'changed::glass-tint', () => setTint(settings.get_double('glass-tint')),
             this);
         // A theme set while this was off wrote opaque windows (and the
         // switch turned back on changes no setting): put them right.
@@ -3515,17 +3738,6 @@ export class Glass {
             Glass.prototype._engine('window-glass');
     }
 
-    // a slider sends many changes: re-render once it rests
-    _tintSoon() {
-        if (this._tintId)
-            GLib.source_remove(this._tintId);
-        this._tintId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-            this._tintId = 0;
-            this._engine('window-glass');
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
     _engine(cmd, ...args) {
         try {
             Gio.Subprocess.new([ENGINE, cmd, ...args], Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE);
@@ -3725,8 +3937,6 @@ export class Glass {
         this._covered = null;
         Hold.set(false, []);
         Views.unwatch();
-        if (this._tintId)
-            GLib.source_remove(this._tintId);
         this._settings.disconnectObject(this);
         this._a11y.disconnectObject(this);
         this._upower?.disconnectObject(this);

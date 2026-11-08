@@ -1825,12 +1825,265 @@ def overview_glass():
     return 0 if report["ok"] else 1
 
 
+# The lock screen's glass (glass.js LockGlass), as glass.js keeps it: the
+# unlock dialog's wallpapers with their stock blur off, the dialog marked
+# for the sheet's text rules, the ground (LockGlass._ground) over every
+# screen, and the login pane (LockGlass._actor, BLUR_PAD wider than the
+# glass on every side) behind the prompt only. Reads glass.js's own
+# bookkeeping: if it renames them, this fails loudly.
+LOCK_PROBE = r"""(() => {
+  const ext = Main.extensionManager.lookup('EXT')?.stateObj;
+  const d = Main.screenShield?._dialog;
+  const r = a => { const [x, y] = a.get_transformed_position(); const [w, h] = a.get_transformed_size();
+    return [x, y, w, h].map(v => Math.round(v)); };
+  const o = {locked: Main.sessionMode.isLocked, glass: !!ext?._glass, lock: !!ext?._lock, dialog: !!d};
+  if (d) {
+    o.marked = d.has_style_class_name('pulsar-lock-glass');
+    o.blurs = [...d._backgroundGroup].map(w => w.get_effect('blur')?.enabled ?? null);
+    o.stack = r(d._stack);
+    o.screen = r(d._stack.get_parent());
+    const g = ext?._lock?._ground;
+    o.ground = g && g.get_parent() ? r(g) : null;
+    o.dialogSize = r(d);
+    const pane = ext?._lock?._actor;
+    o.pane = pane && pane.get_parent() ? r(pane) : null;
+    o.paneShown = !!pane?.visible && pane.opacity === 255;
+    o.paneHidden = !pane?.visible;
+  }
+  return JSON.stringify(o); })()""".replace("EXT", EXT)
+
+# Every visible label with text under the lock screen's ROOT (the clock, or
+# the prompt): where it is on screen, and the color it is lettered in.
+LOCK_LABELS = r"""(() => {
+  const d = Main.screenShield._dialog;
+  const out = [];
+  const walk = a => {
+    if (!a.visible) return;
+    // an St.Label (St itself is not in Eval's scope)
+    if (a.clutter_text !== undefined && a.text && a.get_paint_opacity() > 0) {
+      const [x, y] = a.get_transformed_position(); const [w, h] = a.get_transformed_size();
+      const c = a.get_theme_node().get_foreground_color();
+      out.push({name: a.style_class || a.text, text: a.text, rect: [x, y, w, h].map(Math.round),
+                color: [c.red, c.green, c.blue], size: a.get_theme_node().get_font().get_size() / 1024});
+    }
+    for (const c of a.get_children()) walk(c);
+  };
+  walk(ROOT);
+  return JSON.stringify(out); })()"""
+
+# WCAG: large text (the clock) needs 3:1, everything else 4.5:1. Measured
+# against the screen with the text hidden, at each label's worst pixels:
+# the LOCK_PERCENTILE lowest contrast inside its box, so a few stray pixels
+# do not decide it, and a small bright patch behind a word still does.
+LOCK_LARGE_PT = 18
+LOCK_PERCENTILE = 0.02
+
+
+def label_contrast(png, label):
+    """The LOCK_PERCENTILE-lowest contrast between the label's color and the
+    pixels inside its box in `png` (the screen with the text hidden)."""
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    pb = GdkPixbuf.Pixbuf.new_from_file(str(png))
+    px, rs, n = pb.get_pixels(), pb.get_rowstride(), pb.get_n_channels()
+    x, y, w, h = label["rect"]
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(pb.get_width(), x + w), min(pb.get_height(), y + h)
+    lin = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in (i / 255 for i in range(256))]
+    lum = lambda r, g, b: 0.2126 * lin[r] + 0.7152 * lin[g] + 0.0722 * lin[b]
+    t = lum(*label["color"])
+    cs = []
+    for yy in range(y0, y1, 2):
+        o = yy * rs
+        for xx in range(x0, x1, 2):
+            i = o + xx * n
+            b = lum(px[i], px[i + 1], px[i + 2])
+            hi, lo = (t, b) if t > b else (b, t)
+            cs.append((hi + 0.05) / (lo + 0.05))
+    if not cs:
+        return None
+    cs.sort()
+    return round(cs[int(len(cs) * LOCK_PERCENTILE)], 2)
+
+
+def lock_corpus(themes):
+    """(slug, mode, wallpaper or None for the theme's own) for every theme x
+    mode on its own wallpaper, and every GNOME stock wallpaper under the
+    Pulsar theme in the mode it is made for (-d dark, -l light; one with no
+    pair in both)."""
+    out = [(slug, mode, None) for slug, modes in themes.items() for mode in modes]
+    gnome = pathlib.Path("/usr/share/backgrounds/gnome")
+    files = sorted(f for f in gnome.iterdir() if f.suffix in (".jxl", ".png", ".jpg", ".svg", ".webp")) \
+        if gnome.is_dir() else []
+    for f in files:
+        stem = f.stem
+        if stem.endswith("-d"):
+            out.append(("pulsar", "dark", str(f)))
+        elif stem.endswith("-l"):
+            out.append(("pulsar", "light", str(f)))
+        else:
+            out += [("pulsar", "dark", str(f)), ("pulsar", "light", str(f))]
+    return out
+
+
+def lockscreen(only):
+    """The lock screen: the wallpaper under one glass, and every word on it
+    legible on any wallpaper. Locks once per theme x mode and, while locked,
+    goes through that theme's own wallpaper and (for Pulsar) every GNOME
+    stock one, measuring each label of the clock and the prompt against the
+    screen with the text hidden (label_contrast). Also: the desktop's glass
+    down while locked and back after, the login pane behind the prompt only,
+    stock with glass off. Shots: lock/<slug>-<mode>-<wallpaper>-clock.png
+    (and -prompt), the measured ones scaled down. Writes
+    lockscreen-report.json, worst first; exit 1 on failure."""
+    for k in ("glass", "window-glass"):
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    # the Shell has a lock screen only where GDM answers (fixtures/fakegdm.py)
+    procs.append(subprocess.Popen(["python3", "/gate/fixtures/fakegdm.py"], stdout=LOG, stderr=LOG))
+    time.sleep(1.5)
+    start_shell()
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    report = {"gnome_shell": sh("gnome-shell", "--version").stdout.strip(), "checks": [], "contrast": []}
+    add = lambda name, ok, detail="": report["checks"].append({"check": name, "ok": bool(ok), "detail": detail})
+    if not os.path.isdir("/run/systemd/seats"):
+        add("/run/systemd/seats is there (run.sh mounts it for lockscreen)", False)
+    pad = 64     # glass.js BLUR_PAD
+    shots = SHOTS / "lock"
+    shots.mkdir(parents=True, exist_ok=True)
+
+    def probe():
+        v, why = eval_json(LOCK_PROBE)
+        return v or {"error": why}
+
+    def lock():
+        ok, out = eval_js("Main.screenShield ? (Main.screenShield.lock(false), 'asked') : 'no screen shield'")
+        if wait_for("Main.sessionMode.isLocked && !!Main.screenShield._dialog", secs=10):
+            # the screen fades to black as it locks, and comes back when the
+            # user moves (_onUserBecameActive): as if they had
+            eval_js("Main.screenShield._shortLightbox.lightOff(); Main.screenShield._longLightbox.lightOff(); 1")
+            return True, ""
+        return False, f"{ok} {out}"
+
+    def unlock():
+        eval_js("Main.screenShield.deactivate(false); 1")
+        return wait_for("!Main.sessionMode.isLocked && !Main.screenShield._dialog", secs=10)
+
+    def measure(tag, page, root, hide):
+        """Shoot the screen as it is, then with `hide` at opacity 0, and
+        measure every label under `root` against the second."""
+        labels, why = eval_json(LOCK_LABELS.replace("ROOT", root))
+        if not labels:
+            time.sleep(1.5)
+            labels, why = eval_json(LOCK_LABELS.replace("ROOT", root))
+        if not labels:
+            add(f"{tag} {page}: labels to measure", False, why)
+            return
+        full = screenshot(f"lock/{tag}-{page}-full")
+        eval_js(f"{hide}.opacity = 0; 1")
+        time.sleep(0.8)
+        bare = screenshot(f"lock/{tag}-{page}-bare")
+        eval_js(f"{hide}.opacity = 255; 1")
+        for lb in labels:
+            c = label_contrast(bare, lb)
+            need = 3.0 if lb["size"] >= LOCK_LARGE_PT else 4.5
+            report["contrast"].append({"shot": f"{tag}-{page}", "label": lb["name"], "text": lb["text"],
+                                       "contrast": c, "need": need, "ok": c is not None and c >= need})
+        # kept small: the measured screen, for the contact sheet (PNG: the
+        # image's JPEG writer saves a screenshot grey)
+        pb = GdkPixbuf.Pixbuf.new_from_file(str(full))
+        pb.scale_simple(pb.get_width() // 2, pb.get_height() // 2, GdkPixbuf.InterpType.BILINEAR) \
+          .savev(str(shots / f"{tag}-{page}.png"), "png", [], [])
+        full.unlink()
+        bare.unlink()
+
+    themes = {k: v for k, v in theme_list().items() if not only or k in only}
+    corpus = lock_corpus(themes)
+    first = True
+    for slug, modes in themes.items():
+        for mode in modes:
+            pt("set", slug, "--no-restart")
+            if len(modes) == 2:
+                dconf("/org/gnome/desktop/interface/color-scheme", "'prefer-dark'" if mode == "dark" else "'default'")
+            time.sleep(1.5)
+            tag = f"{slug}-{mode}"
+            add(f"{tag}: locked", *lock())
+            time.sleep(1.5)
+            v = probe()
+            if first:
+                add("the desktop's glass is down while locked", v.get("lock") and not v.get("glass"), json.dumps(v))
+                add("the dialog is marked for the sheet's text", v.get("marked"), json.dumps(v))
+                add("the stock blur is off", v.get("blurs") and not any(v["blurs"]), json.dumps(v))
+                add("the ground covers the screen", v.get("ground") == v.get("dialogSize"), json.dumps(v))
+                add("no pane behind the clock", v.get("paneHidden"), json.dumps(v))
+            walls = [w for (s_, m_, w) in corpus if s_ == slug and m_ == mode]
+            for wall in walls:
+                if wall:
+                    for k in ("picture-uri", "picture-uri-dark"):
+                        dconf(f"/org/gnome/desktop/background/{k}", f"'file://{wall}'")
+                    time.sleep(1.5)
+                name = pathlib.Path(wall).stem if wall else "own"
+                eval_js("Main.screenShield._dialog._clock._hint.opacity = 255; 1")
+                measure(f"{tag}-{name}", "clock", "Main.screenShield._dialog._clock",
+                        "Main.screenShield._dialog._stack")
+            # the prompt, on the theme's last wallpaper
+            eval_js("Main.screenShield._dialog._showPrompt(); 1")
+            add(f"{tag}: the prompt came up", wait_for(
+                "Main.screenShield._dialog._promptBox.visible && Main.screenShield._dialog._promptBox.opacity === 255"))
+            time.sleep(1.5)
+            if first:
+                v = probe()
+                p, s_, m = v.get("pane"), v.get("stack"), v.get("screen")
+                ok = bool(p and s_ and m and v.get("paneShown"))
+                if ok:
+                    x, y, w, h = p[0] + pad, p[1] + pad, p[2] - 2 * pad, p[3] - 2 * pad
+                    ok = y < s_[1] and y + h > s_[1] + s_[3] and w >= round(0.3 * m[2]) - 1 and h >= round(0.55 * m[3]) - 1
+                add("the login pane: behind the prompt, the screen's share of its size", ok, json.dumps(v))
+            measure(f"{tag}-{name}", "prompt", "Main.screenShield._dialog._promptBox",
+                    "Main.screenShield._dialog._promptBox")
+            add(f"{tag}: unlocked", unlock())
+            time.sleep(1)
+            if first:
+                v = probe()
+                add("the desktop's glass is back after unlock", v.get("glass") and not v.get("lock"), json.dumps(v))
+            first = False
+            print(f"  {slug:12} {mode:5} {len(walls)} wallpaper(s)", flush=True)
+
+    dconf("/org/gnome/shell/extensions/pulsar-theme/glass", "false")
+    time.sleep(1)
+    add("glass off: locked", *lock())
+    time.sleep(1.5)
+    v = probe()
+    add("glass off: the stock lock screen (blurred, no glass, no marks)",
+        v.get("blurs") and all(v["blurs"]) and not v.get("marked") and not v.get("ground"), json.dumps(v))
+    add("glass off: unlocked", unlock())
+
+    problems = shell_log_problems("lockscreen")
+    add("no glass warnings or JS errors in the Shell's log", not problems, "\n".join(problems[:20]))
+    stop_shell()
+    report["contrast"].sort(key=lambda c: (c["contrast"] or 0) / c["need"])
+    bad = [c for c in report["contrast"] if not c["ok"]]
+    add(f"every label legible on every wallpaper ({len(report['contrast'])} measured)", not bad,
+        "\n".join(f"{c['shot']} {c['label']}: {c['contrast']} < {c['need']}" for c in bad[:30]))
+    (SHOTS / "lockscreen-report.json").write_text(json.dumps(report, indent=2))
+    for c in report["contrast"][:12]:
+        print(f"  {c['contrast']:>6} / {c['need']}  {c['shot']:40} {c['label']}", flush=True)
+    failed = [c for c in report["checks"] if not c["ok"]]
+    for c in failed:
+        print(f"FAIL {c['check']}: {c['detail'][:600]}", flush=True)
+    print(f"lockscreen: {len(report['checks']) - len(failed)}/{len(report['checks'])} passed", flush=True)
+    return 1 if failed else 0
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "gate"
     rc = 0
     try:
         rc = {"gate": lambda: gate(sys.argv[2:]), "firstlogin": firstlogin, "restart": restart,
               "picker": picker, "desktops": lambda: desktops(sys.argv[2:]), "glass": glass, "switchers": switchers, "overview-glass": overview_glass,
+              "lockscreen": lambda: lockscreen(sys.argv[2:]),
               "leaks": lambda: leaks(sys.argv[2:])}[mode]() or 0
     finally:
         kill_apps()

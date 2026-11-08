@@ -980,7 +980,13 @@ print("" if d is None else d)' "$1" "$2"; }
         setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint "$tint"
         python3 "$ENGINE" set pulsar --no-restart >/dev/null
         grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0);' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+        # the tint is the glass shader's color strength (glass.js setTint),
+        # live in the Shell: nothing the engine writes follows it
+        cat "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" "$XDG_STATE_HOME"/pulsar-theme/shell/gnome-shell-*.css \
+            > "${BATS_TEST_TMPDIR}/written-$tint"
     done
+    cmp "${BATS_TEST_TMPDIR}/written-0.0" "${BATS_TEST_TMPDIR}/written-1.0"
+    cmp "${BATS_TEST_TMPDIR}/written-0.0" "${BATS_TEST_TMPDIR}/written-0.5"
     # the Shell's sheet carries GTK's grounds for that glass, the popover's
     # at the alpha GTK paints its body
     for mode in dark light; do

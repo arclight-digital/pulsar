@@ -29,7 +29,7 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {Glass} from './glass.js';
+import {Glass, LockGlass} from './glass.js';
 
 // How long a burst of changes may take to arrive before the sheet is
 // reloaded once for all of it (see _reloadSoon).
@@ -93,8 +93,32 @@ export default class PulsarThemeExtension extends Extension {
         this._readOneMode();
         // Glass and light (glass.js), switched by this extension's own
         // settings: the Extensions app's preferences and the theme picker.
-        this._injections = new InjectionManager();
-        this._glass = new Glass(this.getSettings(), this._injections);
+        // The extension stays on while the screen is locked (session-modes),
+        // for the lock screen's own glass (LockGlass); the desktop's is
+        // taken down for the lock and made anew at unlock, as it was when
+        // every lock disabled the extension.
+        this._settings = this.getSettings();
+        this._glass = null;
+        this._lock = null;
+        Main.sessionMode.connectObject('updated', () => this._mode(), this);
+        this._mode();
+    }
+
+    _mode() {
+        if (Main.sessionMode.isLocked) {
+            this._injections?.clear();
+            this._injections = null;
+            this._glass?.destroy();
+            this._glass = null;
+            this._lock ??= new LockGlass(this._settings);
+        } else if (!this._glass) {
+            // the lock screen slides away with its glass on it, and takes
+            // the glass with it when it is destroyed
+            this._lock?.release();
+            this._lock = null;
+            this._injections = new InjectionManager();
+            this._glass = new Glass(this._settings, this._injections);
+        }
     }
 
     disable() {
@@ -103,10 +127,14 @@ export default class PulsarThemeExtension extends Extension {
         this._toggleRetryId = 0;
         this._oneMode = null;
         this._syncDarkStyle();      // gives the toggle back as it was
+        Main.sessionMode.disconnectObject(this);
+        this._lock?.destroy(true);
+        this._lock = null;
         this._injections?.clear();
         this._injections = null;
         this._glass?.destroy();
         this._glass = null;
+        this._settings = null;
         Glass.release();
         this._monitor?.disconnect(this._monitorId);
         this._monitor?.cancel();

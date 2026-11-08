@@ -290,6 +290,8 @@ SURFACE_KEYS = ["window", "view", "headerbar", "sidebar", "card", "popover"]
 # the Shell extension to tell it from the popup's shadow (about 0.25; it
 # takes 0.3 to 0.42 as the edge), little enough to take back out cleanly.
 POPUP_GROUND = 0.5
+# the alpha of the glass grounds GTK and St still paint (Variant.glass_alpha)
+GLASS_ALPHA = 0.65
 
 
 class Variant:
@@ -300,7 +302,11 @@ class Variant:
         self.shell_glow = False     # set by Theme from its top-level key
         self.window_glass = False   # set by the gtk4 target from the Shell extension's switch
         self.glow = False           # set by the gtk4 target from the Shell extension's Glow switch
-        self.glass_alpha = 0.65     # set by the shell target from the Glass tint slider
+        # The glass grounds GTK and St still paint (views, dialogs, the
+        # overview's ground). The Glass tint slider set it until 2026-11-08;
+        # it is the glass shader's color strength now (glass.js setTint),
+        # and this stays where the slider's default put it.
+        self.glass_alpha = GLASS_ALPHA
         p = {}
         for k, v in raw.items():
             if isinstance(v, str) and (v.startswith("#") or re.fullmatch(r"[0-9a-fA-F]{6}", v)):
@@ -416,8 +422,7 @@ class Variant:
             c["panel_shadow"] = f"rgba({self.p['foreground'].rgb}, 0.1)"
         # The overview's ground: the wallpaper, blurred, under the deep ground
         # a step more opaque than the glass, so the app grid's labels and the
-        # search results read on any wallpaper: 0.8 at the Glass tint
-        # slider's default (0.65), 0.92 at most.
+        # search results read on any wallpaper: 0.8.
         c["glass_ground"] = (f"rgba({self.p['background_deep'].rgb}, "
                              f"{round(min(0.92, self.glass_alpha + 0.15), 3)})")
         # A CRT theme's text glows like its phosphor while Lighting is on
@@ -1230,16 +1235,6 @@ class Scheme(Target):
         tx.set("/org/gnome/desktop/interface/accent-color", gv_str(v.gnome_accent))
 
 
-def glass_tint():
-    """The Shell extension's Glass tint slider, 0 (clear) to 1 (fully tinted),
-    as the alpha of the glass surfaces' own tint: 0.35 to 0.95."""
-    try:
-        t = float(gsettings_get("org.gnome.shell.extensions.pulsar-theme", "glass-tint"))
-    except (TypeError, ValueError):
-        t = 0.5
-    return round(0.35 + 0.6 * min(max(t, 0.0), 1.0), 3)
-
-
 GLASS_MARK = "pulsar window-glass: "
 
 
@@ -1383,11 +1378,9 @@ class Gtk4(Target):
 
     def apply(self, tx, theme, vm):
         glass = window_glass()
-        tint = glass_tint()
         glow = glow_on()
         for v in theme.variants.values():
             v.window_glass = glass
-            v.glass_alpha = tint
             v.glow = glow
         def wrap(m, body):
             if m is None:
@@ -1533,7 +1526,6 @@ class Shell(Target):
         # one sheet per scheme; the extension swaps them when Dark Style flips
         for scheme in ("dark", "light"):
             mode = scheme if (vm == "both" and scheme in theme.variants) else (theme.prefer if vm == "both" else vm)
-            theme.variants[mode].glass_alpha = glass_tint()
             ctx = theme.variants[mode].ctx()
             css = render_tpl(template("gnome-shell.css"), ctx, "gnome-shell.css")
             # the Glow effect's rules, keyed off the class the extension sets
