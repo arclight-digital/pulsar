@@ -160,6 +160,55 @@ def fit_contrast(c, bg, target):
             return n
     return n
 
+# The lock screen's ground (glass.js LockGlass): the wallpaper under one
+# glass, its lightness kept inside a band in which the theme's text holds
+# LOCK_CONTRAST. Its fills are wells of the band's far side (black on a
+# dark theme, white on a light one), so they only add to that. The
+# prompt's dimmed hint and the focus rings are worked out against the
+# band's end nearest the text -- the hint under the field's lightest well,
+# a ring against the bare ground beside it -- so they pass WCAG on any
+# wallpaper: text 4.5:1, a ring 3:1 (1.4.11). A little over each, for
+# rounding.
+LOCK_CONTRAST = 5           # glass.js LOCK_CONTRAST
+LOCK_FIELD_WELL = 0.2       # the sheet's .login-dialog-prompt-entry
+LOCK_HINT_DIM = 0.4         # how far the hint fades toward the field at most
+
+
+def _lin(u):
+    return u / 12.92 if u <= 0.04045 else ((u + 0.055) / 1.055) ** 2.4
+
+
+def _gamma(u):
+    return u * 12.92 if u <= 0.0031308 else 1.055 * u ** (1 / 2.4) - 0.055
+
+
+def lock_worst_ground(window, fg):
+    """The band's end nearest the text (glass.js LockGlass._palette): the
+    window color moved in linear light to where fg holds LOCK_CONTRAST."""
+    ys, yf = window.lum(), fg.lum()
+    y = max(ys, (yf + 0.05) / LOCK_CONTRAST - 0.05) if yf > ys else min(ys, LOCK_CONTRAST * (yf + 0.05) - 0.05)
+    l = [_lin(v) for v in (window.r, window.g, window.b)]
+    if y >= ys:
+        t = 0 if ys >= 1 else (y - ys) / (1 - ys)
+        return Color(*(_gamma(v + (1 - v) * t) for v in l))
+    return Color(*(_gamma(v * (0 if ys <= 0 else y / ys)) for v in l))
+
+
+def lock_well(window, fg):
+    """The lock screen's fills: away from the text."""
+    return BLACK if fg.lum() > window.lum() else WHITE
+
+
+def lock_prompt_colors(window, fg, accent):
+    """(hint, ring) for the lock screen's password field and buttons."""
+    ground = lock_worst_ground(window, fg)
+    field = ground.mix(lock_well(window, fg), LOCK_FIELD_WELL)
+    dim = LOCK_HINT_DIM
+    while dim > 0 and fg.mix(field, dim).contrast(field) < 4.6:
+        dim = round(dim - 0.02, 2)
+    return fg.mix(field, max(dim, 0)), fit_contrast(accent, ground, 3.2)
+
+
 # libadwaita's nine system accents (AdwAccentColor). The Shell and every
 # Flatpak (through the settings portal) only ever see one of these, so the
 # nearest one is always set alongside the exact hex that gtk.css carries.
@@ -425,6 +474,10 @@ class Variant:
         # search results read on any wallpaper: 0.8.
         c["glass_ground"] = (f"rgba({self.p['background_deep'].rgb}, "
                              f"{round(min(0.92, self.glass_alpha + 0.15), 3)})")
+        # the lock screen's password field (lock_prompt_colors)
+        hint, ring = lock_prompt_colors(self.p["window"], self.p["foreground"], self.p["accent"])
+        c["lock_hint"], c["lock_ring"] = hint.hex, ring.hex
+        c["lock_well_rgb"] = lock_well(self.p["window"], self.p["foreground"]).rgb
         # A CRT theme's text glows like its phosphor while Lighting is on
         # (the Shell sheet's .pulsar-lit block); every other theme's is an
         # empty rule.

@@ -2408,20 +2408,12 @@ class OverviewGround {
 // get all the room the text can spare and never more. So the lock screen is the theme's ground with the wallpaper's
 // shapes in it, and its text is the theme's (the sheet's .pulsar-lock-glass
 // rules; stock letters it white, for its dark blur). Unlit: nothing opened
-// it. GNOME's layout and crossfade stay as they are.
-//
-// When it is time to log in, a pane of the same glass fades in behind the
-// password prompt with the stock crossfade, in the menus' color, its size
-// the screen's (LOCK_PANE of the monitor, never smaller than the prompt and
-// the sheet's padding), centered where the prompt comes to rest.
+// it. GNOME's layout and crossfade stay as they are, and the password
+// prompt sits on the same glass as the clock (Nick, 2026-11-08: no panel).
 //
 // The lock screen lives in the unlock dialog, which the Shell builds as the
 // screen locks and destroys once it has slid away at unlock: everything
 // here hangs off that dialog.
-const LOCK_PANE = {width: 0.3, height: 0.55};
-// GNOME's AUTH_PROMPT_VERTICAL_CENTER_OFFSET (ui/unlockDialog.js): the
-// prompt rests this far below the middle
-const LOCK_PROMPT_OFFSET = 50;
 // The ground's band (LockGlass._palette): the contrast its text keeps over
 // any wallpaper (WCAG asks 4.5:1 of small text), and how far past the
 // theme's color, away from the text, the wallpaper may take it (a share of
@@ -2472,21 +2464,10 @@ export class LockGlass {
         this._groundBlur.setSoft(0);
         this._ground.add_effect_with_name('pulsar-blur', this._groundBlur);
         d.insert_child_above(this._ground, d._backgroundGroup);
-        // the login pane, over the ground
-        this._actor = new St.Widget({reactive: false});
-        this._blur = new LiveBlur({lens: SURFACE_LENS});
-        this._actor.add_effect_with_name('pulsar-blur', this._blur);
-        d.insert_child_above(this._actor, this._ground);
-        // the pane's own style (its size, its corners), never drawn
-        this._pane = new St.Widget({style_class: 'pulsar-lock-panel', reactive: false, opacity: 0});
-        d.add_child(this._pane);
         this._colors = new St.Widget({style_class: 'pulsar-glass-colors', opacity: 0, width: 0, height: 0});
         d.add_child(this._colors);
         this._colors.connectObject('style-changed', () => this._palette(), this);
-        this._pane.connectObject('style-changed', () => this._shape(), this);
-        for (const a of [d, d._stack, d._stack.get_parent()])
-            a.connectObject('notify::allocation', () => this._shape(), this);
-        d._adjustment?.connectObject('notify::value', () => this._shape(), this);
+        d.connectObject('notify::allocation', () => this._shape(), this);
         d.connectObject('destroy', () => this.destroy(), this);
         this._palette();
         this._shape();
@@ -2503,12 +2484,10 @@ export class LockGlass {
     _palette() {
         const node = this._colors.get_theme_node();
         const [okW, win] = node.lookup_color('-pulsar-window', false);
-        const [okP, pop] = node.lookup_color('-pulsar-popover', false);
-        if (!okW || !okP)
+        if (!okW)
             return;
         const [okAcc, acc] = node.lookup_color('-pulsar-light', false);
         const fg = rgb(node.get_foreground_color()), light = rgb(okAcc ? acc : node.get_foreground_color());
-        const lt = luminance(win) > 0.5;
         // The ground's band, from the contrast its text needs: on a dark
         // theme (light text) it may darken toward black and lighten only
         // until the text would fall to LOCK_CONTRAST; on a light one the
@@ -2528,43 +2507,15 @@ export class LockGlass {
                 within: LOCK_WITHIN, range: LOCK_RANGE};
         };
         this._groundBlur.setPalette(away(win));
-        this._blur.setPalette(away(pop));
-        this._blur.setShadow(...deepShadow(lt), SHADOW.alpha[lt ? 0 : 1]);
-        this._blur.setEdgeDark(0);
     }
 
-    // The ground over the whole dialog (every screen); the pane laid out as
-    // the dialog's layout puts the prompt once it has come in
-    // (UnlockDialogLayout): centered, LOCK_PROMPT_OFFSET low, kept above
-    // the notifications.
+    // The ground over the whole dialog (every screen)
     _shape() {
-        const d = this._dialog, box = d._stack.get_parent();
+        const d = this._dialog;
         const [dw, dh] = d.get_size();
         this._ground.set_position(0, 0);
         this._ground.set_size(dw, dh);
         this._groundBlur.setShape([0, 0, dw, dh], 0);
-        const t = d._adjustment?.value ?? d._stack.progress ?? 0;
-        this._actor.visible = t > 0;
-        this._actor.opacity = Math.round(255 * Math.min(Math.max(t, 0), 1));
-        if (!box.has_allocation())
-            return;
-        const node = this._pane.get_theme_node();
-        const r = node.get_border_radius(St.Corner.TOPLEFT);
-        const px = node.get_padding(St.Side.LEFT), py = node.get_padding(St.Side.TOP);
-        const b = box.get_allocation_box();
-        const bw = b.get_width(), bh = b.get_height();
-        const [, promptW] = d._promptBox.get_preferred_width(-1);
-        const [, promptH] = d._promptBox.get_preferred_height(promptW);
-        const [, notesH] = d._notificationsBox?.get_preferred_height(-1) ?? [0, 0];
-        const notes = Math.min(notesH, bh - bh / 10 - promptH);
-        const promptY = Math.min(Math.floor(bh / 2 - promptH / 2) + LOCK_PROMPT_OFFSET, bh - promptH - notes);
-        const w = Math.round(Math.max(LOCK_PANE.width * bw, promptW + 2 * px));
-        const h = Math.round(Math.max(LOCK_PANE.height * bh, promptH + 2 * py));
-        const x = Math.round(b.x1 + (bw - w) / 2);
-        const y = Math.round(b.y1 + promptY + promptH / 2 - h / 2);
-        this._actor.set_position(x - BLUR_PAD, y - BLUR_PAD);
-        this._actor.set_size(w + 2 * BLUR_PAD, h + 2 * BLUR_PAD);
-        this._blur.setShape([BLUR_PAD, BLUR_PAD, w, h], r);
     }
 
     // Unlocked: the dialog slides away with the glass on it, and its
@@ -2582,13 +2533,9 @@ export class LockGlass {
             return;
         this._dialog = null;
         Main.layoutManager.disconnectObject(this);
-        d._adjustment?.disconnectObject(this);
         d.disconnectObject(this);
         d._backgroundGroup?.disconnectObject(this);
-        d._stack?.disconnectObject(this);
-        d._stack?.get_parent()?.disconnectObject(this);
         this._colors.disconnectObject(this);
-        this._pane.disconnectObject(this);
         for (const w of d._backgroundGroup ?? []) {
             const e = w.get_effect('blur');
             if (e)
@@ -2596,8 +2543,6 @@ export class LockGlass {
         }
         d.remove_style_class_name('pulsar-lock-glass');
         this._ground.destroy();
-        this._actor.destroy();
-        this._pane.destroy();
         this._colors.destroy();
     }
 }

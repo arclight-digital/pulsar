@@ -102,7 +102,7 @@ Agents you can leave running, a command menu, and GNOME 51.
   lifting the glass far above the theme.
 - The lock screen is glass in the theme's colors: your wallpaper shows
   through, toned so the clock, notifications and login text stay readable
-  on any wallpaper. The login panel fades in when you go to log in.
+  on any wallpaper.
 - The Glass tint slider now sets how much of the color behind the glass
   comes through. All the way up, the glass is the theme's color alone.
 - Dialogs inside a window (preferences, an alert, a toast) are the same
