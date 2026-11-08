@@ -1064,6 +1064,9 @@ RUN set -eu; \
 # login (and leaves a customised one alone), notice tells that account what
 # happened once the Shell is up. Both are gated on stamps in the account's
 # state dir, so on every later login they do not even start.
+# pulsar-theme-guard.service is --global too: on each login of a themed
+# account it rewrites gtk.css with solid windows if the Shell failed to load
+# the glass extension (one gdbus call when nothing is wrong).
 #
 # pulsar-welcome.service is --global for the same per-account reason. It runs
 # only on a new account's first login: init writes its marker for an account
@@ -1153,6 +1156,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     systemctl --global enable pulsar-steam-gl-profile.service && \
     systemctl --global enable pulsar-theme-init.service && \
     systemctl --global enable pulsar-theme-notice.service && \
+    systemctl --global enable pulsar-theme-guard.service && \
     systemctl --global enable pulsar-welcome.service && \
     systemctl --global enable pulsar-whats-new.service && \
     systemctl --global enable pulsar-shortcuts.service && \
@@ -1165,7 +1169,7 @@ RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
     done && \
     for u in podman-auto-update.timer gamescale-reconcile.service pulsar-update-check.timer \
              pulsar-gl-check.path pulsar-crash-watch.path pulsar-steam-gpu-watch.service pulsar-gpu-fault-watch.service pulsar-theme-init.service pulsar-theme-notice.service \
-             pulsar-welcome.service pulsar-whats-new.service pulsar-shortcuts.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer pulsar-presence.service; do \
+             pulsar-theme-guard.service pulsar-welcome.service pulsar-whats-new.service pulsar-shortcuts.service pulsar-steam-gl-profile.service pulsar-doc-portal-watch.timer pulsar-presence.service; do \
       grep -qx "enable ${u}" /usr/lib/systemd/user-preset/50-pulsar.preset || \
         { echo "FATAL: ${u} is enabled --global here but missing from the user preset; a full preset-all would disable it"; exit 1; }; \
     done && \

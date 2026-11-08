@@ -126,12 +126,57 @@ setup() {
     grep -qx 'restart-prompt = off' "$XDG_CONFIG_HOME/pulsar/theme.conf"
 }
 
-@test "the user preset lists both theme units the Containerfile enables" {
+@test "the user preset lists the theme units the Containerfile enables" {
     preset="${REPO}/system_files/usr/lib/systemd/user-preset/50-pulsar.preset"
-    grep -qx 'enable pulsar-theme-init.service' "$preset"
-    grep -qx 'enable pulsar-theme-notice.service' "$preset"
-    grep -q 'systemctl --global enable pulsar-theme-init.service' "${REPO}/Containerfile"
-    grep -q 'systemctl --global enable pulsar-theme-notice.service' "${REPO}/Containerfile"
+    for u in init notice guard; do
+        grep -qx "enable pulsar-theme-$u.service" "$preset"
+        grep -q "systemctl --global enable pulsar-theme-$u.service" "${REPO}/Containerfile"
+    done
+    # the guard runs the engine's login check, after the Shell is up
+    unit="${REPO}/system_files/usr/lib/systemd/user/pulsar-theme-guard.service"
+    grep -qx 'ExecStart=/usr/libexec/pulsar/pulsar-theme window-glass --login' "$unit"
+    grep -qx 'WantedBy=graphical-session.target' "$unit"
+    grep -q '^After=.*graphical-session.target' "$unit"
+}
+
+# The Shell failed to load the extension: nothing draws the glass behind
+# GTK's clear windows, so gtk.css goes solid until it loads again. The fake
+# is the Shell's GetExtensionInfo reply (ExtensionState 3 error, 4 out of
+# date, 1 active).
+@test "glass: windows go solid while the Shell has the extension failed" {
+    fake_dconf
+    setkey /org/gnome/shell/extensions/pulsar-theme/glass true
+    setkey /org/gnome/shell/extensions/pulsar-theme/window-glass true
+    setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
+    export PULSAR_THEME_FAKE_SHELL_EXT="${BATS_TEST_TMPDIR}/ext"
+    css="$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+    reply() { echo "({'uuid': <'pulsar-theme@arclight.digital'>, 'state': <$1>, 'enabled': <true>},)" > "$PULSAR_THEME_FAKE_SHELL_EXT"; }
+    reply 1.0
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q 'pulsar window-glass: on' "$css"
+    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
+    # the login check, with the extension failed
+    reply 3.0
+    python3 "$ENGINE" window-glass --login >/dev/null
+    grep -q 'pulsar window-glass: off' "$css"
+    grep -q -- '--window-bg-color: #[0-9a-f]*;' "$css"
+    if grep -q 'alpha(#[0-9a-f]*, 0);' "$css"; then false; fi
+    # loaded again: the extension's own check puts the glass back
+    reply 1.0
+    python3 "$ENGINE" window-glass --if-stale >/dev/null
+    grep -q 'pulsar window-glass: on' "$css"
+    # nothing wrong: the login check leaves gtk.css alone
+    before=$(stat -c %Y.%i "$css")
+    python3 "$ENGINE" window-glass --login >/dev/null
+    [ "$(stat -c %Y.%i "$css")" = "$before" ]
+    # out of date counts as failed; a theme set meanwhile writes solid too
+    reply 4.0
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q 'pulsar window-glass: off' "$css"
+    # no Shell to ask (before it starts): trust the settings
+    rm "$PULSAR_THEME_FAKE_SHELL_EXT"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q 'pulsar window-glass: on' "$css"
 }
 
 @test "exactly one override sets enabled-extensions, with both extensions" {

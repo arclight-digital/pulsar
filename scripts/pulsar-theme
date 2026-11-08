@@ -1258,6 +1258,56 @@ def ext_turned_off():
     return EXT_UUID in parse_gv_list(gsettings_get("org.gnome.shell", "disabled-extensions"))
 
 
+# GNOME Shell's ExtensionState (js/misc/extensionUtils.js): the two a
+# failed load leaves, and the two it passes through while loading.
+EXT_BROKEN = {3: "error", 4: "out of date"}
+EXT_LOADING = {6, 8}    # initialized, activating
+_EXT_STATE = []
+
+
+def ext_state():
+    """The extension's state in the running Shell, a number, or None when no
+    Shell answers (before it starts, or no session at all). Asked once per
+    run. PULSAR_THEME_FAKE_SHELL_EXT names a file holding the Shell's reply,
+    for the tests; with the fake dconf and no such file, no Shell answers."""
+    if _EXT_STATE:
+        return _EXT_STATE[0]
+    fake = os.environ.get("PULSAR_THEME_FAKE_SHELL_EXT")
+    if fake:
+        try:
+            out = pathlib.Path(fake).read_text()
+        except OSError:
+            out = None
+    elif FAKE_DCONF:
+        out = None
+    else:
+        out = _gdbus(EXT_UUID, dest="org.gnome.Shell.Extensions", path="/org/gnome/Shell/Extensions",
+                     method="org.gnome.Shell.Extensions.GetExtensionInfo")
+    m = re.search(r"'state': <(\d+)(?:\.\d*)?>", out or "")
+    st = int(m.group(1)) if m else None
+    _EXT_STATE.append(st)
+    return st
+
+
+def ext_broken():
+    """Whether the Shell tried to load the extension and could not (an error
+    in it, or a GNOME it does not declare). Then nothing draws the glass
+    behind GTK's clear windows, and they would show the desktop through."""
+    return ext_state() in EXT_BROKEN
+
+
+def await_shell(timeout=60):
+    """At login: wait until the Shell has the extension loaded or failed,
+    up to timeout seconds, so ext_broken() reads its settled state."""
+    end = time.monotonic() + timeout
+    while True:
+        _EXT_STATE.clear()
+        st = ext_state()
+        if (st is not None and st not in EXT_LOADING) or time.monotonic() >= end:
+            return st
+        time.sleep(1)
+
+
 # Glow in proportion to size. t is an element's thickness -- its short
 # side, in logical pixels -- measured where it renders: the Shell's in the
 # theme gate's headless Shell (GNOME 50, the stock sheet under ours), GTK's
@@ -1311,7 +1361,7 @@ def glow_on():
         return False
     if gsettings_get("org.gnome.shell", "disable-user-extensions") == "true":
         return False
-    if ext_turned_off():
+    if ext_turned_off() or ext_broken():
         return False
     return f"'{EXT_UUID}'" in (gsettings_get("org.gnome.shell", "enabled-extensions") or "")
 
@@ -1320,7 +1370,8 @@ def window_glass():
     """Whether GTK windows go translucent: only while the Shell extension is
     enabled and would draw its blur behind them -- Glass and Glass windows
     on, high contrast off. Otherwise translucent windows would show the
-    desktop sharp. Off when the extension's schema is not installed."""
+    desktop sharp. Off when the extension's schema is not installed, and
+    when the Shell failed to load it (ext_broken)."""
     sid = "org.gnome.shell.extensions.pulsar-theme"
     if gsettings_get(sid, "glass") != "true" or gsettings_get(sid, "window-glass") != "true":
         return False
@@ -1328,8 +1379,9 @@ def window_glass():
         return False
     if gsettings_get("org.gnome.shell", "disable-user-extensions") == "true":
         return False
-    # switched off: nothing draws the blur, whatever enabled-extensions says
-    if ext_turned_off():
+    # switched off, or failed to load: nothing draws the blur, whatever
+    # enabled-extensions says
+    if ext_turned_off() or ext_broken():
         return False
     return f"'{EXT_UUID}'" in (gsettings_get("org.gnome.shell", "enabled-extensions") or "")
 
@@ -2706,6 +2758,8 @@ def main(argv=None):
     sub.add_parser("follow-scheme", help="re-apply the GTK3 half after a Dark Style flip (the Shell extension calls this)")
     wg = sub.add_parser("window-glass", help="re-apply the GTK4 half after the Glass windows switch (the Shell extension calls this)")
     wg.add_argument("--if-stale", action="store_true", help="only when it was written for the other glass state")
+    wg.add_argument("--login", action="store_true",
+                    help="--if-stale once the Shell has loaded the extension (pulsar-theme-guard.service)")
     sub.add_parser("current")
     rv = sub.add_parser("revert")
     rv.add_argument("--to", choices=["stock", "image"], default="stock",
@@ -2722,6 +2776,10 @@ def main(argv=None):
     i.add_argument("--into", help="themes root to write into (default: user themes dir)")
     i.add_argument("--set", action="append", help="override a palette key: red=#f7768e (base16)")
     a = ap.parse_args(argv)
+    # Before the lock: the wait must not hold up a `set` meanwhile.
+    if a.cmd == "window-glass" and a.login:
+        await_shell()
+        a.if_stale = True
     # One writer at a time. Mostly this orders the extension's follow-scheme
     # behind a `set` that flips Dark Style itself (Dracula, Alucard): it
     # waits, then reads the NEW theme's state, instead of rewriting GTK3 for

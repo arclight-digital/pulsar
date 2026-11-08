@@ -1,0 +1,23 @@
+# Glass windows leave GTK's window ground clear: the Shell extension draws
+# the glass behind it. If the Shell fails to load the extension (an error in
+# it, or a GNOME it does not declare), nothing draws that glass, and every
+# GTK app opened afterwards would show the desktop through its windows.
+# Once the Shell has loaded or failed the extension, this asks the engine to
+# check: it rewrites gtk.css with solid windows when the extension failed,
+# and does nothing when gtk.css already matches (the extension makes the
+# same check when it loads, so a working extension has already put things
+# right). One gdbus call per login; up to a minute while the Shell starts.
+[Unit]
+Description=Pulsar theme: solid windows if the glass extension failed
+ConditionUser=!@system
+ConditionPathExists=%S/pulsar-theme/current.json
+After=pulsar-theme-init.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pulsar/pulsar-theme window-glass --login
+TimeoutStartSec=120
+
+[Install]
+WantedBy=graphical-session.target

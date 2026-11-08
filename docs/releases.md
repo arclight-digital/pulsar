@@ -105,6 +105,8 @@ Agents you can leave running, a command menu, and GNOME 51.
   on any wallpaper. The login panel fades in when you go to log in.
 - The Glass tint slider now sets how much of the color behind the glass
   comes through. All the way up, the glass is the theme's color alone.
+- If the glass extension fails to load (after a GNOME update, say), apps
+  open with solid windows instead of see-through ones with no glass behind.
 - A window's glass no longer sits off to one side after you unmaximize it.
 - The clock shows one highlight while the date menu is open, not two.
 - The calendar's weekday names and "No Notifications" are easier to read,
