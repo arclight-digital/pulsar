@@ -142,21 +142,29 @@ setup() {
 # The Shell failed to load the extension: nothing draws the glass behind
 # GTK's clear windows, so gtk.css goes solid until it loads again. The fake
 # is the Shell's GetExtensionInfo reply (ExtensionState 3 error, 4 out of
-# date, 1 active).
-@test "glass: windows go solid while the Shell has the extension failed" {
+# date, 1 active, 6 initialized), in GNOME 51's own form:
+# reply STATE [ENABLED] [ERROR].
+glass_env() {
     fake_dconf
     setkey /org/gnome/shell/extensions/pulsar-theme/glass true
     setkey /org/gnome/shell/extensions/pulsar-theme/window-glass true
     setkey /org/gnome/shell/enabled-extensions "['pulsar-theme@arclight.digital']"
     export PULSAR_THEME_FAKE_SHELL_EXT="${BATS_TEST_TMPDIR}/ext"
     css="$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
-    reply() { echo "({'uuid': <'pulsar-theme@arclight.digital'>, 'state': <$1>, 'enabled': <true>},)" > "$PULSAR_THEME_FAKE_SHELL_EXT"; }
+}
+reply() {
+    echo "({'uuid': <'pulsar-theme@arclight.digital'>, 'type': <2.0>, 'state': <$1>, 'enabled': <${2:-true}>, 'error': <'${3:-}'>, 'hasPrefs': <true>},)" > "${PULSAR_THEME_FAKE_SHELL_EXT}.new"
+    mv "${PULSAR_THEME_FAKE_SHELL_EXT}.new" "$PULSAR_THEME_FAKE_SHELL_EXT"
+}
+
+@test "glass: windows go solid while the Shell has the extension failed" {
+    glass_env
     reply 1.0
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     grep -q 'pulsar window-glass: on' "$css"
     grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
     # the login check, with the extension failed
-    reply 3.0
+    reply 3.0 true 'TypeError: this._glass is undefined'
     python3 "$ENGINE" window-glass --login >/dev/null
     grep -q 'pulsar window-glass: off' "$css"
     grep -q -- '--window-bg-color: #[0-9a-f]*;' "$css"
@@ -177,6 +185,51 @@ setup() {
     rm "$PULSAR_THEME_FAKE_SHELL_EXT"
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     grep -q 'pulsar window-glass: on' "$css"
+}
+
+# GNOME 51's loadExtension sets 3 first ("Default to error, we set success
+# as the last step") and holds it while extension.js imports; only a real
+# failure fills in 'error'.
+@test "glass: at login, a 3 with no error is a load under way, waited out" {
+    glass_env
+    reply 1.0
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q 'pulsar window-glass: on' "$css"
+    reply 3.0
+    # a theme set mid-load keeps the glass
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q 'pulsar window-glass: on' "$css"
+    ( sleep 2; reply 1.0 ) &
+    PULSAR_THEME_SHELL_WAIT=20 python3 "$ENGINE" window-glass --login >/dev/null
+    wait
+    grep -q 'pulsar window-glass: on' "$css"
+    # one that never finishes loading draws nothing either
+    reply 3.0
+    PULSAR_THEME_SHELL_WAIT=2 python3 "$ENGINE" window-glass --login >/dev/null
+    grep -q 'pulsar window-glass: off' "$css"
+}
+
+# 6 is where an extension that is not enabled stays for good (switched off,
+# or disable-user-extensions); only an enabled one is on its way from it.
+@test "glass: at login, a switched-off extension is settled, not waited on" {
+    glass_env
+    reply 1.0
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    grep -q 'pulsar window-glass: on' "$css"
+    setkey /org/gnome/shell/disabled-extensions "['pulsar-theme@arclight.digital']"
+    reply 6.0 false
+    SECONDS=0
+    PULSAR_THEME_SHELL_WAIT=20 python3 "$ENGINE" window-glass --login >/dev/null
+    [ "$SECONDS" -lt 10 ]
+    grep -q 'pulsar window-glass: off' "$css"
+    # switched on again: 6 while enabled is on its way, and is waited for
+    # (here to a failure, which keeps the windows solid)
+    setkey /org/gnome/shell/disabled-extensions "[]"
+    reply 6.0 true
+    ( sleep 2; reply 3.0 true 'TypeError: this._glass is undefined' ) &
+    PULSAR_THEME_SHELL_WAIT=20 python3 "$ENGINE" window-glass --login >/dev/null
+    wait
+    grep -q 'pulsar window-glass: off' "$css"
 }
 
 @test "exactly one override sets enabled-extensions, with both extensions" {

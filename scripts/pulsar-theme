@@ -1316,17 +1316,25 @@ def ext_turned_off():
 
 
 # GNOME Shell's ExtensionState (js/misc/extensionUtils.js): the two a
-# failed load leaves, and the two it passes through while loading.
+# failed load leaves, and the ones it passes through while loading.
+#   3 error: also the state loadExtension starts from ("Default to error,
+#     we set success as the last step", GNOME 51), held while extension.js
+#     is imported. Only logExtensionError fills in 'error', so a 3 with an
+#     empty 'error' is a load still under way.
+#   6 initialized: on the way to enabled, or where a disabled extension
+#     stays (switched off, or disable-user-extensions). The reply's
+#     'enabled' tells the two apart.
 EXT_BROKEN = {3: "error", 4: "out of date"}
-EXT_LOADING = {6, 8}    # initialized, activating
 _EXT_STATE = []
+_EXT_HELD = []
 
 
-def ext_state():
-    """The extension's state in the running Shell, a number, or None when no
-    Shell answers (before it starts, or no session at all). Asked once per
-    run. PULSAR_THEME_FAKE_SHELL_EXT names a file holding the Shell's reply,
-    for the tests; with the fake dconf and no such file, no Shell answers."""
+def ext_info():
+    """The Shell's GetExtensionInfo reply for the extension, parsed:
+    (state number, error text non-empty, enabled), or None when no Shell
+    answers (before it starts, or no session at all). Asked once per run.
+    PULSAR_THEME_FAKE_SHELL_EXT names a file holding the Shell's reply, for
+    the tests; with the fake dconf and no such file, no Shell answers."""
     if _EXT_STATE:
         return _EXT_STATE[0]
     fake = os.environ.get("PULSAR_THEME_FAKE_SHELL_EXT")
@@ -1340,28 +1348,56 @@ def ext_state():
     else:
         out = _gdbus(EXT_UUID, dest="org.gnome.Shell.Extensions", path="/org/gnome/Shell/Extensions",
                      method="org.gnome.Shell.Extensions.GetExtensionInfo")
-    m = re.search(r"'state': <(\d+)(?:\.\d*)?>", out or "")
-    st = int(m.group(1)) if m else None
-    _EXT_STATE.append(st)
-    return st
+    out = out or ""
+    m = re.search(r"'state': <(\d+)(?:\.\d*)?>", out)
+    info = None
+    if m:
+        # a string prints as '...', or "..." when it holds a '
+        e = re.search(r"'error': <(['\"])(.)", out)
+        en = re.search(r"'enabled': <(true|false)>", out)
+        info = (int(m.group(1)), bool(e and e.group(2) != e.group(1)), not en or en.group(1) == "true")
+    _EXT_STATE.append(info)
+    return info
+
+
+def ext_loading(info):
+    """Whether the Shell is still on its way to a settled state: activating,
+    importing (3 with no error yet), or initialized while enabled."""
+    if info is None:
+        return False
+    st, err, enabled = info
+    return st == 8 or (st == 3 and not err) or (st == 6 and enabled)
 
 
 def ext_broken():
     """Whether the Shell tried to load the extension and could not (an error
     in it, or a GNOME it does not declare). Then nothing draws the glass
-    behind GTK's clear windows, and they would show the desktop through."""
-    return ext_state() in EXT_BROKEN
+    behind GTK's clear windows, and they would show the desktop through.
+    A 3 still without an error is a load under way, not a failure, unless
+    it held through the whole of await_shell."""
+    info = ext_info()
+    if info is None or info[0] not in EXT_BROKEN:
+        return False
+    return info[0] != 3 or info[1] or bool(_EXT_HELD)
 
 
-def await_shell(timeout=60):
+def await_shell(timeout=None):
     """At login: wait until the Shell has the extension loaded or failed,
-    up to timeout seconds, so ext_broken() reads its settled state."""
+    up to timeout seconds (60; PULSAR_THEME_SHELL_WAIT for the tests), so
+    ext_broken() reads its settled state."""
+    if timeout is None:
+        timeout = float(os.environ.get("PULSAR_THEME_SHELL_WAIT") or 60)
     end = time.monotonic() + timeout
     while True:
         _EXT_STATE.clear()
-        st = ext_state()
-        if (st is not None and st not in EXT_LOADING) or time.monotonic() >= end:
-            return st
+        info = ext_info()
+        if info is not None and not ext_loading(info):
+            return info[0]
+        if time.monotonic() >= end:
+            # an import that never finished: nothing draws the glass either
+            if info is not None and info[0] == 3:
+                _EXT_HELD.append(True)
+            return info[0] if info else None
         time.sleep(1)
 
 
