@@ -38,13 +38,18 @@ setup() {
     # and the build flathub has (by default the same one)
     export FLATPAK_COMMITS="${BATS_TEST_TMPDIR}/commits"
     export FLATPAK_REMOTE="${BATS_TEST_TMPDIR}/remote"
+    # "<ref> <commit>": a build downloaded into the local repo (--no-deploy)
+    # and not deployed yet
+    export FLATPAK_PULLED="${BATS_TEST_TMPDIR}/pulled"
+    # run by the stub in the middle of a --no-pull deploy
+    export FLATPAK_DEPLOY_HOOK=""
     export FLATPAK_MASKS="${BATS_TEST_TMPDIR}/masks"
     export PULSAR_RUN_ROOT="${BATS_TEST_TMPDIR}/run"
     export FLATPAK_UNPUBLISHED="" FLATPAK_OFFLINE="" FLATPAK_PULL_FAIL=""
     # `flatpak remotes --system --columns=name` on cherenkov, in its order
     export FLATPAK_REMOTES="fedora flathub"
     : > "$FLATPAK_STATE"; : > "$FLATPAK_LOG"
-    : > "$FLATPAK_COMMITS"; : > "$FLATPAK_REMOTE"; : > "$FLATPAK_MASKS"
+    : > "$FLATPAK_COMMITS"; : > "$FLATPAK_REMOTE"; : > "$FLATPAK_MASKS"; : > "$FLATPAK_PULLED"
 
     # Checked against flatpak 1.18.4 (mask in a scratch FLATPAK_USER_DIR, the
     # rest read-only on cherenkov): `mask` lists patterns two spaces in, and
@@ -52,12 +57,16 @@ setup() {
     # says "No current masked pattern matching" and exits 1; `info -c` and
     # `remote-info -c` print the bare commit; an unpublished extension fails
     # to install with "Nothing matches <ref> in remote flathub", exit 1.
+    # Plain `info` (C locale) prints "Active commit:" and "Latest commit:"
+    # when the local repo holds a build that is not deployed, and a single
+    # "Commit:" line when they are the same (cherenkov 2026-11-09).
     cat > "${STUB}/flatpak" <<'EOF'
 #!/bin/sh
 cmd=$1; shift
-ref="" reinstall="" nodeploy="" nopull="" remove=""
+ref="" reinstall="" nodeploy="" nopull="" remove="" showc=""
 for a in "$@"; do
     case "$a" in
+        -c)          showc=1 ;;
         --reinstall) reinstall=1 ;;
         --no-deploy) nodeploy=1 ;;
         --no-pull)   nopull=1 ;;
@@ -72,7 +81,16 @@ case "$cmd" in
     remotes) printf '%s\n' $FLATPAK_REMOTES; exit 0 ;;
     info)
         grep -qFx "$ref" "$FLATPAK_STATE" || exit 1
-        commit "$ref" "$FLATPAK_COMMITS" || echo c0
+        active=$(commit "$ref" "$FLATPAK_COMMITS" || echo c0)
+        [ -n "$showc" ] && { echo "$active"; exit 0; }
+        latest=$(commit "$ref" "$FLATPAK_PULLED" || echo "$active")
+        printf '            ID: %s\n        Origin: flathub\n\n' "$ref"
+        if [ "$latest" = "$active" ]; then
+            printf '        Commit: %s\n' "$active"
+        else
+            printf ' Active commit: %s\n Latest commit: %s\n' "$active" "$latest"
+        fi
+        printf '       Subject: Add 615.78.08 (1dd0ef3)\n'
         exit 0 ;;
     remote-info)
         [ -n "$FLATPAK_OFFLINE" ] && { echo "error: Could not resolve host: dl.flathub.org" >&2; exit 1; }
@@ -91,11 +109,14 @@ case "$cmd" in
         [ -n "$FLATPAK_OFFLINE" ] && [ -z "$nopull" ] && { echo "error: Could not resolve host: dl.flathub.org" >&2; exit 1; }
         if [ -n "$reinstall" ] && [ -n "$nodeploy" ]; then
             [ -n "$FLATPAK_PULL_FAIL" ] && { echo "error: Failed to pull $ref from flathub" >&2; exit 1; }
-            echo "pull:$ref" >> "$FLATPAK_LOG"; exit 0
+            echo "pull:$ref" >> "$FLATPAK_LOG"
+            echo "$ref $(commit "$ref" "$FLATPAK_REMOTE")" >> "$FLATPAK_PULLED"; exit 0
         fi
         if [ -n "$reinstall" ] && [ -n "$nopull" ]; then
+            new=$(commit "$ref" "$FLATPAK_PULLED") || { echo "error: $ref not found in local repo" >&2; exit 1; }
+            [ -n "$FLATPAK_DEPLOY_HOOK" ] && sh -c "$FLATPAK_DEPLOY_HOOK"
             echo "deploy:$ref" >> "$FLATPAK_LOG"
-            echo "$ref $(commit "$ref" "$FLATPAK_REMOTE")" >> "$FLATPAK_COMMITS"; exit 0
+            echo "$ref $new" >> "$FLATPAK_COMMITS"; exit 0
         fi
         case " $FLATPAK_UNPUBLISHED " in *" $ref "*)
             echo "error: Nothing matches $ref in remote flathub" >&2; exit 1 ;;
@@ -326,6 +347,78 @@ dead_pid() {
     run "$SCRIPT"
     [ "$status" -eq 0 ]
     [ ! -s "$FLATPAK_LOG" ]
+}
+
+@test "REGRESSION: a build downloaded under a running app goes in at the next boot, before the network is up" {
+    # cherenkov 2026-11-09: deployed 79a0490e, flathub and the local repo
+    # 6f68c3e6, downloaded by an earlier run while Steam held the extension.
+    # The boot run starts ~8 s before NetworkManager, could not ask flathub,
+    # and returned without deploying it.
+    echo org.freedesktop.Platform.GL.nvidia-610-57-04 > "$FLATPAK_STATE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 79a0490e" > "$FLATPAK_COMMITS"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 6f68c3e6" > "$FLATPAK_PULLED"
+    export FLATPAK_OFFLINE=1
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"updated org.freedesktop.Platform.GL.nvidia-610-57-04 to flathub's newer build"* ]]
+    run cat "$FLATPAK_LOG"
+    [ "$output" = deploy:org.freedesktop.Platform.GL.nvidia-610-57-04 ]
+    run flatpak info --system -c org.freedesktop.Platform.GL.nvidia-610-57-04
+    [ "$output" = 6f68c3e6 ]
+}
+
+@test "offline, a downloaded build still waits while a running app holds the extension" {
+    echo org.freedesktop.Platform.GL.nvidia-610-57-04 > "$FLATPAK_STATE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 6f68c3e6" > "$FLATPAK_PULLED"
+    instance com.valvesoftware.Steam $$ org.freedesktop.Platform.GL.nvidia-610-57-04
+    export FLATPAK_OFFLINE=1
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GL.nvidia-610-57-04 downloaded; Steam use the current one"* ]]
+    [ ! -s "$FLATPAK_LOG" ]
+}
+
+@test "offline, nothing is deployed when the downloaded build is the one in use" {
+    # Deployed already: plain `flatpak info` prints one "Commit:" line.
+    echo org.freedesktop.Platform.GL.nvidia-610-57-04 > "$FLATPAK_STATE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 6f68c3e6" > "$FLATPAK_COMMITS"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 6f68c3e6" > "$FLATPAK_PULLED"
+    export FLATPAK_OFFLINE=1
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ ! -s "$FLATPAK_LOG" ]
+}
+
+@test "online, a build already downloaded is deployed without downloading it again" {
+    echo org.freedesktop.Platform.GL.nvidia-610-57-04 > "$FLATPAK_STATE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 c1" > "$FLATPAK_REMOTE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 c1" > "$FLATPAK_PULLED"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run cat "$FLATPAK_LOG"
+    [ "$output" = deploy:org.freedesktop.Platform.GL.nvidia-610-57-04 ]
+}
+
+@test "online, flathub's build is fetched when the local repo holds an older download" {
+    echo org.freedesktop.Platform.GL.nvidia-610-57-04 > "$FLATPAK_STATE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 c2" > "$FLATPAK_REMOTE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 c1" > "$FLATPAK_PULLED"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run flatpak info --system -c org.freedesktop.Platform.GL.nvidia-610-57-04
+    [ "$output" = c2 ]
+}
+
+@test "an app that starts while the extension is replaced is named in the journal" {
+    echo org.freedesktop.Platform.GL.nvidia-610-57-04 > "$FLATPAK_STATE"
+    echo "org.freedesktop.Platform.GL.nvidia-610-57-04 c1" > "$FLATPAK_PULLED"
+    export FLATPAK_OFFLINE=1
+    local dir="${PULSAR_RUN_ROOT}/1000/.flatpak/9"
+    export FLATPAK_DEPLOY_HOOK="mkdir -p '$dir' && printf '[Application]\nname=com.valvesoftware.Steam\n\n[Instance]\nruntime-extensions=org.freedesktop.Platform.GL.nvidia-610-57-04=c0\n' > '$dir/info' && printf '%s' $$ > '$dir/pid'"
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -qx deploy:org.freedesktop.Platform.GL.nvidia-610-57-04 "$FLATPAK_LOG"
+    [[ "$output" == *"Steam started while org.freedesktop.Platform.GL.nvidia-610-57-04 was replaced"* ]]
 }
 
 @test "a removed extension loses its mask" {

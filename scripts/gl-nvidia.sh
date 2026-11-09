@@ -162,27 +162,52 @@ holders() {
     printf '%s\n' "${apps[@]}" | LC_ALL=C sort | paste -sd' '
 }
 
+# The build of extension $1 already downloaded into the local repo, when it
+# is not the one deployed: what `install --no-pull` would put in. flatpak
+# info prints it as "Latest commit:" only when it differs from the active one
+# (the same commit is a single "Commit:" line). C locale: the label is
+# translated otherwise.
+pulled() {
+    LC_ALL=C flatpak info --system "$1" 2>/dev/null | sed -n 's/^ *Latest commit: *//p' | head -1
+}
+
 # A newer flathub build of extension $1 (same driver): downloaded now, and
 # deployed now only if no running app holds it. --reinstall is how a masked
 # ref is updated on purpose; --no-deploy and --no-pull split the slow half
 # (the download) from the quick one, so the check for holders sits right
 # before the swap. Never a failure: the extension that is there works, and
 # the next run tries again.
+#
+# The boot run is the one that deploys what a run under a running app only
+# downloaded, and at boot it starts before the network is up (cherenkov,
+# 2026-11-09: ~8 s before NetworkManager). So without flathub the decision
+# comes from the local repo: a build downloaded and not deployed goes in.
 refresh() {
-    local ref=$1 active latest apps
+    local ref=$1 active latest have apps
     active=$(flatpak info --system -c "$ref" 2>/dev/null) || return 0
-    latest=$(LC_ALL=C flatpak remote-info --system -c "$REMOTE" "$ref" 2>/dev/null) || return 0
-    [ -n "$latest" ] && [ "$latest" != "$active" ] || return 0
-    if ! LC_ALL=C flatpak install --system --noninteractive --reinstall --no-deploy "$REMOTE" "$ref" >/dev/null 2>&1; then
-        log "could not download the newer ${ref}; the next run tries again"
-        return 0
+    have=$(pulled "$ref")
+    if latest=$(LC_ALL=C flatpak remote-info --system -c "$REMOTE" "$ref" 2>/dev/null) && [ -n "$latest" ]; then
+        [ "$latest" != "$active" ] || return 0
+        if [ "$latest" != "$have" ] &&
+            ! LC_ALL=C flatpak install --system --noninteractive --reinstall --no-deploy "$REMOTE" "$ref" >/dev/null 2>&1; then
+            log "could not download the newer ${ref}; the next run tries again"
+            return 0
+        fi
+    else
+        [ -n "$have" ] || return 0
     fi
+    # Nothing slow between this check and the swap: every lookup is above.
     if apps=$(holders "$ref"); then
         log "newer ${ref} downloaded; ${apps// /, } use the current one, so it goes in at the next boot"
         return 0
     fi
     if LC_ALL=C flatpak install --system --noninteractive --reinstall --no-pull "$REMOTE" "$ref" >/dev/null 2>&1; then
         log "updated ${ref} to flathub's newer build"
+        # An app that started during the swap may have mounted a half-replaced
+        # directory. Nothing can undo that, but the journal can name it.
+        if apps=$(holders "$ref"); then
+            log "${apps// /, } started while ${ref} was replaced; restart it if its games fall back to the iGPU" >&2
+        fi
     else
         log "could not put in the newer ${ref}; the next run tries again" >&2
     fi
