@@ -2892,6 +2892,76 @@ GONE_32='NVRM: Xid (PCI:0000:02:00): 32, pid=6161, name=StateOfDecay2-W, channel
     grep -q "search for reports of it with Freelode" "$RUN_LOG"
 }
 
+# The driver's own forms: a fault it could not tie to a process (common on
+# Xid 31 and 13, every line of the fault carrying the "<unknown>"), and Xid
+# 154 moving the recovery action to a reset and back to none.
+UNKNOWN_31="NVRM: Xid (PCI:0000:02:00): 31, pid='<unknown>', name=<unknown>, Ch 00000010, intr 00000000. MMU Fault: ENGINE GRAPHICS GPC2 GPCCLIENT_T1_3 faulted @ 0x7f3a_1c400000. Fault is of type FAULT_PDE ACCESS_TYPE_VIRT_READ"
+UNKNOWN_13_WARP="NVRM: Xid (PCI:0000:02:00): 13, pid='<unknown>', name=<unknown>, Graphics SM Warp Exception on (GPC 3, TPC 4, SM 1): Out Of Range Address"
+UNKNOWN_13_ESR="NVRM: Xid (PCI:0000:02:00): 13, pid='<unknown>', name=<unknown>, Graphics Exception: ESR 0x51df30=0x1c813b60 0x51df34=0x4 0x51df28=0x0 0x51df2c=0x0"
+RESET_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x0 (None) to 0x1 (GPU Reset Required)'
+NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 (GPU Reset Required) to 0x0 (None)'
+
+@test "gpu faults: a fault the driver tied to no program is announced once, naming none" {
+    gpu_env
+    klog "$UNKNOWN_31" "$UNKNOWN_31"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(grep -c "^--user" "$RUN_LOG")" -eq 1 ] || fail "$(cat "$RUN_LOG")"
+    grep -q -- "--unit=pulsar-gpu-fault-xid31-" "$RUN_LOG"
+    grep -q "A program hit a GPU fault Xid 31: a GPU memory access outside its own memory. The NVIDIA driver did not log which program." "$RUN_LOG"
+    run grep -c "<unknown>" "$RUN_LOG"
+    [ "$output" = 0 ]
+    # nothing to ignore it by: the last argument (the name to ignore) is empty
+    grep -qE "/pulsar $" "$RUN_LOG" || fail "$(cat "$RUN_LOG")"
+}
+
+@test "gpu faults: the GPU itself falling off the bus is about the GPU, even with no program named" {
+    gpu_env
+    klog "NVRM: Xid (PCI:0000:02:00): 79, pid='<unknown>', name=<unknown>, GPU has fallen off the bus."
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$(grep -c "^--user" "$RUN_LOG")" -eq 1 ] || fail "$(cat "$RUN_LOG")"
+    grep -q "The NVIDIA GPU stopped answering the system Xid 79. Save your work" "$RUN_LOG"
+    run "$PULSAR" doctor gpu-faults
+    [[ "$output" == warn*"1 GPU fault(s) this boot: GPU (Xid 79)"* ]] || fail "$output"
+}
+
+@test "doctor gpu-faults counts a fault tied to no program, once per fault" {
+    gpu_env
+    klog "$UNKNOWN_13_WARP" "$UNKNOWN_13_ESR" "$UNKNOWN_31"
+    run "$PULSAR" doctor gpu-faults
+    [ "$status" -eq 0 ]
+    [[ "$output" == warn*"2 GPU fault(s) this boot: an unnamed program (Xid 13), an unnamed program (Xid 31)"* ]] || fail "$output"
+}
+
+@test "REGRESSION: gpu faults: a game's later Xid after it quit is not a second notification" {
+    gpu_env
+    klog "$HIU_13"
+    run "$PULSAR" doctor gpu-faults --watch
+    grep -q "Hell Is Us hit a GPU fault" "$RUN_LOG"
+    # The game has gone; its pid's next Xid can only be named "GameThread".
+    rm -rf "${PULSAR_PROC:?}/4242"
+    : > "$KLOG"; : > "$RUN_LOG"
+    klog "$HIU_43"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ] || fail "$output"
+    [ ! -s "$RUN_LOG" ] || fail "$(cat "$RUN_LOG")"
+}
+
+@test "gpu faults: an Xid 154 back to no recovery action is not news; one asking for a reset is" {
+    gpu_env
+    klog "$NONE_154"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ] || fail "$output"
+    [ ! -s "$RUN_LOG" ] || fail "$(cat "$RUN_LOG")"
+    run "$PULSAR" doctor gpu-faults
+    [[ "$output" == ok*"no GPU faults this boot"* ]] || fail "$output"
+    klog "$RESET_154"
+    run "$PULSAR" doctor gpu-faults --watch
+    grep -q "The NVIDIA driver says the GPU needs a reset Xid 154." "$RUN_LOG"
+    run "$PULSAR" doctor gpu-faults
+    [[ "$output" == warn*"1 GPU fault(s) this boot: GPU (Xid 154)"* ]] || fail "$output"
+}
+
 @test "doctor gpu-faults lists this boot's faults by the names the watcher found" {
     gpu_env
     run "$PULSAR" doctor gpu-faults

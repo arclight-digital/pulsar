@@ -4821,9 +4821,16 @@ GPU_FAULT_PROC=${PULSAR_PROC:-/proc}
 
 # A kernel log line -> "xid<TAB>pid<TAB>name". pid and name are empty when the
 # line names no process: the detail lines that follow an Xid 13, an Xid 79.
+# pid is "?" when the driver logged a fault but not whose
+# ("pid='<unknown>', name=<unknown>", common on Xid 31 and 13): still a fault.
+# An Xid 154 whose recovery action is now 0x0 (None) asks for nothing: the
+# driver logs it when a recovery is over, so it is not news.
 xid_parse() {
     sed -nE '/NVRM: Xid /{
+        /NVRM: Xid \([^)]*\): 154,.* 0x0+ \(None\)[.[:space:]]*$/d
         s/^.*NVRM: Xid \([^)]*\): ([0-9]+), pid=([0-9]+), name=([^,]*),.*$/\1\t\2\t\3/p
+        t
+        s/^.*NVRM: Xid \([^)]*\): ([0-9]+), pid=[^0-9,][^,]*, name=[^,]*,.*$/\1\t?\t/p
         t
         s/^.*NVRM: Xid \([^)]*\): ([0-9]+)[,:].*$/\1\t\t/p
     }'
@@ -4900,29 +4907,41 @@ gpu_fault_boot() { cat "${PULSAR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
 # One Xid as the watcher sees it: named, remembered for doctor, and announced
 # once per program per boot (a game that faults every launch is one piece of
 # news an evening). The state file holds this boot's faults, one per process:
-# boot <TAB> pid <TAB> xid <TAB> name.
+# boot <TAB> pid <TAB> xid <TAB> name. pid is "-" for the GPU itself and "?"
+# for a program the driver did not name.
 gpu_fault_event() {
     local xid=$1 pid=$2 comm=$3 kind what name game boot state="${UPDATE_STATE}/gpu-faults" rows=""
     IFS=$'\t' read -r kind what <<<"$(xid_meaning "$xid")"
     [ "$kind" != skip ] || return 0
     # A program's fault without its pid is a detail line of one already seen.
     [ -n "$pid" ] || [ "$kind" = gpu ] || return 0
-    if [ -n "$pid" ]; then
-        IFS=$'\t' read -r name game <<<"$(gpu_fault_who "$pid" "$comm")"
-    else
+    if [ -z "$pid" ]; then
         pid=- name="the GPU" game=0
+    elif [ "$pid" = "?" ]; then
+        name="" game=0
+    else
+        IFS=$'\t' read -r name game <<<"$(gpu_fault_who "$pid" "$comm")"
     fi
     boot=$(gpu_fault_boot)
     [ -r "$state" ] && rows=$(awk -F'\t' -v b="$boot" '$1 == b' "$state")
-    # once per program: the Xid 43 after an Xid 13 is the same fault
+    # Once per program: the Xid 43 after an Xid 13 is the same fault. By pid
+    # as well as by name: once the game has gone, a later Xid from its pid
+    # resolves only to its thread's name ("GameThread") and is still the same
+    # program. The GPU itself, and a program the driver did not name, once
+    # per Xid.
     local news=1
-    printf '%s\n' "$rows" | awk -F'\t' -v n="$name" -v x="$xid" -v p="$pid" \
-        '(p != "-" && $4 == n) || (p == "-" && $2 == "-" && $3 == x) { f = 1 } END { exit !f }' && news=0
+    printf '%s\n' "$rows" | awk -F'\t' -v n="$name" -v x="$xid" -v p="$pid" '
+        p == "-" || p == "?" { if ($2 == p && $3 == x) f = 1; next }
+        $2 == p || ($4 == n && n != "") { f = 1 }
+        END { exit !f }' && news=0
     mkdir -p "$UPDATE_STATE" \
         && printf '%s\n%s\t%s\t%s\t%s\n' "$rows" "$boot" "$pid" "$xid" "$name" | awk 'NF' > "$state"
     [ "$news" = 1 ] || return 0
-    [ "$pid" = - ] || ! crash_ignored "$name" || return 0
-    gpu_fault_notify_one "$xid" "$kind" "$what" "$name" "$game" "${pid#-}"
+    case "$pid" in
+        -|"?") pid="" ;;
+        *) ! crash_ignored "$name" || return 0 ;;
+    esac
+    gpu_fault_notify_one "$xid" "$kind" "$what" "$name" "$game" "$pid"
 }
 
 gpu_fault_notify_one() {
@@ -4933,6 +4952,11 @@ gpu_fault_notify_one() {
         title=$what
         body="Xid ${xid}. Save your work: apps using the GPU may not recover until you restart. Details: pulsar doctor gpu-faults"
         q="The NVIDIA driver logged Xid ${xid} (${what}). Explain what it means on this machine and whether it points to the driver, the GPU or its power, and what I should do."
+    elif [ -z "$name" ]; then
+        # The driver did not log which program: say what happened, name none.
+        title="A program hit a GPU fault"
+        body="Xid ${xid}: ${what}. The NVIDIA driver did not log which program. That is usually a bug in the program or in the NVIDIA driver, not a failing GPU. ${GPU_FAULT_ADVICE}"
+        q="A program hit an NVIDIA GPU fault (Xid ${xid}, ${what}) and the driver did not log which; pulsar doctor gpu-faults lists this boot's. Explain what this Xid means, how to find which program it was, and what to try."
     else
         title="${name} hit a GPU fault"
         body="Xid ${xid}: ${what}. That is usually a bug in ${name} or in the NVIDIA driver, not a failing GPU."
@@ -5010,13 +5034,19 @@ check_gpu_faults() {
         [ -n "$xid" ] || continue
         IFS=$'\t' read -r kind what <<<"$(xid_meaning "$xid")"
         case "$kind" in skip) continue ;; gpu) ;; *) [ -n "$pid" ] || continue ;; esac
-        if [ -n "$pid" ]; then
+        if [ -z "$pid" ] || { [ "$pid" = "?" ] && [ "$kind" = gpu ]; }; then
+            printf -- '-\t%s\t%s\t%s\n' "$xid" "GPU" "$what"
+        elif [ "$pid" = "?" ]; then
+            printf '?\t%s\t%s\t%s\n' "$xid" "an unnamed program" "$what"
+        else
             n=$(printf '%s\n' "$names" | awk -F'\t' -v p="$pid" '$1 == p { print $2; exit }')
             printf '%s\t%s\t%s\t%s\n' "$pid" "$xid" "${n:-$comm}" "$what"
-        else
-            printf -- '-\t%s\t%s\t%s\n' "$xid" "GPU" "$what"
         fi
-    done | awk -F'\t' '$1 == "-" || !seen[$1]++')
+    # One per process. An unnamed program's: one per run of the same Xid, as
+    # every line of one such fault carries the "<unknown>".
+    done | awk -F'\t' '$1 == "-" { last = ""; print; next }
+        $1 == "?" { if (last != $2) print; last = $2; next }
+        { last = "" } !seen[$1]++')
     if [ -z "$list" ]; then
         record gpu-faults ok "no GPU faults this boot"
         return 0
