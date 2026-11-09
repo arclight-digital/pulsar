@@ -541,7 +541,16 @@ class Variant:
                                  # 2026-11-09: a clear content pane read busy behind
                                  # Files' list).
                                  f".content-pane {{\n  background-color: {self.p['window'].hex};\n}}\n"
-                                 f"window.view .content-pane {{\n  background-color: {self.p['view'].hex};\n}}\n")
+                                 f"window.view .content-pane {{\n  background-color: {self.p['view'].hex};\n}}\n"
+                                 # Text Editor is the other way round: its document
+                                 # is a split view's content pane too (beside the
+                                 # properties sidebar, mostly hidden), and it stays
+                                 # glass; the header and tab bars across the top are
+                                 # solid (Nick 2026-11-09).
+                                 f"window.org-gnome-TextEditor .content-pane {{\n  background-color: transparent;\n}}\n"
+                                 f"window.org-gnome-TextEditor {{\n"
+                                 f"  --headerbar-bg-color: {self.p['headerbar'].hex};\n"
+                                 f"  --headerbar-backdrop-color: {self.p['window'].hex};\n}}\n")
             # the glass is the filter's (backdrop_svg): it paints the
             # whole sheet, so GTK paints none over it
             c["sheet_glass"] = "".join(

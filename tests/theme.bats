@@ -1196,6 +1196,9 @@ print("" if d is None else d)' "$1" "$2"; }
     grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0.35);$' "$css"
     grep -A1 '^\.content-pane {$' "$css" | grep -q '^  background-color: #f1f3fa;$'          # Pulsar light's window
     grep -A1 '^window\.view \.content-pane {$' "$css" | grep -q '^  background-color: #ffffff;$'  # and its view
+    # Text Editor the other way round: its document glass, its bars solid
+    grep -A1 '^window\.org-gnome-TextEditor \.content-pane {$' "$css" | grep -q '^  background-color: transparent;$'
+    grep -A1 '^window\.org-gnome-TextEditor {$' "$css" | grep -q '^  --headerbar-bg-color: #e6e9f5;$'  # Pulsar light's headerbar
     # every GTK: the in-window sheet solid, in the popover's color, inside each variant's block
     grep -A1 '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css" |
         grep -q '^  background-color: #ffffff;$'   # Pulsar light's popover
