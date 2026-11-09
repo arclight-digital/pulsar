@@ -816,6 +816,20 @@ def run_detached(argv):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# The Shell's extension that gives the menu its ground (glass.js,
+# Glass._trackCommandMenu), and its ExtensionState while it runs
+THEME_EXTENSION = "pulsar-theme@arclight.digital"
+EXTENSION_ACTIVE = 1
+
+
+def shell_grounds(info):
+    """Whether the Shell paints the menu's ground: its glass, or the theme's
+    solid popover when glass is off. Only while pulsar-theme runs there;
+    info is the Shell's GetExtensionInfo reply (unpacked: {} for an unknown
+    extension), or None when the Shell did not answer."""
+    return bool(info) and info.get("state") == EXTENSION_ACTIVE
+
+
 def window_class():
     """The window, built on first use: the logic above runs without GTK."""
     import gi
@@ -928,9 +942,30 @@ def window_class():
                              resizable=False, default_width=620, default_height=520)
             self.add_css_class("pulsar-menu")
             # no ground of its own: the Shell gives this window the glass and
-            # light of its menus (glass.js, Glass._trackCommandMenu), and the
-            # window's .background would lie over them
+            # light of its menus, or with glass off the theme's popover
+            # (glass.js, Glass._trackCommandMenu), and the window's
+            # .background would lie over them. Unless pulsar-theme is not
+            # running (switched off, failed): then nothing else would, and it
+            # keeps its own. Asked once, without waiting; until the answer
+            # the menu is fading in from nothing either way.
             self.remove_css_class("background")
+
+            def grounded(bus, res):
+                try:
+                    info = bus.call_finish(res).unpack()[0]
+                except GLib.Error:
+                    info = None
+                if not shell_grounds(info):
+                    self.add_css_class("background")
+            bus = app.get_dbus_connection()
+            if bus is None:
+                self.add_css_class("background")
+            else:
+                # the Shell's own, not org.gnome.Shell.Extensions (a service
+                # of its own, started to answer)
+                bus.call("org.gnome.Shell", "/org/gnome/Shell",
+                         "org.gnome.Shell.Extensions", "GetExtensionInfo", GLib.Variant("(s)", (THEME_EXTENSION,)),
+                         GLib.VariantType.new("(a{sv})"), Gio.DBusCallFlags.NO_AUTO_START, 2000, None, grounded)
             css = Gtk.CssProvider()
             css.load_from_string(CSS)
             Gtk.StyleContext.add_provider_for_display(self.get_display(), css,

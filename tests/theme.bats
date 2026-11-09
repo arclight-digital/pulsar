@@ -1313,3 +1313,290 @@ print([b["path"] for b in bad], judged, unjudged)'
     [ "$status" -eq 0 ] || { echo "$output"; false; }
     [ "$output" = "['menu > box[0] > label[0]'] 2 1" ]
 }
+
+# glass.js and extension.js themselves, under node: tests/fixtures/shell-js.mjs
+# fakes their gi:// and resource:// imports, and nothing else of them.
+need_node() {
+    command -v node >/dev/null || skip "no node here"
+}
+
+shell_js() {
+    EXT="${REPO}/system_files/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital" \
+        HARNESS="${REPO}/tests/fixtures/shell-js.mjs" node --input-type=module -
+}
+
+@test "glass: one bad frame's NaN size never takes the half-float targets away" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, Signals} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+// Cogl as GJS hands it a size: NaN arrives as 0, a texture of no size is
+// null ("cogl_texture_2d_new_with_format: assertion 'width >= 1' failed"),
+// and an offscreen on null throws
+const cogl = {halfFails: false, allFail: false, asked: 0};
+const tex = (W, H, fmt) => {
+    cogl.asked++;
+    const [w, h] = [W, H].map(v => (Number.isNaN(v) ? 0 : v));
+    if (w < 1 || h < 1)
+        return null;
+    if (cogl.allFail || (fmt === 'half' && cogl.halfFails))
+        throw new Error(`no ${fmt} texture`);
+    return {w, h, fmt};
+};
+provide('Cogl', fake('Cogl', {
+    PixelFormat: {RGBA_FP_16161616_PRE: 'half'},
+    Texture2D: {new_with_format: (_c, W, H, f) => tex(W, H, f), new_with_size: (_c, W, H) => tex(W, H, '8-bit')},
+    Offscreen: {new_with_texture: t => {
+        if (!t)
+            throw new Error('Expected type Cogl.Texture, got null');
+        return fake('fb');
+    }},
+}));
+globalThis.stage = Object.assign(new Signals(), {context: fake('context')});
+const g = await load(`${process.env.EXT}/glass.js`, ['makeTarget', 'matrixRect', 'deviceRect', 'Views']);
+const half = () => g.__peek('floatTargets');
+
+// a size no texture can have is refused before Cogl is asked (and logs its
+// assertion), and says nothing about the driver
+assert.throws(() => g.makeTarget(NaN, NaN));
+assert.throws(() => g.makeTarget(0, 64));
+assert.equal(cogl.asked, 0);
+assert.equal(half(), true);
+assert.equal(g.makeTarget(64, 32).tex.fmt, 'half');
+assert.equal(g.makeTarget(64, 32, false).tex.fmt, '8-bit');
+// nor does a size 8-bit fails at too
+cogl.allFail = true;
+assert.throws(() => g.makeTarget(64, 64));
+assert.equal(half(), true);
+cogl.allFail = false;
+
+// a NaN never makes a rect: through the matrices (an offscreen, a clone)...
+const ident = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const fb = fake('fb', {
+    get_modelview_matrix: () => ({multiply: () => ({to_float: () => ident})}),
+    get_viewport4fv: () => [0, 0, 200, 100],
+});
+const out = {};
+assert.equal(g.matrixRect(fb, -0.5, -0.5, 1, 1, out), true);
+assert.deepEqual([out.x, out.y, out.w, out.h], [50, 25, 100, 50]);
+assert.equal(g.matrixRect(fb, NaN, 0, 1, 1, out), false);
+assert.equal(g.matrixRect(fb, 0, 0, Infinity, 1, out), false);
+// ...or from its place on a stage view
+g.Views.watch();
+stage.emit('before-paint', {get_framebuffer: () => fb, layout: {x: 0, y: 0, width: 200, height: 100},
+    get_scale: () => 1});
+const actor = pos => ({get_transformed_position: () => pos, get_transformed_size: () => [50, 50],
+    width: 50, height: 50});
+assert.equal(g.deviceRect(fb, actor([10, 20]), 0, 0, 50, 50, out), true);
+assert.deepEqual([out.x, out.y, out.w, out.h], [10, 20, 50, 50]);
+assert.equal(g.deviceRect(fb, actor([NaN, 20]), 0, 0, 50, 50, out), false);
+
+// a half-float target that fails where 8-bit works: no half floats here
+cogl.halfFails = true;
+assert.equal(g.makeTarget(64, 32).tex.fmt, '8-bit');
+assert.equal(half(), false);
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
+}
+
+@test "glass: the command menu always has a ground, made once, and gone with the glass" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, FakeActor, Signals} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+const settings = {'glass': true, 'window-glass': true, 'lighting': false, 'glow': false, 'focus-brackets': false,
+    'glass-off-power-saver': true, 'glass-off-gaming': false};
+const a11y = {'high-contrast': false};
+const keys = vals => Object.assign(new Signals(), {get_boolean: k => !!vals[k], get_double: () => 0.5});
+provide('main', fake('main', {
+    sessionMode: Object.assign(new Signals(), {isLocked: false, isGreeter: false, currentMode: 'user'}),
+    layoutManager: Object.assign(new Signals(), {uiGroup: new FakeActor(), panelBox: new Signals()}),
+}));
+const {Glass} = await load(`${process.env.EXT}/glass.js`);
+// a Glass as its constructor leaves one, without what it hooks into the Shell
+const glass = Object.assign(Object.create(Glass.prototype), {
+    _settings: keys(settings), _a11y: keys(a11y),
+    _surfaces: new Map(), _windows: new Map(), _glassy: new WeakSet(),
+});
+
+// the menu's window: its frame inside a buffer with room for its shadow,
+// the window's own surfaces already in its actor
+const group = new FakeActor();
+// the Shell's `global`, which is node's globalThis
+Object.assign(globalThis, {get_window_actors: () => group.get_children(), display: fake('display'),
+    workspace_manager: fake('workspace_manager'), stage: fake('stage'), compositor: fake('compositor')});
+const menu = () => {
+    const win = Object.assign(new Signals(), {
+        get_frame_rect: () => ({x: 124, y: 80, width: 620, height: 520}),
+        get_buffer_rect: () => ({x: 100, y: 56, width: 668, height: 568}),
+        get_gtk_application_id: () => 'digital.arclight.Pulsar.Menu',
+    });
+    const actor = new FakeActor({meta_window: win});
+    actor.add_child(new FakeActor({name: 'surfaces'}));
+    group.add_child(actor);
+    return actor;
+};
+const actor = menu(), win = actor.meta_window;
+const grounds = () => actor.get_children().filter(c => c.has_style_class_name('popup-menu-content'));
+const ground = () => {
+    assert.equal(grounds().length, 1);
+    assert.equal(win.handlers('size-changed'), 1);
+    assert.equal(actor.handlers('notify::width'), 1);
+    assert.equal(actor.handlers('notify::height'), 1);
+    // beneath the window's own surfaces, over its frame
+    const g = actor.get_first_child();
+    assert.equal(g, grounds()[0]);
+    assert.deepEqual([g.x, g.y, g.width, g.height], [24, 24, 620, 520]);
+    return g;
+};
+
+// Power Saver: glass suspended, so no glass behind it, and _sync asks again
+// every time: one ground, the theme's solid popover
+glass._powerSaver = true;
+for (let i = 0; i < 3; i++)
+    glass._sync();
+assert.equal(ground().opacity, 255);
+glass._powerSaver = false;
+// glass on, its Surface behind the menu: the box only measures
+const surface = {key: actor, sync() {}, destroy() {}};
+glass._surfaces.set(actor, surface);
+glass._trackCommandMenu(actor);
+assert.equal(ground().opacity, 0);
+// the Glass switch off, or high contrast, with the menu open: solid
+settings.glass = false;
+glass._sync();
+assert.equal(ground().opacity, 255);
+settings.glass = true;
+glass._trackCommandMenu(actor);
+assert.equal(ground().opacity, 0);
+a11y['high-contrast'] = true;
+glass._sync();
+assert.equal(ground().opacity, 255);
+a11y['high-contrast'] = false;
+// glass on with no Surface (none could be made): solid
+glass._surfaces.delete(actor);
+group.remove_child(actor);
+glass._trackCommandMenu(actor);
+assert.equal(ground().opacity, 255);
+group.add_child(actor);
+
+// a menu that closes takes its ground with it
+settings.glass = false;
+const other = menu();
+glass._trackCommandMenu(other);
+assert.equal(glass._menus.has(other), true);
+other.destroy();
+assert.equal(glass._menus.has(other), false);
+
+// the extension off (or the lock): ground and handlers go, the window stays
+const g = ground();
+glass.destroy();
+assert.equal(g.destroyed, true);
+assert.deepEqual(actor.get_children().map(c => c.name), ['surfaces']);
+assert.equal(win.handlers('size-changed'), 0);
+assert.equal(actor.handlers('notify::width'), 0);
+assert.equal(actor.handlers('notify::height'), 0);
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
+}
+
+@test "glass: locking again while the unlock slides away keeps one ground on the lock screen" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, FakeActor, Signals} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+provide('Gio', fake('Gio', {Settings: class { get_boolean() { return false; } }}));
+globalThis.stage = Object.assign(new Signals(), {context: fake('context')});
+// the unlock dialog, with GNOME's blurred wallpaper in it
+const dialog = new FakeActor({width: 1920, height: 1080});
+const wall = new FakeActor();
+const blur = {enabled: true};
+wall.add_effect_with_name('blur', blur);
+dialog._backgroundGroup = new FakeActor();
+dialog._backgroundGroup.add_child(wall);
+dialog.add_child(dialog._backgroundGroup);
+dialog._stack = dialog._clock = dialog._promptBox = new FakeActor();
+provide('main', fake('main', {screenShield: {_dialog: dialog}, layoutManager: new Signals()}));
+const {LockGlass} = await load(`${process.env.EXT}/glass.js`);
+const on = {get_boolean: k => k === 'glass', get_double: () => 0.5};
+const off = {get_boolean: () => false, get_double: () => 0.5};
+const grounds = () => dialog.get_children().filter(c => c.get_effect('pulsar-blur'));
+
+const first = new LockGlass(on);
+assert.equal(grounds().length, 1);
+assert.equal(blur.enabled, false);
+// unlocked: the dialog slides away with the glass on it...
+first.release();
+// ...and the screen locks again before it has gone: the Shell reuses it
+const second = new LockGlass(on);
+assert.equal(grounds().length, 1);
+assert.equal(dialog.has_style_class_name('pulsar-lock-glass'), true);
+assert.equal(blur.enabled, false);
+assert.equal(dialog.handlers('destroy'), 1);
+// once more, with glass switched off meanwhile: GNOME's own lock screen
+second.release();
+new LockGlass(off);
+assert.equal(grounds().length, 0);
+assert.equal(dialog.has_style_class_name('pulsar-lock-glass'), false);
+assert.equal(blur.enabled, true);
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
+}
+
+@test "theme extension: a rebase leaves the windows' glass alone; turned off, it takes it back" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, fakeLoop, Signals} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+let released = 0;
+provide('glass', {
+    Glass: class { static release() { released++; } destroy() {} },
+    LockGlass: class { release() {} destroy() {} },
+});
+const loop = fakeLoop();
+provide('GLib', fake('GLib', {...loop, PRIORITY_DEFAULT: 0, SOURCE_REMOVE: false}));
+const UUID = 'pulsar-theme@arclight.digital';
+// the Shell's ExtensionState (misc/extensionUtils.js)
+provide('extensionUtils', {ExtensionState: {ACTIVE: 1, INACTIVE: 2, DEACTIVATING: 7}});
+const ext = {state: 1};
+provide('main', fake('main', {
+    extensionManager: {lookup: uuid => (uuid === UUID ? ext : null)},
+    sessionMode: Object.assign(new Signals(), {isLocked: false}),
+}));
+provide('extension', {
+    Extension: class { get uuid() { return UUID; } getSettings() { return fake('settings'); } },
+    InjectionManager: class { clear() {} },
+});
+const {default: Theme} = await load(`${process.env.EXT}/extension.js`);
+const theme = new Theme();
+theme.enable();
+
+// an extension before it in the order turned off: the Shell turns this
+// one off and on again, ACTIVE throughout
+theme.disable();
+theme.enable();
+loop.run();
+assert.equal(released, 0);
+assert.equal(loop.sources.size, 0);
+// a rebase whose enable() never comes: the windows go solid after all
+theme.disable();
+assert.equal(released, 0);
+loop.run();
+assert.equal(released, 1);
+// turned off for real (the Shell has it DEACTIVATING): at once
+theme.enable();
+ext.state = 7;
+theme.disable();
+assert.equal(released, 2);
+assert.equal(loop.sources.size, 0);
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
+}

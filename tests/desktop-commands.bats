@@ -402,6 +402,19 @@ print(m.SETTLE_MS >= 150)'
     [ "${lines[1]}" = "True" ]
 }
 
+@test "menu: the Shell gives it its ground only while pulsar-theme runs there; else it keeps its own" {
+    # the Shell's GetExtensionInfo reply, unpacked: ExtensionState 1 active,
+    # 2 off, 3 error, 4 out of date, 8 activating; {} unknown; None no answer
+    run menu '
+print(m.THEME_EXTENSION)
+for info in ({"state": 1.0, "enabled": True}, {"state": 2.0}, {"state": 3.0}, {"state": 4.0},
+             {"state": 8.0}, {"enabled": True}, {}, None):
+    print(m.shell_grounds(info))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "pulsar-theme@arclight.digital" ]
+    [ "$(printf '%s ' "${lines[@]:1}")" = "True False False False False False False False " ]
+}
+
 @test "menu: apps in GNOME's order, once each, without hidden ones or Pulsar's listed ones" {
     run menu '
 groups = [["b.desktop", "digital.arclight.Pulsar.Settings.desktop", "hidden.desktop"],

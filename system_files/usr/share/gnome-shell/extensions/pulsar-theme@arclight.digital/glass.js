@@ -502,7 +502,7 @@ function deviceRect(fb, actor, x, y, w, h, out, clone = false) {
         out.vy0 = v.y;
         out.vx1 = v.x + v.w;
         out.vy1 = v.y + v.h;
-        return true;
+        return finiteRect(out);
     }
     out.sx0 = NaN;
     out.scale = 1;
@@ -532,7 +532,15 @@ function matrixRect(fb, x, y, w, h, out) {
     out.y = Math.floor(y0);
     out.w = Math.ceil(x1) - out.x;
     out.h = Math.ceil(y1) - out.y;
-    return true;
+    return finiteRect(out);
+}
+
+// A NaN or an infinity anywhere in the numbers (an actor caught mid-change
+// for a frame, a matrix that is not invertible) makes no rect: every
+// comparison with NaN is false, so it slipped past each size check and on
+// into a texture of no size (see makeTarget).
+function finiteRect(r) {
+    return Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.w) && Number.isFinite(r.h);
 }
 
 // Clutter flags only a clone's source as in a clone paint, not the source's
@@ -576,26 +584,36 @@ const Scratch = {
 // narrow range. (The copy itself stays 8-bit: GL will not blit between an
 // 8-bit framebuffer and a float one, and it has no more to keep.) Falls back
 // to 8-bit where the driver has no half floats.
+//
+// Only a half-float target that fails where an 8-bit one of the same size
+// works says the driver has none. On 2026-11-02 one NaN-sized request (one
+// bad frame) failed both ways, was taken for that, and every glass stayed
+// 8-bit for the rest of the session: so a size no texture can have is
+// refused outright, and a failure the 8-bit target shares is not the half
+// floats' doing.
 let floatTargets = true;
 function makeTarget(W, H, precise = true) {
+    if (!(Number.isInteger(W) && Number.isInteger(H) && W >= 1 && H >= 1))
+        throw new Error(`glass: no target can be ${W}x${H}`);
     const ctx = global.stage.context.get_backend().get_cogl_context();
+    const offscreen = tex => {
+        const fb = Cogl.Offscreen.new_with_texture(tex);
+        fb.allocate();
+        fb.orthographic(0, 0, W, H, -1, 1);
+        return {W, H, tex, fb};
+    };
+    const plain = () => offscreen(Cogl.Texture2D.new_with_size(ctx, W, H));
     if (precise && floatTargets) {
         try {
-            const tex = Cogl.Texture2D.new_with_format(ctx, W, H, Cogl.PixelFormat.RGBA_FP_16161616_PRE);
-            const fb = Cogl.Offscreen.new_with_texture(tex);
-            fb.allocate();
-            fb.orthographic(0, 0, W, H, -1, 1);
-            return {W, H, tex, fb};
+            return offscreen(Cogl.Texture2D.new_with_format(ctx, W, H, Cogl.PixelFormat.RGBA_FP_16161616_PRE));
         } catch (e) {
+            const t = plain();      // throws if 8-bit fails too
             floatTargets = false;
             console.warn(`pulsar-theme: glass: no half-float targets, using 8-bit (${e.message})`);
+            return t;
         }
     }
-    const tex = Cogl.Texture2D.new_with_size(ctx, W, H);
-    const fb = Cogl.Offscreen.new_with_texture(tex);
-    fb.allocate();
-    fb.orthographic(0, 0, W, H, -1, 1);
-    return {W, H, tex, fb};
+    return plain();
 }
 
 // The dual-filter (Kawase) pyramid. Down: five taps, the centre and four
@@ -2440,14 +2458,23 @@ function toLuminance(c, y) {
     return l.map(v => gamma(v * t));
 }
 
+// The unlock dialog's LockGlass. Unlocked, a LockGlass stays on its dialog
+// as it slides away (release()); locked again before the slide has ended,
+// the Shell reuses that dialog, and the new one takes the old one's place
+// here: two of them stacked their grounds, one over the other.
+const LOCKED = new WeakMap();
+
 export class LockGlass {
     constructor(settings) {
         const d = Main.screenShield?._dialog;
+        if (d)
+            LOCKED.get(d)?.destroy();
         const a11y = new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.interface'});
         if (!d?._backgroundGroup || !d._stack || !d._clock || !d._promptBox ||
             !settings.get_boolean('glass') || a11y.get_boolean('high-contrast'))
             return;
         this._dialog = d;
+        LOCKED.set(d, this);
         setTint(settings.get_double('glass-tint'));
         // the blur's note of each screen; the desktop's glass, gone for the
         // lock, stopped it (and starts it again at unlock)
@@ -2532,6 +2559,8 @@ export class LockGlass {
         if (!d)
             return;
         this._dialog = null;
+        if (LOCKED.get(d) === this)
+            LOCKED.delete(d);
         Main.layoutManager.disconnectObject(this);
         d.disconnectObject(this);
         d._backgroundGroup?.disconnectObject(this);
@@ -3742,32 +3771,53 @@ export class Glass {
 
     // Pulsar's command menu (Super+Space) is a GTK window that should read
     // as one of the Shell's menus, so it gets their glass, not a window's:
-    // a Surface on the window actor, its colors and shape off a stand-in box
-    // styled as a menu (never painted) over the window's frame, lit from a
-    // point above the top edge a little in from the left. The window itself
-    // paints no ground (scripts/pulsar-menu drops its .background).
+    // a Surface on the window actor, its colors and shape off a box styled
+    // as a menu over the window's frame, lit from a point above the top edge
+    // a little in from the left. The window itself paints no ground while
+    // this extension runs (scripts/pulsar-menu drops its .background), so
+    // the box is its ground whenever no glass is behind it -- Glass off,
+    // Power Saver or a game, high contrast: shown, beneath the window's own
+    // surfaces, it is the theme's solid popover. One box per window, made
+    // once, whatever the switches say; asked again on every _sync.
     _trackCommandMenu(actor) {
-        if (this._surfaces.has(actor))
+        let ground = this._menus?.get(actor);
+        if (!ground) {
+            // its id can come after window-created took a first look: a
+            // window's glass made then gives way
+            this.forgetWindow(actor);
+            const win = actor.meta_window;
+            ground = new St.Widget({style_class: 'popup-menu-content', reactive: false, opacity: 0,
+                style: `border-radius: ${WINDOW_RADIUS}px;`});
+            actor.insert_child_at_index(ground, 0);
+            const place = () => {
+                const f = win.get_frame_rect(), b = win.get_buffer_rect();
+                ground.set_position(f.x - b.x, f.y - b.y);
+                ground.set_size(f.width, f.height);
+            };
+            place();
+            // held by the box: gone with it, the window's close included
+            win.connectObject('size-changed', place, ground);
+            actor.connectObject('notify::width', place, 'notify::height', place, ground);
+            ground.connect('destroy', () => this._menus?.delete(actor));
+            (this._menus ??= new Map()).set(actor, ground);
+        }
+        if (!this._surfaces.has(actor)) {
+            this._add(actor, {
+                box: () => ground,
+                source: (x, y, w) => [x + w * 0.15, y - LIGHT_MIN_DISTANCE],
+            });
+        }
+        ground.opacity = this.glass && this._surfaces.has(actor) ? 0 : 255;
+    }
+
+    _forgetMenu(actor) {
+        const ground = this._menus?.get(actor);
+        if (!ground)
             return;
-        // its id can come after window-created took a first look: a
-        // window's glass made then gives way
-        this.forgetWindow(actor);
-        const win = actor.meta_window;
-        const box = new St.Widget({style_class: 'popup-menu-content', reactive: false, opacity: 0,
-            style: `border-radius: ${WINDOW_RADIUS}px;`});
-        actor.add_child(box);
-        const place = () => {
-            const f = win.get_frame_rect(), b = win.get_buffer_rect();
-            box.set_position(f.x - b.x, f.y - b.y);
-            box.set_size(f.width, f.height);
-        };
-        place();
-        win.connectObject('size-changed', place, this);
-        actor.connectObject('notify::width', place, 'notify::height', place, this);
-        this._add(actor, {
-            box: () => box,
-            source: (x, y, w) => [x + w * 0.15, y - LIGHT_MIN_DISTANCE],
-        });
+        this._menus.delete(actor);
+        actor.meta_window?.disconnectObject(ground);
+        actor.disconnectObject(ground);
+        ground.destroy();
     }
 
     // `glassy`: one that opened translucent, kept whatever the switch says
@@ -3870,6 +3920,11 @@ export class Glass {
             // gtk.css again; the rest go
             global.get_window_actors().forEach(a => this._glassy.has(a)
                 ? this._trackWindow(a, true, gtkPids) : this.forgetWindow(a));
+        // the command menu, whichever way: its ground follows the switches
+        for (const a of global.get_window_actors()) {
+            if (a.meta_window?.get_gtk_application_id?.() === COMMAND_MENU)
+                this._trackCommandMenu(a);
+        }
 
         for (const s of this._surfaces.values())
             s.sync();
@@ -3899,6 +3954,9 @@ export class Glass {
         Main.panel.disconnectObject(this);
         for (const s of [...this._surfaces.values()])
             this.forget(s);
+        for (const a of [...this._menus?.keys() ?? []])
+            this._forgetMenu(a);
+        this._menus = null;
         this._unwrapFolders();
         uncutStacks();
         this._panel?.destroy();

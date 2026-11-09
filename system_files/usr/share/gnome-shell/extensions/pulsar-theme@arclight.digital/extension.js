@@ -28,6 +28,7 @@ import GLib from 'gi://GLib';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {ExtensionState} from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 
 import {Glass, LockGlass} from './glass.js';
 
@@ -36,9 +37,15 @@ import {Glass, LockGlass} from './glass.js';
 const RELOAD_MS = 100;
 // beside the sheets: the one mode the applied theme has (engine's ONE_MODE)
 const ONE_MODE = 'one-mode.json';
+// How long a rebase (see _release) may take to turn this back on.
+const REBASE_MS = 1000;
 
 export default class PulsarThemeExtension extends Extension {
     enable() {
+        // back on in the same rebase that turned it off (_release)
+        if (this._releaseId)
+            GLib.source_remove(this._releaseId);
+        this._releaseId = 0;
         this._dir = GLib.build_filenamev([GLib.get_user_state_dir(), 'pulsar-theme', 'shell']);
         GLib.mkdir_with_parents(this._dir, 0o755);
         this._reloading = false;
@@ -135,7 +142,7 @@ export default class PulsarThemeExtension extends Extension {
         this._glass?.destroy();
         this._glass = null;
         this._settings = null;
-        Glass.release();
+        this._release();
         this._monitor?.disconnect(this._monitorId);
         this._monitor?.cancel();
         this._monitor = null;
@@ -151,6 +158,27 @@ export default class PulsarThemeExtension extends Extension {
         this._unload();
         this._themeCtx = null;
         this._theme = null;
+    }
+
+    // Turned off: GTK's windows go solid (Glass.release), a rewrite of
+    // gtk.css and a restyle of every window. Not straight away when the
+    // Shell is only "rebasing": turning this off and on again because an
+    // extension before it in the load order went off. Then the Shell leaves
+    // this one's state ACTIVE (a real disable has made it DEACTIVATING), and
+    // enable() follows within the same run of extension calls, which
+    // cancels it. If enable() does not come (it threw), the windows go
+    // solid a moment later after all.
+    _release() {
+        const state = Main.extensionManager?.lookup(this.uuid)?.state;
+        if (state !== ExtensionState.ACTIVE) {
+            Glass.release();
+            return;
+        }
+        this._releaseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, REBASE_MS, () => {
+            this._releaseId = 0;
+            Glass.release();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _readOneMode() {
