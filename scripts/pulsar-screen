@@ -15,13 +15,16 @@ text, not a file in Pictures.
 PULSAR_SCREEN_IMAGE=<png> reads that file instead of asking the portal (the
 tests, and trying it without a desktop).
 """
+import base64
 import os
 import shutil
 import subprocess
 import sys
 import time
 import urllib.parse
+import xml.etree.ElementTree as ET
 
+ZBAR_NS = "{http://zbar.sourceforge.net/2008/barcode}"
 USAGE = "usage: pulsar screen text | qr   (pick an area; its text or QR code goes on the clipboard)"
 PREVIEW = 120
 
@@ -92,13 +95,34 @@ def read_text(path):
 
 
 def read_qr(path):
+    """Every code in the picture, each as read. --xml, not --raw: --raw
+    prints the codes one after another, a line each, and a code can hold
+    lines of its own (a contact card), so its output can't be told apart
+    into codes. Two codes read as one, and the first one's "https:" sent
+    both to xdg-open as one link."""
     # exit 4: no code found
-    r = subprocess.run(["zbarimg", "--quiet", "--raw", path], capture_output=True, text=True)
+    r = subprocess.run(["zbarimg", "--quiet", "--xml", path], capture_output=True, text=True)
     if r.returncode == 4:
-        return ""
+        return []
     if r.returncode != 0:
         raise RuntimeError(f"zbarimg failed: {r.stderr.strip()[:200]}")
-    return r.stdout.rstrip("\n")
+    codes = []
+    for data in ET.fromstring(r.stdout).iter(ZBAR_NS + "data"):
+        text = data.text or ""
+        if data.get("format") == "base64":  # zbar's form for a code that is not text
+            text = base64.b64decode(text).decode(errors="replace")
+        if text:
+            codes.append(text)
+    return codes
+
+
+def safe_link(code):
+    """`code` when it is one plain http(s) link and nothing else, else None:
+    the only thing offered to open."""
+    if any(c.isspace() or not c.isprintable() for c in code):
+        return None
+    u = urllib.parse.urlparse(code)
+    return code if u.scheme in ("http", "https") and u.netloc else None
 
 
 def copy(text):
@@ -172,13 +196,17 @@ def main(argv):
         notify("No text found" if kind == "text" else "No QR code found",
                "Nothing was copied. Pick an area with less around it, or zoom in first.")
         return 0
-    copy(found)
     if kind == "text":
+        copy(found)
         n = found.count("\n") + 1
         notify(f"Copied {n} line{'s' if n != 1 else ''} of text", preview(found))
     else:
-        url = found if urllib.parse.urlparse(found).scheme in ("http", "https") else None
-        notify("Copied the QR code", preview(found), url=url)
+        text = "\n".join(found)
+        copy(text)
+        # one code, one link: with several, which one to open is a guess
+        url = safe_link(found[0]) if len(found) == 1 else None
+        notify("Copied the QR code" if len(found) == 1 else f"Copied {len(found)} QR codes",
+               preview(text), url=url)
     return 0
 
 

@@ -36,10 +36,36 @@ ocr() {
     chmod +x "${STUB}/tesseract"
 }
 
-# zbarimg finds $QR, or nothing (exit 4) when it is empty
+# qr CODE...: zbarimg finds these codes, or nothing (exit 4) with none or "".
+# Its output as zbarimg 0.23 printed it on cherenkov 2026-11-09 for a picture
+# of two codes (one a link) and one of a contact card: --raw, each code then a
+# newline; --xml, a <symbol> each, its data in CDATA.
 qr() {
-    export QR="$1"
-    printf '#!/bin/sh\n[ -n "$QR" ] || exit 4\nprintf "%%s\\n" "$QR"\n' > "${STUB}/zbarimg"
+    QR_DIR="${BATS_TEST_TMPDIR}/qr"
+    rm -rf "$QR_DIR"; mkdir -p "$QR_DIR"
+    local c n=0
+    for c in "$@"; do
+        [ -n "$c" ] || continue
+        n=$((n + 1))
+        printf '%s' "$c" > "${QR_DIR}/${n}"
+    done
+    export QR_DIR
+    cat > "${STUB}/zbarimg" <<'SH'
+#!/bin/bash
+[ "$1" = --quiet ] || { echo "bad args: $*" >&2; exit 1; }
+mode=$2
+set -- "$QR_DIR"/*
+[ -e "$1" ] || exit 4
+case "$mode" in
+    --raw) for f in "$@"; do cat "$f"; echo; done ;;
+    --xml)
+        printf "<barcodes xmlns='http://zbar.sourceforge.net/2008/barcode'>\n<source href='%s'>\n<index num='0'>\n" "$PULSAR_SCREEN_IMAGE"
+        for f in "$@"; do
+            printf "<symbol type='QR-Code' quality='1' orientation='UP'><polygon points='+25,+25 +25,+172 +174,+174 +172,+25'/><data><![CDATA[%s]]></data></symbol>\n" "$(cat "$f")"
+        done
+        printf '</index>\n</source>\n</barcodes>\n' ;;
+esac
+SH
     chmod +x "${STUB}/zbarimg"
 }
 
@@ -89,6 +115,56 @@ qr() {
     [ "$status" -eq 0 ]
     [ ! -e "$CLIP" ]
     grep -qx "No QR code found" "$NOTIFY_LOG"
+}
+
+@test "REGRESSION: screen qr: two codes are both copied, and neither is offered to open" {
+    # --raw put them on two lines; the first one's "https:" made the whole
+    # two-line text "a link", handed to xdg-open as one
+    qr "https://evil.example/x" "https://getpulsar.dev/blog"
+    run python3 "$SCREEN" qr
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat "$CLIP")" = $'https://evil.example/x\nhttps://getpulsar.dev/blog' ]
+    run cat "$NOTIFY_LOG"
+    [ "$output" = "$(printf '%s\n' --app-name=Pulsar --icon=edit-copy-symbolic "Copied 2 QR codes" \
+        "https://evil.example/x https://getpulsar.dev/blog")" ]
+}
+
+@test "screen qr: a code of several lines is one code; a link with more after it is not offered" {
+    qr $'BEGIN:VCARD\nN:Doe;John\nTEL:+15551234\nEND:VCARD'
+    run python3 "$SCREEN" qr
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat "$CLIP")" = $'BEGIN:VCARD\nN:Doe;John\nTEL:+15551234\nEND:VCARD' ]
+    grep -qx "Copied the QR code" "$NOTIFY_LOG"
+    : > "$NOTIFY_LOG"
+    qr $'https://getpulsar.dev/\nrm -rf ~'
+    run python3 "$SCREEN" qr
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -qx "Copied the QR code" "$NOTIFY_LOG"
+    run grep -c -- "--action" "$NOTIFY_LOG"
+    [ "$output" = 0 ]
+}
+
+@test "screen qr: only a plain http(s) link with a host is offered to open" {
+    run python3 - "$SCREEN" <<'PY'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("ps", sys.argv[1])
+spec = importlib.util.spec_from_loader("ps", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+for c in ("https://getpulsar.dev/blog?a=1#b", "http://192.168.1.1/", "HTTPS://getpulsar.dev/",
+          "https:///etc/passwd", "file:///etc/passwd", "javascript:alert(1)", "https://a.example/ b",
+          "https://a.example/\tb", "https://a.example/\x1b[2J", "getpulsar.dev"):
+    print(repr(m.safe_link(c)))
+PY
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "'https://getpulsar.dev/blog?a=1#b'
+'http://192.168.1.1/'
+'HTTPS://getpulsar.dev/'
+None
+None
+None
+None
+None
+None
+None" ]
 }
 
 @test "screen: closing the screenshot UI is silent; only a real failure is said" {
