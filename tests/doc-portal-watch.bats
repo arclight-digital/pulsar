@@ -72,6 +72,8 @@ EOF
     cat > "${BIN}/notify-send" <<EOF
 #!/usr/bin/env bash
 printf 'notify-send %s\n' "\$*" >> "${LOG}"
+# CLOSED: an app the user quits while the notification is up
+if [ -n "\${CLOSED:-}" ]; then grep -vx "\${CLOSED}" "\${APPS}" > "\${APPS}.new"; mv "\${APPS}.new" "\${APPS}"; fi
 [ -n "\${ANSWER}" ] && echo "\${ANSWER}"
 exit 0
 EOF
@@ -164,6 +166,17 @@ EOF
     grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/com.discordapp.Discord.desktop" "$LOG"
     [ "$(grep -n '^flatpak kill com.valvesoftware.Steam' "$LOG" | cut -d: -f1)" -lt \
       "$(grep -n '^gio launch .*Steam' "$LOG" | cut -d: -f1)" ]
+}
+
+@test "an app closed before the click is not started again" {
+    printf '%s\n' com.valvesoftware.Steam com.discordapp.Discord > "$APPS"
+    CLOSED=com.discordapp.Discord ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    [[ "$output" == *"com.discordapp.Discord is closed already; not starting it"* ]]
+    # the one still open is reopened, the closed one is left alone
+    grep -Fxq 'flatpak kill com.valvesoftware.Steam' "$LOG"
+    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/com.valvesoftware.Steam.desktop" "$LOG"
+    [ "$(grep -c '^flatpak kill' "$LOG")" -eq 1 ]
+    [ "$(grep -c '^gio launch' "$LOG")" -eq 1 ]
 }
 
 @test "a helper with no launcher is closed and not started" {

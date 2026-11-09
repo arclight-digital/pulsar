@@ -38,9 +38,10 @@
 # reopened. The notification names those apps and offers a "Reopen them"
 # button. Nothing is closed unless that is clicked: the apps may be holding
 # work (a game in Steam, a half-written message), and closing them is the
-# user's call. The button closes each one and starts it again; a background
-# helper with no launcher (NautilusPreviewer) is only closed, and starts again
-# the next time it is asked for.
+# user's call. The button closes each one still running and starts it again;
+# one the user closed meanwhile stays closed, and a background helper with no
+# launcher (NautilusPreviewer) is only closed, and starts again the next time
+# it is asked for.
 set -uo pipefail
 
 UNIT=xdg-document-portal.service
@@ -75,6 +76,9 @@ offer() {
         "$(short_names "$@") can't open or save files until they're reopened.") || return 0
     [ "$answer" = reopen ] || return 0
     for app in "$@"; do
+        # The list is from the restart; the click can come much later. One
+        # the user has closed since is not started again.
+        if ! running "$app"; then log "$app is closed already; not starting it"; continue; fi
         log "reopening $app"
         flatpak kill "$app" 2>/dev/null
         # Gone before it starts again, or the launch only opens another
