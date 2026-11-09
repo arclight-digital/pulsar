@@ -187,9 +187,12 @@ APPS = {
     # twentyfold, so a btop resized after it started drew at the launch
     # size and caught up some 40 s later, after the picture. The wait polls
     # with a sleep outside libfaketime, which would slow it the same way;
-    # the title is set by hand, or the window would read "sh".
+    # the title is set by hand, or the window would read "sh". SIGUSR2 is
+    # btop's "reload the theme", which pulsar-theme sends after setting one:
+    # landing before btop's handler is in, it killed btop. Ignored here, it
+    # stays ignored across exec until btop puts its own handler in.
     "org.gnome.Ptyxis": (["ptyxis", "--new-window", "--", "sh", "-c",
-                          'printf "\\033]0;btop\\007"; while [ ! -e "$1" ]; do env -u LD_PRELOAD sleep 0.2; done; exec btop', "sh", "/tmp/gate-btop-go"],
+                          'trap "" USR2; printf "\\033]0;btop\\007"; while [ ! -e "$1" ]; do env -u LD_PRELOAD sleep 0.2; done; exec btop', "sh", "/tmp/gate-btop-go"],
                          (0, .5, .43, .5)),
     "org.gnome.Adwaita1.Demo": (["adwaita-1-demo"], (.43, 0, .57, .5)),
     "gtk3-widget-factory": (["gtk3-widget-factory"], (.43, .5, .57, .5)),
