@@ -2,7 +2,12 @@
 """Install Pulsar onto a disk: everything after the user said yes. Root only.
 
     pulsar-install-system --mode erase|alongside --key-file FILE | --no-encrypt \\
-        --source-imgref containers-storage:IMG --target-imgref REGISTRY/IMG DISK
+        --source-imgref containers-storage:IMG --target-imgref REGISTRY/IMG \\
+        --expect-size BYTES --expect-serial SERIAL DISK
+
+--expect-size and --expect-serial are the disk the person chose, as the
+installer's lsblk saw it; the disk tool refuses to write to DISK unless it
+is still that drive (a name like /dev/sda can pass to another).
 
   1. alongside: the disk's EFI system partition must have room for Pulsar's
      boot files (checked before anything is written)
@@ -17,14 +22,18 @@
   5. if Windows is on the ESP, GRUB gets an entry for it
   6. the firmware gets a "Pulsar" entry, replacing only older "Pulsar"
      entries on this same ESP
-  7. everything is unmounted and the root locked again, failed or not
+  7. a finished install keeps this run's log in its own /var/log
+     (pulsar-install.log), where it outlives the live session
+  8. everything is unmounted and the root locked again, failed or not
 
 Progress goes to stdout as one JSON object per line, for the installer app:
 {"stage": "check" | "disk" | "unlock" | "install" | "boot"} as each step
 starts ("unlock" only when encrypted), {"log": "..."} for each line bootc
 and the disk tool print, then {"stage": "done", ...} or {"stage": "failed", "error": ...,
-"restored": true|false} (whether the partitions this install made were
-taken back). --plan-only prints
+"restored": true|false}. restored is whether the disk is as it was before:
+true only if nothing was written to it, or, installing alongside, every
+partition this install made was taken back. An erase that began writing is
+never restored: what was on the disk is gone. --plan-only prints
 {"stage": "plan", "plan": [...]} (pulsar-install-disk's dry run) and
 writes nothing; it needs no key (--no-encrypt plans the unencrypted layout).
 
@@ -54,11 +63,36 @@ SCRATCH = "/run/pulsar-install"      # mount points for the target
 
 
 class Failed(Exception):
-    pass
+    def __init__(self, msg, code=None):
+        super().__init__(msg)
+        self.code = code     # the failed command's exit status, when there was one
+
+
+# pulsar-install-disk's exits: refused before writing anything, or failed
+# with the write begun. Any other failure of it counts as the second.
+DISK_REFUSED, DISK_WRITE_FAILED = 2, 3
+
+# Everything this run prints, stdout and stderr, stamped as the installer
+# app stamps its log: a finished install keeps it (keep_log). The app's
+# own log is in the live session, gone at restart.
+RECORD = []
+T0 = time.monotonic()
+KEPT_LOG = "var/log/pulsar-install.log"     # in the new system's /var
+
+
+def note(line):
+    RECORD.append(f"[{time.monotonic() - T0:7.1f}s] {line}")
+
+
+def say(msg):
+    note("stderr: " + msg)
+    print(msg, file=sys.stderr, flush=True)
 
 
 def emit(**event):
-    print(json.dumps(event), flush=True)
+    line = json.dumps(event)
+    note(line)
+    print(line, flush=True)
 
 
 UNITS = {"B": 1, "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
@@ -85,7 +119,7 @@ def run_stream(*cmd, watch=None, expected_bytes=None):
     """run(), with each output line passed on as a progress event. watch,
     a mounted path: while it runs, how much of the announced copy has landed
     there, as {"progress": 0..1}."""
-    print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
+    say("+ " + shlex.join(cmd))
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
     tail, expected = [], [expected_bytes]
     if watch:
@@ -114,14 +148,14 @@ def run_stream(*cmd, watch=None, expected_bytes=None):
                 expected[0] = max(announced, expected[0] or 0)
             tail = (tail + [line])[-8:]
     if p.wait() != 0:
-        raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:])
+        raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:], p.returncode)
 
 
 def run_logged(*cmd):
     """run() for a command that logs as it works (the disk tool): each line
     of its stderr is passed on as {"log": ...} the moment it is printed, so
     a slow step shows which part of it is slow. Returns its stdout."""
-    print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
+    say("+ " + shlex.join(cmd))
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out = []
     reader = threading.Thread(target=lambda: out.append(p.stdout.read()), daemon=True)
@@ -134,15 +168,15 @@ def run_logged(*cmd):
             tail = (tail + [line])[-8:]
     reader.join()
     if p.wait() != 0:
-        raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:])
+        raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:], p.returncode)
     return out[0] if out else ""
 
 
 def run(*cmd, **kw):
-    print("+ " + shlex.join(cmd), file=sys.stderr, flush=True)
+    say("+ " + shlex.join(cmd))
     r = subprocess.run(cmd, text=True, capture_output=True, **kw)
     if r.returncode != 0:
-        raise Failed(f"{cmd[0]} exited {r.returncode}: {(r.stderr or r.stdout).strip()[-500:]}")
+        raise Failed(f"{cmd[0]} exited {r.returncode}: {(r.stderr or r.stdout).strip()[-500:]}", r.returncode)
     return r.stdout
 
 
@@ -263,6 +297,22 @@ def write_locale(target, lang, keymap, xkb_layout=None, xkb_variant=""):
     return etc
 
 
+def keep_log(target, lines):
+    """This run's log, into the installed system's /var/log: the stateroot's
+    var, which the deployment's /var is. Returns the path written."""
+    deploy = os.path.join(target, "ostree/deploy")
+    roots = [d for d in os.listdir(deploy) if os.path.isdir(os.path.join(deploy, d, "var"))]
+    if len(roots) != 1:
+        raise Failed(f"expected one stateroot's /var under {deploy}, found {len(roots)}")
+    path = os.path.join(deploy, roots[0], KEPT_LOG)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(f"--- pulsar-install-system, {time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n")
+        f.writelines(line + "\n" for line in lines)
+    os.chmod(path, 0o644)
+    return path
+
+
 def snapshot_fallback(efi_root):
     """What is in EFI/BOOT before installing beside another system: every
     file, by name, with its bytes (the fallback loader is a few hundred KB)."""
@@ -361,37 +411,57 @@ def main():
     ap.add_argument("--keymap", help="its console keymap (default: the live system's)")
     ap.add_argument("--xkb-layout", help="its desktop keyboard layout (GNOME's), e.g. de")
     ap.add_argument("--xkb-variant", default="", help="and variant, e.g. nodeadkeys")
+    ap.add_argument("--expect-size", type=int, help="the chosen disk's size in bytes: refuse any other")
+    ap.add_argument("--expect-serial", help="the chosen disk's serial number (may be empty): refuse any other")
     ap.add_argument("disk")
     a = ap.parse_args()
     if os.geteuid() != 0:
         ap.error("needs root")
     if not a.plan_only and not ((a.key_file or a.no_encrypt) and a.source_imgref and a.target_imgref):
         ap.error("installing needs --key-file (or --no-encrypt), --source-imgref and --target-imgref")
+    if not a.plan_only and (a.expect_size is None or a.expect_serial is None):
+        ap.error("installing needs --expect-size and --expect-serial: the disk that was chosen")
+    note("$ " + shlex.join(sys.argv))
     # what pulsar-install-disk is told: never neither, so it can't default
     plain = ["--no-encrypt"] if a.no_encrypt else []
+    # and which drive it must find at a.disk
+    ident = [*(["--expect-size", str(a.expect_size)] if a.expect_size is not None else []),
+             *(["--expect-serial", a.expect_serial] if a.expect_serial is not None else [])]
     # not /tmp: bootc copies itself there to enter SELinux's install_t, and
     # a wrapper that shares /tmp for the target's sake breaks that
     os.makedirs(SCRATCH, mode=0o700, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="install-", dir=SCRATCH)
     target = os.path.join(scratch, "target")
     mounted, opened, made, ok, error = [], False, set(), False, None
+    # whether anything may have been written to the disk: from the moment
+    # the disk tool starts writing, whether it finished or not
+    changed = False
     try:
         emit(stage="check")
         if a.mode == "alongside":
             preflight_alongside(a.disk, scratch)
         if a.plan_only:
             ok = True
-            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, a.disk)))
+            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, *ident, a.disk)))
             return 0
         emit(stage="disk")
-        plan = json.loads(run_logged(DISK_TOOL, "apply", "--mode", a.mode, *(plain or ["--key-file", a.key_file]),
-                                     a.disk))
-        run("udevadm", "settle")
+        try:
+            out = run_logged(DISK_TOOL, "apply", "--mode", a.mode, *(plain or ["--key-file", a.key_file]),
+                             *ident, a.disk)
+        except Failed as e:
+            # refused: nothing was written. Anything else (failed partway,
+            # crashed, killed): the disk may have changed
+            changed = e.code != DISK_REFUSED
+            raise
+        changed = True
         # the partitions this install made, by the partition UUIDs repart
         # reports: never guessed from labels or order, which another system
-        # on the disk could share
+        # on the disk could share. Taken now, before anything else can fail,
+        # so a failure after this point takes them back
+        plan = json.loads(out)
         made_by_type = {p["type"]: p["uuid"].lower() for p in plan if p["activity"] == "create"}
         made = set(made_by_type.values())
+        run("udevadm", "settle")
         by_uuid = {(p.get("partuuid") or "").lower(): p for p in partitions(a.disk)}
         root, boot = by_uuid.get(made_by_type.get("root-x86-64")), by_uuid.get(made_by_type.get("xbootldr"))
         if not (root and boot):
@@ -441,24 +511,36 @@ def main():
         return 0
     except Failed as e:
         error = str(e)
-        print(f"pulsar-install-system: {e}", file=sys.stderr)
+        say(f"pulsar-install-system: {e}")
         return 1
     except Exception as e:     # a bug: still unmount, take back, and say so
         error = f"{type(e).__name__}: {e}"
         raise
     finally:
+        if ok and mounted:
+            # the live session's log is gone at restart: the installed
+            # system keeps this one. A log that can't be kept fails nothing
+            try:
+                say(f"pulsar-install-system: keeping this log as /{KEPT_LOG} in the installed system")
+                keep_log(target, RECORD)
+            except (OSError, Failed) as e:
+                say(f"pulsar-install-system: could not keep the log in the installed system: {e}")
         for path in reversed(mounted):
             subprocess.run(["umount", path])
         if opened:
             subprocess.run(["cryptsetup", "close", MAPPER])
-        restored = not made
+        all_gone = not made
         if not ok and made:
             try:
                 gone = remove_made(a.disk, made)
-                restored = len(gone) == len(made)
-                print(f"pulsar-install-system: removed the {len(gone)} partitions this install made", file=sys.stderr)
+                all_gone = len(gone) == len(made)
+                say(f"pulsar-install-system: removed the {len(gone)} partitions this install made")
             except Failed as e:
-                print(f"pulsar-install-system: could not remove the partitions this install made: {e}", file=sys.stderr)
+                say(f"pulsar-install-system: could not remove the partitions this install made: {e}")
+        # as it was: nothing written; or, beside another system, everything
+        # this install made taken back. An erase that wrote is never undone:
+        # what was on the disk is gone, whatever happened to Pulsar's part
+        restored = not changed or (a.mode == "alongside" and bool(made) and all_gone)
         if not ok:
             emit(stage="failed", error=error or "interrupted", restored=restored)
 

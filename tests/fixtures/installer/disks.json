@@ -90,7 +90,8 @@
      "fstype": "ntfs",
      "parttype": "de94bba4-06d1-4d40-a16a-bfd50179d6ac"
     }
-   ]
+   ],
+   "serial": "S6B0NX0R123456A"
   },
   {
    "name": "sda",
@@ -179,6 +180,54 @@
      "fstype": "ntfs",
      "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
      "label": "Games"
+    }
+   ]
+  },
+  {
+   "name": "sdf",
+   "path": "/dev/sdf",
+   "type": "disk",
+   "size": 64023257088,
+   "ro": false,
+   "rm": true,
+   "tran": "usb",
+   "vendor": "SanDisk",
+   "model": "Ultra",
+   "serial": "4C530001230918110453",
+   "children": [
+    {
+     "name": "sdf1",
+     "size": 63989653504,
+     "start": 2048,
+     "fstype": "exfat",
+     "label": "Ventoy",
+     "mountpoints": [
+      null
+     ],
+     "children": [
+      {
+       "name": "ventoy",
+       "path": "/dev/mapper/ventoy",
+       "type": "dm",
+       "size": 2700000000,
+       "ro": true,
+       "fstype": "iso9660",
+       "label": "PULSAR-INSTALL",
+       "mountpoints": [
+        "/run/initramfs/live"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "sdf2",
+     "size": 33554432,
+     "start": 124977152,
+     "fstype": "vfat",
+     "label": "VTOYEFI",
+     "mountpoints": [
+      null
+     ]
     }
    ]
   },

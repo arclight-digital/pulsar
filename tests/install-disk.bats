@@ -535,12 +535,12 @@ PY
 }
 
 @test "install-system passes the choice to the disk tool: --no-encrypt, or the key file" {
-    run system_py --mode erase --no-encrypt --source-imgref a --target-imgref b /dev/fake
+    run system_py --mode erase --no-encrypt --source-imgref a --target-imgref b --expect-size 1 --expect-serial X /dev/fake
     [ "$status" -eq 1 ]
-    [[ "$output" == *"DISK apply --mode erase --no-encrypt /dev/fake"* ]]
-    run system_py --mode erase --key-file "$T/key" --source-imgref a --target-imgref b /dev/fake
+    [[ "$output" == *"DISK apply --mode erase --no-encrypt --expect-size 1 --expect-serial X /dev/fake"* ]]
+    run system_py --mode erase --key-file "$T/key" --source-imgref a --target-imgref b --expect-size 1 --expect-serial X /dev/fake
     [ "$status" -eq 1 ]
-    [[ "$output" == *"DISK apply --mode erase --key-file $T/key /dev/fake"* ]]
+    [[ "$output" == *"DISK apply --mode erase --key-file $T/key --expect-size 1 --expect-serial X /dev/fake"* ]]
     run system_py --mode erase --plan-only --no-encrypt /dev/fake
     [[ "$output" == *"DISK plan --mode erase --no-encrypt /dev/fake"* ]]
     run system_py --mode erase --plan-only /dev/fake

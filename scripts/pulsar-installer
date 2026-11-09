@@ -36,9 +36,14 @@ BACKEND = os.environ.get("PULSAR_INSTALL_SYSTEM", "/usr/libexec/pulsar/pulsar-in
 PKEXEC = shlex.split(os.environ.get("PULSAR_INSTALLER_PKEXEC", "pkexec"))
 PAYLOAD = pathlib.Path(os.environ.get("PULSAR_INSTALLER_PAYLOAD", "/usr/share/pulsar/installer/payload.json"))
 LIVE_LABEL = "PULSAR-INSTALL"
+# Where dracut mounts the medium the live system runs from: the ISO's
+# filesystem, and, when it boots an ISO file (iso-scan), the partition
+# holding that file
+LIVE_MOUNTS = ("/run/initramfs/live", "/run/initramfs/isoscan")
 # Every line the backend prints, with the seconds since the app started it:
 # the live session has no root to read the journal with, so this is what
-# says which step stalled or failed. Gone at restart, like the session.
+# says which step stalled or failed. Gone at restart, like the session; a
+# finished install keeps the backend's own copy in its /var/log.
 LOG = pathlib.Path(os.environ.get("PULSAR_INSTALLER_LOG", pathlib.Path.home() / "pulsar-install.log"))
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"), HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
 
@@ -170,7 +175,10 @@ def tell_apart(found):
 
 
 def failure_state(mode, restored, planning=False):
-    """What the disk is like after a failure, said plainly."""
+    """What the disk is like after a failure, said plainly. restored is the
+    backend's word that the disk is as it was: nothing written, or (beside
+    another system) everything it made taken back. An erase that wrote
+    never is."""
     if planning:
         return "Nothing on the disk was changed."
     if restored:
@@ -178,11 +186,50 @@ def failure_state(mode, restored, planning=False):
     if mode == "alongside":
         return ("Pulsar's new partitions may still be on the disk. "
                 "Everything that was on the disk before is untouched.")
-    return "The disk was erased, but Pulsar is not fully on it."
+    return "The disk was erased, and Pulsar isn't on it."
+
+
+def disk_restored(events):
+    """Whether a failed install left the disk as it was: the backend's
+    failed event says. Without one (it was killed), only if it never
+    reached the disk step, where writing starts."""
+    failed = next((e for e in events if e.get("stage") == "failed"), None)
+    if failed is not None:
+        return bool(failed.get("restored", False))
+    return not any(e.get("stage") == "disk" for e in events)
+
+
+def backend_argv(mode, d, *args):
+    """The backend's command line for disk d: its device, and what it must
+    still be when the backend writes (size and serial, as lsblk read them
+    here), so a drive swapped in under the same name is refused."""
+    return [*PKEXEC, BACKEND, "--mode", mode, *args,
+            "--expect-size", str(d["size"]), "--expect-serial", d.get("serial") or "", d["path"]]
 
 
 def elapsed(secs):
     return f"Time so far: {secs // 60}:{secs % 60:02d}"
+
+
+def descendants(dev):
+    """Everything lsblk shows under a device: partitions, and what is made
+    from them (device-mapper, LUKS, LVM), at any depth."""
+    for c in dev.get("children", []):
+        yield c
+        yield from descendants(c)
+
+
+def is_live(disk):
+    """Whether the live system runs from this disk: its medium's label or
+    mount anywhere on it. Not only on a partition: Ventoy maps the ISO file
+    through device-mapper, so the label and the mount are on a device made
+    from the stick's partition, a level down."""
+    for dev in (disk, *descendants(disk)):
+        if (dev.get("label") or "") == LIVE_LABEL:
+            return True
+        if any(m in LIVE_MOUNTS for m in dev.get("mountpoints") or []):
+            return True
+    return False
 
 
 def describe(disk):
@@ -194,7 +241,6 @@ def describe(disk):
         parts = [dict(disk, start=0)]
     fs = {(p.get("fstype") or "") for p in parts}
     ptypes = {(p.get("parttype") or "").lower() for p in parts}
-    labels = {(p.get("label") or "") for p in parts}
     d = {
         "path": disk["path"],
         "name": disk_name(disk),
@@ -208,8 +254,7 @@ def describe(disk):
         "esp": ESP in ptypes,
         "empty": not parts,
         "free": 0 if disk.get("fstype") else (free_gaps(disk) or [0])[0],
-        "live": LIVE_LABEL in labels or (disk.get("label") or "") == LIVE_LABEL or any(
-            "/run/initramfs/live" in (p.get("mountpoints") or []) for p in parts),
+        "live": is_live(disk),
         "partitions": [{"size": p["size"], "what": part_name(p),
                         "label": (p.get("label") or p.get("partlabel") or "").strip()} for p in parts],
         "serial": disk.get("serial") or "",
@@ -399,6 +444,16 @@ def secret_args(key_path):
 
 # --------------------------------------------------------------- app ----
 
+def row(cls=None, **kw):
+    """An Adw row (ActionRow unless cls says) whose title and subtitle are
+    plain text. Adw parses them as Pango markup by default, and a disk's or
+    partition's name with & or < in it (Backup & Photos) showed as a blank
+    row. Every row the app makes is made here. use_markup goes first: set
+    after a title, it comes too late for that title's first parse."""
+    from gi.repository import Adw
+    return (cls or Adw.ActionRow)(use_markup=False, **kw)
+
+
 def main():
     import gi
     gi.require_version("Gtk", "4.0")
@@ -566,7 +621,7 @@ def main():
                 found = disks(read_lsblk())
             except Exception as e:     # noqa: BLE001 -- shown, not hidden
                 found = None
-                listbox.append(Adw.ActionRow(title="The installer couldn't read the disks", subtitle=str(e)))
+                listbox.append(row(title="The installer couldn't read the disks", subtitle=str(e)))
             for d in sorted(found or [], key=lambda d: (d["usb"], -d["size"])):
                 opts = options(d)
                 usable = any(ok for ok, _ in opts.values())
@@ -575,16 +630,16 @@ def main():
                     sub += f" · {human(d['free'])} free"
                 if not usable:
                     sub += f"\n{opts['erase'][1]}"
-                row = Adw.ActionRow(title=d["name"], subtitle=sub, activatable=usable, sensitive=usable)
-                row.add_prefix(Gtk.Image(icon_name="drive-removable-media-symbolic" if d["usb"]
-                                         else "drive-harddisk-symbolic", pixel_size=32))
+                r = row(title=d["name"], subtitle=sub, activatable=usable, sensitive=usable)
+                r.add_prefix(Gtk.Image(icon_name="drive-removable-media-symbolic" if d["usb"]
+                                       else "drive-harddisk-symbolic", pixel_size=32))
                 if usable:
-                    row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
-                row.connect("activated", lambda _r, d=d: self.pick_disk(d))
-                listbox.append(row)
+                    r.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+                r.connect("activated", lambda _r, d=d: self.pick_disk(d))
+                listbox.append(r)
             if found == [] or (found and not any(any(ok for ok, _ in options(d).values()) for d in found)):
                 if found == []:
-                    listbox.append(Adw.ActionRow(
+                    listbox.append(row(
                         title="No disk found",
                         subtitle="The USB stick the installer is running from isn't listed."))
                 extra.append(label(f"Connect a disk of at least {human(NEEDS_ERASE)}, then press Refresh.",
@@ -608,13 +663,13 @@ def main():
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             for mode in ("alongside", "erase"):
                 ok, why = opts[mode]
-                row = Adw.ActionRow(title=method_title(d, mode), subtitle=why, activatable=ok, sensitive=ok)
+                r = row(title=method_title(d, mode), subtitle=why, activatable=ok, sensitive=ok)
                 if ok:
-                    row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+                    r.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
                 if mode == "erase":
-                    row.add_css_class("in-erase")
-                row.connect("activated", lambda _r, m=mode: self.pick_mode(m))
-                listbox.append(row)
+                    r.add_css_class("in-erase")
+                r.connect("activated", lambda _r, m=mode: self.pick_mode(m))
+                listbox.append(r)
             if opts["alongside"][0]:
                 keep = d["holds"] if d["holds"] in ("Windows", "Linux") else "your files"
                 head = f"Keep {keep}, or erase the disk?"
@@ -633,7 +688,7 @@ def main():
             d = self.disk
             parts = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             for p in d["partitions"]:
-                parts.append(Adw.ActionRow(title=p["what"], subtitle=human(p["size"])))
+                parts.append(row(title=p["what"], subtitle=human(p["size"])))
             sure = Gtk.CheckButton(label=f"Yes, delete everything on {d['name']}", halign=Gtk.Align.CENTER)
             go = Gtk.Button(label="Continue", css_classes=["suggested-action", "in-pill"], sensitive=False)
             sure.connect("toggled", lambda b: go.set_sensitive(b.get_active()))
@@ -651,12 +706,12 @@ def main():
 
         def passphrase_page(self):
             self.encrypt = True
-            switch = Adw.SwitchRow(title="Encrypt the disk", subtitle="Recommended", active=True)
+            switch = row(Adw.SwitchRow, title="Encrypt the disk", subtitle="Recommended", active=True)
             self.encrypt_row = switch
             choice = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             choice.append(switch)
-            a = Adw.PasswordEntryRow(title="Passphrase")
-            b = Adw.PasswordEntryRow(title="Confirm passphrase")
+            a = row(Adw.PasswordEntryRow, title="Passphrase")
+            b = row(Adw.PasswordEntryRow, title="Confirm passphrase")
             group = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             group.append(a)
             group.append(b)
@@ -700,7 +755,7 @@ def main():
         # ------------------------------------------- plan, then install
 
         def backend(self, *args):
-            return PKEXEC + [BACKEND, "--mode", self.mode, *args, self.disk["path"]]
+            return backend_argv(self.mode, self.disk, *args)
 
         def plan(self, passphrase):
             self.passphrase = passphrase
@@ -736,7 +791,7 @@ def main():
                 rows.insert(1, ("What happens", "Pulsar uses the whole disk."))
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             for k, v in rows:
-                listbox.append(Adw.ActionRow(title=k, subtitle=v, subtitle_selectable=True, css_classes=["property"]))
+                listbox.append(row(title=k, subtitle=v, subtitle_selectable=True, css_classes=["property"]))
             # red only when Install deletes something: never for an empty disk
             go = Gtk.Button(label=install_button(self.mode, d),
                             css_classes=["destructive-action" if destroys else "suggested-action", "in-pill"])
@@ -820,8 +875,7 @@ def main():
             if code == 0 and done:
                 self.nav.push(self.done_page(int(time.monotonic() - self.started), done))
             else:
-                failed = next((e for e in events if e.get("stage") == "failed"), {})
-                self.nav.push(self.failed_page(self.error_of(events), restored=failed.get("restored", False)))
+                self.nav.push(self.failed_page(self.error_of(events), restored=disk_restored(events)))
 
         def done_page(self, secs, done):
             restart = Gtk.Button(label="Restart Now", css_classes=["suggested-action", "in-big"],

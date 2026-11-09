@@ -162,7 +162,17 @@ PY
     [ "$(py 'm.failure_state("erase", True, planning=True)')" = "Nothing on the disk was changed." ]
     [ "$(py 'm.failure_state("erase", True)')" = "The disk is as it was before you pressed Install." ]
     [[ "$(py 'm.failure_state("alongside", False)')" == *"Everything that was on the disk before is untouched."* ]]
-    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, but Pulsar is not fully on it." ]
+    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, and Pulsar isn't on it." ]
+}
+
+@test "a failed install is 'as it was' only on the backend's word, or if it never reached the disk step" {
+    # the backend's failed event decides, either way
+    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": False}])')" = "False" ]
+    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": True}])')" = "True" ]
+    # killed with no failed event: the disk step is where writing starts
+    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"log": "Encrypting future partition 3..."}])')" = "False" ]
+    [ "$(py 'm.disk_restored([{"stage": "check"}])')" = "True" ]
+    [ "$(py 'm.disk_restored([])')" = "True" ]
 }
 
 @test "elapsed time reads as minutes and seconds" {
@@ -203,7 +213,7 @@ PY
 }
 
 @test "the encryption switch starts on, and the app starts encrypted" {
-    grep -q 'Adw.SwitchRow(title="Encrypt the disk", subtitle="Recommended", active=True)' "$APP"
+    grep -q 'row(Adw.SwitchRow, title="Encrypt the disk", subtitle="Recommended", active=True)' "$APP"
     grep -q 'self.encrypt = True' "$APP"
 }
 
@@ -226,4 +236,71 @@ PY
     [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, is deleted when you press Erase and Install. It can't be recovered." ]
     [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it is deleted when you press Erase and Install. It can't be recovered." ]
     [ "$(py 'm.options(D["/dev/nvme1n1"])["erase"][1]')" = "Deletes everything on this disk, including Windows." ]
+}
+
+@test "a Ventoy stick running the installer is never offered: its live label and mount are a level down" {
+    # the fixture's sdf: the ISO file mapped through device-mapper under sdf1
+    [ "$(py '"/dev/sdf" in D')" = "False" ]
+    [ "$(py 'm.is_live(next(d for d in json.load(open(sys.argv[2]))["blockdevices"] if d["name"] == "sdf"))')" = "True" ]
+    # by the label alone, or the mount alone, at any depth
+    run py '[m.is_live({"name": "sdg", "children": [{"name": "sdg1", "children": [c]}]}) for c in (
+        {"name": "ventoy", "label": "PULSAR-INSTALL"},
+        {"name": "ventoy", "label": "Pulsar ISO", "mountpoints": ["/run/initramfs/live"]})]'
+    [ "$output" = "[True, True]" ]
+    # mapped from the whole stick, not a partition
+    [ "$(py 'm.is_live({"name": "sdg", "children": [{"name": "ventoy", "mountpoints": ["/run/initramfs/live"]}]})')" = "True" ]
+    # an ISO file booted by iso-scan: the stick's partition holds it, mounted here
+    [ "$(py 'm.is_live({"name": "sdg", "children": [{"name": "sdg1", "label": "Ventoy", "mountpoints": ["/run/initramfs/isoscan"]}]})')" = "True" ]
+    # a disk with an encrypted, mounted volume on it is still offered
+    [ "$(py 'm.is_live({"name": "sdg", "children": [{"name": "sdg1", "fstype": "crypto_LUKS", "children": [{"name": "luks-1", "label": "home", "mountpoints": ["/var/home"]}]}]})')" = "False" ]
+}
+
+@test "the backend is told which drive was chosen, not only its name" {
+    run py 'm.backend_argv("erase", D["/dev/nvme1n1"], "--plan-only")[2:]'
+    [ "$output" = "['--mode', 'erase', '--plan-only', '--expect-size', '1000204886016', '--expect-serial', 'S6B0NX0R123456A', '/dev/nvme1n1']" ]
+    # no serial: the drive must still have none
+    run py 'm.backend_argv("alongside", D["/dev/sdb"], "--no-encrypt")[2:]'
+    [ "$output" = "['--mode', 'alongside', '--no-encrypt', '--expect-size', '256060514304', '--expect-serial', '', '/dev/sdb']" ]
+}
+
+@test "rows are never Pango markup: every Adw row is made by row(), which turns markup off first" {
+    run python3 - "$APP" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+# an Adw row made anywhere but row(): Adw.ActionRow(...), Adw.SwitchRow(...)
+direct = [n.lineno for n in calls if isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name)
+          and n.func.value.id == "Adw" and n.func.attr.endswith("Row")]
+helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "row")
+made = [n for n in ast.walk(helper) if isinstance(n, ast.Call) and isinstance(n.func, ast.BoolOp)]
+first = [(k.arg, ast.literal_eval(k.value)) for k in made[0].keywords[:1]]
+# markup turned on anywhere, any way
+markup = [n.lineno for n in calls if any(k.arg and "markup" in k.arg and not (isinstance(k.value, ast.Constant)
+          and k.value.value is False) for k in n.keywords)
+          or isinstance(n.func, ast.Attribute) and n.func.attr.startswith("set_") and "markup" in n.func.attr]
+print(direct, len(made), first, markup)
+PY
+    [ "$status" -eq 0 ]
+    [ "$output" = "[] 1 [('use_markup', False)] []" ]
+}
+
+@test "a disk or partition named with & or < shows its name, not a blank row (real GTK)" {
+    python3 -c 'import gi; gi.require_version("Adw", "1")' 2>/dev/null || skip "no GTK 4 and libadwaita here"
+    [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] || skip "no display"
+    run python3 - "$APP" <<'PY'
+import importlib.machinery as M, importlib.util as U, sys
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+import gi
+gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")
+from gi.repository import Adw, Gtk
+Adw.init()
+def texts(w):
+    out, c = [], w.get_first_child()
+    while c:
+        out += ([c.get_text()] if isinstance(c, Gtk.Label) else []) + texts(c)
+        c = c.get_next_sibling()
+    return out
+print(texts(m.row(title="Backup & <Photos>", subtitle="1.0 TB · Files (Tom & Jerry)")))
+PY
+    [ "${lines[${#lines[@]}-1]}" = "['Backup & <Photos>', '1.0 TB · Files (Tom & Jerry)']" ]
 }

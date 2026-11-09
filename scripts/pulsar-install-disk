@@ -1,9 +1,15 @@
 #!/usr/bin/python3
 """Lay out a disk for Pulsar: the one step of an install that can destroy data.
 
-    pulsar-install-disk plan  --mode erase|alongside [--no-encrypt] DISK
-    pulsar-install-disk apply --mode erase|alongside --key-file FILE DISK
-    pulsar-install-disk apply --mode erase|alongside --no-encrypt DISK
+    pulsar-install-disk plan  --mode erase|alongside [--no-encrypt] [IDENTITY] DISK
+    pulsar-install-disk apply --mode erase|alongside --key-file FILE [IDENTITY] DISK
+    pulsar-install-disk apply --mode erase|alongside --no-encrypt [IDENTITY] DISK
+
+IDENTITY is --expect-size BYTES --expect-serial SERIAL: the disk the person
+chose, as lsblk described it to the installer. DISK is only a name (/dev/sda),
+and a name can come to mean another drive when one is unplugged and another
+plugged in; with IDENTITY, the disk at DISK must still be that one, checked
+before planning and again just before writing.
 
 Both run systemd-repart from the layouts in /usr/share/pulsar/installer/repart:
 an EFI system partition, a 2G /boot, and a btrfs root. With --key-file the
@@ -22,7 +28,9 @@ is only ever one somebody asked for.
 `apply` re-plans first and refuses unless the plan passes the same checks, so a
 caller can't apply something it never saw. repart decides the layout; this
 script decides whether that layout is one Pulsar is willing to write. Exit 0
-prints the plan as JSON; exit 2 means refused, with the reason on stderr.
+prints the plan as JSON; exit 2 means refused, with the reason on stderr, and
+nothing written; exit 3 means the write began and failed partway: the disk
+has changed, and what is on it now is unknown.
 """
 
 import argparse
@@ -39,7 +47,14 @@ CREATED = {"erase": ["esp", "xbootldr", "root-x86-64"], "alongside": ["xbootldr"
 
 
 class Refused(Exception):
-    pass
+    """Refused before writing anything: exit 2."""
+
+
+class WriteFailed(Exception):
+    """The write began and did not finish: exit 3."""
+
+
+REFUSED, WRITE_FAILED = 2, 3
 
 
 ROOT_CONF = "30-root.conf"
@@ -97,13 +112,41 @@ def repart(mode, defs, disk, key_file, dry_run):
         # shows it, instead of arriving all at once when it ends
         r = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, env=env)
         if r.returncode != 0:
-            raise Refused(f"systemd-repart exited {r.returncode}")
-        return json.loads(r.stdout)
+            raise WriteFailed(f"systemd-repart exited {r.returncode}")
+        try:
+            return json.loads(r.stdout)
+        except ValueError as e:
+            raise WriteFailed(f"systemd-repart wrote the disk but its plan can't be read: {e}") from e
     r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
         why = r.stderr.strip().splitlines()
         raise Refused(why[0] if why else f"systemd-repart exited {r.returncode}")
     return json.loads(r.stdout)
+
+
+def short_serial(serial):
+    return f"serial ending {serial[-4:]}" if serial else "no serial number"
+
+
+def same_disk(disk, size, serial):
+    """Refuse unless the disk at DISK is the one the person chose: the same
+    size in bytes and the same serial number (lsblk's, as the installer read
+    them). A different drive at the same name is never written."""
+    if size is None and serial is None:
+        return
+    r = subprocess.run(["lsblk", "-J", "-b", "-d", "-o", "SIZE,SERIAL", disk], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Refused(f"can't read {disk} to check it is the disk you chose: {r.stderr.strip()}")
+    try:
+        dev = json.loads(r.stdout)["blockdevices"][0]
+        now_size, now_serial = int(dev.get("size") or 0), (dev.get("serial") or "").strip()
+    except (ValueError, LookupError, TypeError) as e:
+        raise Refused(f"can't read {disk} to check it is the disk you chose: {e}") from e
+    if (size is not None and now_size != size) or (serial is not None and now_serial != serial.strip()):
+        was = [f"{size} bytes" if size is not None else None, short_serial(serial.strip()) if serial is not None else None]
+        raise Refused(f"{disk} is no longer the disk you chose: it was "
+                      f"{', '.join(x for x in was if x)}, and is now {now_size} bytes, {short_serial(now_serial)}. "
+                      "Was a disk unplugged or swapped?")
 
 
 def check(mode, plan):
@@ -132,6 +175,8 @@ def main():
     secret = ap.add_mutually_exclusive_group()
     secret.add_argument("--key-file", help="encrypt the root with the passphrase in FILE")
     secret.add_argument("--no-encrypt", action="store_true", help="a plain, unencrypted root")
+    ap.add_argument("--expect-size", type=int, help="refuse unless DISK is this many bytes")
+    ap.add_argument("--expect-serial", help="refuse unless DISK has this serial number")
     ap.add_argument("disk")
     a = ap.parse_args()
     if a.action == "apply" and not (a.key_file or a.no_encrypt):
@@ -139,13 +184,20 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="pulsar-layouts-") as scratch:
             defs = definitions(a.mode, not a.no_encrypt, scratch)
+            same_disk(a.disk, a.expect_size, a.expect_serial)
             plan = repart(a.mode, defs, a.disk, a.key_file, dry_run=True)
             check(a.mode, plan)
             if a.action == "apply":
+                # again, just before writing: planning takes seconds, and a
+                # drive can be swapped in them
+                same_disk(a.disk, a.expect_size, a.expect_serial)
                 plan = repart(a.mode, defs, a.disk, a.key_file, dry_run=False)
     except Refused as e:
         print(f"pulsar-install-disk: refused: {e}", file=sys.stderr)
-        return 2
+        return REFUSED
+    except WriteFailed as e:
+        print(f"pulsar-install-disk: failed while writing the disk: {e}", file=sys.stderr)
+        return WRITE_FAILED
     json.dump(plan, sys.stdout, indent=1)
     print()
     return 0
