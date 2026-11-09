@@ -114,13 +114,31 @@ def session_items(sessions):
     return out
 
 
-# Arithmetic typed into the search: parsed, never eval'd. Numbers, + - * /
-# // % and ^ or ** for powers, x between numbers, parentheses, a few names
-# and functions; "15% of 80", "80 + 15%"; "5 mi in km", "100 f in c",
-# "2 GiB in MB"; "255 in hex", and "0xff" alone in decimal.
+def round_half_away(v):
+    """round() as a calculator does it: 2.5 is 3 and -2.5 is -3 (Python's
+    own round goes to the even one, so 2.5 would be 2)."""
+    import decimal
+    if isinstance(v, int):
+        return v
+    if not math.isfinite(v):
+        raise ValueError("not a number")
+    return int(decimal.Decimal(v).to_integral_value(rounding=decimal.ROUND_HALF_UP))
+
+
+# Arithmetic typed into the search: parsed, never eval'd. Numbers (0x1f in
+# hex too), + - * / // and ^ or ** for powers, % for the remainder (10 % 3),
+# x between numbers, parentheses, a few names and functions; "15% of 80",
+# "80 + 15%"; "5 mi in km", "100 f in c", "2 GiB in MB"; "255 in hex", and
+# "0xff" alone in decimal. Real answers only: (-8)^(1/3) is none.
 CALC_NAMES = {"pi": math.pi, "e": math.e, "tau": math.tau}
-CALC_FUNCS = {"sqrt": math.sqrt, "abs": abs, "round": round, "floor": math.floor, "ceil": math.ceil,
+CALC_FUNCS = {"sqrt": math.sqrt, "abs": abs, "round": round_half_away, "floor": math.floor, "ceil": math.ceil,
               "log": math.log10, "ln": math.log, "sin": math.sin, "cos": math.cos, "tan": math.tan}
+# longer than any sum anyone types: a paste of a page is a search, and parsing
+# thousands of brackets runs the parser out of memory
+CALC_MAX = 200
+# what working a sum out can raise: any of them means "not a sum"
+CALC_ERRORS = (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError, RecursionError,
+               MemoryError)
 CALC_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
             ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow}
 
@@ -138,7 +156,11 @@ def _calc(node):
         # 9^9^9 would take the machine with it
         if isinstance(node.op, ast.Pow) and (abs(b) > 1000 or abs(a) > 1e100):
             raise ValueError("too big")
-        return CALC_OPS[type(node.op)](a, b)
+        v = CALC_OPS[type(node.op)](a, b)
+        # (-8)^(1/3) is a complex number in Python: real answers only
+        if isinstance(v, complex):
+            raise ValueError("not a real number")
+        return v
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in CALC_FUNCS
             and len(node.args) == 1 and not node.keywords):
         return CALC_FUNCS[node.func.id](_calc(node.args[0]))
@@ -167,6 +189,7 @@ CONVERT = re.compile(r"^(.+?)\s*([a-z°/]+)\s+(?:in|to|as)\s+([a-z°/]+)$", re.I
 TO_BASE = re.compile(r"^(.+?)\s+(?:in|to|as)\s+(hex|bin|binary|oct|octal|dec|decimal)$", re.I)
 PERCENT_OF = re.compile(r"^(.+?)\s*%\s*of\s+(.+)$", re.I)
 PLUS_PERCENT = re.compile(r"^(.+?)\s*([+-])\s*([\d.]+)\s*%$")
+HEX_OR_TIMES = re.compile(r"(?P<hex>(?<![\w.])0[xX][0-9a-fA-F]+)|(?<=[\d)])\s*x\s*(?=[\d(])")
 
 
 def number(v):
@@ -181,11 +204,15 @@ def number(v):
 
 
 def evaluate(q):
+    if len(q) > CALC_MAX:
+        raise ValueError("too long")
     q = q.strip().replace("^", "**").replace("\u00d7", "*").replace("\u00f7", "/").replace(",", "")
-    # "3x4", "3 x 4": x between numbers is a times sign
-    q = re.sub(r"(?<=[\d)])\s*x\s*(?=[\d(])", "*", q)
-    # 15% alone is 0.15 once it is part of a sum
-    q = re.sub(r"(\d(?:[\d.]*))\s*%", r"(\1/100)", q)
+    # "3x4", "3 x 4": x between numbers is a times sign; a hex number (0x1f,
+    # wherever it is in the sum) is kept as it is
+    q = HEX_OR_TIMES.sub(lambda m: m.group("hex") or "*", q)
+    # 15% is 0.15 once it is part of a sum; % with a number after it is the
+    # remainder (10 % 3)
+    q = re.sub(r"(\d[\d.]*)\s*%(?!\s*[\w.(])", r"(\1/100)", q)
     return _calc(ast.parse(q, mode="eval").body)
 
 
@@ -193,7 +220,7 @@ def calc(query):
     """The answer to `query` as (shown, copied), or None when it is not a
     sum: a lone number, a word, or anything that does not work out."""
     q = query.strip()
-    if not q or not any(c.isdigit() for c in q) or len(q) > 200:
+    if not q or not any(c.isdigit() for c in q) or len(q) > CALC_MAX:
         return None
     try:
         m = TO_BASE.match(q)
@@ -234,7 +261,7 @@ def calc(query):
             return None
         n = number(evaluate(q))
         return n, n
-    except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError, RecursionError):
+    except CALC_ERRORS:
         return None
 
 
@@ -247,7 +274,8 @@ def calc(query):
 # ---------------------------------------------------------------------------
 RATES_URL = os.environ.get("PULSAR_RATES_URL", "https://api.frankfurter.dev/v1/latest?base=EUR")
 RATES_MAX_AGE = 12 * 3600
-CURRENCIES = set("AUD BGN BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR "
+# the ones the ECB publishes (not BGN: Bulgaria has the euro since 2026)
+CURRENCIES = set("AUD BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR "
                  "NOK NZD PHP PLN RON SEK SGD THB TRY USD ZAR".split())
 CURRENCY_SIGNS = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP", "\u00a5": "JPY", "\u20b9": "INR", "\u20a9": "KRW"}
 CURRENCY = re.compile(r"^([$\u20ac\u00a3\u00a5\u20b9\u20a9])?\s*(.+?)\s*([a-z]{3})?\s+(?:in|to|as)\s+"
@@ -261,6 +289,8 @@ def rates_file():
 
 def currency_parse(query):
     """(amount, from, to) for a currency conversion, else None."""
+    if len(query) > CALC_MAX:
+        return None
     m = CURRENCY.match(query.strip())
     if not m or bool(m.group(1)) == bool(m.group(3)):
         return None
@@ -270,9 +300,15 @@ def currency_parse(query):
         return None
     try:
         amount = evaluate(m.group(2))
-    except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError, RecursionError, KeyError):
+    except CALC_ERRORS:
         return None
     return amount, src, dst
+
+
+def currency_missing(parsed, rates):
+    """Which of a conversion's two currencies `rates` has no rate for, or None."""
+    have = set(rates["rates"]) | {"EUR"}
+    return next((c for c in parsed[1:] if c not in have), None)
 
 
 def currency_convert(parsed, rates):
@@ -286,9 +322,19 @@ def currency_convert(parsed, rates):
     return f"{n} {dst}", n.replace(",", "")
 
 
+def rates_ok(r):
+    """Whether `r` is rates to convert with: a date, and a positive number for
+    each currency. Anything else in the cache (or the feed) is as good as none."""
+    return (isinstance(r, dict) and isinstance(r.get("date"), str) and isinstance(r.get("rates"), dict)
+            and all(isinstance(k, str) and type(v) in (int, float) and math.isfinite(v) and v > 0
+                    for k, v in r["rates"].items()))
+
+
 def load_rates(now=None, fetch=True):
     """The rates: the cache if it is fresh, else fetched (and cached), else the
-    stale cache, else None. Blocking: the window calls it off the main thread."""
+    stale cache, else None. Blocking: the window calls it off the main thread.
+    A cache that is not rates is none; one fetched "in the future" (the clock
+    was wrong, or went back) is stale."""
     import time
     now = now or time.time()
     path = rates_file()
@@ -296,25 +342,43 @@ def load_rates(now=None, fetch=True):
     try:
         with open(path) as f:
             cached = json.load(f)
-        if now - cached.get("fetched", 0) < RATES_MAX_AGE:
-            return cached
     except (OSError, ValueError):
         cached = None
+    if not rates_ok(cached):
+        cached = None
+    else:
+        fetched = cached.get("fetched")
+        if type(fetched) in (int, float) and 0 <= now - fetched < RATES_MAX_AGE:
+            return cached
     if fetch:
         import urllib.request
         try:
             req = urllib.request.Request(RATES_URL, headers={"User-Agent": "pulsar-menu"})
             with urllib.request.urlopen(req, timeout=8) as r:
                 got = json.load(r)
-            fresh = {"date": got["date"], "rates": got["rates"], "fetched": now}
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path + ".tmp", "w") as f:
-                json.dump(fresh, f)
-            os.replace(path + ".tmp", path)
-            return fresh
-        except (OSError, ValueError, KeyError):
+            if rates_ok(got):
+                fresh = {"date": got["date"], "rates": got["rates"], "fetched": now}
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path + ".tmp", "w") as f:
+                    json.dump(fresh, f)
+                os.replace(path + ".tmp", path)
+                return fresh
+        # a network can fail in more ways than OSError (http.client's own errors)
+        except Exception:
             pass
     return cached
+
+
+def fetch_then(report):
+    """report(the rates, or None), whatever happens getting them: the answer
+    row waits on it, and would say "Getting the exchange rates" for good."""
+    got = None
+    try:
+        got = load_rates()
+    except Exception as e:
+        print(f"pulsar-menu: exchange rates: {e!r}", file=sys.stderr)
+    finally:
+        report(got)
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +388,10 @@ def load_rates(now=None, fetch=True):
 # 2026-12-25, dec 25, 25 december 2026, 12/25 or 12/25/2026 (month first).
 # ---------------------------------------------------------------------------
 MONTHS = {m: i + 1 for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
+# a month's name or its short form, not any word that starts like one
+# ("octopath 2" is a game, "4 decks" is not December)
+MONTH_RE = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+            r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?")
 DATE_UNITS = {"d": "days", "day": "days", "days": "days", "w": "weeks", "wk": "weeks", "week": "weeks",
               "weeks": "weeks", "month": "months", "months": "months", "mo": "months",
               "y": "years", "yr": "years", "year": "years", "years": "years"}
@@ -361,29 +429,38 @@ def parse_date(text, today, prefer="next"):
         y, mo, d = (int(x) for x in m.groups())
     else:
         m = (re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", t)
-             or re.fullmatch(r"([a-z]{3})[a-z]*\.? (\d{1,2})(?:st|nd|rd|th)?,?(?: (\d{4}))?", t))
+             or re.fullmatch(MONTH_RE + r" (\d{1,2})(?:st|nd|rd|th)?,?(?: (\d{4}))?", t))
         if m:
             mo, d, y = m.group(1), int(m.group(2)), m.group(3)
         else:
-            m = re.fullmatch(r"(\d{1,2})(?:st|nd|rd|th)? ([a-z]{3})[a-z]*\.?,?(?: (\d{4}))?", t)
+            m = re.fullmatch(r"(\d{1,2})(?:st|nd|rd|th)? " + MONTH_RE + r",?(?: (\d{4}))?", t)
             if not m:
                 return None
             d, mo, y = int(m.group(1)), m.group(2), m.group(3)
-        mo = MONTHS.get(mo) if not str(mo).isdigit() else int(mo)
-        if mo is None:
-            return None
+        mo = int(mo) if mo.isdigit() else MONTHS[mo[:3]]
         y = int(y) if y else None
     try:
         if y is not None:
             return datetime.date(y, mo, d)
-        when = datetime.date(today.year, mo, d)
+        datetime.date(2000, mo, d)   # a day some year has: Feb 29 is, Feb 30 is not
     except ValueError:
         return None
-    if prefer == "next" and when < today:
-        when = when.replace(year=today.year + 1)
-    elif prefer == "last" and when > today:
-        when = when.replace(year=today.year - 1)
-    return when
+    if prefer not in ("next", "last"):
+        try:
+            return datetime.date(today.year, mo, d)
+        except ValueError:
+            return None
+    # no year: the first on or after today ("next"), or the last on or before
+    # it ("last"); a Feb 29 can be up to 8 years off (2096, then 2104)
+    step = 1 if prefer == "next" else -1
+    for n in range(9):
+        try:
+            when = datetime.date(today.year + n * step, mo, d)
+        except ValueError:   # Feb 29 in a common year, or no such year
+            continue
+        if (when >= today) if step > 0 else (when <= today):
+            return when
+    return None
 
 
 def long_date(d):
@@ -395,10 +472,19 @@ def days_text(n):
 
 
 def date_calc(query, today=None):
-    """(shown, copied) for date arithmetic, else None."""
+    """(shown, copied) for date arithmetic, else None: also for a date past
+    what Python's dates reach (year 9999), "in 9000 years"."""
     import datetime
-    today = today or datetime.date.today()
-    q = " ".join(query.strip().split())
+    if len(query) > CALC_MAX:
+        return None
+    try:
+        return _date_calc(" ".join(query.strip().split()), today or datetime.date.today())
+    except (ValueError, OverflowError):
+        return None
+
+
+def _date_calc(q, today):
+    import datetime
     m = re.fullmatch(r"days? (until|till|to|since|from) (.+)", q, re.I)
     if m:
         since = m.group(1).lower() in ("since", "from")
@@ -486,6 +572,18 @@ class CalcItem(Item):
         return True
 
     def matches(self, query):
+        # every row is asked on every key: a parser that raises would stop the
+        # search halfway (stale rows, Enter failing). No answer, instead, and
+        # none left over from the last search.
+        try:
+            if self._matches(query):
+                return True
+        except Exception:
+            pass
+        self.answer, self.argv = None, []
+        return False
+
+    def _matches(self, query):
         said = egg(query)
         if said is not None:
             self.group, self.icon = "", "face-smile-big-symbolic"
@@ -504,10 +602,14 @@ class CalcItem(Item):
                     self.want_rates()
                 self.title, self.subtitle = "= \u2026", "Getting the exchange rates"
                 return True
-            got = currency_convert(cur, self.rates)
-            if got is None:
-                return False
-            return self._answer(*got, note=f"ECB rate of {self.rates['date']}")
+            missing = currency_missing(cur, self.rates)
+            if missing is not None:
+                # the ECB stops publishing a currency now and then (BGN, 2026)
+                self.answer, self.argv = None, []
+                self.title = "= ?"
+                self.subtitle = f"No rate for {missing} in the ECB's rates of {self.rates['date']}"
+                return True
+            return self._answer(*currency_convert(cur, self.rates), note=f"ECB rate of {self.rates['date']}")
         got = date_calc(query)
         if got is None:
             got = calc(query)
@@ -567,6 +669,15 @@ class Found(Item):
 
     def matches(self, query):
         return query == self.for_query
+
+
+def found_changes(shown, query, found):
+    """What a search does to the list's rows (`shown`: their items): the
+    found rows of other searches go, and of `found`, the ones not there yet
+    for this search come. The same search again adds nothing twice."""
+    gone = [it for it in shown if isinstance(it, Found) and it.for_query != query]
+    have = {it.key for it in shown if isinstance(it, Found) and it.for_query == query}
+    return gone, [it for it in found if it.key not in have]
 
 
 def pick_apps(groups, shown, limit=APP_LIMIT):
@@ -952,30 +1063,40 @@ def window_class():
             self.fetching = True
             import threading
 
-            def work():
-                got = load_rates()
+            def report(got):
                 GLib.idle_add(self._got_rates, got)
-            threading.Thread(target=work, daemon=True).start()
+            threading.Thread(target=fetch_then, args=(report,), daemon=True).start()
 
         def _got_rates(self, rates):
+            # the answer row only: the apps and files found are still the ones
             self.fetching = False
             self.calc.rates = rates
             self.calc.rates_failed = rates is None
-            self._changed(self.entry)
+            self._answer_row()
+            self.list.invalidate_filter()
+            self.list.invalidate_headers()
+            row = self.list.get_selected_row()
+            if row is None or not row.item.matches(self.query):
+                self._select_first()
             return False
 
-        def _changed(self, entry):
-            self.query = entry.get_text()
+        def _answer_row(self):
             row = self.list.get_row_at_index(0)
             if row.item.matches(self.query):
                 row.title.set_label(row.item.title)
                 row.sub.set_label(row.item.subtitle)
                 row.icon.set_from_icon_name(row.item.icon)
+
+        def _changed(self, entry):
+            self.query = entry.get_text()
+            self._answer_row()
             # rows from the last search go; apps come straight after the answer
-            for r in self._all_rows():
-                if isinstance(r.item, Found) and r.item.for_query != self.query:
+            rows = self._all_rows()
+            gone, new = found_changes([r.item for r in rows], self.query, self._apps(self.query))
+            for r in rows:
+                if r.item in gone:
                     self.list.remove(r)
-            for n, it in enumerate(self._apps(self.query)):
+            for n, it in enumerate(new):
                 self.add(it, 1 + n)
             self._search_files(self.query)
             self.empty_title.set_label(nothing_found(self.query)[0])
@@ -1190,6 +1311,7 @@ def window_class():
             stmt.execute_async(cancel, done)
 
         def _got_files(self, query, paths):
+            found = []
             for path in paths:
                 f = Gio.File.new_for_path(path)
                 try:
@@ -1202,6 +1324,9 @@ def window_class():
                 uri = f.get_uri()
                 it.launch = lambda ctx, uri=uri: Gio.AppInfo.launch_default_for_uri(uri, ctx)
                 it.reveal = uri
+                found.append(it)
+            # the same search again (the same words typed back) adds none twice
+            for it in found_changes([r.item for r in self._all_rows()], query, found)[1]:
                 self.add(it)
             self.list.invalidate_headers()
             # the first row only if nothing was chosen: files arrive while you type

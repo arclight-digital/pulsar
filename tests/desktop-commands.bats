@@ -587,3 +587,267 @@ print(it.matches("100 usd in eur"), it.title, "|", it.subtitle)'
     run menu 'print(m.load_rates(now=1000))'
     [ "$output" = "None" ]
 }
+
+@test "menu: a hex number works anywhere in a sum; x between numbers still multiplies" {
+    run menu '
+for q in ("0x10", "0x10 + 1", "0x1f", "0x7fffffff", "2*0x10", "0XFF - 0x0f", "3 x 0x10",
+          "3x4", "3 x 4", "10x4", "(2)x(3)"):
+    print(q, "=", m.calc(q))'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "0x10 = ('16', '16')"
+        "0x10 + 1 = ('17', '17')"
+        "0x1f = ('31', '31')"
+        "0x7fffffff = ('2147483647', '2147483647')"
+        "2*0x10 = ('32', '32')"
+        "0XFF - 0x0f = ('240', '240')"
+        "3 x 0x10 = ('48', '48')"
+        "3x4 = ('12', '12')"
+        "3 x 4 = ('12', '12')"
+        "10x4 = ('40', '40')"
+        "(2)x(3) = ('6', '6')"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: % with a number after it is the remainder; with none, a percent" {
+    run menu '
+for q in ("10 % 3", "10%3", "17 % 5 + 1", "7.5 % 2", "10 % (2+1)", "10 % pi",
+          "50%", "50% * 2", "(50%)*4", "15% of 80", "80 + 15%", "80 - 15%"):
+    print(q, "=", m.calc(q))'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "10 % 3 = ('1', '1')"
+        "10%3 = ('1', '1')"
+        "17 % 5 + 1 = ('3', '3')"
+        "7.5 % 2 = ('1.5', '1.5')"
+        "10 % (2+1) = ('1', '1')"
+        "10 % pi = ('0.575222039231', '0.575222039231')"
+        "50% = ('0.5', '0.5')"
+        "50% * 2 = ('1', '1')"
+        "(50%)*4 = ('2', '2')"
+        "15% of 80 = ('12', '12')"
+        "80 + 15% = ('92', '92')"
+        "80 - 15% = ('68', '68')"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: real answers only: a negative number to a fraction is no answer, and Enter copies nothing" {
+    run menu '
+for q in ("(-8)^(1/3)", "(-2)^0.5", "(-8)^2", "(-8)^(-1)", "2^0.5"):
+    print(q, "=", m.calc(q))
+it = m.CalcItem()
+print(it.matches("(-8)^(1/3)"), it.argv)'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "(-8)^(1/3) = None"
+        "(-2)^0.5 = None"
+        "(-8)^2 = ('64', '64')"
+        "(-8)^(-1) = ('-0.125', '-0.125')"
+        "2^0.5 = ('1.41421356237', '1.41421356237')"
+        "False []"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: round() takes a half away from zero, as a calculator does" {
+    run menu '
+for q in ("round(2.5)", "round(-2.5)", "round(0.5)", "round(3.5)", "round(1.4)", "round(-0.4)", "round(2.675)", "round(7)"):
+    print(q, "=", m.calc(q)[0])'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "$(printf '%s\n' "round(2.5) = 3" "round(-2.5) = -3" "round(0.5) = 1" "round(3.5) = 4" \
+        "round(1.4) = 1" "round(-0.4) = 0" "round(2.675) = 3" "round(7) = 7")" ] || fail "$output"
+}
+
+@test "menu: a date past the year 9999 is no answer, never an error that stops the search" {
+    run menu '
+import datetime
+today = datetime.date(2026, 11, 5)
+for q in ("in 9000 years", "in 99999999 days", "99999999 days ago", "12/25/9999 + 1 week",
+          "in 7000 years", "12/25/9999 - 1 week"):
+    print(q, "=", m.date_calc(q, today))
+real = m.date_calc
+m.date_calc = lambda q, t=None: real(q, today)
+it = m.CalcItem()
+print(it.matches("2+2"), it.argv)
+print(it.matches("in 9000 years"), it.argv)
+# whatever a parser raises, the row is no answer, and keeps no old one
+def boom(*a):
+    raise RuntimeError("boom")
+print(it.matches("2+2"), it.argv)
+m.date_calc = boom
+print(it.matches("2+2"), it.argv)
+m.date_calc, m.calc, m.currency_parse = (lambda q, t=None: real(q, today)), boom, boom
+print(it.matches("2+2"), it.matches("100 usd in eur"), it.argv)'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "in 9000 years = None"
+        "in 99999999 days = None"
+        "99999999 days ago = None"
+        "12/25/9999 + 1 week = None"
+        "in 7000 years = ('Sunday, November 5, 9026', '9026-11-05')"
+        "12/25/9999 - 1 week = ('Saturday, December 18, 9999', '9999-12-18')"
+        "True ['wl-copy', '--', '4']"
+        "False []"
+        "True ['wl-copy', '--', '4']"
+        "False []"
+        "False False []"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: Feb 29 with no year is the next or last one there is" {
+    run menu '
+import datetime
+D = datetime.date
+for today, q in ((D(2028, 3, 1), "feb 29"), (D(2028, 3, 1), "days until feb 29"),
+                 (D(2028, 1, 15), "days since feb 29"), (D(2026, 11, 5), "days until feb 29"),
+                 (D(2026, 11, 5), "days since feb 29"), (D(2028, 2, 29), "days until feb 29"),
+                 (D(2026, 11, 5), "feb 30"), (D(2026, 11, 5), "days until feb 30")):
+    print(today, q, "=", m.date_calc(q, today))'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "2028-03-01 feb 29 = ('Sunday, February 29, 2032 · in 1,460 days', '2032-02-29')"
+        "2028-03-01 days until feb 29 = ('1,460 days (Sunday, February 29, 2032)', '1460')"
+        "2028-01-15 days since feb 29 = ('1,416 days (Thursday, February 29, 2024)', '1416')"
+        "2026-11-05 days until feb 29 = ('481 days (Tuesday, February 29, 2028)', '481')"
+        "2026-11-05 days since feb 29 = ('980 days (Thursday, February 29, 2024)', '980')"
+        "2028-02-29 days until feb 29 = ('0 days (Tuesday, February 29, 2028)', '0')"
+        "2026-11-05 feb 30 = None"
+        "2026-11-05 days until feb 30 = None"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: only a month's name or short form makes a date, not a word that starts like one" {
+    run menu '
+import datetime
+today = datetime.date(2026, 11, 5)
+for q in ("octopath 2", "marvel 2", "jungle 3", "4 decks", "decks 4", "mayday 1", "augment 3", "days until marvel 2",
+          "sept 5", "sept. 5", "september 5", "5 sept", "june 3", "4 jul.", "march 3 2027", "days until may 1"):
+    print(q, "=", m.date_calc(q, today))'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "octopath 2 = None"
+        "marvel 2 = None"
+        "jungle 3 = None"
+        "4 decks = None"
+        "decks 4 = None"
+        "mayday 1 = None"
+        "augment 3 = None"
+        "days until marvel 2 = None"
+        "sept 5 = ('Sunday, September 5, 2027 · in 304 days', '2027-09-05')"
+        "sept. 5 = ('Sunday, September 5, 2027 · in 304 days', '2027-09-05')"
+        "september 5 = ('Sunday, September 5, 2027 · in 304 days', '2027-09-05')"
+        "5 sept = ('Sunday, September 5, 2027 · in 304 days', '2027-09-05')"
+        "june 3 = ('Thursday, June 3, 2027 · in 210 days', '2027-06-03')"
+        "4 jul. = ('Sunday, July 4, 2027 · in 241 days', '2027-07-04')"
+        "march 3 2027 = ('Wednesday, March 3, 2027 · in 118 days', '2027-03-03')"
+        "days until may 1 = ('177 days (Saturday, May 1, 2027)', '177')"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: a currency the ECB's rates lack says so; BGN is not offered" {
+    run menu '
+print("BGN" in m.CURRENCIES, m.currency_parse("100 bgn in eur"))
+it = m.CalcItem()
+it.rates = {"date": "2026-11-05", "rates": {"USD": 1.1497}}
+for q in ("100 usd in jpy", "¥100 in usd", "100 usd in eur"):
+    print(it.matches(q), it.title, "|", it.subtitle, "|", it.argv)
+# rates without the rates in them: no answer, not an error
+it.rates = {"date": "2026-11-05"}
+print(it.matches("100 usd in eur"), it.argv)'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "False None"
+        "True = ? | No rate for JPY in the ECB's rates of 2026-11-05 | []"
+        "True = ? | No rate for JPY in the ECB's rates of 2026-11-05 | []"
+        "True = 86.98 EUR | ECB rate of 2026-11-05 · Enter copies 86.98 | ['wl-copy', '--', '86.98']"
+        "False []"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: a cache that is not rates, or from the future, is stale; the row always hears back" {
+    local feed="${BATS_TEST_TMPDIR}/rates.json" cache
+    echo '{"amount":1.0,"base":"EUR","date":"2026-11-05","rates":{"USD":1.1497}}' > "$feed"
+    export XDG_CACHE_HOME="${BATS_TEST_TMPDIR}/cache" PULSAR_RATES_URL="file://${feed}"
+    cache="${XDG_CACHE_HOME}/pulsar/currency.json"
+    mkdir -p "${XDG_CACHE_HOME}/pulsar"
+    local bad=('[]' 'null' '"rates"' '{"fetched":"x"}' '{"fetched":1000,"date":"2026-11-01"}'
+               '{"fetched":1000,"date":"2026-11-01","rates":[]}'
+               '{"fetched":1000,"date":"2026-11-01","rates":{"USD":"x"}}'
+               '{"fetched":1000,"date":"2026-11-01","rates":{"USD":0}}')
+    local future='{"fetched":5000000,"date":"2026-11-01","rates":{"USD":1.1}}'
+    local c
+    for c in "${bad[@]}" "$future"; do
+        echo "$c" > "$cache"
+        run menu 'print(m.load_rates(now=1000)["date"])'
+        [ "$output" = "2026-11-05" ] || fail "cache $c: $output"
+    done
+    # a feed that is not rates: the stale cache, not an error, and not cached
+    for c in '[]' '{"date":"2026-11-06"}' '{"date":"2026-11-06","rates":{"USD":"x"}}'; do
+        echo "$c" > "$feed"
+        echo '{"fetched":1,"date":"2026-11-01","rates":{"USD":1.1}}' > "$cache"
+        run menu 'print(m.load_rates(now=100000)["date"])'
+        [ "$output" = "2026-11-01" ] || fail "feed $c: $output"
+    done
+    # offline: a bad cache is none at all; the future one is stale, and beats nothing
+    rm "$feed"
+    for c in "${bad[@]}"; do
+        echo "$c" > "$cache"
+        run menu 'print(m.load_rates(now=1000))'
+        [ "$output" = "None" ] || fail "offline, cache $c: $output"
+    done
+    echo "$future" > "$cache"
+    run menu 'print(m.load_rates(now=1000)["date"])'
+    [ "$output" = "2026-11-01" ] || fail "$output"
+    # whatever getting them raises, the window is told: None, and the row says so
+    run menu '
+sys.stderr = sys.stdout
+got = []
+m.load_rates = lambda: 1 / 0
+m.fetch_then(got.append)
+m.load_rates = lambda: {"date": "d", "rates": {}}
+m.fetch_then(got.append)
+print(got)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "$(printf '%s\n' "pulsar-menu: exchange rates: ZeroDivisionError('division by zero')" \
+        "[None, {'date': 'd', 'rates': {}}]")" ] || fail "$output"
+}
+
+@test "menu: the same search again adds no app or file twice; other searches' rows go" {
+    run menu '
+F = m.Found
+shown = [m.CalcItem(), F("fi", "app:fi", "Fi", "", "Apps"), F("fire", "app:ff", "Firefox", "", "Apps"),
+         F("fire", "file:/h/fire.txt", "fire.txt", "", "Files")]
+gone, new = m.found_changes(shown, "fire", [F("fire", "app:ff", "Firefox", "", "Apps"),
+                                            F("fire", "app:x", "X", "", "Apps")])
+print([i.key for i in gone], [i.key for i in new])
+gone, new = m.found_changes(shown, "fire", [F("fire", "file:/h/fire.txt", "fire.txt", "", "Files")])
+print([i.key for i in gone], [i.key for i in new])
+gone, new = m.found_changes(shown, "fir", [F("fir", "app:ff", "Firefox", "", "Apps")])
+print([i.key for i in gone], [i.key for i in new])'
+    [ "$status" -eq 0 ] || fail "$output"
+    expected=(
+        "['app:fi'] ['app:x']"
+        "['app:fi'] []"
+        "['app:fi', 'app:ff', 'file:/h/fire.txt'] ['app:ff']"
+    )
+    [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
+}
+
+@test "menu: a paste of thousands of characters is a search, not a sum, and raises nothing" {
+    run menu '
+import datetime
+today = datetime.date(2026, 11, 5)
+huge = "-" * 6000 + "1"
+print(m.calc(huge), m.currency_parse(huge + " usd in eur"), m.date_calc("in " + "9" * 5000 + " days", today))
+print(m.CalcItem().matches(huge + " usd in eur"))
+# a long sum that fits is still worked out
+print(m.calc("1+" * 99 + "1"), m.currency_parse("1+" * 90 + "1 usd in eur"))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "$(printf '%s\n' "None None None" "False" "('100', '100') (91, 'USD', 'EUR')")" ] || fail "$output"
+}
