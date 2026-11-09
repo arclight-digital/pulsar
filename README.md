@@ -255,8 +255,10 @@ and as [changelog.json](https://getpulsar.dev/changelog.json). On an
 installed system, `pulsar changelog` shows the same list.
 
 The installer ISOs are signed with Pulsar's cosign key,
-[`keys/cosign.pub`](keys/cosign.pub). The container images aren't signed
-yet. They were attested by GitHub Actions until the build moved to its own
+[`keys/cosign.pub`](keys/cosign.pub). That key replaced the old one on
+2026-11-09; ISOs from before then verify with
+[`keys/cosign-before-2026-11-09.pub`](keys/cosign-before-2026-11-09.pub).
+The container images aren't signed yet. They were attested by GitHub Actions until the build moved to its own
 host in August, and signing them with the same cosign key is planned.
 
 ## Working on it

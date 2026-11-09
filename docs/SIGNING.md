@@ -168,3 +168,14 @@ For `bootstrap.md` in `arclight-infra`: until step 4 runs, both keys can be
 generated on halo, since neither is enrolled anywhere. After that, the module
 key is import-only again: replacing it means re-enrolling every machine in
 person.
+
+## The release key (cosign)
+
+`keys/cosign.pub` and `system_files/etc/pki/containers/pulsar.pub` are the
+same key (`tests/signing-policy.bats` compares them). `build-iso.sh` verifies
+every ISO signature against `keys/cosign.pub` and stops on a mismatch, so a
+new key on halo fails the weekly ISO until both files follow it.
+
+On 2026-11-09 halo was deleted, and its cosign private key had no copy, so
+the key was replaced. ISOs and images signed before that verify only with
+the old key, kept as `keys/cosign-before-2026-11-09.pub`.
