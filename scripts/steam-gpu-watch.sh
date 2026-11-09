@@ -22,7 +22,8 @@
 # long as it runs (cef_log.txt, 2026-10-11: a crash on 10-09 was still number
 # 1 when the next came two days later). On the third, Steam relaunches its
 # whole UI. So this restarts the process only when the stall is observed,
-# never as a precaution.
+# never as a precaution, and at most twice in one Steam run: a stall that
+# comes straight back after that is logged once and left alone.
 #
 # WHAT "STUCK" MEANS. The GPU process is the steamwebhelper that owns a
 # VizCompositorTh thread (it is forked from a zygote, so its command line
@@ -57,6 +58,10 @@ STALL_TICKS=${PULSAR_STEAM_WATCH_TICKS:-10}
 # frame loop makes 20 or more.
 MAX_SWITCHES=4
 COOLDOWN=${PULSAR_STEAM_WATCH_COOLDOWN:-30}
+# Restarts per Steam run (one browser process, which keeps Chromium's crash
+# count): the third crash relaunches Steam's whole UI, so never a third of
+# ours. A stall that is back after two restarts is not one a restart fixes.
+MAX_RESTARTS=2
 # Tests bound the loop; 0 is forever.
 MAX_LOOPS=${PULSAR_STEAM_WATCH_LOOPS:-0}
 
@@ -84,6 +89,26 @@ find_gpu_process() {
     return 1
 }
 
+# The Steam run GPU process $1 belongs to, into $2: its topmost
+# steamwebhelper ancestor, the browser process (on cherenkov 2026-11-09 the
+# GPU process 9111's parent was the zygote 9091, and its parent the browser
+# 9082, whose own parent is Steam). A new browser is a new crash count. The
+# GPU process itself when its parents cannot be read.
+steam_run() {
+    local pid=$1 stat ppid comm _
+    for _ in 1 2 3 4 5 6 7 8; do
+        read_line "$PROC/$pid/stat" stat || break
+        # "pid (comm) state ppid ...": comm can hold spaces and ")"
+        stat=${stat##*) }
+        ppid=${stat#* }
+        ppid=${ppid%% *}
+        [[ $ppid =~ ^[0-9]+$ ]] && [ "$ppid" -gt 1 ] || break
+        read_line "$PROC/$ppid/comm" comm && [ "$comm" = steamwebhelper ] || break
+        pid=$ppid
+    done
+    printf -v "$2" '%s' "$pid"
+}
+
 switches() {
     local k v
     while read -r k v; do
@@ -93,7 +118,9 @@ switches() {
 }
 
 # since: the switch count when the current run of quiet waiting began.
-gpu="" since="" stalled=0 loops=0
+# run: the Steam run (browser pid) of $gpu; restarts[run]: ours in it.
+gpu="" since="" stalled=0 loops=0 run=""
+declare -A restarts=()
 while :; do
     if [ "$MAX_LOOPS" -gt 0 ]; then
         loops=$((loops + 1)); [ "$loops" -le "$MAX_LOOPS" ] || exit 0
@@ -101,6 +128,12 @@ while :; do
     if [ -z "$gpu" ] || ! is_gpu_process "$gpu"; then
         gpu="" since="" stalled=0
         find_gpu_process || { sleep "$IDLE_INTERVAL"; continue; }
+        steam_run "$gpu" run
+    fi
+    # given up on this Steam run: only look for a new one
+    if [ "${restarts[$run]:-0}" -gt "$MAX_RESTARTS" ]; then
+        sleep "$IDLE_INTERVAL"
+        continue
     fi
     wchan="" sw=""
     read_line "$PROC/$gpu/task/$gpu/wchan" wchan
@@ -115,7 +148,15 @@ while :; do
     else
         since="" stalled=0
     fi
+    if [ "$stalled" -ge "$STALL_TICKS" ] && [ "${restarts[$run]:-0}" -ge "$MAX_RESTARTS" ]; then
+        log "Steam's GPU process $gpu is stuck again after ${MAX_RESTARTS} restarts in this Steam run; leaving it, since another would relaunch Steam's whole UI. Restart Steam to clear it."
+        restarts[$run]=$((MAX_RESTARTS + 1))
+        since="" stalled=0
+        sleep "$IDLE_INTERVAL"
+        continue
+    fi
     if [ "$stalled" -ge "$STALL_TICKS" ]; then
+        restarts[$run]=$((${restarts[$run]:-0} + 1))
         log "Steam's GPU process $gpu has been stuck in an explicit-sync wait for ${stalled}s ($((sw - since)) wakeups); restarting it"
         kill "$gpu" 2>/dev/null || log "could not signal $gpu"
         gpu="" since="" stalled=0

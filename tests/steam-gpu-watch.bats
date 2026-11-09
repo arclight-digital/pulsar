@@ -34,10 +34,12 @@ setup() {
 teardown() {
     kill "$VICTIM" 2>/dev/null || true
     # -9: one of these ignores TERM. The wait reaps it without a job notice.
-    if [ -n "${VICTIM2:-}" ]; then
-        kill -9 "$VICTIM2" 2>/dev/null || true
-        wait "$VICTIM2" 2>/dev/null || true
-    fi
+    local v
+    for v in "${VICTIM2:-}" "${VICTIM3:-}"; do
+        [ -n "$v" ] || continue
+        kill -9 "$v" 2>/dev/null || true
+        wait "$v" 2>/dev/null || true
+    done
 }
 
 # fake_proc PID COMM MAIN_WCHAN SWITCHES [THREAD_COMM...]
@@ -71,6 +73,25 @@ set_switches() {
         "$2" > "$PULSAR_PROC/$1/task/$1/status"
 }
 
+# parent PID PPID: PID's parent, in /proc/PID/stat as the kernel writes it
+# ("pid (comm) state ppid pgrp ..."). Steam's real chain on cherenkov
+# 2026-11-09: GPU process 9111, its zygote 9091, the browser 9082, all
+# steamwebhelper; the browser's parent is Steam.
+parent() {
+    mkdir -p "$PULSAR_PROC/$1"
+    printf '%s (steamwebhelper) S %s 9041 9041 0 -1 4194560\n' "$1" "$2" > "$PULSAR_PROC/$1/stat"
+}
+
+# steam_tree BROWSER ZYGOTE: a Steam browser process and its zygote, the
+# GPU process's parents
+steam_tree() {
+    fake_proc "$1" steamwebhelper poll_schedule_timeout.constprop.0 10 Chrome_IOThread CompositorTileW
+    parent "$1" 9058
+    fake_proc 9058 steam poll_schedule_timeout.constprop.0 10
+    fake_proc "$2" steamwebhelper poll_schedule_timeout.constprop.0 10
+    parent "$2" "$1"
+}
+
 # set_wchan PID WCHAN: where the main thread is blocked now
 set_wchan() { printf '%s' "$2" > "$PULSAR_PROC/$1/task/$1/wchan"; }
 
@@ -90,7 +111,7 @@ echo "$1" >> "$CLOCK/slept"
 EOF
     chmod +x "$CLOCK/bin/sleep"
     export CLOCK PATH="$CLOCK/bin:$PATH"
-    export -f fake_proc set_switches set_wchan
+    export -f fake_proc set_switches set_wchan parent
 }
 
 # step N COMMANDS: run COMMANDS after the watcher's Nth sample
@@ -247,6 +268,72 @@ fake_proc $VICTIM2 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 10 
     [ "$status" -eq 0 ]
     [ "$(grep -c 'restarting it' <<<"$output")" -eq 1 ]
     kill -0 "$VICTIM2"
+}
+
+@test "REGRESSION: a stall that comes straight back is restarted twice in a Steam run, then left alone" {
+    # Every restart is a crash to Chromium, and the third relaunches Steam's
+    # whole UI: the stall coming back used to mean a kill every ~40 s.
+    ( trap '' TERM; exec sleep 300 ) & VICTIM2=$!
+    fake_proc "$VICTIM2" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 136053 VizCompositorTh
+    export PULSAR_STEAM_WATCH_INTERVAL=1 PULSAR_STEAM_WATCH_IDLE=10 PULSAR_STEAM_WATCH_COOLDOWN=30
+    fake_clock
+    PULSAR_STEAM_WATCH_LOOPS=40 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "${#lines[@]}" -eq 3 ] || { printf '%s\n' "$output"; false; }
+    [[ "${lines[0]}" == *"restarting it" ]]
+    [[ "${lines[1]}" == *"restarting it" ]]
+    [ "${lines[2]}" = "steam-gpu-watch: Steam's GPU process $VICTIM2 is stuck again after 2 restarts in this Steam run; leaving it, since another would relaunch Steam's whole UI. Restart Steam to clear it." ]
+    # a stall and the cooldown, twice; the third stall; then only an idle
+    # look for a new Steam now and then, not a sample a second
+    local ones="1 1 1 1 1 1 1 1 1 1"
+    [ "$(paste -sd' ' "$CLOCK/slept")" = "$ones 30 $ones 30 $ones 10 10 10 10 10 10 10 10" ]
+    kill -0 "$VICTIM2"
+}
+
+@test "the GPU process CEF starts in place of a restarted one is the same Steam run" {
+    sleep 300 & VICTIM2=$!
+    sleep 300 & VICTIM3=$!
+    steam_tree 900001 900002
+    fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 1000 VizCompositorTh
+    parent "$VICTIM" 900002
+    fake_clock
+    # after each restart's cooldown, a new GPU process under the same zygote,
+    # stuck the same way
+    step 11 "rm -rf '$PULSAR_PROC/$VICTIM'
+fake_proc $VICTIM2 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 20 VizCompositorTh
+parent $VICTIM2 900002"
+    step 22 "rm -rf '$PULSAR_PROC/$VICTIM2'
+fake_proc $VICTIM3 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 30 VizCompositorTh
+parent $VICTIM3 900002"
+    PULSAR_STEAM_WATCH_LOOPS=40 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c 'restarting it' <<<"$output")" -eq 2 ]
+    [[ "$output" == *"Steam's GPU process $VICTIM3 is stuck again after 2 restarts in this Steam run"* ]]
+    kill -0 "$VICTIM3"
+}
+
+@test "a new Steam run, with a browser process of its own, starts the count again" {
+    sleep 300 & VICTIM2=$!
+    sleep 300 & VICTIM3=$!
+    steam_tree 900001 900002
+    fake_proc "$VICTIM" steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 1000 VizCompositorTh
+    parent "$VICTIM" 900002
+    fake_clock
+    step 11 "rm -rf '$PULSAR_PROC/$VICTIM'
+fake_proc $VICTIM2 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 20 VizCompositorTh
+parent $VICTIM2 900002"
+    # Steam relaunched its UI: a new browser, zygote and GPU process
+    step 22 "rm -rf '$PULSAR_PROC/$VICTIM2' '$PULSAR_PROC/900001' '$PULSAR_PROC/900002'
+fake_proc 900011 steamwebhelper poll_schedule_timeout.constprop.0 10 Chrome_IOThread
+parent 900011 9058
+fake_proc 900012 steamwebhelper poll_schedule_timeout.constprop.0 10
+parent 900012 900011
+fake_proc $VICTIM3 steamwebhelper drm_syncobj_array_wait_timeout.constprop.0 30 VizCompositorTh
+parent $VICTIM3 900012"
+    PULSAR_STEAM_WATCH_LOOPS=40 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c 'restarting it' <<<"$output")" -eq 3 ]
+    [[ "$output" != *"stuck again"* ]]
 }
 
 @test "with no Steam running it does nothing" {
