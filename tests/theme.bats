@@ -162,13 +162,13 @@ reply() {
     reply 1.0
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     grep -q 'pulsar window-glass: on' "$css"
-    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
+    grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.8);' "$css"
     # the login check, with the extension failed
     reply 3.0 true 'TypeError: this._glass is undefined'
     python3 "$ENGINE" window-glass --login >/dev/null
     grep -q 'pulsar window-glass: off' "$css"
     grep -q -- '--window-bg-color: #[0-9a-f]*;' "$css"
-    if grep -q 'alpha(#[0-9a-f]*, 0);' "$css"; then false; fi
+    if grep -q 'alpha(#[0-9a-f]*, 0.8);' "$css"; then false; fi
     # loaded again: the extension's own check puts the glass back
     reply 1.0
     python3 "$ENGINE" window-glass --if-stale >/dev/null
@@ -1077,7 +1077,7 @@ print("" if d is None else d)' "$1" "$2"; }
     for tint in 0.0 0.5 1.0; do
         setkey /org/gnome/shell/extensions/pulsar-theme/glass-tint "$tint"
         python3 "$ENGINE" set pulsar --no-restart >/dev/null
-        grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0);' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+        grep -q -- '--window-bg-color: alpha(#[0-9a-f]*, 0.8);' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
         # the tint is the glass shader's color strength (glass.js setTint),
         # live in the Shell: nothing the engine writes follows it
         cat "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" "$XDG_STATE_HOME"/pulsar-theme/shell/gnome-shell-*.css \
@@ -1188,12 +1188,12 @@ print("" if d is None else d)' "$1" "$2"; }
     grep -q -- '--popover-bg-color: alpha(#[0-9a-f]*, 0.5);' "$css"
     # a floating dialog and a view: no ground of their own, the glass is it
     # (a dialog's in the popover's color: glass.js WindowGlass)
-    grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
+    grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0.8);' "$css"
     grep -q -- '--view-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
     # beside a sidebar only the sidebar is glass: a split view's content
     # pane is solid, in the window's ground, or the view's in a .view
     # window (Files) (Nick 2026-11-09)
-    grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0.35);$' "$css"
+    grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
     grep -A1 '^\.content-pane {$' "$css" | grep -q '^  background-color: #f1f3fa;$'          # Pulsar light's window
     grep -A1 '^window\.view \.content-pane {$' "$css" | grep -q '^  background-color: #ffffff;$'  # and its view
     # Text Editor the other way round: its document glass, its bars solid
@@ -1638,4 +1638,30 @@ console.log('ok');
 JS
     [ "$status" -eq 0 ] || { echo "$output"; false; }
     [ "${lines[-1]}" = ok ]
+}
+
+@test "glass: the terminal, the window ground and a floating dialog are one level, 80%" {
+    glass_env
+    reply 1.0
+    # the ptyxis target runs where a ptyxis is on PATH; it is never run
+    mkdir -p "${BATS_TEST_TMPDIR}/bin"
+    printf '#!/bin/sh\nexit 0\n' > "${BATS_TEST_TMPDIR}/bin/ptyxis"
+    chmod +x "${BATS_TEST_TMPDIR}/bin/ptyxis"
+    PATH="${BATS_TEST_TMPDIR}/bin:$PATH"
+    setkey /org/gnome/Ptyxis/profile-uuids "['old', 'mine']"
+    setkey /org/gnome/Ptyxis/Profiles/old/opacity 0.85    # what an earlier release set
+    setkey /org/gnome/Ptyxis/Profiles/mine/opacity 0.6    # the user's own
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(key /org/gnome/Ptyxis/Profiles/old/opacity)" = 0.8 ]
+    [ "$(key /org/gnome/Ptyxis/Profiles/mine/opacity)" = 0.6 ]
+    grep -q -- '^  --window-bg-color: alpha(#[0-9a-f]*, 0.8);$' "$css"
+    grep -q -- '^  --dialog-bg-color: alpha(#[0-9a-f]*, 0.8);$' "$css"
+    # the bars and the sidebar paint nothing over it, so nothing stacks past 80%
+    grep -q -- '^  --headerbar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
+    grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
+    grep -q -- '^  --view-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
+    # Text Editor's page: the scheme paints the text clear, the current line a tint
+    scheme="$XDG_DATA_HOME/gtksourceview-5/styles/pulsar-pulsar-dark.xml"
+    grep -q '<style name="text" foreground="#[0-9a-f]\{6\}" background="#[0-9a-f]\{6\}00"/>' "$scheme"
+    grep -q '<style name="current-line" background="#[0-9a-f]\{6\}59"/>' "$scheme"
 }

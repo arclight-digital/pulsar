@@ -339,6 +339,9 @@ SURFACE_KEYS = ["window", "view", "headerbar", "sidebar", "card", "popover"]
 # the Shell extension to tell it from the popup's shadow (about 0.25; it
 # takes 0.3 to 0.42 as the edge), little enough to take back out cleanly.
 POPUP_GROUND = 0.5
+# What a glass window's ground is painted at over the extension's blur, and
+# the terminal's background: one level everywhere (Nick 2026-11-09).
+GLASS_GROUND = 0.8
 # the alpha of the glass grounds GTK and St still paint (Variant.glass_alpha)
 GLASS_ALPHA = 0.65
 
@@ -491,16 +494,20 @@ class Variant:
         g = self.window_glass
         def glass(k, a):
             return f"alpha({self.p[k].hex}, {a})" if g else self.p[k].hex
-        # The window ground is the glass's: the extension draws it in the
-        # window's own color, on the theme's palette, the same glass as the
-        # Shell's menus (Nick 2026-11-07: one glass), so GTK paints none.
-        c["window_bg"] = glass("window", 0)
-        # Views too (Nick 2026-11-08: clear views and dialogs): the content
-        # pane is the window's glass.
+        # The window ground: GTK paints it at GLASS_GROUND over the glass
+        # the extension draws behind the window, as the terminal paints its
+        # own (Nick 2026-11-09: a flat 80% across the board; clear, Text
+        # Editor and Faugus read far more see-through than the terminal).
+        c["window_bg"] = glass("window", GLASS_GROUND)
+        # Views take none of their own: a view is the window's ground, so
+        # the page is the same 80%, not 80% over 80%.
         c["view_bg"] = glass("view", 0)
-        c["headerbar_bg"] = glass("headerbar", 0.35)
-        c["sidebar_bg"] = glass("sidebar", 0.35)
-        c["window_backdrop"] = glass("window", 0.35)
+        # The header bar and sidebar paint over that ground: none of their
+        # own, or they stack to ~87% over the 80% and the window is not one
+        # level (Nick 2026-11-09: "consistency man").
+        c["headerbar_bg"] = glass("headerbar", 0)
+        c["sidebar_bg"] = glass("sidebar", 0)
+        c["window_backdrop"] = glass("window", 0)
         # Menus and popovers are windows of their own, and the extension blurs
         # what is beneath each one; so are dialogs that float. Their ground is
         # the glass's (Nick 2026-11-08), drawn in the popover's color, lighter
@@ -511,7 +518,7 @@ class Variant:
         # arrow, not its shadow) by alpha, and takes this paint back out
         # under it (the Shell sheet's -pulsar-popover carries the alpha).
         c["popover_bg"] = glass("popover", POPUP_GROUND)
-        c["dialog_bg"] = glass("popover", 0)
+        c["dialog_bg"] = glass("popover", GLASS_GROUND)
         # A libadwaita dialog inside its window (preferences, about, an alert)
         # is drawn into the window's own buffer, over the page it covers,
         # where the Shell's blur cannot reach: its sheet is a .background, at
@@ -1681,7 +1688,9 @@ class Gtk3(Target):
             tx.set("/org/gnome/desktop/interface/gtk-theme", gv_str("adw-gtk3-dark" if mode == "dark" else "adw-gtk3"))
 
 
-PTYXIS_GLASS_OPACITY = "0.85"
+PTYXIS_GLASS_OPACITY = str(GLASS_GROUND)
+# what earlier releases set, still ours to move
+PTYXIS_GLASS_EARLIER = (0.85,)
 
 
 class Ptyxis(Target):
@@ -1719,7 +1728,7 @@ class Ptyxis(Target):
             except ValueError:
                 cur = None
             # (compared as numbers: dconf reads 0.80 back as 0.80000000000000004)
-            if cur is not None and any(abs(cur - v) < 1e-6 for v in (1.0, float(PTYXIS_GLASS_OPACITY))):
+            if cur is not None and any(abs(cur - v) < 1e-6 for v in (1.0, float(PTYXIS_GLASS_OPACITY), *PTYXIS_GLASS_EARLIER)):
                 tx.set(key, PTYXIS_GLASS_OPACITY if glass else "1.0")
         # Ptyxis ships interface-style='dark' regardless of the desktop; a
         # two-variant theme only follows the Dark Style toggle with 'system'.
@@ -1737,10 +1746,18 @@ class SourceView(Target):
             dirs.append(flat / "data" / "gtksourceview-5" / "styles")
         base = f"pulsar-{theme.slug}"
         modes = ["light", "dark"] if theme.both else [theme.prefer]
+        glass = window_glass()
         for m in modes:
             v = theme.variants[m]
             sid = base if (m == "light" or not theme.both) else base + "-dark"
-            ctx = dict(v.ctx(), id=sid, name=xml_escape(theme.name + (" Dark" if sid.endswith("-dark") and theme.both else "")),
+            # Glass windows: the text and its line numbers take no ground of
+            # their own (clear: #rrggbb00), so the window's glass is the
+            # page, and the current line is a 0.35 tint over it (Nick
+            # 2026-11-09: Text Editor's page had no glass).
+            raised, ground = v.p["background_raised"].hex, v.p["background"].hex
+            ctx = dict(v.ctx(), id=sid,
+                       text_bg=f"{ground}00" if glass else ground,
+                       line_bg=f"{raised}59" if glass else raised, name=xml_escape(theme.name + (" Dark" if sid.endswith("-dark") and theme.both else "")),
                        author=xml_escape(theme.author or "pulsar-theme"),
                        pair=(base + "-dark" if m == "light" else base) if theme.both else sid,
                        pair_key="dark-variant" if m == "light" else "light-variant")
@@ -2597,7 +2614,7 @@ def cmd_window_glass(if_stale=False):
         if "gtk4" not in st.get("targets", []) or window_glass_written() == window_glass():
             return
     # gtk3 for Glow, whose GTK3 block this redoes too
-    redo = [t for t in ("gtk4", "gtk3", "ptyxis", "shell") if t in st.get("targets", [])]
+    redo = [t for t in ("gtk4", "gtk3", "ptyxis", "gtksourceview", "shell") if t in st.get("targets", [])]
     if not st.get("theme") or not redo:
         return
     try:
