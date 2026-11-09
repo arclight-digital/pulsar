@@ -1190,6 +1190,12 @@ print("" if d is None else d)' "$1" "$2"; }
     # (a dialog's in the popover's color: glass.js WindowGlass)
     grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
     grep -q -- '--view-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
+    # beside a sidebar only the sidebar is glass: a split view's content
+    # pane is solid, in the window's ground, or the view's in a .view
+    # window (Files) (Nick 2026-11-09)
+    grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0.35);$' "$css"
+    grep -A1 '^\.content-pane {$' "$css" | grep -q '^  background-color: #f1f3fa;$'          # Pulsar light's window
+    grep -A1 '^window\.view \.content-pane {$' "$css" | grep -q '^  background-color: #ffffff;$'  # and its view
     # every GTK: the in-window sheet solid, in the popover's color, inside each variant's block
     grep -A1 '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css" |
         grep -q '^  background-color: #ffffff;$'   # Pulsar light's popover

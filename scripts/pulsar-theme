@@ -533,7 +533,15 @@ class Variant:
             # in the popover's color, as the floating dialogs' glass is
             c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
                                  f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
-                                 f"window.fullscreen {{\n{full}}}\n")
+                                 f"window.fullscreen {{\n{full}}}\n"
+                                 # Beside a sidebar (a split view: Files, Settings), only
+                                 # the sidebar is glass; the content pane is solid, in
+                                 # the ground stock gives it -- the view's in a window
+                                 # styled .view (Files), else the window's (Nick
+                                 # 2026-11-09: a clear content pane read busy behind
+                                 # Files' list).
+                                 f".content-pane {{\n  background-color: {self.p['window'].hex};\n}}\n"
+                                 f"window.view .content-pane {{\n  background-color: {self.p['view'].hex};\n}}\n")
             # the glass is the filter's (backdrop_svg): it paints the
             # whole sheet, so GTK paints none over it
             c["sheet_glass"] = "".join(
