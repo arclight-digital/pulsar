@@ -2843,8 +2843,13 @@ class WindowGlass {
         const frame = w.get_frame_rect();
         const buffer = w.get_buffer_rect();
         const maximized = w.is_maximized?.() ?? (w.maximized_horizontally && w.maximized_vertically);
-        // tiled and maximized windows are square
-        const square = maximized || w.maximized_vertically || w.maximized_horizontally;
+        // Tiled and maximized windows are square, and so is one GTK draws
+        // without its decorations (set_decorated(false): Faugus's splash
+        // and dialogs), which has no .csd, so no rounded corners and no
+        // shadow in its buffer. A glass rounded at 16px drew its own edge
+        // around whatever the app put inside (a frame with 12px corners).
+        const csd = buffer.width > frame.width || buffer.height > frame.height;
+        const square = !csd || maximized || w.maximized_vertically || w.maximized_horizontally;
         const p = WINDOW_PAD;
         this._backdrop.set_position(frame.x - buffer.x - p, frame.y - buffer.y - p);
         this._backdrop.set_size(frame.width + 2 * p, frame.height + 2 * p);

@@ -175,6 +175,14 @@ export class FakeActor extends Signals {
         this._handlers = [];
     }
 
+    show() {
+        this.visible = true;
+    }
+
+    hide() {
+        this.visible = false;
+    }
+
     set_position(x, y) {
         [this.x, this.y] = [x, y];
     }

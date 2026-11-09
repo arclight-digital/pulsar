@@ -1600,3 +1600,33 @@ JS
     [ "$status" -eq 0 ] || { echo "$output"; false; }
     [ "${lines[-1]}" = ok ]
 }
+
+@test "glass: a window GTK draws undecorated gets square glass, not a 16px rounded edge of its own" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, FakeActor, Signals, plainNode} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+globalThis.global = {stage: Object.assign(new Signals(), {context: fake('context')}), get_window_actors: () => []};
+provide('Meta', fake('Meta', {WindowType: {NORMAL: 0, DIALOG: 3, MODAL_DIALOG: 4, UTILITY: 5}}));
+const g = await load(`${process.env.EXT}/glass.js`, ['WindowGlass', 'WINDOW_RADIUS']);
+const owner = {colors: Object.assign(new Signals(), {get_theme_node: () => plainNode}), forgetWindow() {}};
+const radius = (frame, buffer, max = false) => {
+    const win = Object.assign(new Signals(), {
+        get_frame_rect: () => frame, get_buffer_rect: () => buffer,
+        get_window_type: () => 0, is_fullscreen: () => false, is_maximized: () => max,
+        maximized_horizontally: max, maximized_vertically: max,
+    });
+    return new g.WindowGlass(owner, Object.assign(new FakeActor(), {meta_window: win}))._blur._shapeRadius;
+};
+// a CSD window: its buffer holds its shadow around the frame
+assert.equal(radius({x: 100, y: 100, width: 400, height: 300}, {x: 70, y: 70, width: 460, height: 360}), g.WINDOW_RADIUS);
+assert.equal(g.WINDOW_RADIUS, 16);
+// maximized: square
+assert.equal(radius({x: 0, y: 0, width: 400, height: 300}, {x: 0, y: 0, width: 400, height: 300}, true), 0);
+// set_decorated(false) (Faugus's splash): no .csd, no shadow, square corners
+assert.equal(radius({x: 100, y: 100, width: 280, height: 160}, {x: 100, y: 100, width: 280, height: 160}), 0);
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
+}
