@@ -14,8 +14,11 @@ app's (pulsar-welcome --whats-new), which imports this for the notes.
 A new account is not told: its first login gets the welcome tour, which is
 about everything, not what changed. The release it started on is recorded,
 so the next one is news. The record is
-$XDG_STATE_HOME/pulsar-welcome/release; a release is announced once,
-clicked or not.
+$XDG_STATE_HOME/pulsar-welcome/release, the newest release announced; a
+release is announced once, clicked or not, and only when it is newer than
+that (by number: 26.9.1 < 26.10.1). A rollback, by hand or greenboot, says
+nothing and leaves the record alone, so rolling forward again says nothing
+either.
 
 No GTK here: the notification side runs without a display toolkit, and the
 tests read the notes without one.
@@ -46,6 +49,14 @@ def current_release():
         return RELEASE_FILE.read_text().strip()
     except OSError:
         return ""
+
+
+def release_key(release):
+    """26.10.1 -> (26, 10, 1), to compare as numbers (as strings 26.9.1
+    would come after 26.10.1); None for anything not dotted numbers."""
+    if not re.fullmatch(r"\d+(\.\d+)*", release):
+        return None
+    return tuple(int(x) for x in release.split("."))
 
 
 def inline(text):
@@ -122,7 +133,10 @@ def notify():
         seen = rec.read_text().strip()
     except OSError:
         seen = ""
-    if seen == release:
+    # Only forward: a rollback to an older release, and the roll forward
+    # again after it, are not news.
+    cur, top = release_key(release), release_key(seen)
+    if seen == release or (cur and top and cur <= top):
         return 0
     rec.parent.mkdir(parents=True, exist_ok=True)
     rec.write_text(release + "\n")

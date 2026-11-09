@@ -298,6 +298,51 @@ MD
     [ "$(cat "${BATS_TEST_TMPDIR}/opened")" = "welcome --whats-new" ]
 }
 
+@test "what's new: a rollback says nothing, and neither does rolling forward again" {
+    news_env
+    python3 "$WHATS_NEW" --notify
+    grep -qx "Pulsar 26.12.1 is here" "$NOTIFY_LOG"
+    # greenboot or the user rolls back: 26.11.1 has notes, and is not news
+    : > "$NOTIFY_LOG"
+    echo 26.11.1 > "$PULSAR_RELEASE_FILE"
+    python3 "$WHATS_NEW" --notify
+    [ ! -s "$NOTIFY_LOG" ]
+    [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.12.1 ]
+    # forward again: 26.12.1 was told already
+    echo 26.12.1 > "$PULSAR_RELEASE_FILE"
+    python3 "$WHATS_NEW" --notify
+    [ ! -s "$NOTIFY_LOG" ]
+    [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.12.1 ]
+}
+
+@test "what's new: releases compare as numbers, 26.9.1 before 26.10.1" {
+    news_env
+    sed -i 's/^## 26.12.1$/## 26.10.1/; s/^## 26.11.1$/## 26.9.1/' "$PULSAR_RELEASE_NOTES"
+    # the record as an older image left it: one line, the release last told
+    mkdir -p "$XDG_STATE_HOME/pulsar-welcome"
+    echo 26.9.1 > "$XDG_STATE_HOME/pulsar-welcome/release"
+    echo 26.10.1 > "$PULSAR_RELEASE_FILE"
+    python3 "$WHATS_NEW" --notify
+    grep -qx "Pulsar 26.10.1 is here" "$NOTIFY_LOG"
+    [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.10.1 ]
+    # and back to 26.9.1, which sorts after 26.10.1 as a string
+    : > "$NOTIFY_LOG"
+    echo 26.9.1 > "$PULSAR_RELEASE_FILE"
+    python3 "$WHATS_NEW" --notify
+    [ ! -s "$NOTIFY_LOG" ]
+    [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.10.1 ]
+}
+
+@test "what's new: skipping a release, the one installed is told once" {
+    news_env
+    mkdir -p "$XDG_STATE_HOME/pulsar-welcome"
+    echo 26.10.1 > "$XDG_STATE_HOME/pulsar-welcome/release"
+    python3 "$WHATS_NEW" --notify
+    [ "$(grep -cx "Pulsar 26.12.1 is here" "$NOTIFY_LOG")" -eq 1 ]
+    python3 "$WHATS_NEW" --notify
+    [ "$(grep -cx "Pulsar 26.12.1 is here" "$NOTIFY_LOG")" -eq 1 ]
+}
+
 @test "what's new: a new account gets the tour, not the notice; a release without notes says nothing" {
     news_env
     mkdir -p "$TS"; touch "$TS/welcome.pending"
