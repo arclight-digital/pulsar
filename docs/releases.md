@@ -31,8 +31,10 @@ Agents you can leave running, a command menu, and GNOME 51.
   agents can work in one project without touching each other's files. It
   works in the sandbox too.
 - `pulsar agent undo <name>` puts a project's files back as they were when
-  the session started (in a git repository), and `--redo` takes that back. It never touches files
-  git ignores and never moves a branch.
+  the session started (in a git repository), however often it was restarted
+  since, and `--redo` takes that back. It never touches files git ignores,
+  never overwrites a file it couldn't take back (it names those), and never
+  moves a branch.
 - `pulsar agent sessions` lists the sessions and what each is doing, and
   `pulsar agent usage <name>` shows a Claude Code session's tokens.
 - Pulsar Settings has an Agents page: each session, its folder and usage,
@@ -133,8 +135,9 @@ Agents you can leave running, a command menu, and GNOME 51.
 
 - Erasing a disk is unmistakable: a warning, the disk and what is on it
   in red, and a red Erase and Install button.
-- The disk step shows what it is doing, and every install keeps a log at
-  `~/pulsar-install.log`, named on the failure page.
+- The disk step shows what it is doing. The install log is at
+  `~/pulsar-install.log` while the installer runs, named on the failure
+  page, and a finished install keeps it at `/var/log/pulsar-install.log`.
 - The ISO's boot menu is Pulsar's own.
 
 ## 26.10.1
