@@ -3568,8 +3568,12 @@ cmd=$1; shift
 target() { while [ $# -gt 0 ]; do [ "$1" != -t ] || { printf '%s' "${2#=}"; return; }; shift; done; }
 case "$cmd" in
     has-session) [ -e "${TMUX_LIVE}/$(target "$@")" ] ;;
-    new-session)
+    new-session)   # TMUX_NEW_FAIL: refuse it; TMUX_NEW_DELAY: take that long
+        [ -z "${TMUX_NEW_FAIL:-}" ] || exit 1
+        [ -z "${TMUX_NEW_DELAY:-}" ] || sleep "$TMUX_NEW_DELAY"
         while [ "$1" != -- ]; do [ "$1" != -s ] || s=$2; [ "$1" != -c ] || c=$2; shift; done; shift
+        # a name already running is refused, as tmux does
+        ( set -C; : > "${TMUX_LIVE}/${s}" ) 2>/dev/null || { echo "duplicate session: ${s}" >&2; exit 1; }
         printf '%s\n' "$c" "$@" > "${TMUX_LIVE}/${s}"
         printf '%s\0' "$@" > "${TMUX_LIVE}/.${s}.argv" ;;
     kill-session) rm "${TMUX_LIVE}/$(target "$@")" ;;
@@ -3782,7 +3786,7 @@ agent_args() {
 @test "agent run --tmux: names tmux cannot hold, and --new or --dir without --tmux, are refused" {
     tmux_env
     cd "$PROJ"
-    for n in a.b a:b "a b" ""; do
+    for n in a.b a:b "a b" "" -a --x; do
         run "$PULSAR" agent run claude --tmux "$n"
         [ "$status" -ne 0 ] || fail "'$n' accepted"
         [[ "$output" == *"a session name is letters, digits, - and _"* ]]
@@ -3792,6 +3796,75 @@ agent_args() {
     run "$PULSAR" agent run claude --dir "$PROJ"
     [[ "$output" == *"--new, --dir and --worktree go with --tmux <session>"* ]]
     [ ! -s "$TMUX_CALLS" ]
+    [ ! -e "$REC" ]
+}
+
+@test "agent run --tmux: a start tmux refuses leaves the record and the snapshots as they were" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    rm "${TMUX_LIVE}/work"
+    local rec refs
+    rec=$(cat "${REC}/work.session"); refs=$(git for-each-ref refs/pulsar/)
+    [ -n "$refs" ]
+    TMUX_NEW_FAIL=1 run "$PULSAR" agent run claude --tmux work --new
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"tmux could not start work"* ]] || fail "$output"
+    # still the old conversation, still the old start to undo to
+    [ "$(cat "${REC}/work.session")" = "$rec" ]
+    [ "$(git for-each-ref refs/pulsar/)" = "$refs" ]
+    TMUX_NEW_FAIL=1 run "$PULSAR" agent run claude --tmux other
+    [ "$status" -ne 0 ]
+    [ ! -e "${REC}/other.session" ]
+    [ -z "$(git for-each-ref refs/pulsar/undo/other/)" ]
+}
+
+@test "agent run --tmux: two starts of one name at once: one starts it, the other finds it running" {
+    tmux_env
+    cd "$PROJ"
+    TMUX_NEW_DELAY=2 "$PULSAR" agent run claude --tmux work > "${BATS_TEST_TMPDIR}/first" 2>&1 &
+    local first=$! i
+    # the second click, once the first is starting it
+    for i in $(seq 50); do grep -qx new-session "$TMUX_CALLS" && break; sleep 0.1; done
+    grep -qx new-session "$TMUX_CALLS" || fail "the first never got to tmux"
+    run "$PULSAR" agent run claude --tmux work
+    wait "$first" || fail "the first: $(cat "${BATS_TEST_TMPDIR}/first")"
+    [ "$status" -eq 0 ] || fail "the second: $output"
+    [[ "$output" == *"work is running; attach with"* ]] || fail "$output"
+    [ "$(grep -cx new-session "$TMUX_CALLS")" -eq 1 ]
+    [ "$(pane work | grep -cxF -- "$(rec_id work)")" -eq 1 ] || fail "record $(rec_id work), pane $(pane work)"
+}
+
+@test "agent run --tmux: the bell's hook reaches the CLI wherever it is, spaces, quotes and # in its path too" {
+    notify_env
+    local d="${BATS_TEST_TMPDIR}/it's a #S dir" cli
+    mkdir -p "$d"; cp "$PULSAR" "${d}/pulsar"; cli=$(realpath "${d}/pulsar")
+    rm "${TMUX_LIVE}/work"; : > "$TMUX_CALLS"
+    "$cli" agent run claude --tmux work >/dev/null
+    local hook; hook=$(grep -A1 -x alert-bell "$TMUX_CALLS" | tail -n 1)
+    # tmux's parser, for what this quoting uses ('...' and "'"), reads it as sh does
+    local -a words; eval "words=(${hook})"
+    [ "${#words[@]}" -eq 3 ] || fail "${#words[@]} words: ${hook}"
+    [ "${words[0]}" = run-shell ] && [ "${words[1]}" = -b ] || fail "$hook"
+    # then run-shell expands its formats (## is #) and hands it to sh
+    local cmd=${words[2]//\#\{session_name\}/work}
+    cmd=${cmd//\#\#/\#}
+    mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
+    sh -c "$cmd"
+    [ "$(sd_arg 1)" = "work: Claude Code is done" ]
+    [ "$(sd_arg 3)" = "$cli" ]
+    if [ -x /usr/bin/tmux ]; then
+        # and real tmux's parser and run-shell, on a server of the test's own
+        rm "$SD_ARGS"
+        local sock="${BATS_TEST_TMPDIR}/real.sock" i
+        /usr/bin/tmux -S "$sock" -f /dev/null new-session -d -s work 'sleep 30'
+        /usr/bin/tmux -S "$sock" set-hook -g alert-bell "$hook"
+        /usr/bin/tmux -S "$sock" set-hook -R -g -t work alert-bell
+        for i in $(seq 50); do [ ! -s "$SD_ARGS" ] || break; sleep 0.1; done
+        /usr/bin/tmux -S "$sock" kill-server
+        [ -s "$SD_ARGS" ] || fail "tmux never reached the CLI: ${hook}"
+        [ "$(sd_arg 3)" = "$cli" ]
+    fi
 }
 
 @test "agent run --tmux: an agent that cannot be pinned gets the session, and is told it starts fresh" {
@@ -4096,6 +4169,56 @@ wt_env() {
     [ -f "${PROJ}/.worktrees/dirty/new.txt" ]
 }
 
+@test "agent run --worktree: one removed by hand is made again" {
+    wt_env
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    rm "${TMUX_LIVE}/fix"
+    rm -rf "$WT"
+    run "$PULSAR" agent run claude --tmux fix
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"fix ran in the worktree ${WT}, which is gone; --new --worktree makes it again"* ]] || fail "$output"
+    run "$PULSAR" agent run claude --tmux fix --new --worktree
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(git -C "$WT" rev-parse --abbrev-ref HEAD)" = fix ]
+    [ "$(pane fix | head -1)" = "$WT" ]
+    [ "$(git worktree list --porcelain | grep -c '^worktree ')" -eq 2 ]
+    # a locked one is someone's on purpose (a drive not mounted): left alone
+    rm "${TMUX_LIVE}/fix"
+    git worktree lock "$WT"; rm -rf "$WT"
+    run "$PULSAR" agent run claude --tmux fix --new --worktree
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"git still has ${WT} registered"* ]] || fail "$output"
+    git worktree list --porcelain | grep -qx locked
+}
+
+@test "agent sessions --forget: a worktree removed by hand has its snapshots dropped too; a gone folder says what is left" {
+    wt_env
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    rm "${TMUX_LIVE}/fix"
+    [ -n "$(git for-each-ref refs/pulsar/undo/fix/)" ]
+    rm -rf "$WT"
+    run "$PULSAR" agent sessions --forget fix
+    [ "$status" -eq 0 ] || fail "$output"
+    [ -z "$(git for-each-ref refs/pulsar/)" ]
+    # a session in a folder of the repo that is gone: no repo on record
+    mkdir -p "${PROJ}/sub"
+    "$PULSAR" agent run claude --tmux side --dir "${PROJ}/sub" >/dev/null 2>&1
+    rm "${TMUX_LIVE}/side"; rm -rf "${PROJ}/sub"
+    run "$PULSAR" agent sessions --forget side
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"note: ~/code/proj/sub is gone, so its undo snapshots could not be dropped; if it was in a git repository, git for-each-ref refs/pulsar/undo/side/ refs/pulsar/undone/side/ there lists them"* ]] \
+        || fail "$output"
+    [ ! -e "${REC}/side.session" ]
+    # and a new session of that name is not handed the old one's start
+    local stale; stale=$(git for-each-ref --format='%(refname)' refs/pulsar/undo/side/)
+    [ -n "$stale" ]
+    printf 'new\n' > f.txt
+    "$PULSAR" agent run claude --tmux side >/dev/null 2>&1; rm "${TMUX_LIVE}/side"
+    printf 'agent\n' > f.txt
+    "$PULSAR" agent undo side --yes >/dev/null
+    [ "$(cat f.txt)" = new ]
+}
+
 @test "a sandboxed agent in a session worktree sees the checkout; its git pointers are read-only" {
     wt_env
     git -C "$PROJ" worktree add -q "${PROJ}/.worktrees/other" -b other
@@ -4215,22 +4338,144 @@ agent_works() {
     [ "$(cat ':(top)odd')" = odd ]
 }
 
-@test "agent undo: the last few starts are kept, --list names them, --to picks one" {
+@test "agent undo: back to the session's start however often it restarted; the start is never pruned; --new starts over" {
     undo_env
     export PULSAR_UNDO_KEEP=2
+    printf '0\n' > counter.txt
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    local start; start=$(git for-each-ref --format='%(refname)' 'refs/pulsar/undo/work/')
+    [ "$(sed -n 's/^base=//p' "${REC}/work.session")" = "$start" ]
     local i
-    for i in 1 2 3; do
+    for i in 1 2 3; do   # the agent's work, then a restart (a reboot, Start, an attach)
+        rm "${TMUX_LIVE}/work"
         printf '%s\n' "$i" > counter.txt
-        "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+        "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
     done
+    rm "${TMUX_LIVE}/work"
+    [ "$(sed -n 's/^base=//p' "${REC}/work.session")" = "$start" ]
+    # the last two restarts, and the start
     run "$PULSAR" agent undo work --list
-    [ "$(wc -l <<<"$output")" -eq 2 ]
-    [[ "$output" == *"  1  "*"pulsar: work started"* ]]
+    [ "${#lines[@]}" -eq 3 ] || fail "$output"
+    [[ "${lines[0]}" == "  1  "*"  pulsar: work restarted "* ]] || fail "$output"
+    [[ "${lines[1]}" == "  2  "*"  pulsar: work restarted "* ]] || fail "$output"
+    [[ "${lines[2]}" == "  3  "*"  pulsar: work started "*"  <- the session's start, where undo goes" ]] || fail "$output"
+    [[ "${lines[0]}${lines[1]}" != *"<-"* ]] || fail "$output"
     printf 'later\n' > counter.txt
     "$PULSAR" agent undo work --to 2 --yes >/dev/null
     [ "$(cat counter.txt)" = 2 ]
-    run "$PULSAR" agent undo work --to 3
-    [[ "$output" == *"there are 2 snapshots of work"* ]]
+    "$PULSAR" agent undo work --yes >/dev/null
+    [ "$(cat counter.txt)" = 0 ]
+    run "$PULSAR" agent undo work --to 4
+    [[ "$output" == *"there are 3 snapshots of work"* ]]
+    # --new: a new session, so a new start
+    printf 'n\n' > counter.txt
+    "$PULSAR" agent run claude --tmux work --new >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    printf 'm\n' > counter.txt
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    printf 'agent\n' > counter.txt
+    "$PULSAR" agent undo work --yes >/dev/null
+    [ "$(cat counter.txt)" = n ]
+}
+
+@test "agent undo: a session from before its start was named keeps its oldest snapshot as the start" {
+    undo_env
+    export PULSAR_UNDO_KEEP=1
+    printf '0\n' > counter.txt
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    local start; start=$(git for-each-ref --format='%(refname)' 'refs/pulsar/undo/work/')
+    sed -i '/^base=/d' "${REC}/work.session"
+    printf '1\n' > counter.txt
+    run "$PULSAR" agent undo work --dry-run
+    [[ "$output" == *"note: the snapshot of when work started is not kept; this goes back to the oldest one there is"* ]] || fail "$output"
+    # the next start names it, and so keeps it
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    [ "$(sed -n 's/^base=//p' "${REC}/work.session")" = "$start" ]
+    printf '2\n' > counter.txt
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    git rev-parse -q --verify "$start" >/dev/null || fail "the start was pruned"
+    printf 'agent\n' > counter.txt
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" != *"note:"* ]] || fail "$output"
+    [ "$(cat counter.txt)" = 0 ]
+}
+
+@test "agent undo: a file git ignored at the start stays, even once the agent un-ignores it" {
+    undo_env
+    printf 'build/\n.env\n' > .gitignore; git commit -q -m 'ignore .env' .gitignore
+    printf 'SECRET=1\n' > .env
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    printf 'build/\n' > .gitignore        # the agent un-ignores it
+    printf 'agent\n' >> edited.txt
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat .env)" = SECRET=1 ] || fail "$output"
+    [ "$(cat .gitignore)" = $'build/\n.env' ]
+    [ "$(cat edited.txt)" = two ]
+    [[ "$output" == *"restores 2 file(s)"* ]] || fail "$output"
+    [[ "$output" != *"deletes"* ]] || fail "$output"
+    [[ "$output" == *$'\n  leaves 1 file(s) as they are:\n  ! .env  (git ignored it then, and it is not the snapshot\'s to delete)\n'* ]] || fail "$output"
+    run "$PULSAR" agent undo work --redo --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat .env)" = SECRET=1 ]
+    [ "$(cat .gitignore)" = build/ ]
+}
+
+@test "agent undo: a file git ignores now is never written over or made again, and --redo cannot lose it" {
+    undo_env
+    printf 'v1\n' > notes.txt; printf 'old\n' > dropped.txt    # untracked, in the start's snapshot
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    printf 'build/\nnotes.txt\ndropped.txt\n' > .gitignore     # the agent ignores them,
+    printf 'v2\n' > notes.txt; rm dropped.txt                  # changes one, deletes the other
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat notes.txt)" = v2 ]
+    [ ! -e dropped.txt ]
+    [ "$(cat .gitignore)" = build/ ]
+    [[ "$output" == *$'\n  leaves 2 file(s) as they are:\n  ! dropped.txt  (git ignores it now)\n  ! notes.txt  (git ignores it now)\n'* ]] || fail "$output"
+    run "$PULSAR" agent undo work --redo --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat notes.txt)" = v2 ]
+    [ "$(cat .gitignore)" = $'build/\nnotes.txt\ndropped.txt' ]
+}
+
+@test "agent undo: a file grown over the size limit since is left as it is, and --redo cannot lose it" {
+    undo_env
+    export PULSAR_UNDO_MAX_BYTES=10
+    printf 'small\n' > grows.bin
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    head -c 100 /dev/zero > grows.bin
+    printf 'agent\n' >> edited.txt
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(stat -c %s grows.bin)" -eq 100 ]
+    [ "$(cat edited.txt)" = two ]
+    [[ "$output" == *$'\n  ! grows.bin  (over 0 MB now, too big to keep a copy of to take back)\n'* ]] || fail "$output"
+    run "$PULSAR" agent undo work --redo --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(stat -c %s grows.bin)" -eq 100 ]
+    [ "$(tail -n 1 edited.txt)" = agent ]
+}
+
+@test "agent undo: refused while another session runs in the same checkout; one in its own worktree is no bar" {
+    undo_env
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    agent_works
+    mkdir -p sub
+    "$PULSAR" agent run claude --tmux other --dir "${PROJ}/sub" >/dev/null 2>&1
+    touch "${TMUX_LIVE}/mine"     # one started by hand, with no record
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"other is running in this checkout (~/code/proj), and its agent could write here mid-undo; end it first (pulsar agent sessions --kill other)" ]] \
+        || fail "$output"
+    [ -f added.txt ]
+    [ -z "$(git for-each-ref refs/pulsar/undone/)" ]
+    "$PULSAR" agent sessions --kill other >/dev/null
+    "$PULSAR" agent run claude --tmux wt --worktree >/dev/null 2>&1
+    [ -e "${TMUX_LIVE}/wt" ]
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ ! -e added.txt ]
 }
 
 @test "agent undo: an untracked file over the size limit is left out, and named" {
@@ -4292,6 +4537,19 @@ usage_env() {
     [[ "$output" == *"requests     2, and 1 by subagents"* ]]
     [[ "$output" == *"read         3.3M tokens (272k of them from the cache)"* ]]
     [[ "$output" == *"written      2k tokens"* ]]
+}
+
+@test "agent usage: an API error's stand-in message is no request, no model and no context" {
+    usage_env
+    # how Claude Code writes an API error: an assistant message of its own
+    printf '{"type":"assistant","timestamp":"2026-11-05T10:05:00Z","isApiErrorMessage":true,"message":{"id":"e1","model":"<synthetic>","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}\n' \
+        >> "${HOME}/.claude/projects/-code-proj/${ID}.jsonl"
+    run "$PULSAR" agent usage work --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -c . <<<"$output")" = '{"model":"claude-opus-5-5","requests":2,"subagent_requests":1,"context":272502,"read":3273512,"read_cached":272000,"written":2100}' ] \
+        || fail "$output"
+    run "$PULSAR" agent sessions
+    [[ "$output" =~ work\ +claude\ +running\ +0m\ +273k\ +~/code/proj ]] || fail "$output"
 }
 
 @test "agent usage: a sandboxed conversation is read from the sandbox's home; other agents and empty ones say why" {

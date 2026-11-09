@@ -3089,6 +3089,9 @@ atmux() { atmux_argv; "${ATMUX[@]}" "$@"; }
 
 atmux_running() { atmux has-session -t "=$1" 2>/dev/null; }
 
+# One word for tmux's command parser: single-quoted, and a ' inside as "'".
+tq() { local s=${1//\'/\'\"\'\"\'}; printf "'%s'" "$s"; }
+
 # session_get <session> <key>: agent, dir or id, from its record.
 session_get() {
     local f="${AGENT_SESSIONS}/$1.session" k v
@@ -3100,12 +3103,14 @@ session_get() {
 }
 
 # session_put <session> <agent> <dir> <conversation> <sandbox on|off> [<repo, for a worktree>]
+#             [<the undo snapshot of the session's start>]
 session_put() {
     local tmp
     mkdir -p "$AGENT_SESSIONS"
     tmp=$(mktemp "${AGENT_SESSIONS}/.$1.XXXXXX")
     printf 'agent=%s\ndir=%s\nid=%s\nsandbox=%s\n' "$2" "$3" "$4" "$5" > "$tmp"
     [ -z "${6:-}" ] || printf 'repo=%s\n' "$6" >> "$tmp"
+    [ -z "${7:-}" ] || printf 'base=%s\n' "$7" >> "$tmp"
     mv "$tmp" "${AGENT_SESSIONS}/$1.session"
 }
 
@@ -3130,6 +3135,13 @@ agent_worktree() {
         excl=$(git -C "$main" rev-parse --path-format=absolute --git-path info/exclude)
         mkdir -p "$(dirname "$excl")"
         grep -qxF '/.worktrees/' "$excl" 2>/dev/null || printf '/.worktrees/\n' >> "$excl"
+        # one removed by hand (rm -rf) is still registered, and git will not
+        # add it again; with the folder gone this only drops that record
+        # (and leaves a locked one alone)
+        if git -C "$main" worktree list --porcelain | grep -qxF "worktree ${wt}"; then
+            git -C "$main" worktree remove "$wt" >&2 \
+                || die "git still has ${wt} registered (git worktree list says why; git worktree unlock, then prune, clears it)"
+        fi
         if git -C "$main" show-ref --verify --quiet "refs/heads/${s}"; then
             git -C "$main" worktree add --quiet "$wt" "$s" >&2 \
                 || die "git could not check out the branch ${s} in ${wt}"
@@ -3156,11 +3168,22 @@ claude_has_conversation() {
 agent_tmux() {
     local tname=$1 name=$2 mode=$3 fresh=$4 dir=$5 worktree=$6
     shift 6
+    # not -x: git and the CLI would read it as an option
     case "$tname" in
-        ''|*[!A-Za-z0-9_-]*) die "a session name is letters, digits, - and _ (got: '${tname}')" ;;
+        ''|-*|*[!A-Za-z0-9_-]*) die "a session name is letters, digits, - and _, and does not start with - (got: '${tname}')" ;;
     esac
     have tmux || die "tmux is not on this system; newer Pulsar images include it (sudo pulsar update)"
-    local saved_agent saved_dir id repo
+    # One start of a name at a time (two Start clicks): the second waits,
+    # then finds it running and attaches, so the record and the pane agree.
+    # Closed for everything that could outlive this (the tmux server it
+    # starts, git) and before attaching.
+    local lk
+    mkdir -p "$AGENT_SESSIONS"
+    exec {lk}>>"${AGENT_SESSIONS}/.${tname}.lock"
+    flock -w 60 "$lk" || die "another start of ${tname} is still under way"
+    local saved_agent saved_dir id repo base had=0
+    [ ! -e "${AGENT_SESSIONS}/${tname}.session" ] || had=1
+    base=$(session_get "$tname" base) || base=""
     saved_agent=$(session_get "$tname" agent) || saved_agent=""
     saved_dir=$(session_get "$tname" dir) || saved_dir=""
     id=$(session_get "$tname" id) || id=""
@@ -3176,12 +3199,13 @@ agent_tmux() {
         [ -z "$dir" ] || [ -z "$saved_dir" ] || [ "$dir" = "$saved_dir" ] \
             || die "${tname} is running in ${saved_dir}, not ${dir}"
         [ $# -eq 0 ] || printf 'note: %s is already running; the arguments after -- were not used\n' "$tname" >&2
+        exec {lk}>&-
         agent_tmux_attach "$tname"
     fi
 
     if [ "$worktree" = 1 ] && { [ "$fresh" = 1 ] || [ -z "$saved_dir" ]; }; then
         local wtline
-        wtline=$(agent_worktree "$tname" "${dir:-$(pwd -P)}") || exit 1
+        wtline=$(agent_worktree "$tname" "${dir:-$(pwd -P)}" {lk}>&-) || exit 1
         repo=${wtline%%$'\t'*}; dir=${wtline#*$'\t'}
         saved_dir=$dir
     elif [ "$worktree" = 1 ] && [ -z "$repo" ]; then
@@ -3199,6 +3223,7 @@ agent_tmux() {
     fi
     if [ -z "$dir" ]; then
         if [ "$fresh" = 0 ] && [ -n "$saved_dir" ]; then
+            [ -d "$saved_dir" ] || [ -z "$repo" ] || die "${tname} ran in the worktree ${saved_dir}, which is gone; --new --worktree makes it again"
             [ -d "$saved_dir" ] || die "${tname} ran in ${saved_dir}, which is gone; --new --dir <path> starts it over"
             dir=$saved_dir
         else
@@ -3253,20 +3278,34 @@ agent_tmux() {
         printf 'note: %s comes back as a new %s conversation; only claude resumes the one a session had\n' \
             "$tname" "$name" >&2
     fi
-    session_put "$tname" "$name" "$dir" "$id" "$mode" "$repo"
-    undo_snapshot_start "$tname" "$dir"
+    # The files before the agent can touch them. A start that begins the
+    # session (the first, or --new) is what undo goes back to; a restart of
+    # it (reboot, attach) is a snapshot too, but never moves that.
+    local newbase=0
+    [ "$fresh" = 0 ] && [ "$had" = 1 ] || newbase=1
+    undo_snapshot_start "$tname" "$dir" "$newbase" "$base" {lk}>&-
 
     local cli flag=--no-sandbox
     cli=$(realpath "$SELF")
     [ "$mode" = off ] || flag=--sandbox
-    atmux new-session -d -s "$tname" -c "$dir" -x "$(tput cols 2>/dev/null || echo 80)" -y "$(tput lines 2>/dev/null || echo 24)" \
-        -- bash -c "$AGENT_TMUX_PANE" "$name" "$cli" agent run "$name" "$flag" -- "${conv[@]}" "$@" \
-        || die "tmux could not start ${tname}"
+    if ! atmux new-session -d -s "$tname" -c "$dir" -x "$(tput cols 2>/dev/null || echo 80)" -y "$(tput lines 2>/dev/null || echo 24)" \
+        -- bash -c "$AGENT_TMUX_PANE" "$name" "$cli" agent run "$name" "$flag" -- "${conv[@]}" "$@" {lk}>&-; then
+        [ -z "$UNDO_SNAP_REF" ] || git -C "$UNDO_SNAP_TOP" update-ref -d "$UNDO_SNAP_REF"
+        die "tmux could not start ${tname}"
+    fi
+    # Only now that it runs: a start that failed leaves the record, and the
+    # conversation it points to, as they were.
+    session_put "$tname" "$name" "$dir" "$id" "$mode" "$repo" "$UNDO_SNAP_BASE"
     # A bell in any agent's session is the agent asking for you; the notice
     # goes away once you look. Set on every start: the CLI's path can move.
-    atmux set-hook -g alert-bell "run-shell -b '$(sq "$cli") agent notify #{session_name}'"
+    # Quoted twice: for the shell run-shell starts, then for tmux, whose own
+    # parser reads this string; ## is a # its formats leave alone.
+    local hook
+    hook="$(sq "$cli") agent notify"
+    atmux set-hook -g alert-bell "run-shell -b $(tq "${hook//\#/\#\#} #{session_name}")"
     atmux set-hook -g client-session-changed "set-option -u @pulsar-alert"
     atmux set-hook -g client-attached "set-option -u @pulsar-alert"
+    exec {lk}>&-
     agent_tmux_attach "$tname"
 }
 
@@ -3276,16 +3315,26 @@ agent_tmux() {
 #
 # Each start of a session in a git repository records a snapshot of the
 # working files, tracked and untracked alike, as a commit no branch points
-# at: refs/pulsar/undo/<session>/<time>, the last UNDO_KEEP of them. Built on
-# a copy of the real index, so only what changed is read again, and nothing
-# of the user's index, branches or stash is touched. Not in it: files git
-# ignores (build output, node_modules), which an undo leaves as they are,
-# and untracked files over UNDO_MAX_BYTES, named in the snapshot's message.
+# at: refs/pulsar/undo/<session>/<time>. Built on a copy of the real index,
+# so only what changed is read again, and nothing of the user's index,
+# branches or stash is touched. Not in it: files git ignores (build output,
+# node_modules), and untracked files over UNDO_MAX_BYTES, named in the
+# snapshot's message.
+#
+# The snapshot of the start that began the session (its first, or --new)
+# is the one an undo goes back to; the session's record names it (base=).
+# A restart (a reboot, Start in Settings, an attach to one that died) takes
+# a snapshot too, for --to, but never moves it. The last UNDO_KEEP
+# snapshots are kept, and the start's always.
 #
 # An undo restores files and deletes the ones added since; it never moves a
 # branch. Commits made since stay, and are named. What the files were just
 # before the undo is kept too (refs/pulsar/undone/<session>/...), so
-# --redo takes the undo back.
+# --redo takes the undo back. So an undo never overwrites or deletes a file
+# that copy does not hold (one git ignores now, one grown over the limit),
+# and never touches a path git ignores, by today's rules or by the
+# snapshot's (an .env the agent took out of .gitignore): it leaves those as
+# they are, and names them.
 # ---------------------------------------------------------------------------
 UNDO_KEEP=${PULSAR_UNDO_KEEP:-10}
 UNDO_MAX_BYTES=${PULSAR_UNDO_MAX_BYTES:-52428800}
@@ -3316,46 +3365,151 @@ undo_tree() {
 
 undo_top() { git -C "$1" rev-parse --show-toplevel 2>/dev/null; }
 
+# undo_snapshot_start <session> <dir> <1 if this start begins the session>
+#                     <the snapshot of its start, from the record>
+# Sets UNDO_SNAP_TOP and UNDO_SNAP_REF (the snapshot it took, if it took
+# one) and UNDO_SNAP_BASE (the start's, for the record).
 undo_snapshot_start() {
-    local s=$1 dir=$2 top c old n=0
+    local s=$1 dir=$2 new=$3 base=$4 top c old ref n=0
+    UNDO_SNAP_TOP=""; UNDO_SNAP_REF=""; UNDO_SNAP_BASE=$base
+    [ "$new" = 0 ] || UNDO_SNAP_BASE=""
     top=$(undo_top "$dir") || {
         printf 'note: %s is not in a git repository, so pulsar agent undo has nothing to go back to\n' "${dir/#"$HOME"/\~}" >&2
         return 0; }
-    if ! c=$(undo_tree "$top" "pulsar: ${s} started $(date '+%Y-%m-%d %H:%M')"); then
+    if ! c=$(undo_tree "$top" "pulsar: ${s} $([ "$new" = 1 ] && echo started || echo restarted) $(date '+%Y-%m-%d %H:%M')"); then
         printf 'note: git could not snapshot %s; pulsar agent undo %s has nothing new to go back to\n' "$top" "$s" >&2
         return 0
     fi
-    git -C "$top" update-ref "refs/pulsar/undo/${s}/$(date +%s%N)" "$c"
+    ref="refs/pulsar/undo/${s}/$(date +%s%N)"
+    git -C "$top" update-ref "$ref" "$c" || return 0
+    UNDO_SNAP_TOP=$top; UNDO_SNAP_REF=$ref
+    if [ "$new" = 1 ]; then
+        UNDO_SNAP_BASE=$ref
+    elif [ -z "$base" ] || ! git -C "$top" show-ref --verify --quiet "$base"; then
+        # a record from before the start's snapshot was named: the oldest
+        # one is the nearest there is, and is kept from now on
+        UNDO_SNAP_BASE=$(git -C "$top" for-each-ref --sort=refname --count=1 --format='%(refname)' "refs/pulsar/undo/${s}/")
+    fi
     while IFS= read -r old; do
         n=$((n + 1))
-        [ "$n" -le "$UNDO_KEEP" ] || git -C "$top" update-ref -d "$old"
+        [ "$n" -le "$UNDO_KEEP" ] || [ "$old" = "$UNDO_SNAP_BASE" ] || git -C "$top" update-ref -d "$old"
     done < <(git -C "$top" for-each-ref --sort=-refname --format='%(refname)' "refs/pulsar/undo/${s}/")
 }
 
-# undo_apply <top> <from commit> <to commit>: make the files match <to>
-undo_apply() {
-    local top=$1 from=$2 to=$3 meta p
-    local -a restore=() remove=()
+# undo_ignored_then <top> <commit>, the paths on stdin (NUL-separated):
+# those git ignored by <commit>'s rules, its own .gitignore files with
+# info/exclude and core.excludesFile, on stdout (NUL-separated)
+undo_ignored_then() {
+    local top=$1 c=$2 gd tmp f mode rc=0 bad=0
+    gd=$(git -C "$top" rev-parse --path-format=absolute --git-dir) || return 2
+    tmp=$(mktemp -d) || return 2
+    while IFS= read -r -d '' f; do
+        mode=${f%% *}; f=${f#*$'\t'}
+        case "$mode" in 100644|100755) ;; *) continue ;; esac
+        case "/${f}" in */.gitignore) ;; *) continue ;; esac
+        mkdir -p -- "${tmp}/$(dirname -- "$f")"
+        git -C "$top" cat-file blob "${c}:${f}" > "${tmp}/${f}" || bad=1
+    done < <(git -C "$top" ls-tree -r -z "$c")
+    if [ "$bad" = 0 ]; then
+        git -C "$tmp" --git-dir="$gd" --work-tree="$tmp" check-ignore --no-index -z --stdin || rc=$?
+    else
+        rc=2
+    fi
+    rm -rf -- "$tmp"
+    [ "$rc" -le 1 ]
+}
+
+# undo_plan <top> <now> <to>: what making the files match <to> takes, in
+# UNDO_RESTORE and UNDO_REMOVE, and what it must leave in UNDO_SKIP
+# ("path<TAB>why"). <now> is the copy --redo puts back: a file it does not
+# hold is never overwritten, and a path git ignores is never touched.
+undo_plan() {
+    local top=$1 now=$2 to=$3 meta p out rc=0
+    UNDO_RESTORE=(); UNDO_REMOVE=(); UNDO_SKIP=()
+    local -a added=() gone=()
     while IFS= read -r -d '' meta && IFS= read -r -d '' p; do
         # gitlinks (submodules) are their own repositories
         case "$meta" in :160000\ *|:*\ 160000\ *) continue ;; esac
         case "${meta##* }" in
-            A) remove+=("$p") ;;
-            *) restore+=("$p") ;;
+            A) added+=("$p") ;;      # made since: deleted
+            D) gone+=("$p") ;;       # not in <now>: written from <to>
+            *) UNDO_RESTORE+=("$p") ;;
         esac
-    done < <(git -C "$top" diff-tree -r -z --no-renames --raw "$to" "$from")
-    if [ ${#restore[@]} -gt 0 ]; then
-        printf '%s\0' "${restore[@]}" | GIT_LITERAL_PATHSPECS=1 git -C "$top" restore --source="$to" --worktree \
+    done < <(git -C "$top" diff-tree -r -z --no-renames --raw "$to" "$now")
+    # keyed "x<path>": a path of @ or * is no subscript bash takes
+    local -A then_ign=() now_ign=()
+    out=$(mktemp) || return 1
+    if [ ${#added[@]} -gt 0 ]; then
+        printf '%s\0' "${added[@]}" | undo_ignored_then "$top" "$to" > "$out" || { rm -f "$out"; return 1; }
+        while IFS= read -r -d '' p; do then_ign["x${p}"]=1; done < "$out"
+    fi
+    if [ ${#gone[@]} -gt 0 ]; then
+        printf '%s\0' "${gone[@]}" | git -C "$top" check-ignore -z --stdin > "$out" || rc=$?
+        [ "$rc" -le 1 ] || { rm -f "$out"; return 1; }
+        while IFS= read -r -d '' p; do now_ign["x${p}"]=1; done < "$out"
+    fi
+    rm -f "$out"
+    for p in "${added[@]}"; do
+        if [ -n "${then_ign["x${p}"]:-}" ]; then
+            UNDO_SKIP+=("${p}"$'\t'"git ignored it then, and it is not the snapshot's to delete")
+        else
+            UNDO_REMOVE+=("$p")
+        fi
+    done
+    for p in "${gone[@]}"; do
+        if [ -n "${now_ign["x${p}"]:-}" ]; then
+            UNDO_SKIP+=("${p}"$'\t'"git ignores it now")
+        elif [ -e "${top}/${p}" ] || [ -L "${top}/${p}" ]; then
+            if [ -f "${top}/${p}" ] && [ "$(stat -c %s -- "${top}/${p}")" -gt "$UNDO_MAX_BYTES" ]; then
+                UNDO_SKIP+=("${p}"$'\t'"over $((UNDO_MAX_BYTES / 1048576)) MB now, too big to keep a copy of to take back")
+            else
+                UNDO_SKIP+=("${p}"$'\t'"no copy of it as it is now to take back")
+            fi
+        else
+            UNDO_RESTORE+=("$p")
+        fi
+    done
+}
+
+# undo_apply <top> <to>: carry out undo_plan's UNDO_RESTORE and UNDO_REMOVE
+undo_apply() {
+    local top=$1 to=$2 p
+    if [ ${#UNDO_RESTORE[@]} -gt 0 ]; then
+        printf '%s\0' "${UNDO_RESTORE[@]}" | GIT_LITERAL_PATHSPECS=1 git -C "$top" restore --source="$to" --worktree \
             --pathspec-from-file=- --pathspec-file-nul || return 1
     fi
-    for p in "${remove[@]}"; do
+    for p in "${UNDO_REMOVE[@]}"; do
         rm -f -- "${top:?}/${p:?}"
         rmdir -p --ignore-fail-on-non-empty -- "$(dirname -- "${top}/${p}")" 2>/dev/null || true
     done
 }
 
+# the running session, other than $1, whose folder is in the checkout $2
+undo_busy() {
+    local s=$1 top=$2 n d t
+    while IFS=$'\t' read -r n _; do
+        [ -n "$n" ] && [ "$n" != "$s" ] || continue
+        d=$(session_get "$n" dir) || continue
+        [ -d "$d" ] && t=$(undo_top "$d") && [ "$t" = "$top" ] || continue
+        printf '%s\n' "$n"
+        return 0
+    done < <(atmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    return 1
+}
+
+undo_print_skips() {
+    [ ${#UNDO_SKIP[@]} -gt 0 ] || return 0
+    local e i=0
+    printf '  leaves %d file(s) as they are:\n' ${#UNDO_SKIP[@]}
+    for e in "${UNDO_SKIP[@]}"; do
+        i=$((i + 1))
+        [ "$i" -le 20 ] || { printf '    ... and %d more\n' $(( ${#UNDO_SKIP[@]} - 20 )); break; }
+        printf '  ! %s  (%s)\n' "${e%%$'\t'*}" "${e#*$'\t'}"
+    done
+}
+
 agent_undo() {
-    local s="" list=0 to=1 yes=0 redo=0 dry=0
+    local s="" list=0 to="" yes=0 redo=0 dry=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --list) list=1 ;;
@@ -3370,7 +3524,7 @@ agent_undo() {
         shift
     done
     case "$s" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run]" ;; esac
-    case "$to" in ''|*[!0-9]*|0) die "--to wants a number from --list" ;; esac
+    [ -z "$to" ] || case "$to" in *[!0-9]*|0) die "--to wants a number from --list" ;; esac
     local dir top
     dir=$(session_get "$s" dir) || die "no session called ${s} (pulsar agent sessions)"
     [ -d "$dir" ] || die "${s} ran in ${dir}, which is gone"
@@ -3383,43 +3537,75 @@ agent_undo() {
         [ "$redo" = 1 ] && die "there is no undo of ${s} to take back"
         die "no snapshot of ${s} yet: one is taken each time the session starts"
     fi
+    # where an undo goes by default: the snapshot of the session's start
+    local base="" at=0 i=0 r
+    [ "$redo" = 1 ] || base=$(session_get "$s" base) || base=""
+    for r in "${refs[@]}"; do
+        i=$((i + 1))
+        [ "$r" != "$base" ] || at=$i
+    done
     if [ "$list" = 1 ]; then
-        local i=0 r
+        i=0
         for r in "${refs[@]}"; do
             i=$((i + 1))
-            printf '%3d  %s\n' "$i" "$(git -C "$top" log -1 --format='%cd  %s' --date='format:%Y-%m-%d %H:%M' "$r")"
+            printf '%3d  %s%s\n' "$i" "$(git -C "$top" log -1 --format='%cd  %s' --date='format:%Y-%m-%d %H:%M' "$r")" \
+                "$([ "$i" = "$at" ] && echo '  <- the session'"'"'s start, where undo goes')"
         done
         return 0
     fi
-    [ "$to" -le ${#refs[@]} ] || die "there are ${#refs[@]} snapshots of ${s} (pulsar agent undo ${s} --list)"
-    if have tmux && atmux_running "$s"; then
-        die "${s} is running, and its agent could write again mid-undo; end it first (pulsar agent sessions --kill ${s})"
+    if [ -z "$to" ]; then
+        if [ "$redo" = 1 ]; then
+            to=1
+        elif [ "$at" -gt 0 ]; then
+            to=$at
+        else
+            to=${#refs[@]}
+            printf 'note: the snapshot of when %s started is not kept; this goes back to the oldest one there is\n' "$s" >&2
+        fi
     fi
-    local target now
+    [ "$to" -le ${#refs[@]} ] || die "there are ${#refs[@]} snapshots of ${s} (pulsar agent undo ${s} --list)"
+    if have tmux; then
+        if atmux_running "$s"; then
+            die "${s} is running, and its agent could write again mid-undo; end it first (pulsar agent sessions --kill ${s})"
+        fi
+        local other
+        if other=$(undo_busy "$s" "$top"); then
+            die "${other} is running in this checkout (${top/#"$HOME"/\~}), and its agent could write here mid-undo; end it first (pulsar agent sessions --kill ${other})"
+        fi
+    fi
+    local target now when
     target=$(git -C "$top" rev-parse "${refs[$((to - 1))]}")
     now=$(undo_tree "$top" "pulsar: ${s} before an undo $(date '+%Y-%m-%d %H:%M')") || die "git could not read the files as they are now"
-    local changes added=0 changed=0
-    changes=$(git -C "$top" diff-tree -r --no-renames --name-status "$target" "$now")
-    if [ -z "$changes" ]; then
-        printf 'nothing to do: the files are as they were %s\n' "$(git -C "$top" log -1 --format=%cr "$target")"
+    undo_plan "$top" "$now" "$target" || die "git could not tell which files it ignores; nothing changed"
+    when=$(git -C "$top" log -1 --format=%cr "$target")
+    local nr=${#UNDO_RESTORE[@]} nd=${#UNDO_REMOVE[@]}
+    if [ $((nr + nd)) -eq 0 ]; then
+        if [ ${#UNDO_SKIP[@]} -eq 0 ]; then
+            printf 'nothing to do: the files are as they were %s\n' "$when"
+        else
+            printf 'nothing to do: what changed since %s is all left as it is\n' "$when"
+            undo_print_skips
+        fi
         return 0
     fi
-    added=$(grep -c '^A' <<<"$changes" || true)
-    changed=$(( $(wc -l <<<"$changes") - added ))
     printf '%s, as of %s (%s):\n' "$([ "$redo" = 1 ] && echo 'Takes back the undo' || echo "Puts ${top/#"$HOME"/\~} back")" \
-        "$(git -C "$top" log -1 --format='%cd' --date='format:%Y-%m-%d %H:%M' "$target")" \
-        "$(git -C "$top" log -1 --format=%cr "$target")"
-    [ "$changed" -eq 0 ] || printf '  restores %d file(s)\n' "$changed"
-    [ "$added" -eq 0 ] || printf '  deletes %d file(s) made since\n' "$added"
-    sed 's/^A\t/  - /; s/^[MDT]\t/  ~ /' <<<"$changes" | head -n 20
-    [ "$(wc -l <<<"$changes")" -le 20 ] || printf '  ... and %d more\n' $(( $(wc -l <<<"$changes") - 20 ))
-    local base head
-    base=$(git -C "$top" rev-parse -q --verify "${target}^") || base=""
+        "$(git -C "$top" log -1 --format='%cd' --date='format:%Y-%m-%d %H:%M' "$target")" "$when"
+    [ "$nr" -eq 0 ] || printf '  restores %d file(s)\n' "$nr"
+    [ "$nd" -eq 0 ] || printf '  deletes %d file(s) made since\n' "$nd"
+    local p n=0
+    for p in "${UNDO_RESTORE[@]}" "${UNDO_REMOVE[@]}"; do
+        n=$((n + 1))
+        [ "$n" -le 20 ] || { printf '  ... and %d more\n' $(( nr + nd - 20 )); break; }
+        if [ "$n" -le "$nr" ]; then printf '  ~ %s\n' "$p"; else printf '  - %s\n' "$p"; fi
+    done
+    local parent head
+    parent=$(git -C "$top" rev-parse -q --verify "${target}^") || parent=""
     head=$(git -C "$top" rev-parse -q --verify HEAD) || head=""
-    if [ -n "$base" ] && [ -n "$head" ] && [ "$base" != "$head" ] && git -C "$top" merge-base --is-ancestor "$base" "$head"; then
+    if [ -n "$parent" ] && [ -n "$head" ] && [ "$parent" != "$head" ] && git -C "$top" merge-base --is-ancestor "$parent" "$head"; then
         printf '  commits made since stay on the branch (%d; git log %s..HEAD)\n' \
-            "$(git -C "$top" rev-list --count "${base}..${head}")" "$(git -C "$top" rev-parse --short "$base")"
+            "$(git -C "$top" rev-list --count "${parent}..${head}")" "$(git -C "$top" rev-parse --short "$parent")"
     fi
+    undo_print_skips
     printf '  files git ignores are left as they are\n'
     [ "$dry" = 0 ] || return 0
     if [ "$yes" = 0 ]; then
@@ -3428,7 +3614,7 @@ agent_undo() {
         case "$ans" in y|Y|yes) ;; *) printf 'nothing changed\n'; return 0 ;; esac
     fi
     [ "$redo" = 1 ] || git -C "$top" update-ref "refs/pulsar/undone/${s}/$(date +%s%N)" "$now"
-    undo_apply "$top" "$now" "$target" || die "git could not restore every file; the state before this is ${now}"
+    undo_apply "$top" "$target" || die "git could not restore every file; the state before this is ${now}"
     if [ "$redo" = 1 ]; then
         git -C "$top" update-ref -d "${refs[$((to - 1))]}"
         printf 'done: the undo is taken back\n'
@@ -3588,12 +3774,20 @@ agent_sessions() {
         --forget)
             [ "$running" = 0 ] || die "$2 is running; end it first (pulsar agent sessions --kill $2)"
             [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
-            local repo dir top r
+            local repo dir top="" r
             repo=$(session_get "$2" repo) || repo=""
             dir=$(session_get "$2" dir) || dir=""
-            if [ -d "$dir" ] && top=$(undo_top "$dir"); then
+            # the snapshots, so a later session of this name starts clean;
+            # a worktree's are in its repository's refs, gone folder or not
+            if [ -d "$dir" ] && top=$(undo_top "$dir"); then :
+            elif [ -n "$repo" ] && [ -d "$repo" ] && top=$(undo_top "$repo"); then :
+            else top=""; fi
+            if [ -n "$top" ]; then
                 while IFS= read -r r; do git -C "$top" update-ref -d "$r"; done \
                     < <(git -C "$top" for-each-ref --format='%(refname)' "refs/pulsar/undo/$2/" "refs/pulsar/undone/$2/")
+            elif [ -n "$dir" ] && [ ! -d "$dir" ]; then
+                printf 'note: %s is gone, so its undo snapshots could not be dropped; if it was in a git repository, git for-each-ref refs/pulsar/undo/%s/ refs/pulsar/undone/%s/ there lists them (git update-ref -d each)\n' \
+                    "${dir/#"$HOME"/\~}" "$2" "$2"
             fi
             if [ -n "$repo" ] && [ -d "$dir" ]; then
                 # never forced: what is in it might be the only copy
@@ -3690,7 +3884,10 @@ session_usage() {
     [ -n "$f" ] || return 1
     local -a files=("$f")
     for t in "${f%.jsonl}"/subagents/*.jsonl; do [ ! -f "$t" ] || files+=("$t"); done
-    jq -c 'select(.type == "assistant" and .message.usage != null and .message.id != null)
+    # An API error is written as an assistant message of the model
+    # "<synthetic>", with no usage: no request, no model, no context.
+    jq -c 'select(.type == "assistant" and .message.usage != null and .message.id != null
+                  and .message.model != "<synthetic>")
            | .message.usage as $u
            | [.message.id, (.isSidechain // false), (.message.model // ""), (.timestamp // ""),
               ($u.input_tokens // 0), ($u.cache_creation_input_tokens // 0),
@@ -3969,8 +4166,10 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      its agent, folder, conversation and sandbox
        pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run]
                                      put the project's files back as they were when
-                                     the session started (git repositories; files git
-                                     ignores stay as they are, commits stay)
+                                     the session started (its first start or --new;
+                                     restarts do not move it). Git repositories; files
+                                     git ignores stay as they are, commits stay; not
+                                     while a session runs in that checkout
        pulsar agent usage <session> [--json]
                                      its model, how full the context is, and tokens
                                      read and written (Claude Code; no prices)
