@@ -20,9 +20,10 @@ Agents you can leave running, a command menu, and GNOME 51.
 ### Agents
 
 - `pulsar agent run <agent> --tmux <name>` keeps a coding agent in a named
-  session that outlives its terminal window. Run the same command again,
-  from any terminal, to come back to it; with Claude Code, the same
-  conversation picks up where it was. The sessions run on a tmux of their
+  session that outlives its terminal window. `pulsar agent attach <name>`
+  comes back to it from any terminal, and `pulsar agent attach` alone to
+  the one you were on last; with Claude Code, the same conversation picks
+  up where it was, and a sandboxed session stays sandboxed. The sessions run on a tmux of their
   own, tuned for agents, apart from yours. tmux is now in the image.
 - When an agent in a session you aren't looking at finishes or needs you,
   a notification says so, and its Open button takes you to that session.

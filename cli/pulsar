@@ -3099,13 +3099,13 @@ session_get() {
     return 1
 }
 
-# session_put <session> <agent> <dir> <conversation> [<repo, for a worktree>]
+# session_put <session> <agent> <dir> <conversation> <sandbox on|off> [<repo, for a worktree>]
 session_put() {
     local tmp
     mkdir -p "$AGENT_SESSIONS"
     tmp=$(mktemp "${AGENT_SESSIONS}/.$1.XXXXXX")
-    printf 'agent=%s\ndir=%s\nid=%s\n' "$2" "$3" "$4" > "$tmp"
-    [ -z "${5:-}" ] || printf 'repo=%s\n' "$5" >> "$tmp"
+    printf 'agent=%s\ndir=%s\nid=%s\nsandbox=%s\n' "$2" "$3" "$4" "$5" > "$tmp"
+    [ -z "${6:-}" ] || printf 'repo=%s\n' "$6" >> "$tmp"
     mv "$tmp" "${AGENT_SESSIONS}/$1.session"
 }
 
@@ -3207,6 +3207,10 @@ agent_tmux() {
     fi
     case "$dir" in *$'\n'*) die "a folder name with a newline in it cannot hold a session" ;; esac
 
+    # A session that ran sandboxed comes back sandboxed, whoever starts it
+    # again (attach, Settings, a notification), unless told --no-sandbox.
+    # One that ran unsandboxed follows the settings as they are now.
+    [ -n "$mode" ] || [ "$(session_get "$tname" sandbox || true)" != on ] || mode=on
     # Decided here, once, so the conversation is looked for in the home the
     # agent will actually use: the sandbox's own, or the real one.
     mode=$(agent_mode "$mode" "$(settings_root "$dir")") || exit 1
@@ -3249,7 +3253,7 @@ agent_tmux() {
         printf 'note: %s comes back as a new %s conversation; only claude resumes the one a session had\n' \
             "$tname" "$name" >&2
     fi
-    session_put "$tname" "$name" "$dir" "$id" "$repo"
+    session_put "$tname" "$name" "$dir" "$id" "$mode" "$repo"
     undo_snapshot_start "$tname" "$dir"
 
     local cli flag=--no-sandbox
@@ -3521,8 +3525,7 @@ exec ptyxis --new-window -- "$3" agent run "$4" --tmux "$5"'
 # Without a terminal it stays running, detached.
 agent_tmux_attach() {
     if [ ! -t 0 ] || [ ! -t 1 ]; then
-        printf '%s is running; attach with: pulsar agent run %s --tmux %s\n' \
-            "$1" "$(session_get "$1" agent || echo '<agent>')" "$1"
+        printf '%s is running; attach with: pulsar agent attach %s\n' "$1" "$1"
         exit 0
     fi
     atmux_argv
@@ -3531,6 +3534,33 @@ agent_tmux_attach() {
     esac
     unset TMUX
     exec "${ATMUX[@]}" attach-session -t "=$1"
+}
+
+# agent attach -- back onto a session, as `tmux attach` is: by name, or the
+# running one you were on last. An ended session starts again from its
+# record: its agent, its folder, its conversation, its sandbox.
+agent_attach() {
+    local usage="usage: pulsar agent attach [<session>]" s="" agent
+    case "${1:-}" in
+        -h|--help) printf '%s\n' "$usage"; return 0 ;;
+        -*) die "$usage" ;;
+    esac
+    [ $# -le 1 ] || die "$usage"
+    s=${1:-}
+    if [ -z "$s" ]; then
+        have tmux || die "no agent session is running"
+        # last attached first; never-attached ones by when they started
+        s=$(atmux list-sessions -F $'#{session_last_attached}\t#{session_created}\t#{session_name}' 2>/dev/null \
+            | sort -t $'\t' -k1,1nr -k2,2nr | head -n 1 | cut -f3) || s=""
+        [ -n "$s" ] || die "no agent session is running; pulsar agent sessions lists the ended ones, and pulsar agent attach <name> brings one back"
+    fi
+    case "$s" in *[!A-Za-z0-9_-]*) die "not a session name: '${s}'" ;; esac
+    if have tmux && atmux_running "$s"; then
+        agent_tmux_attach "$s"
+    fi
+    agent=$(session_get "$s" agent) || die "no session called ${s} (pulsar agent sessions lists them)"
+    agent_row "$agent" || die "${s} ran ${agent}, which Pulsar no longer knows"
+    agent_tmux "$s" "$agent" "" 0 "" 0
 }
 
 agent_sessions() {
@@ -3550,9 +3580,9 @@ agent_sessions() {
             [ "$running" = 1 ] || die "$2 is not running"
             atmux kill-session -t "=$2"
             if [ "$(session_get "$2" agent || true)" = claude ]; then
-                printf 'ended %s; pulsar agent run claude --tmux %s brings it back on the same conversation\n' "$2" "$2"
+                printf 'ended %s; pulsar agent attach %s brings it back on the same conversation\n' "$2" "$2"
             else
-                printf 'ended %s\n' "$2"
+                printf 'ended %s; pulsar agent attach %s starts it again\n' "$2" "$2"
             fi
             return 0 ;;
         --forget)
@@ -3933,6 +3963,10 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      looking at, a notification opens it.
                                      --worktree: its own git worktree and branch,
                                      <repo>/.worktrees/<session>
+       pulsar agent attach [<session>]
+                                     back onto a session, or the running one you
+                                     were on last; an ended one starts again with
+                                     its agent, folder, conversation and sandbox
        pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run]
                                      put the project's files back as they were when
                                      the session started (git repositories; files git
@@ -4006,6 +4040,10 @@ cmd_agent() {
         sessions)
             need_user "agent sessions"
             agent_sessions "$@" ;;
+        attach)
+            no_json "agent attach"
+            need_user "agent attach"
+            agent_attach "$@" ;;
         model)
             no_json "agent model"
             need_user "agent model"
