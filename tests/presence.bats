@@ -218,6 +218,82 @@ m.tick(idx, shown, sys.argv[4]); print(sorted(shown))' "$DB" "$SOCK"
     [ ! -e "$PULSAR_PRESENCE_INDEX" ]
 }
 
+# What a Discord that crashed (or a session that ended) leaves behind: the
+# socket file, with nothing listening on it.
+stale_socket() {
+    SOCK="${XDG_RUNTIME_DIR}/app/com.discordapp.Discord/discord-ipc-0"
+    mkdir -p "$(dirname "$SOCK")"
+    python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "$SOCK"
+    [ -S "$SOCK" ]
+}
+
+@test "REGRESSION: presence: a socket left by a Discord that is gone is said once and looked at less and less often" {
+    stale_socket
+    proc 10 100 /steam/reaper SteamLaunch AppId=495420 -- x
+    # An hour of 5-second scans with a game running: every connect, and when.
+    run py 'import json, socket
+looks = []
+real = m.reachable
+def counted(p):
+    looks.append(now); return real(p)
+m.reachable = counted
+tries = []
+class P(m.Presence):
+    def __init__(self, *a):
+        tries.append(now); super().__init__(*a)
+m.Presence = P
+w = m.Watch()
+for now in range(0, 3600, 5):
+    w.step(now)
+print(tries)
+print(looks)' "$DB"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${#lines[@]}" -eq 3 ] || fail "$output"
+    [ "${lines[0]}" = "pulsar-presence: Discord is not running: ${SOCK} refuses connections (Connection refused), left by a Discord that quit or a session that ended" ]
+    [ "${lines[1]}" = "[0]" ]
+    # 10 s, then twice as long each time, up to 5 minutes
+    [ "${lines[2]}" = "[10, 30, 70, 150, 310, 610, 910, 1210, 1510, 1810, 2110, 2410, 2710, 3010, 3310]" ]
+}
+
+@test "presence: a Discord that comes back on its old socket is noticed and the game shown" {
+    stale_socket
+    proc 10 100 /steam/reaper SteamLaunch AppId=495420 -- x
+    # Discord restarted: it removes the old file and listens on the same path
+    # (a smaller fake than start_discord's, in this process, so the scans
+    # before and after share one Watch).
+    run py 'import json, socket, struct, threading
+def send(c, obj):
+    b = json.dumps(obj).encode(); c.sendall(struct.pack("<II", 1, len(b)) + b)
+def serve(srv):
+    while True:
+        c, _ = srv.accept()
+        while True:
+            head = c.recv(8)
+            if len(head) < 8:
+                break
+            op, n = struct.unpack("<II", head); msg = json.loads(c.recv(n))
+            send(c, {"evt": "READY"} if op == 0 else {"evt": None, "nonce": msg["nonce"]})
+w = m.Watch()
+for now in range(0, 60, 5):
+    w.step(now)
+print(sorted(w.shown))
+os.remove(sys.argv[4])
+srv = socket.socket(socket.AF_UNIX); srv.bind(sys.argv[4]); srv.listen(4)
+threading.Thread(target=serve, args=(srv,), daemon=True).start()
+for now in range(60, 75, 5):
+    w.step(now)
+print(sorted(w.shown))
+w.drop()' "$DB" "$SOCK"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${#lines[@]}" -eq 5 ] || fail "$output"
+    [ "${lines[0]}" = "pulsar-presence: Discord is not running: ${SOCK} refuses connections (Connection refused), left by a Discord that quit or a session that ended" ]
+    [ "${lines[1]}" = "[]" ]
+    # due to look again at 70 (10 + 20 + 40)
+    [ "${lines[2]}" = "pulsar-presence: Discord is running again (${SOCK})" ]
+    [ "${lines[3]}" = "pulsar-presence: playing State of Decay 2 (pid 10)" ]
+    [ "${lines[4]}" = "['100']" ]
+}
+
 @test "presence: the list is fetched once and kept; a failed refresh keeps the old one" {
     start_discord
     proc 10 100 /steam/reaper SteamLaunch AppId=495420 -- x

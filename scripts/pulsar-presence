@@ -252,7 +252,10 @@ class Presence:
 
 
 def tick(idx, shown, sock):
-    """One pass: show what started, clear what stopped."""
+    """One pass: show what started, clear what stopped. A socket nothing
+    listens on raises ConnectionRefusedError (or FileNotFoundError, gone
+    since it was found) to the caller: that is Discord not running, not a
+    game that could not be shown."""
     games = scan(idx)
     for aid in list(shown):
         if aid not in games or not shown[aid].alive():
@@ -264,31 +267,87 @@ def tick(idx, shown, sock):
         try:
             shown[aid] = Presence(sock, aid, pid)
             log(f"playing {idx['names'].get(aid, aid)} (pid {pid})")
+        except (ConnectionRefusedError, FileNotFoundError):
+            raise
         except (OSError, ValueError) as e:
             log(f"can't show {idx['names'].get(aid, aid)}: {e}")
     return games
 
 
-def main(argv):
-    once = "--once" in argv[1:]
-    shown, idx, tried = {}, None, 0.0
-    while True:
+def reachable(path):
+    """Whether anything listens on socket `path`."""
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(1)
+    try:
+        s.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+BACKOFF_S = (2 * SCAN_S, 300)  # first and longest wait between looks at a dead socket
+
+
+class Watch:
+    """The service's state from one scan to the next. A socket file is not
+    a running Discord: one that crashed, or a session that ended, leaves it
+    behind, and every connect is refused. That was a connect and a log line
+    every 5 s for as long as a game ran. So a refused socket counts as
+    Discord not running: said once, looked at again after 10 s, then twice
+    as long each time up to 5 minutes, and said once more when it answers."""
+
+    def __init__(self):
+        self.shown, self.idx, self.tried = {}, None, float("-inf")
+        self.sock, self.down, self.retry_at, self.backoff = None, False, 0.0, BACKOFF_S[0]
+
+    def drop(self):
+        for p in self.shown.values():
+            p.close()
+        self.shown.clear()
+
+    def step(self, now, once=False):
         socks = discord_sockets()
         if not socks:
-            for p in shown.values():
-                p.close()
-            shown.clear()
-        else:
-            now = time.time()
-            stale = idx is None or now - idx.get("fetched", 0) > REFRESH_S
-            if stale and (once or now - tried > RETRY_S[idx is not None]):
-                tried = now
-                idx = load_index() or idx
-            if idx:
-                tick(idx, shown, socks[0])
+            self.drop()
+            # its socket file gone too: the next one is a fresh start
+            self.down, self.backoff = False, BACKOFF_S[0]
+            return
+        if self.down:
+            if now < self.retry_at:
+                return
+            live = next((p for p in socks if reachable(p)), None)
+            if live is None:
+                self.backoff = min(self.backoff * 2, BACKOFF_S[1])
+                self.retry_at = now + self.backoff
+                return
+            self.down, self.backoff, self.sock = False, BACKOFF_S[0], live
+            log(f"Discord is running again ({live})")
+        if self.sock not in socks:
+            self.sock = socks[0]
+        stale = self.idx is None or now - self.idx.get("fetched", 0) > REFRESH_S
+        if stale and (once or now - self.tried > RETRY_S[self.idx is not None]):
+            self.tried = now
+            self.idx = load_index() or self.idx
+        if not self.idx:
+            return
+        try:
+            tick(self.idx, self.shown, self.sock)
+        except (ConnectionRefusedError, FileNotFoundError) as e:
+            self.drop()
+            self.down, self.retry_at = True, now + self.backoff
+            log(f"Discord is not running: {self.sock} refuses connections ({e.strerror}),"
+                " left by a Discord that quit or a session that ended")
+
+
+def main(argv):
+    once = "--once" in argv[1:]
+    w = Watch()
+    while True:
+        w.step(time.time(), once)
         if once:
-            for p in shown.values():
-                p.close()
+            w.drop()
             return 0
         time.sleep(SCAN_S)
 
