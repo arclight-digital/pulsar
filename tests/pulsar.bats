@@ -3522,6 +3522,19 @@ SH
 # the pane command of a live session, one argument per line (its folder first)
 pane() { cat "${TMUX_LIVE}/$1"; }
 rec_id() { sed -n 's/^id=//p' "${REC}/$1.session"; }
+# What the agent itself is handed: the pane's exact argv (NUL-separated, so
+# nothing is split or filtered), from the -- that `agent run` ends its own
+# options with. The --settings JSON is shown as {settings}. One per line.
+agent_args() {
+    local -a p; local i a seen=0 prev=""
+    mapfile -d '' -t p < "${TMUX_LIVE}/.$1.argv"
+    for a in "${p[@]}"; do
+        if [ "$seen" = 0 ]; then [ "$a" != -- ] || seen=1; continue; fi
+        if [ "$prev" = --settings ]; then printf '{settings}\n'; else printf '%s\n' "$a"; fi
+        prev=$a
+    done
+    [ "$seen" = 1 ] || { echo "no -- in the pane: ${p[*]}" >&2; return 1; }
+}
 
 @test "agent run --tmux: a new session pins a fresh conversation, in this folder, on the agents' server" {
     tmux_env
@@ -3534,11 +3547,59 @@ rec_id() { sed -n 's/^id=//p' "${REC}/$1.session"; }
     grep -qx "agent=claude" "${REC}/work.session"
     grep -qx "dir=${PROJ}" "${REC}/work.session"
     # the pane runs pulsar agent run itself, mode decided up front, the
-    # conversation pinned, the user's own arguments after it
-    pane work | grep -vx -- "--settings\|{.*}" | tail -n 10 | paste -sd' ' - | grep -qxF "$(realpath "$PULSAR") agent run claude --no-sandbox -- --session-id ${id} --model opus" \
-        || fail "$(pane work)"
+    # conversation pinned, the user's own arguments after it, and nothing else
+    mapfile -d '' -t p < "${TMUX_LIVE}/.work.argv"
+    [ "${p[*]:3:5}" = "claude $(realpath "$PULSAR") agent run claude" ] || fail "${p[*]}"
+    [ "${p[*]:8:2}" = "--no-sandbox --" ] || fail "${p[*]}"
+    [ "$(agent_args work | paste -sd' ' -)" = "--session-id ${id} --settings {settings} --model opus" ] \
+        || fail "$(agent_args work)"
     [ "$(pane work | head -1)" = "$PROJ" ]
     grep -qxF -- "$PULSAR_AGENT_TMUX_CONF" "$TMUX_CALLS"
+}
+
+@test "agent run --tmux: a folder after the session name is its folder, and the agent never sees it" {
+    tmux_env
+    mkdir -p "${HOME}/other"
+    cd "${HOME}/other"
+    run "$PULSAR" agent run claude --tmux work "$PROJ"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(pane work | head -1)" = "$PROJ" ] || fail "$(pane work)"
+    grep -qx "dir=${PROJ}" "${REC}/work.session" || fail "$(cat "${REC}/work.session")"
+    # exactly the pinned conversation and the hooks: no stray first prompt
+    [ "$(agent_args work | paste -sd' ' -)" = "--session-id $(rec_id work) --settings {settings}" ] \
+        || fail "$(agent_args work)"
+    "$PULSAR" agent sessions --kill work >/dev/null
+    "$PULSAR" agent sessions --forget work >/dev/null
+
+    # relative, with options after it and the agent's own arguments after --
+    cd "$(dirname "$PROJ")"
+    run "$PULSAR" agent run claude --tmux work "$(basename "$PROJ")" --sandbox -- --model opus
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(pane work | head -1)" = "$PROJ" ] || fail "$(pane work)"
+    mapfile -d '' -t p < "${TMUX_LIVE}/.work.argv"
+    [ "${p[8]}" = --sandbox ] || fail "${p[*]}"
+    [ "$(agent_args work | paste -sd' ' -)" = "--session-id $(rec_id work) --settings {settings} --model opus" ] \
+        || fail "$(agent_args work)"
+}
+
+@test "agent run: a bare word that is not the session's folder is refused, before tmux is asked anything" {
+    tmux_env
+    cd "$PROJ"
+    check_refused() {   # <message> <args...>
+        local msg=$1; shift
+        : > "$TMUX_CALLS"
+        run "$PULSAR" agent run claude "$@"
+        [ "$status" -ne 0 ] || fail "accepted: $*"
+        [[ "$output" == *"$msg"* ]] || fail "$*: $output"
+        [ ! -s "$TMUX_CALLS" ] || fail "$*: tmux was called: $(cat "$TMUX_CALLS")"
+        [ ! -e "${REC}/work.session" ] || fail "$*: a session was recorded"
+    }
+    # a prompt typed where the folder goes
+    check_refused "not a folder: fix the bug; arguments for the agent go after --" --tmux work "fix the bug"
+    # no session to hold a folder: the agent is not started with it as a prompt
+    check_refused "a folder goes with --tmux <session>, got ${PROJ}" "$PROJ"
+    check_refused "two folders, --dir ${HOME} and ${PROJ}" --tmux work --dir "$HOME" "$PROJ"
+    check_refused "one folder only, got ${PROJ} and ${HOME}" --tmux work "$PROJ" "$HOME"
 }
 
 @test "agent run --tmux: a session that died comes back on its own conversation, in its own folder" {

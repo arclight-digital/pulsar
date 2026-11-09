@@ -2995,11 +2995,13 @@ agent_mode() {
     printf '%s\n' "$mode"
 }
 
-AGENT_RUN_USAGE="usage: pulsar agent run <name> [--sandbox|--no-sandbox] [--tmux <session> [--new] [--dir <path>] [--worktree]] [-- args]"
+AGENT_RUN_USAGE="usage: pulsar agent run <name> [--sandbox|--no-sandbox] [--tmux <session> [--new] [--dir <path> | <path>] [--worktree]] [-- args]"
 
 # The one place that decides how an agent starts: the shim calls this.
+# Only what follows -- reaches the agent. A bare word after the name is the
+# session's folder (`--tmux work ~/code/x`), never the agent's first prompt.
 agent_run() {
-    local name="" mode="" tname="" fresh=0 dir="" tmux=0 worktree=0
+    local name="" mode="" tname="" fresh=0 dir="" tmux=0 worktree=0 bare=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --sandbox) mode=on ;;
@@ -3012,12 +3014,22 @@ agent_run() {
             --dir=*) dir=${1#--dir=} ;;
             --) shift; break ;;
             -*) die "unknown option: $1 (${AGENT_RUN_USAGE})" ;;
-            *) [ -z "$name" ] || break; name=$1 ;;
+            *)
+                if [ -z "$name" ]; then name=$1
+                elif [ -z "$bare" ]; then bare=$1
+                else die "one folder only, got ${bare} and $1; arguments for the agent go after --"
+                fi ;;
         esac
         shift
     done
     [ -n "$name" ] || die "$AGENT_RUN_USAGE"
     agent_row "$name" || die "unknown agent: ${name} (known: $(agent_names))"
+    if [ -n "$bare" ]; then
+        [ "$tmux" = 1 ] || die "a folder goes with --tmux <session>, got ${bare}; arguments for the agent go after --"
+        [ -z "$dir" ] || die "two folders, --dir ${dir} and ${bare}"
+        [ -d "$bare" ] || die "not a folder: ${bare}; arguments for the agent go after --"
+        dir=$bare
+    fi
     if [ "$tmux" = 1 ]; then
         agent_tmux "$tname" "$name" "$mode" "$fresh" "$dir" "$worktree" "$@"
         return
@@ -3912,7 +3924,7 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      through pulsar agent run (default on)
        pulsar agent run <name> [--sandbox|--no-sandbox] [-- args]
                                      start an agent (its command does this for you)
-       pulsar agent run <name> --tmux <session> [--new] [--dir <path>] [--worktree] [-- args]
+       pulsar agent run <name> --tmux <session> [--new] [--dir <path> | <path>] [--worktree] [-- args]
                                      attach to that tmux session, or start the agent
                                      in it. One server for agents (-L pulsar-agents),
                                      on the host; a claude session that died comes
