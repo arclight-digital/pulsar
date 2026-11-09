@@ -182,7 +182,15 @@ SAMPLE = GATE / "sample.py"
 TOP = 32
 APPS = {
     "org.gnome.TextEditor": (["gnome-text-editor", "--standalone", str(SAMPLE)], (0, 0, .43, .5)),
-    "org.gnome.Ptyxis": (["ptyxis", "--new-window", "--", "btop"], (0, .5, .43, .5)),
+    # btop starts once its window sits in its cell (BTOP_GO): it times its
+    # redraw after a resize with the wall clock, which FAKE_CLOCK slows
+    # twentyfold, so a btop resized after it started drew at the launch
+    # size and caught up some 40 s later, after the picture. The wait polls
+    # with a sleep outside libfaketime, which would slow it the same way;
+    # the title is set by hand, or the window would read "sh".
+    "org.gnome.Ptyxis": (["ptyxis", "--new-window", "--", "sh", "-c",
+                          'printf "\\033]0;btop\\007"; while [ ! -e "$1" ]; do env -u LD_PRELOAD sleep 0.2; done; exec btop', "sh", "/tmp/gate-btop-go"],
+                         (0, .5, .43, .5)),
     "org.gnome.Adwaita1.Demo": (["adwaita-1-demo"], (.43, 0, .57, .5)),
     "gtk3-widget-factory": (["gtk3-widget-factory"], (.43, .5, .57, .5)),
 }
@@ -197,8 +205,12 @@ def cell(cls):
     return round(x * lw) + 5, TOP + round(y * ah) + 5, round(w * lw) - 10, round(h * ah) - 10
 
 
+BTOP_GO = pathlib.Path("/tmp/gate-btop-go")
+
+
 def launch_apps():
     kill_apps()
+    BTOP_GO.unlink(missing_ok=True)
     for cls, (argv, _) in APPS.items():
         procs.append(subprocess.Popen(argv, env=ENV, stdout=LOG, stderr=LOG, cwd=str(GATE)))
     for _ in range(60):
@@ -218,6 +230,7 @@ def launch_apps():
         if placed == str(len(APPS)):
             break
         time.sleep(1.0)
+    BTOP_GO.touch()
     time.sleep(1.0)
 
 
