@@ -1649,25 +1649,27 @@ function holdBack([lx, ly], rect, r) {
     return [lx, ly];
 }
 
-// The light comes from one of eight places, whatever opened the surface:
+// The light comes from one of six places, whatever opened the surface:
 // the left end, the middle or the right end of its top edge or of its
-// bottom edge, or the whole of either edge at once. A source picks the edge
-// (whether it is above or below the surface's middle) and the third it is
-// over: a menu under a button on the left of the bar is lit top left, the
-// date menu top center, Quick Settings top right, the OSDs and the
-// screenshot panel bottom center. With no source the whole top edge is lit
-// (the switchers, the dialogs, and banners, which come down from the top
-// of the screen); opts.full 'bottom' lights the whole bottom edge (the
-// dash, a shelf on the bottom of the screen). Returns the spot, in the
-// light actor's coordinates (the surface is [LIGHT_PAD, LIGHT_PAD, w, h]),
-// and whether it is a line along that edge.
+// bottom edge. A source picks the edge (whether it is above or below the
+// surface's middle) and the third it is over: a menu under a button on the
+// left of the bar is lit top left, the date menu top center, Quick Settings
+// top right, the OSDs and the screenshot panel bottom center. With no
+// source the top edge is lit at its center (the switchers, the dialogs, and
+// banners, which come down from the top of the screen); opts.full 'bottom'
+// lights the bottom edge at its center (the dash, a shelf on the bottom of
+// the screen). A whole edge lit at once read as a hard bar (Nick,
+// 2026-11-10): every light is a spot. Returns the spot, in the light
+// actor's coordinates (the surface is [LIGHT_PAD, LIGHT_PAD, w, h]), and
+// whether it is a line along that edge (never, now; the shader keeps the
+// line form).
 function lightSpot(src, w, h, r, full) {
     const [x0, y0] = [LIGHT_PAD, LIGHT_PAD];
     const top = y0 - LIGHT_MIN_DISTANCE, bottom = y0 + h + LIGHT_MIN_DISTANCE;
     if (full === 'bottom')
-        return [[x0 + w / 2, bottom], true];
+        return [[x0 + w / 2, bottom], false];
     if (!src)
-        return [[x0 + w / 2, top], true];
+        return [[x0 + w / 2, top], false];
     const f = (src[0] - x0) / w;
     const x = f < 1 / 3 ? x0 + r : f > 2 / 3 ? x0 + w - r : x0 + w / 2;
     return [[x, src[1] > y0 + h / 2 ? bottom : top], false];
@@ -3716,7 +3718,7 @@ export class Glass {
         });
     }
 
-    // The dash, lit along the whole bottom edge it sits on. Its host is the
+    // The dash, lit at the center of the bottom edge it sits on. Its host is the
     // overview's controls, whose layout places only the children it knows:
     // the mirrors beside the dash are placed after it, where they stand.
     _trackDash() {
