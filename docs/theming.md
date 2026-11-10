@@ -137,27 +137,27 @@ and only apps that exited are relaunched. Don't ask again sets
 
 ## Wallpapers
 
-Pulsar has eight shader looks, one file each in `assets/shaders/looks/`
-(`looks.json` gives their order, which is `u_look`). Every classic theme
+Pulsar has eight shader looks, one `.glsl` file each in
+`assets/shaders/looks/`. `looks.json` there lists them in `u_look` order; the
+folder also holds `shared.glsl`, which every look uses, and `warp.glsl`, an
+alternative that doesn't ship. Every classic theme
 ships two of them rendered in its palette from `assets/shaders/theme.frag`,
 dark and light, for `bg-next`; the site's hero can show any of the eight in
-any theme. Each look has its own light:
+any theme. What each one draws:
 
-- nebula: a domain-warped field; ion-trail filaments on its isolines, a faint
-  lit circuit lattice. It was called silk until 2026-09-29: a render table
-  that still says `look = "silk"` renders it, and the old wallpaper paths
+- nebula: a warped noise field with stars in its dark parts and thin glowing
+  lines along its contours, over a faint grid of circuit traces. It was
+  called silk until 2026-09-29: a render table that still says
+  `look = "silk"` renders it, and the old wallpaper paths
   (`pulsar-silk-*.png`, `backgrounds/silk-*.jxl`) stay as links;
-- leak: soft beams with prismatic edges; god-rays, drifting motes, an
-  anamorphic streak;
-- satin: a satin sheet piled up, lit with an anisotropic sheen along the
-  threads;
-- holo: iridescent foil; thin-film fringes, a diffraction sheen, one faint
-  scan band;
-- relief: a topographic map lit by one traveling light, the index lines
-  glowing faintly;
-- tide: caustic light on a pool floor, each filament splitting a little into
-  color;
-- orbit: a ringed planet's limb catching a low sun, ring particles glinting;
+- leak: smooth beams of light whose edges split into color, with rays and
+  specks of dust in them;
+- satin: a pile of satin cloth with a sheen along its folds;
+- holo: holographic foil in three columns of color, with rainbow fringes;
+- relief: the contour lines of a topographic map, lit by one moving light;
+- tide: the light patterns on the floor of a pool, each line split a little
+  into color;
+- orbit: the dark edge of a ringed planet, lit from behind by a low sun;
 - beacon: a pulsar's two beams sweeping through dust.
 
 A look a theme has no render table for takes its colors and light
@@ -167,11 +167,15 @@ Highlights roll off
 through a soft knee below the theme's highlight color; no scanline raster
 (it moirés when GNOME scales). `glow`, `signal`, `web` and `grain` tune each
 render; the phosphor themes run stronger. The brand wallpapers and the
-site's live hero sky compile `assets/shaders/pulsar.frag` (GLSL ES 1.0).
+site's live hero sky both use `assets/shaders/pulsar.frag`, which is written
+GLSL 1.20-style. The wallpaper renderer compiles it under a `#version 330`
+preamble, and the site runs it live in WebGL 1.
 
 `scripts/build.sh` renders PNGs on the builder; the Containerfile converts
-them to JPEG XL at q99 (~1.2 MB each; lower qualities lose the film grain
-that also dithers dark gradients). Both shaders end with a ±1-step
+them to JPEG XL at q99. Measured on Phosphor's Nebula, q99 is about 1.2 MB
+against a 3.7 MB PNG; q97 kept about 60% of the film grain in the dark
+gradients, and that grain is also their dither, so they banded. q99 keeps
+about 90%. Both shaders end with a ±1-step
 triangular dither. A `--no-wallpapers` build ships none, and every theme
 falls back to the brand pair.
 
@@ -183,15 +187,14 @@ sheets (regenerate with `scripts/render-theme-wallpapers.py --sheet`).
 The Shell extension's effects, each a setting in the Extensions app and on
 the Appearance page of Pulsar Settings (the gear in Themes opens it;
 `org.gnome.shell.extensions.pulsar-theme`), where Reset restores the
-defaults. They add material and light only; GNOME's layout, radii, type and
-timing are unchanged. All are on by default except `glass-off-gaming`.
+defaults. All are on by default except `glass-off-gaming`.
 
 | Key | What it does |
 |---|---|
 | `glass` | Menus, the top bar, OSDs and notification banners go translucent over a live blur of what's beneath, with a soft drop shadow. The dash gets the light and shadow without blur. |
 | `glass-tint` | A slider from clear (0) to fully tinted (1), default 0.5: how far the color of what's behind pulls the glass's color, from twice the default pull at 0 to none at 1 (the theme's color alone). Every blur takes it at once. |
 | `window-glass` | Every GTK 4 window's ground is the palette's background at 80% (alpha in `gtk.css`), over a blur the extension draws inside each GTK window; Ptyxis's profile opacity goes to 0.8, so the terminal matches (unless you set your own `opacity`). Header bars, sidebars and views paint nothing over that ground, so a window is one level. Beside a sidebar (Files, Settings) the content pane is solid; in Text Editor the document is glass and the header and tab bars are solid. Popovers' ground is 50%, floating dialogs 80% in the popover color; in-window sheets and toasts are opaque, and fullscreen windows are solid. Cards go a step lighter with a hairline edge. The GTK half applies to apps opened after a change; the terminal changes live. Windows open when it's switched off keep their blur until closed. Needs `glass`. |
-| `lighting` | The button that opened a menu glows; a shader lights the rim facing it, with spill, an inner glint, scatter and grain. OSDs are lit from the bottom, banners from the top. Low battery warms the edge (orange); critical battery or a critical banner turns it red. Phosphor and Amber (`shell_glow` in theme.toml) also glow the clock and headings. |
+| `lighting` | The button that opened a menu glows, and the menu's edge is brighter on the side facing that button, with a little light spilling past it. OSDs are lit from the bottom, banners from the top. Low battery warms the edge (orange); critical battery or a critical banner turns it red. Phosphor, Amber and Synthwave '84 (`shell_glow` in theme.toml) also glow the clock and headings. |
 | `power-on` | A surface's rim traces out from the light as it appears (instant with animations off). Needs `lighting`. |
 | `glow` | Accent-filled things glow softly: a checked quick toggle (a split one as one pill), today in the calendar, the default button, switches, checked boxes, the active workspace, slider fills. Reach and strength scale with each element's size (wider and stronger on big pills, tight and faint on bars); weaker on light schemes. In apps opened after a change: suggested buttons, switches, checks and radios (GTK4 and GTK3), plus scale fills and progress bars (GTK4 only). Nothing inside list cells, nothing disabled. |
 | `focus-brackets` | Four corner brackets follow the keyboard-focused control, beside the stock focus ring (not for pointer hover). |
