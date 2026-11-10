@@ -370,7 +370,7 @@ check_nvidia() {
         # is boot-tested on. Only a GPU that is there and unserved is a fail.
         if ! nvidia_gpu_present; then
             record nvidia warn "NVIDIA image, but this machine has no NVIDIA GPU" \
-                   "the vanilla image fits it: bootc switch ghcr.io/arclight-digital/pulsar:latest"
+                   "the vanilla image fits it: sudo bootc switch ghcr.io/arclight-digital/pulsar:latest"
             return
         fi
         record nvidia fail "NVIDIA image, but no nvidia module is loaded" \
@@ -731,7 +731,7 @@ check_disk() {
     # A bootc system needs room to stage a whole new image. Under ~10GB free
     # an upgrade starts failing in ways that look like network errors.
     if [ "$pct" -ge 90 ]; then
-        record disk fail "${root} is ${pct}% full (${avail} free)" "staging an update needs about 10 GB free"
+        record disk fail "${root} is ${pct}% full (${avail} free)" "fails at 90% used: staging an update needs room for a whole new image"
     elif [ "$pct" -ge 80 ]; then
         record disk warn "${root} is ${pct}% full (${avail} free)"
     else
@@ -2135,7 +2135,9 @@ agent_remove() {
     unlink_agent_context
     unlink_agent_skills
     unregister_mcp
+    local box=""
     if have toolbox && box_exists; then
+        box=", and the ${AGENT_BOX} toolbox (toolbox rm -f ${AGENT_BOX})"
         case "$A_METHOD" in
             npm) in_box npm uninstall -g --prefix "$AGENT_PREFIX" "$A_PKG" || true ;;
             uv)  in_box env "UV_TOOL_DIR=${AGENT_PREFIX}/uv-tools" \
@@ -2143,12 +2145,11 @@ agent_remove() {
                      uv tool uninstall "$A_PKG" || true ;;
         esac
     else
-        printf 'toolbox %s is gone; the package files, if any, are under %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
+        printf 'no %s toolbox here; the package files, if any, are under %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
     fi
     # Said out loud, because "removed" would otherwise read as "gone": the
     # agent's logins, history and settings are the user's data, not ours.
-    printf "left in place: the agent's own config and credentials in \$HOME, and the %s toolbox (toolbox rm -f %s)\n" \
-        "$AGENT_BOX" "$AGENT_BOX"
+    printf "left in place: the agent's own config and credentials in \$HOME%s\n" "$box"
 }
 
 # ---------------------------------------------------------------------------
@@ -3820,7 +3821,7 @@ agent_sessions() {
                 if git -C "$repo" worktree remove "$dir" 2>/dev/null; then
                     printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2"
                 else
-                    printf 'kept the worktree %s: it has changes git has not committed (git worktree remove --force %s drops them)\n' \
+                    printf 'kept the worktree %s: git would not remove it (git worktree remove %s says why)\n' \
                         "${dir/#"$HOME"/\~}" "$dir"
                 fi
             fi
@@ -4205,7 +4206,7 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      the tmux sessions; --kill ends one (attach
                                      brings it back). --forget deletes an ended
                                      one's record and undo snapshots, and its
-                                     worktree unless it has uncommitted changes.
+                                     worktree if git removes it without --force.
                                      The conversation stays in the agent's history
        pulsar agent model [on|off] [--model <hf-repo[:quant]>] [--at-login] [--purge]
                                      a local model server (llama.cpp, rootless podman,
@@ -4452,7 +4453,8 @@ SETUP_HELP='usage: pulsar setup <recipe>
 
   apps        install the default Flatpaks (root)
   devbox      create the default distrobox, pulsar-dev
-  gamemode    add every user account to the gamemode group, for renice (root)
+  gamemode    add every human account (uid 1000 and up, with a login shell) to the
+              gamemode group, for renice (root)
   quadlet     copy the example quadlet to ~/.config/containers/systemd; enable podman auto-update
   gamescale   Steam and Faugus get gg, ggm and gamescale from the image. Run bare, this points an
               older Steam setup at the copies in the image and removes the ones Pulsar put in
@@ -6220,8 +6222,9 @@ usage: sudo pulsar checkpoint [--no-home] [note]
        sudo pulsar checkpoint drop <id>    delete it, unpinning what it pinned
 
 Take one before handing the machine to an agent. "Your settings" are the
-dotfiles in your home folder, ~/.config (without caches), ~/.local/bin and
-~/.ssh, for whoever ran sudo. Settings over 512 MB are skipped. Documents,
+dotfiles in your home folder, ~/.config (minus folders with "cache" in the
+name, Service Worker, Crashpad and blob_storage), ~/.local/bin and ~/.ssh,
+for whoever ran sudo. Settings over 512 MB are skipped. Documents,
 projects, ~/.local/share, /var and Flatpak data are not included. restore
 does not reboot and does not delete files added since (it lists them).
 EOF
