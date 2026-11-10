@@ -178,7 +178,8 @@ check_ntsync() {
     elif grep -q '^ntsync ' /proc/modules 2>/dev/null; then
         record ntsync warn "ntsync module loaded but /dev/ntsync is missing" "check 70-ntsync.rules"
     else
-        record ntsync warn "ntsync not available" "Proton falls back to esync/fsync"
+        # TODO(copy): what does a game lose without ntsync (Proton's fallback)?
+        record ntsync warn "ntsync not available"
     fi
 }
 
@@ -237,8 +238,7 @@ check_gamemode() {
         return
     fi
 
-    record gamemode ok "${user} is in ${group}; renice=${renice} available" \
-           "igpu governor demotion disabled (igpu_power_threshold=-1)"
+    record gamemode ok "${user} is in ${group}; renice=${renice} available"
 }
 
 check_mangohud() {
@@ -373,8 +373,10 @@ check_nvidia() {
                    "the vanilla image fits it: sudo bootc switch ghcr.io/arclight-digital/pulsar:latest"
             return
         fi
+        # TODO(copy): what usually keeps the module from loading here (Secure
+        # Boot without the enrolled key?), and what fixes it?
         record nvidia fail "NVIDIA image, but no nvidia module is loaded" \
-               "Secure Boot may have rejected an unsigned module: dmesg | grep -i taint"
+               "check the kernel log: dmesg | grep -i nvidia"
         return
     fi
     local running expected
