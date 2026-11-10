@@ -121,14 +121,34 @@ PY
     [ "$(py 'm.what_happens("erase", D["/dev/nvme1n1"], {"windows": True})')" = "None" ]
 }
 
-@test "beside a Fedora-family Linux the ready and done pages say how to start it: the startup menu, or plainly that it can't be" {
+@test "beside a Fedora-family Linux the ready and done pages say how to start it from the startup menu" {
     local menu='"fedora_linux": {"menu": True, "title": "Fedora Linux 42 (Workstation Edition)"}'
     [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], {'"$menu"', "other_loaders": []})')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it. To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu." ]
     # the done event says the same, from what the install made
     [ "$(py 'm.startup_notes({"linux_entry": "Fedora Linux 42 (Workstation Edition)", '"$menu"', "windows_entry": False})')" = "['To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu.']" ]
-    # its /boot wasn't found: no entry, and the page says what that means
-    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], {"fedora_linux": {"menu": False, "why": "no grub2/grub.cfg"}})')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it. The installer couldn't find the other Linux's boot configuration, so it won't be in the startup menu. Its own boot entry will start Pulsar instead, because both use EFI/fedora." ]
-    [ "$(py 'len(m.startup_notes({"fedora_linux": {"menu": False}, "linux_entry": None}))')" = 1 ]
+}
+
+@test "a Fedora-family Linux whose startup files can't be found: the method page offers only Erase, and says why" {
+    # the backend's alongside --plan-only refused it, with its reason
+    run py 'm.alongside_refusal([{"stage": "check"}, {"stage": "failed", "error": "...", "disk": "unchanged", "reason": "fedora_linux"}])'
+    [ "$output" = "The other Linux's startup files couldn't be found, so installing beside it would leave it unable to start." ]
+    # any other planning failure isn't a reason here (it is said after the passphrase page, as before)
+    [ "$(py 'm.alongside_refusal([{"stage": "failed", "error": "repart: no space", "reason": None}])')" = "None" ]
+    [ "$(py 'm.alongside_refusal([{"stage": "check"}, {"stage": "plan", "plan": []}])')" = "None" ]
+    # the disk, with that answer: alongside off with the sentence, erase still offered
+    run py '(lambda d: m.options(d))(dict(D["/dev/nvme0n1"], free=100 * 10**9, alongside_refused=m.alongside_refusal([{"stage": "failed", "reason": "fedora_linux"}])))'
+    [ "$output" = "{'alongside': (False, \"The other Linux's startup files couldn't be found, so installing beside it would leave it unable to start.\"), 'erase': (True, 'Deletes everything on this disk, including Linux.')}" ]
+    # picking a disk that lsblk says can take Pulsar alongside asks the backend first
+    run python3 - "$APP" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+pick = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "pick_disk")
+checked = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "checked")
+flat = lambda n: "".join(ast.unparse(n).split())
+print("self.run(backend_argv('alongside',d,'--plan-only')" in flat(pick),
+      "d['alongside_refused']=alongside_refusal(events)" in flat(checked))
+PY
+    [ "$output" = "True True" ]
 }
 
 @test "beside a Linux with its own boot loader the pages point to the computer's own boot menu, not Pulsar's" {
@@ -139,6 +159,11 @@ PY
     [ "$(py 'm.startup_notes({"windows_entry": True, "other_loaders": ["ubuntu"]})[0]')" = "To start Windows, choose it in the startup menu." ]
     # nothing else on the ESP: nothing to say
     [ "$(py 'm.startup_notes({"windows_entry": False, "linux_entry": None, "fedora_linux": None, "other_loaders": []})')" = "[]" ]
+}
+
+@test "no open copy questions are left in the app" {
+    # the owner answered them all (2026-11-10); the last was the 1-second startup menu
+    ! grep -n 'TODO(copy)' "$APP" || false
 }
 
 @test "the erase page names partitions in words" {
@@ -318,7 +343,8 @@ PY
 }
 
 @test "the encryption switch starts on, and the app starts encrypted" {
-    grep -q 'row(Adw.SwitchRow, title="Encrypt the disk", subtitle="Recommended", active=True)' "$APP"
+    grep -q 'row(Adw.SwitchRow, title="Encrypt the disk", active=True,$' "$APP"
+    grep -qx ' *subtitle="Recommended: protects your files if the computer is lost or stolen")' "$APP"
     grep -q 'self.encrypt = True' "$APP"
 }
 
@@ -338,9 +364,12 @@ PY
 }
 
 @test "the ready page's red panel says what the erase deletes, by name" {
-    [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, will be deleted when you press Erase and Install. It can't be recovered." ]
-    [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it will be deleted when you press Erase and Install. It can't be recovered." ]
+    [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, will be deleted when you press Erase and Install. It can't be undone." ]
+    [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it will be deleted when you press Erase and Install. It can't be undone." ]
     [ "$(py 'm.options(D["/dev/nvme1n1"])["erase"][1]')" = "Deletes everything on this disk, including Windows." ]
+    # the erase page says it the same way
+    grep -qF '"The whole disk will be formatted for Pulsar, and that can'"'"'t be undone. These partitions "' "$APP"
+    ! grep -qF "can't be recovered:" "$APP" || false
 }
 
 @test "a Ventoy stick running the installer is never offered: its live label and mount are a level down" {

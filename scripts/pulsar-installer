@@ -133,11 +133,9 @@ def install_button(mode, d):
 def erase_warning(d):
     """The ready page's red panel: what an erase deletes, by name."""
     what = f"Everything on it, including {d['holds']}," if d["holds"] in ("Windows", "Linux") else "Everything on it"
-    # TODO(copy): "can't be recovered" is kept as the safe side of the warning, but the repo
-    # doesn't back it: repart writes a new GPT and formats, and discards (its default) only
-    # where the disk supports it, so on a spinning disk old blocks survive until overwritten.
-    # Keep it, or say "The installer can't undo this."?
-    return f"{what} will be deleted when you press Erase and Install. It can't be recovered."
+    # "can't be undone", not "can't be recovered": repart writes a new GPT and formats, and
+    # discards only where the disk supports it, so old blocks may survive on some disks
+    return f"{what} will be deleted when you press Erase and Install. It can't be undone."
 
 
 def needs_erase_confirm(d):
@@ -223,20 +221,17 @@ def startup_notes(boot):
     Windows, and a Fedora-family Linux whose /boot it found, get an entry in
     Pulsar's startup menu. A Linux with its own boot loader (Ubuntu, Debian,
     openSUSE) keeps its firmware entry, which the computer's own boot menu
-    starts: Pulsar's GRUB can't start it under Secure Boot. A Fedora-family
-    Linux whose /boot wasn't found has no way in, and the page says so."""
+    starts: Pulsar's GRUB can't start it under Secure Boot. (A Fedora-family
+    Linux whose /boot wasn't found is never installed beside: the backend
+    refuses it, alongside_refusal.)"""
     notes = []
     if boot.get("windows") or boot.get("windows_entry"):
-        # TODO(copy): the startup menu shows for 1 s (timeout=1 in bootupd's grub-static-pre.cfg;
-        # Pulsar doesn't override it). Say how to reach it, e.g. hold an arrow key?
+        # the startup menu shows for 5 s whenever another system is beside Pulsar
+        # (pulsar-install-system menu_timeout)
         notes.append("To start Windows, choose it in the startup menu.")
     fedora = boot.get("fedora_linux")
     if fedora and fedora.get("menu"):
         notes.append(f"To start {fedora['title']}, choose it in the startup menu.")
-    elif fedora:
-        notes.append("The installer couldn't find the other Linux's boot configuration, so it won't be in "
-                     "the startup menu. Its own boot entry will start Pulsar instead, because both use "
-                     "EFI/fedora.")
     names = []
     for d in boot.get("other_loaders") or []:
         name = LOADER_NAMES.get(d.lower(), "the other Linux")
@@ -246,6 +241,22 @@ def startup_notes(boot):
         notes.append(f"To start {' or '.join(names)}, choose it in the computer's own boot menu. "
                      "The key that opens it depends on the computer's maker.")
     return notes
+
+
+# Why installing alongside is refused, by the backend's failed event's reason,
+# for the method page: what lsblk can't see, the backend can (it reads the
+# shared ESP before anything is written)
+ALONGSIDE_REFUSALS = {"fedora_linux": "The other Linux's startup files couldn't be found, so installing beside it "
+                                      "would leave it unable to start."}
+
+
+def alongside_refusal(events):
+    """The method page's reason alongside is refused, from the backend's
+    alongside --plan-only run, or None. Other planning failures aren't
+    known yet at this point and are said where they always were, after the
+    passphrase page."""
+    failed = next((e for e in events if e.get("stage") == "failed"), None)
+    return ALONGSIDE_REFUSALS.get((failed or {}).get("reason"))
 
 
 def what_happens(mode, d, boot):
@@ -410,6 +421,9 @@ def options(d):
                  if not d["empty"] else "The disk is empty.")
     if d["empty"]:
         along = (False, "There is nothing on this disk to keep.")
+    elif d.get("alongside_refused"):
+        # the backend's word, from reading the shared ESP (alongside_refusal)
+        along = (False, d["alongside_refused"])
     elif d["bitlocker"]:
         along = (False, "BitLocker is on. Turn it off in Windows first, then start the installer again.")
     elif not d["esp"]:
@@ -775,8 +789,25 @@ def main():
             if skips_method(d):
                 self.mode = "erase"
                 self.nav.push(self.passphrase_page())
+            elif options(d)["alongside"][0] and "alongside_refused" not in d:
+                # whether installing beside what is there would leave it unable
+                # to start is on the shared ESP, which only the backend can read
+                self.nav.push(self.checking_page())
+                self.run(backend_argv("alongside", d, "--plan-only"), lambda events, _code: self.checked(d, events))
             else:
                 self.nav.push(self.method_page(d))
+
+        def checked(self, d, events):
+            self.nav.pop()
+            d["alongside_refused"] = alongside_refusal(events)
+            self.nav.push(self.method_page(d))
+
+        def checking_page(self):
+            spin = Adw.Spinner(width_request=48, height_request=48, halign=Gtk.Align.CENTER)
+            page = nav_page("Checking", "checking", column(spin, label("Checking the disk…", ["in-lede"])))
+            # its caller pops this page itself: a Back here would pop the one under it
+            page.set_can_pop(False)
+            return page
 
         def method_page(self, d):
             opts = options(d)
@@ -818,16 +849,16 @@ def main():
                 label(f"Erase {d['name']}?", ["in-title"]),
                 label(f"{identity(d)} · {d['path']}", ["in-note"]),
                 Gtk.Box(height_request=4),
-                label("The whole disk will be formatted for Pulsar. These partitions and everything in them "
-                      "will be deleted, and can't be recovered:", ["in-lede"]),
+                label("The whole disk will be formatted for Pulsar, and that can't be undone. These partitions "
+                      "and everything in them will be deleted:", ["in-lede"]),
                 parts, sure,
                 label("Nothing is deleted until you press Erase and Install on the last step.", ["in-note"])),
                 back=back_button(self.nav), nxt=go)
 
         def passphrase_page(self):
             self.encrypt = True
-            # TODO(copy): "Recommended" gives no reason. Should it say why (and for whom), or go?
-            switch = row(Adw.SwitchRow, title="Encrypt the disk", subtitle="Recommended", active=True)
+            switch = row(Adw.SwitchRow, title="Encrypt the disk", active=True,
+                         subtitle="Recommended: protects your files if the computer is lost or stolen")
             self.encrypt_row = switch
             choice = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             choice.append(switch)
@@ -846,9 +877,6 @@ def main():
                 srcs = []
             self.layout, self.variant = current_layout(srcs)
             self.keymap = console_keymap(self.layout, self.variant)
-            # TODO(copy): say that the passphrase prompt at startup uses this layout? Only the
-            # karg is tested (tests/install-disk.bats); nothing boots a non-US keymap through
-            # the graphical prompt, and console_keymap falls back to the XKB code itself.
             kbd = label(f"Keyboard layout: {layout_name(self.layout, self.variant)}.", ["in-note"])
             nxt = Gtk.Button(label="Next", css_classes=["suggested-action", "in-pill"], sensitive=False)
 
@@ -882,11 +910,7 @@ def main():
 
         def plan(self, passphrase):
             self.passphrase = passphrase
-            spin = Adw.Spinner(width_request=48, height_request=48, halign=Gtk.Align.CENTER)
-            page = nav_page("Checking", "checking", column(spin, label("Checking the disk…", ["in-lede"])))
-            # planned() pops this page itself: a Back here would pop the one under it
-            page.set_can_pop(False)
-            self.nav.push(page)
+            self.nav.push(self.checking_page())
             self.run(self.backend("--plan-only", *([] if self.encrypt else ["--no-encrypt"])), self.planned)
 
         def planned(self, events, code):
@@ -1008,9 +1032,6 @@ def main():
             extra = [label(note, ["in-note"]) for note in startup_notes(done)]
             page = nav_page("Done", "done", column(
                 mark(120), label("Pulsar is installed", ["in-display"]),
-                # TODO(copy): when is it safe to take the USB stick out? The repo doesn't say.
-                # Pulsar's firmware entry is first after the install (tests/installer-vm/README.md),
-                # so a stick left in shouldn't start the installer again.
                 label("Restart the computer and remove the USB stick.", ["in-lede"]),
                 label(first_start(self.encrypt), ["in-note"]),
                 *extra, Gtk.Box(height_request=8), restart))
