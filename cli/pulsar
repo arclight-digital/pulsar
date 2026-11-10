@@ -1640,9 +1640,9 @@ flatpak_gl_notify() {
     done
     [ "$fresh" = 1 ] || return 0
     if have notify-send; then
-        local body="It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it fully, not just its window."
+        local body="It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it from its menu (Steam: Steam > Exit)."
         case "$FGL_APPS" in *", "*)
-            body="They started without the NVIDIA ${FGL_DRIVER} driver, so their games get the iGPU and can show a black window. Quit them fully, not just their windows." ;;
+            body="They started without the NVIDIA ${FGL_DRIVER} driver, so their games get the iGPU and can show a black window. Quit each from its menu (Steam: Steam > Exit)." ;;
         esac
         notify-send --app-name="Pulsar" --icon=dialog-warning \
             "Restart ${FGL_APPS} to use the NVIDIA GPU" "$body" || true
@@ -4971,7 +4971,7 @@ crashes_notify() {
 crash_notify_one() {
     local pid=$1 name=$2 exe=${3:-$2} title body
     title="${name} crashed"
-    body="${A_DESC%% (*} can read the stack trace and the logs, and help you fix or report it. Nothing is sent to it unless you click."
+    body="Ask ${A_DESC%% (*} opens a terminal where ${A_DESC%% (*} reads a redacted report with the stack trace and the program's log lines."
     have notify-send || return 0
     # The click has to outlive this oneshot unit, so the waiting notification
     # runs as a transient unit of its own. Without systemd-run it still says
@@ -5088,8 +5088,9 @@ xid_meaning() {
         45)    printf 'skip\t' ;;
         79)    printf 'gpu\tThe NVIDIA GPU stopped answering the system' ;;
         62|119|120) printf "gpu\\tThe NVIDIA GPU's firmware stopped responding" ;;
-        154)   printf 'gpu\tThe NVIDIA driver says the GPU needs a reset' ;;
-        *)     printf 'game\tone Pulsar has no description for (see docs.nvidia.com/deploy/xid-errors)' ;;
+        # 154 carries the action the driver wants (a reset is one of several)
+        154)   printf 'gpu\tThe NVIDIA driver says the GPU needs recovery' ;;
+        *)     printf 'game\tan error Pulsar has no description for (see docs.nvidia.com/deploy/xid-errors)' ;;
     esac
 }
 
@@ -5138,7 +5139,7 @@ gpu_fault_who() {
     printf '%s\t%s\n' "${name//\//-}" "$game"
 }
 
-GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS and frame generation in its settings (try FSR or TSR) and undo any GPU overclock."
+GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS in its settings."
 
 # The advice, for the Xids the one known case ties to DLSS: Hell Is Us faulted
 # with Xid 13 and Xid 109 until DLSS was off (see above). Nothing for others.
@@ -5194,7 +5195,9 @@ gpu_fault_notify_one() {
     have notify-send || return 0
     if [ "$kind" = gpu ]; then
         title=$what
-        body="Xid ${xid}. Save your work: apps using the GPU may not recover until you restart. Details: pulsar doctor gpu-faults"
+        # TODO(copy): after a GPU-level Xid (79, 62, 119, 120, 154), what should
+        # the user do, and do apps on the GPU recover without a restart?
+        body="Xid ${xid}. Details: pulsar doctor gpu-faults"
         q="The NVIDIA driver logged Xid ${xid} (${what}). Explain what it means on this machine and whether it points to the driver, the GPU or its power, and what I should do."
     elif [ -z "$name" ]; then
         # The driver did not log which program: say what happened, name none.
