@@ -265,8 +265,10 @@ PY
         grep -q "\"${k}\"" "${REPO}/scripts/pulsar-settings"
         grep -q "'${k}'" "${ext}/glass.js"
     done
-    for words in 'Disable glass when gaming' 'While a game is running' 'Disable glass in Power Saver' \
-                 'While the power mode is Power Saver'; do
+    for words in 'Disable glass when gaming' \
+                 'Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun); app windows stay glass' \
+                 'Disable glass in Power Saver' \
+                 'Glass and lighting turn off while the power mode is Power Saver; app windows stay glass'; do
         grep -qF "'${words}'" "${ext}/prefs.js"
         grep -qF "\"${words}\"" "${REPO}/scripts/pulsar-settings"
     done
