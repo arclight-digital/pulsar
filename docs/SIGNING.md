@@ -7,8 +7,9 @@ Pulsar needs two unrelated signatures:
 | **kernel module** | `nvidia.ko` bytes | the MOK key shipped as `MOK.der` | during the image build |
 | **image** | a published image digest; an ISO's checksum manifest | the release key (cosign) | on the build host, after the boot gate |
 
-Only the first is Secure Boot: get it wrong and machines black-screen, and its
-key can't be casually regenerated.
+Only the module signature involves Secure Boot. With Secure Boot on, a module
+signed by a key the machine hasn't enrolled doesn't load, and replacing that
+key means re-enrolling every machine (see "Rotating the module key").
 
 Both private keys live only on **halo** (the signing host, in
 `arclight-infra`). The builder holds a bearer token and asks halo's signer over
@@ -17,9 +18,10 @@ module-signing client is `scripts/sign-file-oracle`.
 
 ## Why the builder never holds the module key
 
-A compromised builder is rebuilt from this repo. A compromised module key means
-a new `MOK.der` and re-enrolling **every machine, physically, at boot** through
-MokManager. An ephemeral builder is the wrong place for that key.
+Builders are short-lived VMs that download packages and run the
+Containerfile, and one is rebuilt from this repo if it's compromised. If the
+module key leaked from one, replacing it would mean a new `MOK.der` and
+re-enrolling **every machine, at its console, at boot** through MokManager.
 
 ## API
 
@@ -34,14 +36,14 @@ X-Pulsar-Hash-Algo: sha256          # sha256 | sha384 | sha512
 X-Pulsar-Module: nvidia.ko          # advisory, for the audit log
 <body: the uncompressed .ko>
 
-200 application/octet-stream        # detached DER signature (~408 bytes)
+200 application/octet-stream        # detached DER signature
 401                                 # bad or missing token
 413                                 # body over the limit
 400                                 # not an ELF object, or unsupported hash
 ```
 
 - Server: `sign-file -d <hash> <key> <cert> <module>` writes `<module>.p7s`;
-  the client attaches it with `sign-file -s`. No custom crypto on either side.
+  the client attaches it with `sign-file -s`.
 - `sign-file` comes from `kernel-devel` (any version) on halo.
 - Reject bodies not starting with `\x7fELF`.
 
@@ -69,15 +71,34 @@ CA issues for).
   base image's CA bundle. The symptom is `curl: (60) ... self-signed
   certificate` at phase 3. `build.sh` refuses up front if the URL is
   `https:` and no readable CA file was given.
-- Never `curl -k`: the connection carries the token that buys signatures. Use
-  a plain-http test signer locally instead.
+- Never `curl -k`: the bearer token travels on that connection, and whoever
+  reads it can get modules signed until it expires or is revoked. Use a
+  plain-http test signer locally instead.
 
-### `POST /sign` and `GET /healthz`
+### `POST /sign-blob`
 
-Image signing over a digest, and liveness. Specified by `arclight-infra`; the
-image build doesn't call them.
+Signs a small file with the release key. `scripts/build-iso.sh`
+(`sign_manifest`) sends each ISO's checksum manifest:
 
-## Two easy mistakes
+```
+Authorization: Bearer <token>
+X-Pulsar-Name: <file name>
+<body: the file's bytes>
+
+200 application/json                # {"signature": "<base64>"}
+```
+
+`build-iso.sh` then verifies the signature against `keys/cosign.pub` and logs
+it in Rekor itself.
+
+### Endpoints this repo doesn't call
+
+`POST /sign-image` (the build host sends a repository and digest after the
+boot gate, and attaches the signature with `cosign attach signature`),
+`POST /revoke` (ends a build's tokens) and `GET /healthz` (liveness, no
+token) are specified in `arclight-infra`, `services/halo/signd`.
+
+## `kmodtool` and `sig_key`
 
 - **The signing macro fails silently.** `kmodtool`'s
   `%__kmodtool_modsign_install_post` skips signing, with no error, unless both
