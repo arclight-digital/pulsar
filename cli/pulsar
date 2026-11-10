@@ -178,7 +178,8 @@ check_ntsync() {
     elif grep -q '^ntsync ' /proc/modules 2>/dev/null; then
         record ntsync warn "ntsync module loaded but /dev/ntsync is missing" "check 70-ntsync.rules"
     else
-        record ntsync warn "ntsync not available" "Proton falls back to esync/fsync"
+        # TODO(copy): what does a game lose without ntsync (Proton's fallback)?
+        record ntsync warn "ntsync not available"
     fi
 }
 
@@ -237,8 +238,7 @@ check_gamemode() {
         return
     fi
 
-    record gamemode ok "${user} is in ${group}; renice=${renice} available" \
-           "igpu governor demotion disabled (igpu_power_threshold=-1)"
+    record gamemode ok "${user} is in ${group}; renice=${renice} available"
 }
 
 check_mangohud() {
@@ -370,11 +370,13 @@ check_nvidia() {
         # is boot-tested on. Only a GPU that is there and unserved is a fail.
         if ! nvidia_gpu_present; then
             record nvidia warn "NVIDIA image, but this machine has no NVIDIA GPU" \
-                   "the vanilla image fits it: bootc switch ghcr.io/arclight-digital/pulsar:latest"
+                   "the vanilla image fits it: sudo bootc switch ghcr.io/arclight-digital/pulsar:latest"
             return
         fi
+        # TODO(copy): what usually keeps the module from loading here (Secure
+        # Boot without the enrolled key?), and what fixes it?
         record nvidia fail "NVIDIA image, but no nvidia module is loaded" \
-               "Secure Boot may have rejected an unsigned module: dmesg | grep -i taint"
+               "check the kernel log: dmesg | grep -i nvidia"
         return
     fi
     local running expected
@@ -731,7 +733,7 @@ check_disk() {
     # A bootc system needs room to stage a whole new image. Under ~10GB free
     # an upgrade starts failing in ways that look like network errors.
     if [ "$pct" -ge 90 ]; then
-        record disk fail "${root} is ${pct}% full (${avail} free)" "staging an update needs about 10 GB free"
+        record disk fail "${root} is ${pct}% full (${avail} free)" "fails at 90% used: staging an update needs room for a whole new image"
     elif [ "$pct" -ge 80 ]; then
         record disk warn "${root} is ${pct}% full (${avail} free)"
     else
@@ -1553,8 +1555,8 @@ usage: sudo pulsar update [--apply]   download and stage the newest image; it
                                       runs this; turn it off with
                                       sudo systemctl disable --now pulsar-update-auto.timer
 
-Through bootc, or through rpm-ostree when packages are layered (bootc would
-drop them). Other flags pass through to whichever of the two runs.
+Through bootc, or through rpm-ostree when packages are layered. Other flags
+pass through to whichever of the two runs.
 EOF
 }
 
@@ -1640,9 +1642,9 @@ flatpak_gl_notify() {
     done
     [ "$fresh" = 1 ] || return 0
     if have notify-send; then
-        local body="It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it fully, not just its window."
+        local body="It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it from its menu (Steam: Steam > Exit)."
         case "$FGL_APPS" in *", "*)
-            body="They started without the NVIDIA ${FGL_DRIVER} driver, so their games get the iGPU and can show a black window. Quit them fully, not just their windows." ;;
+            body="They started without the NVIDIA ${FGL_DRIVER} driver, so their games get the iGPU and can show a black window. Quit each from its menu (Steam: Steam > Exit)." ;;
         esac
         notify-send --app-name="Pulsar" --icon=dialog-warning \
             "Restart ${FGL_APPS} to use the NVIDIA GPU" "$body" || true
@@ -2115,7 +2117,7 @@ agent_install() {
     register_mcp box
     case ":${PATH}:" in
         *":${AGENT_SHIMS}:"*) ;;
-        *) printf 'note: %s is not on PATH in this shell; a new login shell adds it on Fedora\n' "$AGENT_SHIMS" ;;
+        *) printf "note: %s is not on PATH in this shell; Fedora's ~/.bashrc adds it in a new bash shell\n" "$AGENT_SHIMS" ;;
     esac
     printf "done: run \`%s\` from any terminal\n" "$A_BIN"
 }
@@ -2135,7 +2137,9 @@ agent_remove() {
     unlink_agent_context
     unlink_agent_skills
     unregister_mcp
+    local box=""
     if have toolbox && box_exists; then
+        box=", and the ${AGENT_BOX} toolbox (toolbox rm -f ${AGENT_BOX})"
         case "$A_METHOD" in
             npm) in_box npm uninstall -g --prefix "$AGENT_PREFIX" "$A_PKG" || true ;;
             uv)  in_box env "UV_TOOL_DIR=${AGENT_PREFIX}/uv-tools" \
@@ -2143,12 +2147,11 @@ agent_remove() {
                      uv tool uninstall "$A_PKG" || true ;;
         esac
     else
-        printf 'toolbox %s is gone; the package files, if any, are under %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
+        printf 'no %s toolbox here; the package files, if any, are under %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
     fi
     # Said out loud, because "removed" would otherwise read as "gone": the
     # agent's logins, history and settings are the user's data, not ours.
-    printf "left in place: the agent's own config and credentials in \$HOME, and the %s toolbox (toolbox rm -f %s)\n" \
-        "$AGENT_BOX" "$AGENT_BOX"
+    printf "left in place: the agent's own config and credentials in \$HOME%s\n" "$box"
 }
 
 # ---------------------------------------------------------------------------
@@ -2211,10 +2214,12 @@ usage: pulsar agent guard           what polkit answers for your session
        sudo pulsar agent guard on   layering, rollback, cleanup and system
                                     Flatpak installs and removals ask for
                                     a password
-       sudo pulsar agent guard off  back to the Fedora default (no prompt)
+       sudo pulsar agent guard off  remove the rule: Fedora's default, where an
+                                    administrator in an active local session
+                                    is not asked
 
-It applies to you and to anything you run, a coding agent included.
-Updates are not gated, and root (sudo) is not affected.
+The rule matches the action, not the program, so a coding agent you run gets
+the prompt too. Updates are not gated, and root (sudo) is not affected.
 EOF
             ;;
         status)
@@ -2263,7 +2268,7 @@ EOF
             # sure: polkitd cannot read a mislabeled rule.
             if have restorecon; then restorecon "$dest" 2>/dev/null || true; fi
             printf 'guard on: installed %s\n' "$dest"
-            printf 'these now ask for the admin password, for you and for anything you run:\n'
+            printf 'these now ask for the admin password:\n'
             printf '  rpm-ostree install/uninstall, rollback, cleanup\n'
             printf '  flatpak install/uninstall (system; --user is unaffected)\n'
             printf 'updates are not gated. check: pulsar agent guard\n'
@@ -3820,12 +3825,12 @@ agent_sessions() {
                 if git -C "$repo" worktree remove "$dir" 2>/dev/null; then
                     printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2"
                 else
-                    printf 'kept the worktree %s: it has changes git has not committed (git worktree remove --force %s drops them)\n' \
+                    printf 'kept the worktree %s: git would not remove it (git worktree remove %s says why)\n' \
                         "${dir/#"$HOME"/\~}" "$dir"
                 fi
             fi
             rm -f "${AGENT_SESSIONS}/$2.session"
-            printf 'forgot %s (the conversation itself is still in the agent'"'"'s history)\n' "$2"
+            printf 'forgot %s (the agent'"'"'s own history is not touched)\n' "$2"
             return 0 ;;
     esac
     local live="" names n f row
@@ -4125,7 +4130,7 @@ agent_model() {
             # shellcheck disable=SC2016  # the $(cat) is for the user to run
             printf 'aider    aider --openai-api-base http://127.0.0.1:%s/v1 --openai-api-key "$(cat %s)" --model openai/%s\n' \
                 "$MODEL_PORT" "$MODEL_KEY" "$(basename "${model%%:*}")"
-            [ "$at_login" = 1 ] || printf 'it stops at logout and does not start again; --at-login starts it at each login\n'
+            [ "$at_login" = 1 ] || printf 'to start it at each login: pulsar agent model on --at-login\n'
             ;;
         off)
             if [ -f "$unit" ]; then
@@ -4205,8 +4210,8 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      the tmux sessions; --kill ends one (attach
                                      brings it back). --forget deletes an ended
                                      one's record and undo snapshots, and its
-                                     worktree unless it has uncommitted changes.
-                                     The conversation stays in the agent's history
+                                     worktree if git removes it without --force.
+                                     The agent's own history is not touched
        pulsar agent model [on|off] [--model <hf-repo[:quant]>] [--at-login] [--purge]
                                      a local model server (llama.cpp, rootless podman,
                                      127.0.0.1 only) for agents with no cloud account.
@@ -4217,10 +4222,12 @@ usage: pulsar agent                  the guide, installed agents, guard state
 
 Agents: $(agent_names). None is installed by default.
 
-Each runs in the '${AGENT_BOX}' toolbox (created on first use), installed with
-its vendor's documented npm or uv method into ${AGENT_PREFIX},
-and gets a command in ${AGENT_SHIMS} that works from any host terminal.
-Nothing is layered onto the host and nothing needs root.
+agent add installs an agent with npm or uv in the '${AGENT_BOX}' toolbox
+(created on first use), into ${AGENT_PREFIX}, and puts its command in
+${AGENT_SHIMS}. The command runs it in that toolbox, or in a podman
+sandbox where the sandbox is on (pulsar agent sandbox). An agent its own
+installer put on the host is left as it is, and runs on the host when the
+sandbox is off.
 Where the agent reads a global instructions file Pulsar can own, it links
 ${AGENTS_MD} there, and never overwrites a file that exists.
 EOF
@@ -4405,13 +4412,14 @@ cmd_verify() {
     # Echoed first: the point of the command is that you can check it yourself,
     # and a verifier you cannot read is not much of one.
     printf '%s%s%s\n' "$C_DIM" "$cmd" "$C_RESET"
-    have cosign || die "cosign is not on this machine; run the command above wherever it is (a toolbox: dnf install cosign)"
+    # TODO(copy): where should a user get cosign (Fedora's package, in a toolbox?)
+    have cosign || die "cosign is not on this machine; run the command above where it is"
     if cosign verify --key "$key" "$image" >/dev/null 2>&1; then
         printf 'signed with the release key, and the signature is logged in Rekor\n'
         return 0
     fi
     if cosign verify --key "$key" --insecure-ignore-tlog=true "$image" >/dev/null 2>&1; then
-        printf 'signed with the release key; this signature predates Rekor logging, so it has no log entry\n'
+        printf 'signed with the release key, but not verified in Rekor (signatures from before Rekor logging have no entry)\n'
         return 0
     fi
     die "no signature on ${image} verifies against ${key}"
@@ -4452,7 +4460,8 @@ SETUP_HELP='usage: pulsar setup <recipe>
 
   apps        install the default Flatpaks (root)
   devbox      create the default distrobox, pulsar-dev
-  gamemode    add every user account to the gamemode group, for renice (root)
+  gamemode    add every human account (uid 1000 and up, with a login shell) to the
+              gamemode group, for renice (root)
   quadlet     copy the example quadlet to ~/.config/containers/systemd; enable podman auto-update
   gamescale   Steam and Faugus get gg, ggm and gamescale from the image. Run bare, this points an
               older Steam setup at the copies in the image and removes the ones Pulsar put in
@@ -4969,7 +4978,7 @@ crashes_notify() {
 crash_notify_one() {
     local pid=$1 name=$2 exe=${3:-$2} title body
     title="${name} crashed"
-    body="${A_DESC%% (*} can read the stack trace and the logs, and help you fix or report it. Nothing is sent to it unless you click."
+    body="Ask ${A_DESC%% (*} opens a terminal where ${A_DESC%% (*} reads a redacted report with the stack trace and the program's log lines."
     have notify-send || return 0
     # The click has to outlive this oneshot unit, so the waiting notification
     # runs as a transient unit of its own. Without systemd-run it still says
@@ -5086,8 +5095,9 @@ xid_meaning() {
         45)    printf 'skip\t' ;;
         79)    printf 'gpu\tThe NVIDIA GPU stopped answering the system' ;;
         62|119|120) printf "gpu\\tThe NVIDIA GPU's firmware stopped responding" ;;
-        154)   printf 'gpu\tThe NVIDIA driver says the GPU needs a reset' ;;
-        *)     printf 'game\tone Pulsar has no description for (see docs.nvidia.com/deploy/xid-errors)' ;;
+        # 154 carries the action the driver wants (a reset is one of several)
+        154)   printf 'gpu\tThe NVIDIA driver says the GPU needs recovery' ;;
+        *)     printf 'game\tan error Pulsar has no description for (see docs.nvidia.com/deploy/xid-errors)' ;;
     esac
 }
 
@@ -5136,7 +5146,7 @@ gpu_fault_who() {
     printf '%s\t%s\n' "${name//\//-}" "$game"
 }
 
-GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS and frame generation in its settings (try FSR or TSR) and undo any GPU overclock."
+GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS in its settings."
 
 # The advice, for the Xids the one known case ties to DLSS: Hell Is Us faulted
 # with Xid 13 and Xid 109 until DLSS was off (see above). Nothing for others.
@@ -5192,7 +5202,9 @@ gpu_fault_notify_one() {
     have notify-send || return 0
     if [ "$kind" = gpu ]; then
         title=$what
-        body="Xid ${xid}. Save your work: apps using the GPU may not recover until you restart. Details: pulsar doctor gpu-faults"
+        # TODO(copy): after a GPU-level Xid (79, 62, 119, 120, 154), what should
+        # the user do, and do apps on the GPU recover without a restart?
+        body="Xid ${xid}. Details: pulsar doctor gpu-faults"
         q="The NVIDIA driver logged Xid ${xid} (${what}). Explain what it means on this machine and whether it points to the driver, the GPU or its power, and what I should do."
     elif [ -z "$name" ]; then
         # The driver did not log which program: say what happened, name none.
@@ -5374,7 +5386,7 @@ agent_ask() {
     done
     local name cmd
     name=${with:-$(agent_default_name)} \
-        || die "which agent? pulsar agent default <name>, or --with <name> (installed: $(agent_installed_names))"
+        || die "no agent chosen: pulsar agent default <name>, or --with <name> (installed: $(agent_installed_names))"
     cmd=$(agent_command "$name") || die "${name} is not installed (pulsar agent add ${name})"
     agent_row "$name"
     if [ -n "$crash" ]; then crash=$(crash_resolve "$crash") || exit 1; fi
@@ -6171,7 +6183,8 @@ checkpoint_restore_home() {
         [ "$rc" -eq 0 ] || die "restoring ${hdir} failed part way (tar exit ${rc}); run: sudo pulsar checkpoint diff ${dir##*/}"
         printf 'restored in %s:\n' "$hdir"
         printf '%s\n' "$changes" | awk -F'\t' '$1 != "added" { sub(/^\.\//, "~/", $2); print "  " $1 "  " $2 }'
-        printf 'desktop settings (dconf) are read at login: log out and back in to see them\n'
+        # TODO(copy): does a restored ~/.config/dconf/user take effect at the next
+        # login, or can the running dconf-service write over it first?
     else
         rm -rf "$t"
         printf '%s: no settings changed or deleted since %s\n' "$hdir" "${dir##*/}"
@@ -6219,11 +6232,12 @@ usage: sudo pulsar checkpoint [--no-home] [note]
                                            discard a deployment staged since
        sudo pulsar checkpoint drop <id>    delete it, unpinning what it pinned
 
-Take one before handing the machine to an agent. "Your settings" are the
-dotfiles in your home folder, ~/.config (without caches), ~/.local/bin and
-~/.ssh, for whoever ran sudo. Settings over 512 MB are skipped. Documents,
-projects, ~/.local/share, /var and Flatpak data are not included. restore
-does not reboot and does not delete files added since (it lists them).
+"Your settings" are the dotfiles in your home folder, ~/.config (minus
+folders with "cache" in the name, Service Worker, Crashpad and blob_storage),
+~/.local/bin and ~/.ssh, for whoever ran sudo. Settings over 512 MB are
+skipped. Documents, projects, ~/.local/share, /var and Flatpak data are not
+included. restore does not reboot and does not delete files added since (it
+lists them).
 EOF
 }
 
@@ -6304,7 +6318,7 @@ Agents
   pulsar agent ask         start your agent on a redacted report of this
                            machine; --crash latest for the last crash
   pulsar mcp               this machine's facts as MCP tools, for any agent
-                           (agent add registers it). nothing in it needs root
+                           (agent add registers it)
 
 Options
   --json                   JSON output, anywhere on the line. A command

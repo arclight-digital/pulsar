@@ -171,7 +171,7 @@ SH
     fake_verify_env
     COSIGN_OK=key run "$PULSAR" verify
     [ "$status" -eq 0 ]
-    [[ "$output" == *"predates Rekor"* ]]
+    [[ "$output" == *"not verified in Rekor"* ]]
 }
 
 @test "verify fails an image no signature verifies" {
@@ -2859,7 +2859,7 @@ GONE_32='NVRM: Xid (PCI:0000:02:00): 32, pid=6161, name=StateOfDecay2-W, channel
     grep -q -- "--unit=pulsar-gpu-fault-4242 " "$RUN_LOG"
     grep -q "Hell Is Us hit a GPU fault" "$RUN_LOG"
     grep -q "Xid 13: a fault in graphics work" "$RUN_LOG"
-    grep -q "turn off DLSS and frame generation" "$RUN_LOG"
+    grep -q "turn off DLSS in its settings" "$RUN_LOG"
     # no agent installed: no Ask button, but Ignore is there, by the game's name
     ! grep -q "Ask Claude" "$RUN_LOG" || false
     grep -q "crashes ignore add" "$RUN_LOG"
@@ -2896,7 +2896,7 @@ GONE_32='NVRM: Xid (PCI:0000:02:00): 32, pid=6161, name=StateOfDecay2-W, channel
     klog 'NVRM: Xid (PCI:0000:02:00): 79, GPU has fallen off the bus.'
     run "$PULSAR" doctor gpu-faults --watch
     grep -q "The NVIDIA GPU stopped answering the system" "$RUN_LOG"
-    grep -q "Save your work" "$RUN_LOG"
+    grep -q "Xid 79. Details: pulsar doctor gpu-faults" "$RUN_LOG"
     # nothing to ignore it by: the last argument (the name to ignore) is empty
     grep -qE " $" "$RUN_LOG" || fail "$(cat "$RUN_LOG")"
 }
@@ -2943,7 +2943,7 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     klog "NVRM: Xid (PCI:0000:02:00): 79, pid='<unknown>', name=<unknown>, GPU has fallen off the bus."
     run "$PULSAR" doctor gpu-faults --watch
     [ "$(grep -c "^--user" "$RUN_LOG")" -eq 1 ] || fail "$(cat "$RUN_LOG")"
-    grep -q "The NVIDIA GPU stopped answering the system Xid 79. Save your work" "$RUN_LOG"
+    grep -q "The NVIDIA GPU stopped answering the system Xid 79. Details: pulsar doctor gpu-faults" "$RUN_LOG"
     run "$PULSAR" doctor gpu-faults
     [[ "$output" == warn*"1 GPU fault(s) this boot: GPU (Xid 79)"* ]] || fail "$output"
 }
@@ -2980,7 +2980,7 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     [[ "$output" == ok*"no GPU faults this boot"* ]] || fail "$output"
     klog "$RESET_154"
     run "$PULSAR" doctor gpu-faults --watch
-    grep -q "The NVIDIA driver says the GPU needs a reset Xid 154." "$RUN_LOG"
+    grep -q "The NVIDIA driver says the GPU needs recovery Xid 154." "$RUN_LOG"
     run "$PULSAR" doctor gpu-faults
     [[ "$output" == warn*"1 GPU fault(s) this boot: GPU (Xid 154)"* ]] || fail "$output"
 }
@@ -3060,7 +3060,7 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     fake_agent codex
     run "$PULSAR" agent ask hello
     [ "$status" -ne 0 ]
-    [[ "$output" == *"which agent?"*"claude codex"* ]]
+    [[ "$output" == *"no agent chosen"*"claude codex"* ]]
     run "$PULSAR" agent default codex
     [ "$status" -eq 0 ]
     run "$PULSAR" agent default
