@@ -248,7 +248,7 @@ custom() { gsettings get "org.gnome.settings-daemon.plugins.media-keys.custom-ke
 --icon=input-keyboard-symbolic
 New keyboard shortcuts
 Super+Space: Open Pulsar Commands
-Change them in Settings > Keyboard > Custom Shortcuts." ] || fail "$(cat "$NOTIFY_LOG")"
+Change them in Settings > Keyboard." ] || fail "$(cat "$NOTIFY_LOG")"
     run python3 "$SHORTCUTS" --list
     [[ "$output" == *"bound to <Super>space"* ]]
     [[ "$output" == *"<Super>Print is taken (org.gnome.desktop.wm.keybindings switch-input-source)"* ]]
@@ -296,7 +296,7 @@ Change them in Settings > Keyboard > Custom Shortcuts." ] || fail "$(cat "$NOTIF
     # the switch keeps its other keys, and the way back is untouched
     [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source)" = "['XF86Keyboard']" ]
     [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source-backward)" = "['<Shift><Super>space', '<Shift>XF86Keyboard']" ]
-    grep -qx "Super+Space: Open Pulsar Commands (taken from the keyboard-layout switch, which does nothing with one layout)" "$NOTIFY_LOG"
+    grep -qx "Super+Space: Open Pulsar Commands (it was the shortcut for switching keyboard layouts, and this account has one layout)" "$NOTIFY_LOG"
     run python3 "$SHORTCUTS" --list
     [[ "$output" == *"bound to <Super>space, taken from org.gnome.desktop.wm.keybindings switch-input-source"* ]] || fail "$output"
 }
@@ -652,7 +652,7 @@ print(it.matches("100 usd in eur"), it.title, "|", it.subtitle)'
         "100 usd eur = None"
         "\$100 usd in eur = None"
         "True = … | Getting the exchange rates | [] 1"
-        "True = 86.98 EUR | ECB rate of 2026-11-05 · Enter copies 86.98"
+        "True = 86.98 EUR | Frankfurter rate of 2026-11-05 · Enter copies 86.98"
         "True = ? | No exchange rates: couldn't get them, and none saved yet"
     )
     for i in "${!expected[@]}"; do
@@ -851,9 +851,9 @@ print(it.matches("100 usd in eur"), it.argv)'
     [ "$status" -eq 0 ] || fail "$output"
     expected=(
         "False None"
-        "True = ? | No rate for JPY in the ECB's rates of 2026-11-05 | []"
-        "True = ? | No rate for JPY in the ECB's rates of 2026-11-05 | []"
-        "True = 86.98 EUR | ECB rate of 2026-11-05 · Enter copies 86.98 | ['wl-copy', '--', '86.98']"
+        "True = ? | No rate for JPY in Frankfurter's rates of 2026-11-05 | []"
+        "True = ? | No rate for JPY in Frankfurter's rates of 2026-11-05 | []"
+        "True = 86.98 EUR | Frankfurter rate of 2026-11-05 · Enter copies 86.98 | ['wl-copy', '--', '86.98']"
         "False []"
     )
     [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"

@@ -72,8 +72,8 @@ running() { flatpak ps --columns=application 2>/dev/null | grep -x "$1" >/dev/nu
 offer() {
     local answer app desktop n
     answer=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen="Force Quit and Reopen" \
-        "Opening files was stuck and is fixed now" \
-        "$(short_names "$@") can't open or save files until they're reopened. Force quitting them loses unsaved work.") || return 0
+        "Pulsar restarted file access for Flatpak apps" \
+        "Apps that were running before the restart can't open or save files until they're reopened: $(short_names "$@"). Force quitting them loses unsaved work.") || return 0
     [ "$answer" = reopen ] || return 0
     for app in "$@"; do
         # The list is from the restart; the click can come much later. One

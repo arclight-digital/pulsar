@@ -8,12 +8,12 @@
     <key name="glass" type="b">
       <default>true</default>
       <summary>Glass</summary>
-      <description>Menus and the top bar are translucent over a blur of what is behind them.</description>
+      <description>The top bar, the dash, menus, dialogs, notifications and on-screen displays blur what is behind them.</description>
     </key>
     <key name="lighting" type="b">
       <default>true</default>
       <summary>Lighting</summary>
-      <description>Menus catch light from the button that opened them.</description>
+      <description>A menu's edge is lit from the button that opened it, and turns warmer when the battery is low.</description>
     </key>
     <key name="glass-tint" type="d">
       <range min="0.0" max="1.0"/>
@@ -24,32 +24,32 @@
     <key name="window-glass" type="b">
       <default>true</default>
       <summary>Glass windows</summary>
-      <description>GTK 4 app windows show a blur of what is behind them through an 80% ground. Beside a sidebar the content pane is solid. Apps opened afterwards pick it up.</description>
+      <description>GTK 4 app windows are 80% opaque over the same blur as Glass. GTK 3 apps and fullscreen windows stay solid, and so does the main area beside a sidebar, except Text Editor's document. Applies to apps opened after a change. Needs Glass.</description>
     </key>
     <key name="power-on" type="b">
       <default>true</default>
       <summary>Power-on</summary>
-      <description>A surface's rim traces out from the light when it appears. Needs Lighting.</description>
+      <description>As a menu opens, its lit edge traces out from the button that opened it. Needs Lighting.</description>
     </key>
     <key name="glow" type="b">
       <default>true</default>
       <summary>Glow</summary>
-      <description>What is filled with the accent -- a switched-on toggle, today in the calendar, the default button, a slider's fill -- glows softly in it, in the Shell and in apps opened afterwards.</description>
+      <description>Switches that are on, checked boxes, slider fills, progress bars and default buttons glow in the accent color. In apps, it applies to those opened after a change.</description>
     </key>
     <key name="glass-off-gaming" type="b">
       <default>false</default>
       <summary>Disable glass when gaming</summary>
-      <description>While a game is running (GameMode has a client), the Shell's glass and light are off, as if switched off. Windows opened with glass keep it.</description>
+      <description>Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun). App windows keep their glass.</description>
     </key>
     <key name="glass-off-power-saver" type="b">
       <default>true</default>
       <summary>Disable glass in Power Saver</summary>
-      <description>While the power mode is Power Saver, the Shell's glass and light are off, as if switched off. Windows opened with glass keep it.</description>
+      <description>Glass and lighting turn off while the power mode is Power Saver. App windows keep their glass.</description>
     </key>
     <key name="focus-brackets" type="b">
       <default>true</default>
       <summary>Focus brackets</summary>
-      <description>Corner brackets lock onto the control the keyboard is on, beside the focus ring.</description>
+      <description>While you use the keyboard, four corner brackets mark the focused button or menu item outside app windows. The focus ring stays.</description>
     </key>
   </schema>
 </schemalist>

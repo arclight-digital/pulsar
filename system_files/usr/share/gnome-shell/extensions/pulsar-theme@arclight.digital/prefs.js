@@ -7,14 +7,14 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 
 // key, title, subtitle, the key it needs on
 const EFFECTS = [
-    ['glass', 'Glass', 'Menus, the top bar, on-screen displays and notification banners are translucent over a blur of what is behind them'],
-    ['window-glass', 'Glass windows', 'App windows are 80% opaque over the same blur; apps opened afterwards pick it up', 'glass'],
+    ['glass', 'Glass', 'The top bar, the dash, menus, dialogs, notifications and on-screen displays blur what is behind them'],
+    ['window-glass', 'Glass windows', 'GTK 4 app windows are 80% opaque over the same blur. GTK 3 apps and fullscreen windows stay solid, and so does the main area beside a sidebar, except Text Editor\'s document', 'glass'],
     ['lighting', 'Lighting', 'A menu\'s edge is lit from the button that opened it, and turns warmer when the battery is low'],
     ['power-on', 'Power-on', 'As a menu opens, its lit edge traces out from the button that opened it', 'lighting'],
-    ['glow', 'Glow', 'Controls filled with the accent color, such as switches and sliders, glow in it; apps opened afterwards pick it up'],
-    ['focus-brackets', 'Focus brackets', 'Four corner brackets mark the control the keyboard is on'],
-    ['glass-off-gaming', 'Disable glass when gaming', 'Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun); app windows stay glass'],
-    ['glass-off-power-saver', 'Disable glass in Power Saver', 'Glass and lighting turn off while the power mode is Power Saver; app windows stay glass'],
+    ['glow', 'Glow', 'Switches that are on, checked boxes, slider fills, progress bars and default buttons glow in the accent color'],
+    ['focus-brackets', 'Focus brackets', 'While you use the keyboard, four corner brackets mark the focused button or menu item outside app windows'],
+    ['glass-off-gaming', 'Disable glass when gaming', 'Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun)'],
+    ['glass-off-power-saver', 'Disable glass in Power Saver', 'Glass and lighting turn off while the power mode is Power Saver'],
 ];
 
 // Glass tint: clear to fully tinted, like the slider it is modeled on.
@@ -38,7 +38,9 @@ export default class PulsarThemePrefs extends ExtensionPreferences {
         const page = new Adw.PreferencesPage();
         const group = new Adw.PreferencesGroup({
             title: 'Effects',
-            description: 'High contrast turns them all off, except in app windows already open.',
+            description: 'Glass windows and Glow apply to apps opened after you change them. High contrast turns every ' +
+                'effect off, except in app windows already open. The two Disable glass switches leave app ' +
+                'windows\' glass on.',
         });
         // every effect and the tint back to the defaults; live only while
         // something differs from them

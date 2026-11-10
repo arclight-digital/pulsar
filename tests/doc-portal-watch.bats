@@ -144,7 +144,7 @@ EOF
     HANG=1 run -0 "$SCRIPT"
     # In a unit of its own, which does not take the apps it starts with it.
     grep -q '^systemd-run --user --collect --quiet -p KillMode=process --unit=pulsar-doc-portal-reopen-[0-9]* -- .*doc-portal-watch.sh --offer com.discordapp.Discord com.valvesoftware.Steam$' "$LOG"
-    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Force Quit and Reopen Opening files was stuck and is fixed now Discord, Steam can't open or save files until they're reopened. Force quitting them loses unsaved work." "$LOG"
+    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Force Quit and Reopen Pulsar restarted file access for Flatpak apps Apps that were running before the restart can't open or save files until they're reopened: Discord, Steam. Force quitting them loses unsaved work." "$LOG"
 }
 
 @test "without a click nothing is closed or started" {
