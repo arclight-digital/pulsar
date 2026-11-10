@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Themes
-Comment=Switch the whole desktop's colors: apps, terminal, editor, top bar and wallpaper
+Comment=Recolor the apps, terminal, editor, top bar and wallpaper together
 Keywords=theme;colour;color;palette;dark;light;wallpaper;accent;
 Exec=/usr/libexec/pulsar/pulsar-theme-picker
 Icon=digital.arclight.Pulsar.ThemePicker
