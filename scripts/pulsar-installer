@@ -181,12 +181,17 @@ def failure_state(mode, restored, planning=False):
     never is."""
     if planning:
         return "Nothing on the disk was changed."
-    if restored:
+    if restored and mode == "erase":
         return "The disk is as it was before you pressed Install."
+    # beside another system, restored counts partitions only: what bootc
+    # wrote to the shared ESP is not taken back
+    kept = ("The disk's other partitions are as they were, except the startup files (EFI) "
+            "partition, which Pulsar may have written to.")
+    if restored:
+        return "No Pulsar partitions are left. " + kept
     if mode == "alongside":
-        return ("Pulsar's new partitions may still be on the disk. "
-                "Everything that was on the disk before is untouched.")
-    return "The disk was erased, and Pulsar isn't on it."
+        return "Pulsar's new partitions may still be on the disk. " + kept
+    return "The disk was erased, and Pulsar isn't installed on it."
 
 
 def disk_restored(events):
@@ -295,23 +300,26 @@ def disks(tree):
 def options(d):
     """(available, reason) for each way of installing on disk d."""
     if d["size"] < NEEDS_ERASE:
-        erase = (False, f"Pulsar needs at least {human(NEEDS_ERASE)}")
+        erase = (False, f"Pulsar needs at least {human(NEEDS_ERASE)}.")
     else:
         erase = (True, ("Deletes everything on this disk, including " + d["holds"] + "."
                         if d["holds"] in ("Windows", "Linux") else "Deletes everything on this disk.")
                  if not d["empty"] else "The disk is empty.")
     if d["empty"]:
-        along = (False, "There is nothing on this disk to keep")
+        along = (False, "There is nothing on this disk to keep.")
     elif d["bitlocker"]:
-        along = (False, "BitLocker is on. Turn it off in Windows first, then start the installer again")
+        along = (False, "BitLocker is on. Turn it off in Windows first, then start the installer again.")
     elif not d["esp"]:
-        along = (False, "Only possible on a disk that already starts Windows or Linux")
+        along = (False, "This disk has no startup files (EFI) partition for Pulsar to share.")
     elif d["free"] < NEEDS_ALONGSIDE:
-        along = (False, f"Needs {human(NEEDS_ALONGSIDE)} of free space; {human(d['free'])} is free. "
-                        "Shrink a partition from the other system first")
+        # d["free"] is the largest single gap, not the total
+        how = (f"Shrink a partition from {d['holds']} first." if d["holds"] in ("Windows", "Linux")
+               else "Make room by shrinking a partition first.")
+        along = (False, f"Needs a {human(NEEDS_ALONGSIDE)} block of free space. "
+                        f"The largest here is {human(d['free'])}. " + how)
     else:
-        along = (True, f"Uses the {human(d['free'])} of free space. {d['holds']} stays as it is."
-                 if d["holds"] != "other data" else f"Uses the {human(d['free'])} of free space.")
+        along = (True, f"Uses the free space ({human(d['free'])} in the largest block). {d['holds']} stays as it is."
+                 if d["holds"] != "other data" else f"Uses the free space ({human(d['free'])} in the largest block).")
     return {"alongside": along, "erase": erase}
 
 
@@ -627,7 +635,7 @@ def main():
                 usable = any(ok for ok, _ in opts.values())
                 sub = identity(d)
                 if not d["empty"] and d["free"] >= GiB:
-                    sub += f" · {human(d['free'])} free"
+                    sub += f" · {human(d['free'])} free in one block"
                 if not usable:
                     sub += f"\n{opts['erase'][1]}"
                 r = row(title=d["name"], subtitle=sub, activatable=usable, sensitive=usable)
@@ -690,7 +698,7 @@ def main():
             for p in d["partitions"]:
                 parts.append(row(title=p["what"], subtitle=human(p["size"])))
             sure = Gtk.CheckButton(label=f"Yes, delete everything on {d['name']}", halign=Gtk.Align.CENTER)
-            go = Gtk.Button(label="Continue", css_classes=["suggested-action", "in-pill"], sensitive=False)
+            go = Gtk.Button(label="Next", css_classes=["suggested-action", "in-pill"], sensitive=False)
             sure.connect("toggled", lambda b: go.set_sensitive(b.get_active()))
             go.connect("clicked", lambda *_: self.nav.push(self.passphrase_page()))
             return nav_page("Erase", "erase", column(
@@ -706,6 +714,7 @@ def main():
 
         def passphrase_page(self):
             self.encrypt = True
+            # TODO(copy): "Recommended" gives no reason. Should it say why (and for whom), or go?
             switch = row(Adw.SwitchRow, title="Encrypt the disk", subtitle="Recommended", active=True)
             self.encrypt_row = switch
             choice = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
@@ -883,6 +892,8 @@ def main():
             restart.connect("clicked", lambda *_: subprocess.Popen(["systemctl", "reboot"]))
             extra = []
             if done.get("windows_entry"):
+                # TODO(copy): the menu shows for 1 s (timeout=1 in bootupd's grub-static-pre.cfg;
+                # Pulsar doesn't override it). Say how to reach it, e.g. hold an arrow key?
                 extra.append(label("Windows is still on this computer. Choose it in the startup menu.",
                                    ["in-note"]))
             page = nav_page("Done", "done", column(
@@ -999,7 +1010,7 @@ def main():
                  ("installing", lambda: win.install()),
                  ("done", lambda: win.nav.push(win.done_page(187, {"windows_entry": True}))),
                  ("failed", lambda: win.nav.push(win.failed_page(
-                     "bootc exited 1: error: Installing to filesystem: no space left on device", restored=True)))]
+                     "unshare exited 1: error: Installing to filesystem: no space left on device", restored=True)))]
         # the pages whose mark rises in: shot once it has
         slow = {"welcome": 1400, "done": 1400, "done-off": 1400, "installing": 4000}
 

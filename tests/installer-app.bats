@@ -46,7 +46,7 @@ PY
 
 @test "Windows with room beside it: both ways offered, alongside says Windows stays" {
     run py 'm.options(D["/dev/nvme1n1"])'
-    [[ "$output" == *"'alongside': (True, 'Uses the 462 GB of free space. Windows stays as it is.')"* ]]
+    [[ "$output" == *"'alongside': (True, 'Uses the free space (462 GB in the largest block). Windows stays as it is.')"* ]]
     [[ "$output" == *"'erase': (True,"* ]]
 }
 
@@ -58,8 +58,10 @@ PY
 @test "a full disk: alongside refused with the numbers; an empty one: nothing to keep" {
     run py 'm.options(D["/dev/nvme0n1"])["alongside"][0]'
     [ "$output" = "False" ]
+    # the free number is the largest single gap, and says so
+    [[ "$(py 'm.options(D["/dev/nvme0n1"])["alongside"][1]')" == "Needs a 39 GB block of free space. The largest here is "*" Shrink a partition from Linux first." ]]
     run py 'm.options(D["/dev/sdb"])["alongside"]'
-    [ "$output" = "(False, 'There is nothing on this disk to keep')" ]
+    [ "$output" = "(False, 'There is nothing on this disk to keep.')" ]
     run py 'm.options(D["/dev/sdb"])["erase"][0]'
     [ "$output" = "True" ]
 }
@@ -67,6 +69,7 @@ PY
 @test "a data disk with no EFI system partition can't be shared, only erased" {
     run py 'm.options(D["/dev/sde"])["alongside"][0], m.options(D["/dev/sde"])["erase"][0]'
     [ "$output" = "(False, True)" ]
+    [ "$(py 'm.options(D["/dev/sde"])["alongside"][1]')" = "This disk has no startup files (EFI) partition for Pulsar to share." ]
 }
 
 @test "too small: neither way" {
@@ -161,8 +164,10 @@ PY
 @test "after a failure the page says what state the disk is in, by mode" {
     [ "$(py 'm.failure_state("erase", True, planning=True)')" = "Nothing on the disk was changed." ]
     [ "$(py 'm.failure_state("erase", True)')" = "The disk is as it was before you pressed Install." ]
-    [[ "$(py 'm.failure_state("alongside", False)')" == *"Everything that was on the disk before is untouched."* ]]
-    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, and Pulsar isn't on it." ]
+    [ "$(py 'm.failure_state("alongside", False)')" = "Pulsar's new partitions may still be on the disk. The disk's other partitions are as they were, except the startup files (EFI) partition, which Pulsar may have written to." ]
+    # beside another system, restored is the partitions only: the shared ESP may have changed
+    [ "$(py 'm.failure_state("alongside", True)')" = "No Pulsar partitions are left. The disk's other partitions are as they were, except the startup files (EFI) partition, which Pulsar may have written to." ]
+    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, and Pulsar isn't installed on it." ]
 }
 
 @test "a failed install is 'as it was' only on the backend's word, or if it never reached the disk step" {
