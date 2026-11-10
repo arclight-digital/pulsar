@@ -607,6 +607,7 @@ CHECK_STAGED='{"deployments":[
 # Pulsar Settings' Download runs this. The report has to come from the unit,
 # not the window: a window closed mid-download used to leave no word of it.
 @test "update --download stages in a unit of its own, which says it is ready, as the Update button does" {
+    [ "$(id -u)" -eq 0 ] && skip "update --download refuses root; these run as a user"
     stub_ostree "$CHECK_STATUS"
     stub_skopeo "sha256:bbb" "44.2"
     stub_notify
@@ -628,6 +629,7 @@ EOF
 }
 
 @test "update --download: a failed stage is a notification and exit 1; a dismissed prompt is neither" {
+    [ "$(id -u)" -eq 0 ] && skip "update --download refuses root; these run as a user"
     stub_ostree "$CHECK_STATUS"
     stub_skopeo "sha256:bbb" "44.2"
     stub_notify
@@ -1158,7 +1160,7 @@ JSON
     [ "$(id -u)" -eq 0 ] || skip "meaningful only as root"
     run "$PULSAR" setup quadlet
     [ "$status" -ne 0 ]
-    [[ "$output" == *"must not run as root"* ]]
+    [[ "$output" == *"configures your session, so run it without sudo"* ]]
 }
 
 # ---------------------------------------------------------------------------
