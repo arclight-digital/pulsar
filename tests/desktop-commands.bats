@@ -248,7 +248,7 @@ custom() { gsettings get "org.gnome.settings-daemon.plugins.media-keys.custom-ke
 --icon=input-keyboard-symbolic
 New keyboard shortcuts
 Super+Space: Open Pulsar Commands
-Change them in Settings > Keyboard > Custom Shortcuts." ] || fail "$(cat "$NOTIFY_LOG")"
+Change them in Settings > Keyboard." ] || fail "$(cat "$NOTIFY_LOG")"
     run python3 "$SHORTCUTS" --list
     [[ "$output" == *"bound to <Super>space"* ]]
     [[ "$output" == *"<Super>Print is taken (org.gnome.desktop.wm.keybindings switch-input-source)"* ]]
@@ -296,7 +296,7 @@ Change them in Settings > Keyboard > Custom Shortcuts." ] || fail "$(cat "$NOTIF
     # the switch keeps its other keys, and the way back is untouched
     [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source)" = "['XF86Keyboard']" ]
     [ "$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source-backward)" = "['<Shift><Super>space', '<Shift>XF86Keyboard']" ]
-    grep -qx "Super+Space: Open Pulsar Commands (taken from the keyboard-layout switch, which does nothing with one layout)" "$NOTIFY_LOG"
+    grep -qx "Super+Space: Open Pulsar Commands (it was the shortcut for switching keyboard layouts, and this account has one layout)" "$NOTIFY_LOG"
     run python3 "$SHORTCUTS" --list
     [[ "$output" == *"bound to <Super>space, taken from org.gnome.desktop.wm.keybindings switch-input-source"* ]] || fail "$output"
 }

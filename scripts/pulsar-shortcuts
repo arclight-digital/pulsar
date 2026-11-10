@@ -181,7 +181,7 @@ def offer():
                 note, result = "", f"bound to {accel}"
                 if who and claimable(accel, who):
                     claim(accel)
-                    note = " (taken from the keyboard-layout switch, which does nothing with one layout)"
+                    note = " (it was the shortcut for switching keyboard layouts, and this account has one layout)"
                     result = f"bound to {accel}, taken from {who}"
                 elif who:
                     taken.append(f"{accel} is taken ({who})")
@@ -205,8 +205,11 @@ def offer():
     tmp.replace(f)
     if bound and not new_account():
         body = "\n".join(f"{keys}: {name}" for keys, name in bound)
+        # TODO(copy): the full path to custom shortcuts in GNOME 51's Settings
+        # (Keyboard > View and Customize Shortcuts > Custom Shortcuts?), once
+        # checked on the image; until then only the panel.
         subprocess.run(["notify-send", "--app-name=Pulsar", "--icon=input-keyboard-symbolic",
-                        "New keyboard shortcuts", body + "\nChange them in Settings > Keyboard > Custom Shortcuts."],
+                        "New keyboard shortcuts", body + "\nChange them in Settings > Keyboard."],
                        stderr=subprocess.DEVNULL)
     return 0
 
