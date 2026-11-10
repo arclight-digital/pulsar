@@ -76,7 +76,7 @@ Super+Space opens Pulsar Commands. The desktop is GNOME 51.
 
 - When a program hits a GPU fault on NVIDIA, a notification names the
   program and the fault, once per program each boot. For a game's Xid 13
-  or 109 it also suggests turning off DLSS and frame generation.
+  or 109 it also suggests turning off DLSS in the game.
   `pulsar doctor gpu-faults` lists this boot's faults.
 - Faugus games run the image's `gamescale`, as Steam games do. A game with
   `gamescale` in its launch arguments no longer hangs on its splash.
