@@ -1755,12 +1755,12 @@ link_agent_context() {
     local target
     if ! target=$(agent_context_path "$A_NAME"); then
         case "$A_NAME" in
-            gemini) printf 'to give it the machine guide, add this line to ~/.gemini/GEMINI.md:\n  @%s\n' "$AGENTS_MD" ;;
+            gemini) printf 'to give it the guide, add this line to ~/.gemini/GEMINI.md:\n  @%s\n' "$AGENTS_MD" ;;
             aider)
                 if [ "${1:-}" = native ]; then
-                    printf 'to give it the machine guide, add this to ~/.aider.conf.yml:\n  read: %s\n' "$AGENTS_MD"
+                    printf 'to give it the guide, add this to ~/.aider.conf.yml:\n  read: %s\n' "$AGENTS_MD"
                 else
-                    printf 'the shim passes --read %s whenever the image has it, so aider starts with the machine guide\n' "$AGENTS_MD"
+                    printf 'the shim passes --read %s whenever the image has it, so aider starts with the guide\n' "$AGENTS_MD"
                 fi ;;
         esac
         return 0
@@ -1770,16 +1770,16 @@ link_agent_context() {
         return 0
     }
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$AGENTS_MD" ]; then
-        printf 'machine guide already linked at %s\n' "$target"
+        printf 'the guide is already linked at %s\n' "$target"
     elif [ -e "$target" ] || [ -L "$target" ]; then
         # Never overwritten: it is the user's file, and a guide is not worth
         # losing someone's instructions over.
-        printf '%s already exists; left alone. The machine guide is %s (or: pulsar agent guide)\n' \
+        printf '%s already exists; left alone. The guide is %s (or: pulsar agent guide)\n' \
             "$target" "$AGENTS_MD"
     else
         mkdir -p "$(dirname "$target")"
         ln -s "$AGENTS_MD" "$target"
-        printf 'linked the machine guide at %s\n' "$target"
+        printf 'linked the guide at %s\n' "$target"
     fi
 }
 
@@ -2020,7 +2020,7 @@ agent_list() {
         printf '%-9s %-9s %-34s %-10s %s\n' "$n" "$b" "${m} ${p}" "$state" "$d"
     done <<<"$AGENTS_TABLE"
     [ -z "$notes" ] || printf '\nnative installs:\n%s' "$notes"
-    printf '\nnone is installed by default. box: %s  prefix: %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
+    printf '\nnone is installed by default. toolbox: %s  prefix: %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
 }
 
 agent_install() {
@@ -2035,7 +2035,7 @@ agent_install() {
         link_agent_context native
         link_agent_skills
         register_mcp host
-        printf 'done: nothing installed\n'
+        printf 'done; nothing was installed in the toolbox\n'
         return 0
     fi
     need toolbox
@@ -2292,8 +2292,8 @@ agent_status() {
     fi
     printf 'sandbox  %s here (%s)  (pulsar agent sandbox)\n' "${sbx%%$'\t'*}" "${sbx#*$'\t'}"
     case "$guard" in
-        on)      printf 'guard    on: layering and system Flatpak installs ask for a password\n' ;;
-        off)     printf 'guard    off: layering and system Flatpak installs do not prompt  (sudo pulsar agent guard on)\n' ;;
+        on)      printf 'guard    on: layering, rollback, cleanup and system Flatpak installs and removals ask for a password\n' ;;
+        off)     printf 'guard    off: layering, rollback, cleanup and system Flatpak installs and removals need no password  (sudo pulsar agent guard on)\n' ;;
         partial) printf 'guard    partial  (see: pulsar agent guard)\n' ;;
         *)       printf 'guard    unknown  (run pulsar agent guard as yourself)\n' ;;
     esac
@@ -2357,7 +2357,7 @@ sandbox_image() {
 sandbox_build() {
     local img; img=$(sandbox_image)
     podman image exists "$img" 2>/dev/null && return 0
-    printf 'building the sandbox image %s (once; a few minutes)\n' "$img" >&2
+    printf 'building the sandbox image %s (once)\n' "$img" >&2
     sandbox_recipe | podman build --quiet -t "$img" -f - >&2 || die "could not build the sandbox image"
 }
 
@@ -2433,7 +2433,7 @@ sandbox_allow() {
     case "$HOME/" in "${path%/}/"*) die "that would let the whole of ${path} in; allow the one file or folder you need" ;; esac
     case "$path" in
         "$HOME/.ssh"*|"$HOME/.gnupg"*|"$HOME/.local/share/keyrings"*|"$HOME/.config/gh"*|"$HOME/.password-store"*)
-            printf 'warning: %s holds keys or tokens; the sandbox is weaker with it in\n' "$path" >&2 ;;
+            printf 'warning: %s holds keys or tokens; the agent in the sandbox can read them\n' "$path" >&2 ;;
     esac
     entry=$path; [ "$rw" = 0 ] || entry="${path}:rw"
     tmp=$(mktemp)
@@ -2971,7 +2971,7 @@ sandbox_run() {
     while [ ! -S "$sock" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
     [ -S "$sock" ] || die "the push gate did not start (see ${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log)"
 
-    printf 'sandboxed: only %s is visible; push %s through the gate\n' "$root" "$policy" >&2
+    printf 'sandboxed: %s and the paths you allowed are visible; push: %s, through the gate\n' "$root" "$policy" >&2
     [ "$name" != aider ] || [ ! -r "$AGENTS_MD" ] || set -- --read /usr/share/pulsar/AGENTS.md "$@"
     podman "${args[@]}" "$img" "$real" "$@"
 }
@@ -4096,12 +4096,12 @@ agent_model() {
             systemctl --user restart "${MODEL_UNIT}.service" \
                 || die "the model server did not start: journalctl --user -u ${MODEL_UNIT}"
             model_opencode add "$model"
-            printf 'endpoint http://127.0.0.1:%s/v1\n' "$MODEL_PORT"
-            printf 'key:     %s (every request needs it)\n' "$MODEL_KEY"
+            printf 'endpoint http://127.0.0.1:%s/v1  (OpenAI-compatible)\n' "$MODEL_PORT"
+            printf 'key      %s  (every request needs it)\n' "$MODEL_KEY"
             # shellcheck disable=SC2016  # the $(cat) is for the user to run
-            printf 'aider:   aider --openai-api-base http://127.0.0.1:%s/v1 --openai-api-key "$(cat %s)" --model openai/%s\n' \
+            printf 'aider    aider --openai-api-base http://127.0.0.1:%s/v1 --openai-api-key "$(cat %s)" --model openai/%s\n' \
                 "$MODEL_PORT" "$MODEL_KEY" "$(basename "${model%%:*}")"
-            [ "$at_login" = 1 ] || printf 'it stops at logout; --at-login to keep it running\n'
+            [ "$at_login" = 1 ] || printf 'it stops at logout and does not start again; --at-login starts it at each login\n'
             ;;
         off)
             if [ -f "$unit" ]; then

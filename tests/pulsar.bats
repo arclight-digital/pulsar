@@ -3179,7 +3179,7 @@ teardown() { [ -z "${XDG_RUNTIME_DIR:-}" ] || case "$XDG_RUNTIME_DIR" in /tmp/ps
     cd "$PROJ"
     run "$PULSAR" agent run claude --sandbox -- --version
     [ "$status" -eq 0 ] || fail "$output"
-    [[ "$output" == *"sandboxed: only ${PROJ} is visible; push on"* ]]
+    [[ "$output" == *"sandboxed: ${PROJ} and the paths you allowed are visible; push: on,"* ]]
     local a; a=$(cat "$PODMAN_LOG")
     # its own home, not the real one
     grep -qx "${HOME}/.local/share/pulsar/sandbox/claude:${HOME}" "$PODMAN_LOG"
@@ -4228,7 +4228,7 @@ wt_env() {
     cd "$WT"
     run "$PULSAR" agent run claude --sandbox -- --version
     [ "$status" -eq 0 ] || fail "$output"
-    [[ "$output" == *"sandboxed: only ${PROJ} is visible"* ]]
+    [[ "$output" == *"sandboxed: ${PROJ} and the paths you allowed are visible"* ]]
     grep -qx "${PROJ}:${PROJ}" "$PODMAN_LOG"
     grep -qx "${adm}:${adm}" "$PODMAN_LOG"
     local f
