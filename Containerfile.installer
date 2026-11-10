@@ -68,6 +68,19 @@ RUN systemctl disable bootloader-update.service greenboot-healthcheck.service \
     systemctl enable var-tmp.mount && \
     glib-compile-schemas /usr/share/glib-2.0/schemas
 
+# The live session's own extension (it starts the session on the desktop,
+# with the installer in front) must declare the image's GNOME Shell: one that
+# doesn't is never loaded, and the session opens on the overview. Its
+# shell-version moves with the theme extension's (Containerfile), whose own
+# check is the same.
+RUN EXT=/usr/share/gnome-shell/extensions/pulsar-live@arclight.digital && \
+    test "$(jq -r .uuid "${EXT}/metadata.json")" = pulsar-live@arclight.digital && \
+    SHELL_MAJOR="$(gnome-shell --version | sed 's/[^0-9.]//g' | cut -d. -f1)" && \
+    { jq -e --arg v "${SHELL_MAJOR}" '."shell-version" | index($v)' "${EXT}/metadata.json" >/dev/null || \
+      { echo "FATAL: the pulsar-live extension does not declare GNOME Shell ${SHELL_MAJOR}"; \
+        echo "       it declares: $(jq -c '."shell-version"' "${EXT}/metadata.json")"; \
+        echo "       an extension that does not declare the running Shell is never loaded"; exit 1; }; }
+
 # An initramfs that can find the ISO and boot its squashfs. dracut wants
 # /root to exist (it's a symlink into /var in this image).
 RUN mkdir -p "$(realpath /root)" && \
