@@ -37,14 +37,14 @@ FX_SCHEMA = "org.gnome.shell.extensions.pulsar-theme"
 # The Shell extension's effects (its prefs.js shows the same): key, title,
 # subtitle, the key it needs on.
 EFFECTS = (
-    ("glass", "Glass", "Menus, the top bar, OSDs and banners are translucent over a blur of what is behind them", None),
-    ("window-glass", "Glass windows", "App windows are a little translucent too; apps opened afterwards pick it up", "glass"),
-    ("lighting", "Lighting", "Menus catch light from the button that opened them; the edge warms when the battery is low", None),
-    ("power-on", "Power-on", "The edge traces out from the light as a menu opens", "lighting"),
-    ("glow", "Glow", "What is filled with the accent glows softly; apps opened afterwards pick it up", None),
-    ("focus-brackets", "Focus brackets", "Corner brackets lock onto the control the keyboard is on", None),
-    ("glass-off-gaming", "Disable glass when gaming", "While a game is running", None),
-    ("glass-off-power-saver", "Disable glass in Power Saver", "While the power mode is Power Saver", None),
+    ("glass", "Glass", "Menus, the top bar, on-screen displays and notification banners are translucent over a blur of what is behind them", None),
+    ("window-glass", "Glass windows", "App windows are 80% opaque over the same blur; apps opened afterwards pick it up", "glass"),
+    ("lighting", "Lighting", "A menu's edge is lit from the button that opened it, and turns warmer when the battery is low", None),
+    ("power-on", "Power-on", "As a menu opens, its lit edge traces out from the button that opened it", "lighting"),
+    ("glow", "Glow", "Controls filled with the accent color, such as switches and sliders, glow in it; apps opened afterwards pick it up", None),
+    ("focus-brackets", "Focus brackets", "Four corner brackets mark the control the keyboard is on", None),
+    ("glass-off-gaming", "Disable glass when gaming", "Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun); app windows stay glass", None),
+    ("glass-off-power-saver", "Disable glass in Power Saver", "Glass and lighting turn off while the power mode is Power Saver; app windows stay glass", None),
 )
 
 PAGES = (("appearance", "Appearance", "applications-graphics-symbolic"),
@@ -228,7 +228,7 @@ class Settings(Adw.ApplicationWindow):
         if not Gio.SettingsSchemaSource.get_default().lookup(FX_SCHEMA, True):
             return page
         self.fx = Gio.Settings(schema_id=FX_SCHEMA)
-        fx = Adw.PreferencesGroup(title="Effects", description="High contrast turns them all off.")
+        fx = Adw.PreferencesGroup(title="Effects", description="High contrast turns them all off, except in app windows already open.")
         fx.set_header_suffix(self._reset_button())
         for key, title, subtitle, needs in EFFECTS:
             row = Adw.SwitchRow(title=title, subtitle=subtitle)
@@ -301,10 +301,7 @@ class Settings(Adw.ApplicationWindow):
         upd.add(self.auto_row)
         page.add(upd)
 
-        back = Adw.PreferencesGroup(
-            title="Going back",
-            description="Your files, apps and their data stay as they are. System-wide settings changed since "
-                        "the previous image, such as newly saved Wi-Fi networks, go back to how they were.")
+        back = Adw.PreferencesGroup(title="Going back")
         self.prev_row = Adw.ActionRow(title="Previous image")
         self.rollback_button = button("Roll Back…", lambda *_: self._confirm_rollback())
         self.prev_row.add_suffix(self.rollback_button)
@@ -381,8 +378,8 @@ class Settings(Adw.ApplicationWindow):
             self._slot(button("Check Again", lambda *_: self.check_updates(), "flat"))
         elif s == "available":
             self.update_row.set_title("Update available")
-            self.update_row.set_subtitle(f"{r.get('latest', '?')} is out. Downloading it now leaves this session "
-                                         "as it is; the new image starts at the next restart.")
+            self.update_row.set_subtitle(f"{r.get('latest', '?')} is out. Downloading it changes nothing until "
+                                         "the next restart.")
             self._slot(button("Download", lambda *_: self._download(), "suggested-action"))
         elif s == "staged":
             self.update_row.set_title("Restart to update")
@@ -395,7 +392,7 @@ class Settings(Adw.ApplicationWindow):
 
     def _download(self):
         self.update_row.set_title("Downloading the update")
-        self.update_row.set_subtitle("This can take a few minutes. You can close this window.")
+        self.update_row.set_subtitle("You can close this window.")
         self._slot(Adw.Spinner())
         # the same unit as the update notification's button (see its polkit rule)
         run(["systemctl", "start", "pulsar-update-stage.service"], self._downloaded)
@@ -416,7 +413,7 @@ class Settings(Adw.ApplicationWindow):
     def _confirm_rollback(self):
         version = (self.prev or {}).get("version", "the previous image")
         d = Adw.AlertDialog(heading=f"Roll back to {version}?",
-                            body=f"The next time this computer starts, it starts {version}. Nothing restarts now. "
+                            body=f"This computer starts {version} at the next restart; nothing restarts now. "
                                  "Your files, apps and their data stay as they are. System-wide settings changed "
                                  "since that image, such as newly saved Wi-Fi networks, go back to how they were.")
         d.add_response("cancel", "Cancel")
@@ -462,7 +459,7 @@ class Settings(Adw.ApplicationWindow):
             description="Each runs one coding agent in a terminal session that keeps going when its window "
                         "closes. A notification says when one is waiting for you.")
         self.sessions_empty = Adw.ActionRow(
-            title="No sessions yet", subtitle="Start one in a terminal: pulsar agent run claude --tmux <name>",
+            title="No sessions yet", subtitle="Start one in a terminal: pulsar agent run <agent> --tmux <name>",
             subtitle_selectable=True)
         self.sessions.add(self.sessions_empty)
         page.add(self.sessions)
@@ -525,7 +522,7 @@ class Settings(Adw.ApplicationWindow):
     def end_session(self, s):
         back = " Its conversation is kept: Start brings it back." if s.get("agent") == "claude" else ""
         self.confirm(f"End {s['name']}?", f"The agent stops, and the session closes.{back}",
-                     "end", "End Session", lambda: self._agent_cmd("Could not end the session",
+                     "end", "End", lambda: self._agent_cmd("Could not end the session",
                                                                     "sessions", "--kill", s["name"]))
 
     def forget_session(self, s):
@@ -559,12 +556,12 @@ class Settings(Adw.ApplicationWindow):
                 self.alert("Could not undo", out.strip()[-600:])
                 return
             d = Adw.AlertDialog(heading="Files put back",
-                                body="They are as they were when the session started. Take Back returns them "
+                                body="They are as they were when the session started. Redo returns them "
                                      "to how they were a moment ago.")
             d.add_response("close", "Close")
-            d.add_response("redo", "Take Back")
+            d.add_response("redo", "Redo")
             d.connect("response", lambda _d, r: r == "redo" and self._agent_cmd(
-                "Could not take the undo back", "undo", name, "--redo", "--yes"))
+                "Could not redo", "undo", name, "--redo", "--yes"))
             d.present(self)
         run([PULSAR, "agent", "undo", name, "--dry-run"], shown)
 

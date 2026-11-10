@@ -121,7 +121,7 @@ def command(cmd, what):
 
 
 # What's new: each section of the notes under an icon of its own
-SECTION_ICONS = {"agents": "utilities-terminal-symbolic", "command menu": "system-search-symbolic",
+SECTION_ICONS = {"agents": "utilities-terminal-symbolic", "pulsar commands": "system-search-symbolic",
                  "screen": "edit-copy-symbolic", "gaming": "input-gaming-symbolic",
                  "desktop": "preferences-desktop-appearance-symbolic", "installer": "drive-harddisk-symbolic",
                  "themes": "applications-graphics-symbolic", "glass and light": "weather-clear-symbolic",
@@ -155,7 +155,6 @@ class WhatsNew(Adw.ApplicationWindow):
         tv = Adw.ToolbarView(top_bar_style=Adw.ToolbarStyle.FLAT, bottom_bar_style=Adw.ToolbarStyle.FLAT)
         tv.add_top_bar(Adw.HeaderBar(show_title=False))
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        head.append(label("WHAT'S NEW", ["wl-kicker"]))
         head.append(label(f"Pulsar {n['release']}", ["wl-title"]))
         if n["lede"]:
             head.append(markup(n["lede"], ["wl-lede"]))
@@ -164,8 +163,8 @@ class WhatsNew(Adw.ApplicationWindow):
             body.append(section(h, items))
         tv.set_content(page(head, spacer(8), body, width=720, top=8))
         bottom = Gtk.CenterBox(css_classes=["wl-bottom"])
-        tour = Gtk.Button(label="Take the tour", css_classes=["flat", "wl-pill"],
-                          tooltip_text="Themes, games and coding agents: the welcome")
+        tour = Gtk.Button(label="Take the Tour", css_classes=["flat", "wl-pill"],
+                          tooltip_text="Welcome to Pulsar: themes, updates, games and coding agents")
         tour.connect("clicked", lambda *_: (Welcome(app, False).present(), self.close()))
         done = Gtk.Button(label="Done", css_classes=["suggested-action", "wl-pill"])
         done.connect("clicked", lambda *_: self.close())
@@ -203,7 +202,7 @@ class Welcome(Adw.ApplicationWindow):
 
         tv = Adw.ToolbarView(top_bar_style=Adw.ToolbarStyle.FLAT, bottom_bar_style=Adw.ToolbarStyle.FLAT)
         hb = Adw.HeaderBar(show_title=False)
-        skip = Gtk.Button(label="Skip", css_classes=["flat"], tooltip_text="Close the welcome (Esc)")
+        skip = Gtk.Button(label="Skip", css_classes=["flat"], tooltip_text="Close (Esc)")
         skip.connect("clicked", lambda *_: self.close())
         hb.pack_start(skip)
         self.skip = skip
@@ -219,7 +218,7 @@ class Welcome(Adw.ApplicationWindow):
         bottom = Gtk.CenterBox(css_classes=["wl-bottom"])
         self.back = Gtk.Button(label="Back", css_classes=["flat", "wl-pill"])
         self.back.connect("clicked", lambda *_: self.go(-1))
-        self.next = Gtk.Button(label="Get started", css_classes=["suggested-action", "wl-pill"])
+        self.next = Gtk.Button(label="Get Started", css_classes=["suggested-action", "wl-pill"])
         self.next.connect("clicked", lambda *_: self.go(1))
         bottom.set_start_widget(self.back)
         bottom.set_center_widget(Adw.CarouselIndicatorDots(carousel=self.carousel))
@@ -267,19 +266,18 @@ class Welcome(Adw.ApplicationWindow):
         rise = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-rise"])
         rise.append(label("Welcome to Pulsar", ["wl-display"]))
         rise.append(label("Your lighthouse in the sky.", ["wl-tagline", "dim-label"]))
-        rise.append(spacer(4))
-        rise.append(label("A desktop that looks after itself, so you can get on with the work and the play.",
-                          ["wl-lede"]))
+        # TODO(copy): what one sentence should a new user read here, under the
+        # tagline? (The lede that was here promised "a desktop that looks after
+        # itself", which no one mechanism backs.)
         self.rise = rise
         return page(self.mark, spacer(8), rise, width=640)
 
     def themes(self):
         bound = shortcut_bound()
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        head.append(label("MAKE IT YOURS", ["wl-kicker"]))
         head.append(label("Pick a look", ["wl-title"]))
-        head.append(label("One click recolors everything: apps, terminal, editor, top bar and wallpaper. "
-                          "This window changes with it.", ["wl-lede"]))
+        head.append(label("One click recolors the apps, terminal, editor, top bar and wallpaper, and this "
+                          "window with them. Other apps already open change when you reopen them.", ["wl-lede"]))
 
         row = Gtk.Box(spacing=12, css_classes=["wl-switchrow"], halign=Gtk.Align.CENTER)
         row.append(Gtk.Image(icon_name="weather-clear-night-symbolic"))
@@ -336,67 +334,69 @@ class Welcome(Adw.ApplicationWindow):
 
     def cant_rot(self):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        head.append(label("ATOMIC", ["wl-kicker"]))
-        head.append(label("Built not to rot", ["wl-title"]))
-        head.append(label("The system is one tested image, swapped whole. Your files and settings live apart "
-                          "from it, and updates never touch them.", ["wl-lede"]))
+        head.append(label("Updates and rollback", ["wl-title"]))
+        head.append(label("The system is one image, and an update replaces it whole. Your home folder is not "
+                          "part of the image.", ["wl-lede"]))
         facts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        facts.append(fact("weather-clear-night-symbolic", "A new image every night",
-                          "Built fresh from the latest Fedora packages, and checked before it is published."))
-        facts.append(fact("system-reboot-symbolic", "Updates land on reboot",
-                          "A notification says when a new image is out. Updating stages it beside the "
-                          "running one, and it takes over at the next restart: nothing changes under you "
-                          "mid-session."))
-        facts.append(fact("edit-undo-symbolic", "The last good system is one reboot away",
-                          "If an update misbehaves, pick the previous entry at boot, or roll back and restart."))
+        facts.append(fact("weather-clear-night-symbolic", "Nightly images",
+                          "Built from the latest Fedora packages on each night something changed, and booted "
+                          "in a test VM before it is published."))
+        facts.append(fact("system-reboot-symbolic", "Updates start at the next restart",
+                          "A notification says when a new image is out. Updating downloads it beside the "
+                          "running one."))
+        facts.append(fact("edit-undo-symbolic", "Going back",
+                          "Pick the previous entry at boot, or roll back and restart. A boot that fails its "
+                          "health checks goes back by itself."))
         cmds = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=6)
-        cmds.append(command("pulsar update", "fetch and stage the newest image now"))
-        cmds.append(command("pulsar doctor", "check that everything is as it should be"))
-        cmds.append(command("pulsar rollback", "go back to the previous image"))
+        cmds.append(command("sudo pulsar update", "download the newest image for the next restart"))
+        cmds.append(command("pulsar doctor", "run the health checks"))
+        cmds.append(command("sudo pulsar rollback", "start the previous image at the next restart"))
         return page(head, spacer(8), facts, Gtk.Box(css_classes=["wl-rule"], margin_top=8, margin_bottom=4),
                     cmds, width=680, top=8)
 
     def games(self):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        head.append(label("GAMES", ["wl-kicker"]))
-        head.append(label("Games just run", ["wl-title"]))
-        head.append(label("Steam is among the default apps, and the rest is part of the system.", ["wl-lede"]))
+        head.append(label("Games", ["wl-title"]))
+        head.append(label("Steam is one of the default apps. GameMode, MangoHud and gamescope are in the "
+                          "image.", ["wl-lede"]))
         facts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        facts.append(fact("input-gaming-symbolic", "GameMode, MangoHud and gamescope",
-                          "Installed, configured and ready, with nothing to set up."))
+        facts.append(fact("input-gaming-symbolic", "Steam launch options",
+                          "<tt>gg %command%</tt> runs a game with GameMode and gamescale. "
+                          "<tt>ggm %command%</tt> adds the MangoHud overlay."))
         facts.append(fact("video-display-symbolic", "gamescale",
-                          "Runs a game at the panel's real resolution, then puts the desktop back when it "
-                          "exits."))
+                          "<tt>gamescale %command%</tt> runs a game at the panel's real resolution, then puts "
+                          "the desktop back when it exits."))
         return page(head, spacer(8), facts, width=680, top=8)
 
     def agents(self):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        head.append(label("AGENTIC", ["wl-kicker"]))
         head.append(label("Bring a coding agent", ["wl-title"]))
-        head.append(label("None comes installed. Pick one and it gets its own toolbox and a briefing on "
-                          "this machine. Skipping is fine.", ["wl-lede"]))
+        head.append(label("None comes installed. Each one you install goes in the shared agents toolbox "
+                          "and gets a briefing on this machine.", ["wl-lede"]))
         self.agent_list = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE,
                                       margin_top=6)
         self.agent_status = label("", ["wl-note"], wrap=True, visible=False)
         facts = Gtk.Box(spacing=12, homogeneous=True, margin_top=6)
-        facts.append(fact("dialog-warning-symbolic", "Crashes, one click away",
-                          "A crash notice can hand it to your agent. Nothing is sent unless you click."))
-        facts.append(fact("security-high-symbolic", "It asks first",
-                          "It is told to. <tt>pulsar agent guard</tt> makes system installs need your "
-                          "password."))
+        facts.append(fact("dialog-warning-symbolic", "Crashes",
+                          "A crash notification can hand the crash to your agent. Nothing is sent unless "
+                          "you click."))
+        facts.append(fact("security-high-symbolic", "System changes",
+                          "The briefing tells agents to ask first. <tt>sudo pulsar agent guard on</tt> makes "
+                          "system installs ask for your password."))
         self.fill_agents()
         return page(head, self.agent_list, self.agent_status, facts, width=760, top=8)
 
     def done(self):
         check = Gtk.Image(icon_name="object-select-symbolic", pixel_size=56, css_classes=["wl-fact-icon"])
-        start = Gtk.Button(label="Start", css_classes=["suggested-action", "wl-start"], halign=Gtk.Align.CENTER)
+        start = Gtk.Button(label="Done", css_classes=["suggested-action", "wl-start"], halign=Gtk.Align.CENTER)
         start.connect("clicked", lambda *_: self.close())
         self.start = start
         settings = Gtk.Button(label="Open Pulsar Settings", css_classes=["flat", "wl-pill"],
-                              halign=Gtk.Align.CENTER, tooltip_text="Effects, updates and rollback")
+                              halign=Gtk.Align.CENTER,
+                              tooltip_text="Theme and effects, updates and rollback, agent sessions")
         settings.connect("clicked", lambda *_: self._settings())
         return page(check, label("You're set.", ["wl-display"]),
-                    label("Welcome to Pulsar reopens from the app grid whenever you want this tour again.",
+                    label("Welcome to Pulsar, in the app grid, opens this tour again.",
                           ["wl-lede"]), spacer(18), start, settings, width=560)
 
     def _settings(self):
@@ -420,7 +420,7 @@ class Welcome(Adw.ApplicationWindow):
         self.back.set_opacity(0 if i == 0 else 1)
         self.back.set_sensitive(i > 0)
         self.next.set_visible(i < last)
-        self.next.set_label("Get started" if i == 0 else "Next")
+        self.next.set_label("Get Started" if i == 0 else "Next")
         self.skip.set_visible(i < last)
         if i == last:
             GLib.idle_add(self.start.grab_focus)
@@ -496,11 +496,11 @@ class Welcome(Adw.ApplicationWindow):
             if a["name"] == default:
                 row.set_subtitle(f"{a['vendor']} · default")
             if a["state"] == "available":
-                b = Gtk.Button(label="Add", valign=Gtk.Align.CENTER)
+                b = Gtk.Button(label="Install", valign=Gtk.Align.CENTER)
                 b.connect("clicked", self._add, a)
             else:
                 # First run is where each vendor signs you in.
-                b = Gtk.Button(label="Sign in" if a["state"] == "installed" else "Open",
+                b = Gtk.Button(label="Sign In" if a["state"] == "installed" else "Open",
                                valign=Gtk.Align.CENTER, css_classes=["flat"],
                                tooltip_text=f"Opens a terminal running {a['command']}")
                 b.connect("clicked", lambda *_, c=a["command"]: open_terminal(c))
@@ -511,8 +511,7 @@ class Welcome(Adw.ApplicationWindow):
         spin = Adw.Spinner()
         btn.set_child(spin)
         self.agent_list.set_sensitive(False)
-        self._status(f"Installing {a['title']}. The first one sets up its toolbox, "
-                                    "which takes a minute or two.")
+        self._status(f"Installing {a['title']}. The first agent also sets up the agents toolbox.")
         self._run([PULSAR, "agent", "add", a["name"]], self._added, a)
 
     def _added(self, proc, out, a):
