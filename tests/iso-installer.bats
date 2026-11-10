@@ -211,6 +211,25 @@ installer_build() { # expected status
   run "-$1" "${REAL}/scripts/build-installer-iso.sh" --out "${BATS_TEST_TMPDIR}/out"
 }
 
+@test "a tree without the installer app (or its backend) builds no ISO: no placeholder window stands in" {
+  # the real script, in a bare repo with everything the build copies but one
+  # piece of the installer; podman and the rest are setup()'s stubs
+  local f repo="${BATS_TEST_TMPDIR}/bare"
+  for f in pulsar-installer pulsar-install-system pulsar-install-disk; do
+    rm -rf "${repo}"; mkdir -p "${repo}/scripts" "${repo}/system_files.installer" \
+      "${repo}/system_files/usr/share/pulsar/installer/repart"
+    cp "${REAL}/Containerfile.installer" "${repo}/"
+    cp "${REAL}/scripts/build-installer-iso.sh" "${REAL}/scripts/pulsar-installer" \
+      "${REAL}/scripts/pulsar-install-system" "${REAL}/scripts/pulsar-install-disk" "${repo}/scripts/"
+    rm "${repo}/scripts/${f}"
+    : > "${LOG}"
+    run -1 "${repo}/scripts/build-installer-iso.sh" --out "${BATS_TEST_TMPDIR}/out"
+    [ "${output}" = "scripts/${f} is missing: an ISO without it can't install Pulsar" ]
+    # stopped before anything was pulled or built
+    [ ! -s "${LOG}" ]
+  done
+}
+
 @test "a host missing the image's policy modules is refused before image-builder, and told which" {
   policy_setup
   installer_build 1
