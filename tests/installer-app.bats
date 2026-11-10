@@ -239,6 +239,27 @@ PY
     [ "$(py 'm.disk_state([{"stage": "disk"}, {"stage": "unlock"}, {"stage": "install"}, {"progress": 0.4}])')" = "{'disk': 'left', 'esp': 'fallback'}" ]
 }
 
+@test "a stop signal mid-install waits for the backend; otherwise the app quits" {
+    run py '(lambda g: (g.stop(False), g.pending, g.stop(True), g.pending))(m.QuitGuard())'
+    [ "$output" = "(True, False, False, True)" ]
+    # wired: SIGTERM, SIGHUP and SIGINT go to the guard, and a finished
+    # install quits when one is pending
+    run python3 - "$APP" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+inst = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "Installer")
+flat = lambda n: "".join(ast.unparse(n).split())
+src = flat(inst)
+print("GLib.unix_signal_add(GLib.PRIORITY_HIGH,sig,self._stop_signal,sig)" in src,
+      "forsigin(signal.SIGTERM,signal.SIGHUP,signal.SIGINT)" in src)
+installed = next(n for n in ast.walk(inst) if isinstance(n, ast.FunctionDef) and n.name == "installed")
+print("ifself.guard.pending:self.get_application().quit()" in flat(installed))
+close = next(n for n in ast.walk(inst) if isinstance(n, ast.FunctionDef) and n.name == "_close_request")
+print("ifnotself.installing:returnFalse" in flat(close))
+PY
+    [ "$output" = "$(printf 'True True\nTrue\nTrue')" ]
+}
+
 @test "elapsed time reads as minutes and seconds" {
     [ "$(py 'm.elapsed(0)')" = "Time so far: 0:00" ]
     [ "$(py 'm.elapsed(754)')" = "Time so far: 12:34" ]

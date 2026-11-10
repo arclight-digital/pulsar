@@ -51,7 +51,10 @@ EOF
 # ESP_SHIMS="ubuntu ...": other systems' shims already on the ESP, there once
 # it is mounted; ESP_FALLBACK=TEXT: the ESP's EFI/BOOT/BOOTX64.EFI before the
 # install. ESP_BOOT_RO=1: bootc leaves EFI/BOOT read-only, so it can't be put
-# back. ESP_WINDOWS=1: Windows' boot manager is on the ESP. stdout: the backend's events; $T/calls: every command run(), in order.
+# back. ESP_WINDOWS=1: Windows' boot manager is on the ESP. APP_GONE_AFTER=N:
+# the app goes away after N event lines, closing both pipes (each print after
+# that fails as a closed pipe does). SIGNAL_AT_BOOTC=TERM|HUP: that signal
+# arrives while bootc runs. stdout: the backend's events; $T/calls: every command run(), in order.
 system() {
     local mode=$1; shift
     PULSAR_INSTALL_DISK="$T/disk-tool" python3 - "$SYS" "$T" "$DISK" "$mode" "$@" <<'PY'
@@ -62,6 +65,29 @@ ROOT, BOOT, ESPU = ("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-
                     "33333333-3333-3333-3333-333333333333")
 m.os.geteuid = lambda: 0
 m.SCRATCH = T + "/run"
+if os.environ.get("APP_GONE_AFTER"):
+    left = [int(os.environ["APP_GONE_AFTER"])]
+
+    class Pipe:
+        # a pipe whose reader has gone: every write fails, until its fd is
+        # pointed somewhere else
+        def __init__(self, real, counts):
+            self.real, self.counts = real, counts
+        def broken(self):
+            return left[0] <= 0 and not os.path.samestat(os.fstat(self.real.fileno()), os.stat(os.devnull))
+        def write(self, text):
+            if self.broken():
+                raise BrokenPipeError(32, "Broken pipe")
+            if self.counts:
+                left[0] -= text.count("\n")
+            return self.real.write(text)
+        def flush(self):
+            if self.broken():
+                raise BrokenPipeError(32, "Broken pipe")
+            self.real.flush()
+        def fileno(self):
+            return self.real.fileno()
+    sys.stdout, sys.stderr = Pipe(sys.stdout, True), Pipe(sys.stderr, False)
 # booted via EFI, as the live system is: the firmware entry is made
 m.EFIVARS = T
 calls = open(T + "/calls", "a", buffering=1)
@@ -115,6 +141,9 @@ def run_stream(*cmd, **kw):
         open(os.path.join(target, "boot/efi/EFI/BOOT", f), "w").write("PULSAR-SHIM")
     if os.environ.get("ESP_BOOT_RO"):
         os.chmod(os.path.join(target, "boot/efi/EFI/BOOT"), 0o555)
+    if os.environ.get("SIGNAL_AT_BOOTC"):
+        import signal
+        os.kill(os.getpid(), getattr(signal, "SIG" + os.environ["SIGNAL_AT_BOOTC"]))
     if "bootc" in fail_at:
         raise m.Failed("bootc exited 1: stopped by the test", 1)
 
@@ -258,6 +287,49 @@ deleted() { grep '^sfdisk --delete' "$T/calls" | sed "s|^sfdisk --delete $DISK |
     # and the install itself makes the entry on the same test
     ESP_WINDOWS=1 run --separate-stderr system alongside "${ID[@]}"
     [ "$(echo "$output" | jq -r 'select(.stage? == "done") | .windows_entry')" = true ]
+}
+
+@test "the install carries on when the app goes away mid-install, and nothing is cleaned up under it" {
+    # the app reads check and disk, and is gone as the disk tool's first line comes
+    APP_GONE_AFTER=3 run --separate-stderr system alongside "${ID[@]}"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r .stage)" = "$(printf '%s\n' check disk)" ]
+    ! grep -q '^sfdisk --delete' "$T/calls"
+    grep -q '^bootc install to-filesystem ' "$T/calls"
+    # the kept log has the rest, which the app never saw
+    local log
+    log=$(find "$T/run" -path '*/ostree/deploy/default/var/log/pulsar-install.log')
+    grep -qF ' {"stage": "done", "ok": true,' "$log"
+}
+
+@test "SIGTERM or SIGHUP stops the install in order: the failed event, Pulsar's partitions taken back, EFI/BOOT put back" {
+    for sig in TERM HUP; do
+        rm -f "$T/calls"; rm -rf "$T/run"
+        ESP_FALLBACK=WINDOWS-BOOTMGR SIGNAL_AT_BOOTC=$sig run --separate-stderr system alongside "${ID[@]}"
+        [ "$status" -eq 1 ]
+        [ "$(echo "$output" | jq -r 'select(.stage? == "failed") | .error')" = "stopped by SIG$sig" ]
+        [ "$(known)" = "removed boot_files" ]
+        [ "$(deleted)" = "2 3 " ]
+    done
+}
+
+@test "a step cut short by a signal ends its command and waits for it before the clean-up" {
+    run python3 - "$SYS" "$T/wrote" <<'PY'
+import importlib.machinery as M, importlib.util as U, os, sys, time
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+m.stop_on_signals()
+# a command that is told to stop while it works (the signal comes to the
+# backend, as the session's end would send it), then writes, a second later
+try:
+    m.run_stream("sh", "-c", 'echo working; kill -TERM $PPID; sleep 1; echo done > "$0"', sys.argv[2])
+    print("not stopped")
+except m.Stopped as e:
+    print(e)
+time.sleep(2)
+print("wrote after the stop:", os.path.exists(sys.argv[2]))
+PY
+    [ "${lines[${#lines[@]}-2]}" = "stopped by SIGTERM" ]
+    [ "${lines[${#lines[@]}-1]}" = "wrote after the stop: False" ]
 }
 
 # page_says MODE: the failure page's sentence about the disk, as the installer

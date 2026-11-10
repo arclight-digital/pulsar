@@ -8,7 +8,8 @@ install. An empty disk skips the "how" page: there is
 one way. The work is pulsar-install-system's, run with pkexec; this app only
 asks, shows, and waits. Nothing is written to any disk before the last
 page's button, which says "Erase and Install" whenever it deletes anything,
-and the window can't be closed while the backend is writing.
+and the window can't be closed while the backend is writing: a SIGTERM,
+SIGHUP or SIGINT then waits for the backend to finish before the app quits.
 
 For tests and screenshots, each outside piece can be swapped:
   PULSAR_INSTALLER_LSBLK      a file holding `lsblk -J -b -o ...` output
@@ -26,6 +27,7 @@ import os
 import re
 import pathlib
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -246,6 +248,26 @@ def disk_state(events):
     if "unlock" in reached:
         return {"disk": "left", "esp": "unchanged"}
     return {"disk": "unknown", "esp": None}
+
+
+class QuitGuard:
+    """Whether the app may quit when told to by a signal (SIGTERM, SIGHUP,
+    SIGINT: the session ending, a kill). While the backend installs, the app
+    waits for it and quits once it has finished: the backend runs as root,
+    so the app can't stop it, and an app gone mid-install leaves it writing
+    with nobody reading. The window's close is refused meanwhile
+    (_close_request)."""
+
+    def __init__(self):
+        self.pending = False
+
+    def stop(self, installing):
+        """A stop signal arrived: True to quit now. While installing, False,
+        and pending says to quit when the install ends."""
+        if installing:
+            self.pending = True
+            return False
+        return True
 
 
 def backend_argv(mode, d, *args):
@@ -643,10 +665,20 @@ def main():
             self.installing = False
             self.logf, self.log_t0 = None, time.monotonic()
             self.connect("close-request", self._close_request)
+            self.guard = QuitGuard()
+            for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+                GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, self._stop_signal, sig)
             self.nav = Adw.NavigationView()
             self.set_content(self.nav)
             self.welcome = self.welcome_page()
             self.nav.add(self.welcome)
+
+        def _stop_signal(self, sig):
+            if self.guard.stop(self.installing):
+                self.get_application().quit()
+            else:
+                self.note(f"{signal.Signals(sig).name}: quitting once the install has finished")
+            return GLib.SOURCE_CONTINUE
 
         def _close_request(self, *_):
             if not self.installing:
@@ -926,6 +958,10 @@ def main():
                     os.unlink(self.key_path)
                 except OSError:
                     pass
+            if self.guard.pending:
+                # told to stop while it installed: it has finished, so go now
+                self.get_application().quit()
+                return
             done = next((e for e in events if e.get("stage") == "done"), None)
             if code == 0 and done:
                 self.nav.push(self.done_page(int(time.monotonic() - self.started), done))

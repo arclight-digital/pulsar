@@ -65,6 +65,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -88,6 +89,25 @@ class Failed(Exception):
         self.code = code     # the failed command's exit status, when there was one
 
 
+class Stopped(Failed):
+    """SIGTERM or SIGHUP (the session ending): the step running is stopped,
+    its command ended and waited for, then everything is cleaned up as for
+    any failure. Never a clean-up while bootc or the disk tool still writes."""
+
+
+def stop_on_signals():
+    def stop(signum, _frame):
+        raise Stopped(f"stopped by {signal.Signals(signum).name}")
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, stop)
+
+
+def hold_signals():
+    """The clean-up runs to its end: a second signal can't cut it short."""
+    for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(s, signal.SIG_IGN)
+
+
 # pulsar-install-disk's exits: refused before writing anything, or failed
 # with the write begun. Any other failure of it counts as the second.
 DISK_REFUSED, DISK_WRITE_FAILED = 2, 3
@@ -104,15 +124,46 @@ def note(line):
     RECORD.append(f"[{time.monotonic() - T0:7.1f}s] {line}")
 
 
+def tell(line, stream):
+    """A line for the installer app. If the app has gone (its end of the
+    pipe closed), the install carries on: a print that failed would
+    otherwise end it mid-step, and its clean-up would run while bootc still
+    wrote. The line is in RECORD either way, and the stream is pointed at
+    /dev/null so later lines, and the flush at exit, go nowhere quietly."""
+    try:
+        print(line, file=stream, flush=True)
+    except (OSError, ValueError):
+        try:
+            null = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(null, stream.fileno())
+            os.close(null)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
 def say(msg):
     note("stderr: " + msg)
-    print(msg, file=sys.stderr, flush=True)
+    tell(msg, sys.stderr)
 
 
 def emit(**event):
     line = json.dumps(event)
     note(line)
-    print(line, flush=True)
+    tell(line, sys.stdout)
+
+
+def ended(p):
+    """Stop p and wait for it: a step cut short (a signal, an error while
+    reading its output) never leaves its command running under the clean-up.
+    From here the run is failing: a second signal can't cut the wait short."""
+    hold_signals()
+    if p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
 
 
 UNITS = {"B": 1, "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
@@ -142,32 +193,37 @@ def run_stream(*cmd, watch=None, expected_bytes=None):
     say("+ " + shlex.join(cmd))
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
     tail, expected = [], [expected_bytes]
-    if watch:
-        def used():
-            st = os.statvfs(watch)
-            return (st.f_blocks - st.f_bfree) * st.f_frsize
-        base = used()
+    try:
+        if watch:
+            def used():
+                st = os.statvfs(watch)
+                return (st.f_blocks - st.f_bfree) * st.f_frsize
+            base = used()
 
-        def poll():
-            last = -1.0
-            while p.poll() is None:
-                f = copied_fraction(used(), base, expected[0])
-                if f - last >= 0.005:
-                    emit(progress=round(f, 3))
-                    last = f
-                time.sleep(1)
-        threading.Thread(target=poll, daemon=True).start()
-    for line in p.stdout:
-        line = line.rstrip()
-        if line:
-            emit(log=line)
-            # the larger of what bootc announces (compressed, from some
-            # sources: 3.3 GB for an 8 GB install) and what the ISO measured
-            announced = payload_bytes(line)
-            if announced:
-                expected[0] = max(announced, expected[0] or 0)
-            tail = (tail + [line])[-8:]
-    if p.wait() != 0:
+            def poll():
+                last = -1.0
+                while p.poll() is None:
+                    f = copied_fraction(used(), base, expected[0])
+                    if f - last >= 0.005:
+                        emit(progress=round(f, 3))
+                        last = f
+                    time.sleep(1)
+            threading.Thread(target=poll, daemon=True).start()
+        for line in p.stdout:
+            line = line.rstrip()
+            if line:
+                emit(log=line)
+                # the larger of what bootc announces (compressed, from some
+                # sources: 3.3 GB for an 8 GB install) and what the ISO measured
+                announced = payload_bytes(line)
+                if announced:
+                    expected[0] = max(announced, expected[0] or 0)
+                tail = (tail + [line])[-8:]
+        p.wait()
+    except BaseException:
+        ended(p)
+        raise
+    if p.returncode != 0:
         raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:], p.returncode)
 
 
@@ -177,17 +233,21 @@ def run_logged(*cmd):
     a slow step shows which part of it is slow. Returns its stdout."""
     say("+ " + shlex.join(cmd))
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out = []
-    reader = threading.Thread(target=lambda: out.append(p.stdout.read()), daemon=True)
-    reader.start()
-    tail = []
-    for line in p.stderr:
-        line = line.rstrip()
-        if line:
-            emit(log=line)
-            tail = (tail + [line])[-8:]
-    reader.join()
-    if p.wait() != 0:
+    out, tail = [], []
+    try:
+        reader = threading.Thread(target=lambda: out.append(p.stdout.read()), daemon=True)
+        reader.start()
+        for line in p.stderr:
+            line = line.rstrip()
+            if line:
+                emit(log=line)
+                tail = (tail + [line])[-8:]
+        reader.join()
+        p.wait()
+    except BaseException:
+        ended(p)
+        raise
+    if p.returncode != 0:
         raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:], p.returncode)
     return out[0] if out else ""
 
@@ -461,6 +521,7 @@ def main():
     if not a.plan_only and (a.expect_size is None or a.expect_serial is None):
         ap.error("installing needs --expect-size and --expect-serial: the disk that was chosen")
     note("$ " + shlex.join(sys.argv))
+    stop_on_signals()
     # what pulsar-install-disk is told: never neither, so it can't default
     plain = ["--no-encrypt"] if a.no_encrypt else []
     # and which drive it must find at a.disk
@@ -564,6 +625,7 @@ def main():
         error = f"{type(e).__name__}: {e}"
         raise
     finally:
+        hold_signals()
         if ok and mounted:
             # the live session's log is gone at restart: the installed
             # system keeps this one. A log that can't be kept fails nothing
