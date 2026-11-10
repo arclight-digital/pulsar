@@ -5256,17 +5256,23 @@ gpu_fault_notify_one() {
     # one unit per fault: the pid, or for the GPU itself the Xid and this run
     unit=pulsar-gpu-fault-${6:-xid${xid}-$$}
     # The buttons outlive the watcher's own work, as crash_notify_one's do.
+    # Each button only when it has something to act on: Ask when an agent is
+    # installed ($1), Ignore when there is a program to ignore ($6). The GPU
+    # itself and a program the driver did not name have none, and `crashes
+    # ignore add ""` is an error.
     # shellcheck disable=SC2016  # expanded by the transient unit's sh, not here
-    local script='if [ -n "$1" ]; then
+    local script='if [ -n "$1" ] && [ -n "$6" ]; then
     a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" --action=ignore="Ignore this" "$2" "$3") || exit 0
+elif [ -n "$1" ]; then
+    a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" "$2" "$3") || exit 0
 elif [ -n "$6" ]; then
     a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ignore="Ignore this" "$2" "$3") || exit 0
 else
     exec notify-send --app-name=Pulsar --icon=dialog-warning "$2" "$3"
 fi
 case "$a" in
-    ask) exec ptyxis --new-window -d "$HOME" -- "$5" agent ask "$4" ;;
-    ignore) exec "$5" crashes ignore add "$6" ;;
+    ask) [ -z "$1" ] || exec ptyxis --new-window -d "$HOME" -- "$5" agent ask "$4" ;;
+    ignore) [ -z "$6" ] || exec "$5" crashes ignore add "$6" ;;
 esac'
     local ign=$name
     [ "$kind" != gpu ] || ign=""

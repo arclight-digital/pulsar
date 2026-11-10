@@ -3007,6 +3007,54 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     [[ "$output" == warn*"1 GPU fault(s) this boot: GPU (Xid 79)"* ]] || fail "$output"
 }
 
+# A systemd-run that runs the notification's script here, and a notify-send
+# that clicks "Ignore this" whenever it is offered (and otherwise dismisses).
+click_ignore_env() {
+    cat > "${STUB}/systemd-run" <<'SH'
+#!/bin/sh
+echo "$*" >> "$RUN_LOG"
+while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
+shift
+"$@"
+SH
+    cat > "${STUB}/notify-send" <<'SH'
+#!/bin/sh
+echo "$*" >> "$NOTIFY_LOG"
+case "$*" in *--action=ignore=*) echo ignore ;; esac
+SH
+    chmod +x "${STUB}/systemd-run" "${STUB}/notify-send"
+    export PULSAR_CRASH_IGNORE="${BATS_TEST_TMPDIR}/crash-ignore"
+}
+
+@test "gpu faults: Ignore is offered only when there is a program to ignore, agent or not" {
+    gpu_env
+    click_ignore_env
+    fake_agent claude
+    # the GPU itself, and a program the driver did not name: Ask, no Ignore
+    klog 'NVRM: Xid (PCI:0000:02:00): 79, GPU has fallen off the bus.' "$UNKNOWN_31"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(grep -c -- "--action=ask=" "$NOTIFY_LOG")" -eq 2 ] || fail "$(cat "$NOTIFY_LOG")"
+    run grep -c -- "--action=ignore=" "$NOTIFY_LOG"
+    [ "$output" = 0 ] || fail "$(cat "$NOTIFY_LOG")"
+    [ ! -e "$PULSAR_CRASH_IGNORE" ] || fail "$(cat "$PULSAR_CRASH_IGNORE")"
+    # without an agent, the same faults get a plain notification
+    rm -f "${STUB}/claude"
+    : > "$KLOG"; : > "$NOTIFY_LOG"
+    echo boot-b > "$PULSAR_BOOT_ID_FILE"
+    klog 'NVRM: Xid (PCI:0000:02:00): 79, GPU has fallen off the bus.' "$UNKNOWN_31"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$(grep -c "GPU fault\|NVIDIA GPU" "$NOTIFY_LOG")" -eq 2 ] || fail "$(cat "$NOTIFY_LOG")"
+    run grep -c -- "--action=" "$NOTIFY_LOG"
+    [ "$output" = 0 ] || fail "$(cat "$NOTIFY_LOG")"
+    # a named game does get it, and the click ignores it by name
+    fake_agent claude
+    klog "$HIU_13"
+    run "$PULSAR" doctor gpu-faults --watch
+    grep "Hell Is Us hit" "$NOTIFY_LOG" | grep -q -- '--action=ignore=Ignore this'
+    grep -qx "Hell Is Us" "$PULSAR_CRASH_IGNORE"
+}
+
 @test "doctor gpu-faults counts a fault tied to no program, once per fault" {
     gpu_env
     klog "$UNKNOWN_13_WARP" "$UNKNOWN_13_ESR" "$UNKNOWN_31"
