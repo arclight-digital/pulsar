@@ -318,7 +318,8 @@ PY
 }
 
 @test "the encryption switch starts on, and the app starts encrypted" {
-    grep -q 'row(Adw.SwitchRow, title="Encrypt the disk", subtitle="Recommended", active=True)' "$APP"
+    grep -q 'row(Adw.SwitchRow, title="Encrypt the disk", active=True,$' "$APP"
+    grep -qx ' *subtitle="Recommended: protects your files if the computer is lost or stolen")' "$APP"
     grep -q 'self.encrypt = True' "$APP"
 }
 

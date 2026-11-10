@@ -824,8 +824,8 @@ def main():
 
         def passphrase_page(self):
             self.encrypt = True
-            # TODO(copy): "Recommended" gives no reason. Should it say why (and for whom), or go?
-            switch = row(Adw.SwitchRow, title="Encrypt the disk", subtitle="Recommended", active=True)
+            switch = row(Adw.SwitchRow, title="Encrypt the disk", active=True,
+                         subtitle="Recommended: protects your files if the computer is lost or stolen")
             self.encrypt_row = switch
             choice = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             choice.append(switch)
