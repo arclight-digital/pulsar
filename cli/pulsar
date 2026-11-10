@@ -54,7 +54,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 need_root() {
     [ "$(id -u)" -eq 0 ] && return 0
-    die "'$1' needs root; try: sudo pulsar $1"
+    die "'$1' needs root. Run: sudo pulsar $1"
 }
 
 # The mirror image, for setup recipes: they write to $HOME and talk to the
@@ -63,7 +63,7 @@ need_root() {
 # points nowhere near the actual mistake.
 need_user() {
     [ "$(id -u)" -ne 0 ] && return 0
-    die "'$1' configures your session and must not run as root; drop the sudo"
+    die "'$1' configures your session, so run it without sudo"
 }
 
 need() { have "$1" || die "required tool not found: $1"; }
@@ -572,7 +572,7 @@ check_gpu_containers() {
                "sudo systemctl restart nvidia-cdi-refresh.service; journalctl -b -u nvidia-cdi-refresh.service"
     elif [ -n "$stale" ]; then
         record gpu-containers warn "stale CDI spec for driver ${running}: ${stale}" \
-               "the boot unit owns /var/run/cdi; a hand-written spec in /etc/cdi goes stale on every driver update, so delete it"
+               "delete it: the boot unit keeps /var/run/cdi current, and a spec written by hand in /etc/cdi goes stale with every driver update"
     elif [ -r "$sebool" ] && [ "$(cut -d' ' -f1 "$sebool" 2>/dev/null)" = 0 ]; then
         record gpu-containers warn "CDI spec matches ${running}, but SELinux blocks containers from the GPU" \
                "container_use_xserver_devices is off: systemctl status pulsar-gpu-containers.service"
@@ -1351,7 +1351,7 @@ cmd_update_check() {
         [ "$notify" = 0 ] || update_notify_once staged "$remote_digest" "$remote_version" "$local_version" \
             "$(staged_release "$js")"
         if [ "${JSON:-0}" = 1 ]; then check_json staged; return 0; fi
-        printf 'staged: %s; restart to use it\n' "$remote_version"
+        printf 'staged: %s (restart to use it)\n' "$remote_version"
         return 0
     fi
 
@@ -1433,7 +1433,7 @@ update_notify_send() {
     if [ "$kind" = available ]; then
         # The registry says only the build; the release is inside the image.
         title="Pulsar update available"
-        body="Build ${version} is published; you have ${booted}. Update downloads it; then restart to use it."
+        body="Build ${version} is out. You have ${booted}. Update downloads it."
     else
         title="Pulsar update ready"
         # The release only when it differs from the booted one (VERSION);
@@ -1449,7 +1449,7 @@ update_notify_send() {
     # systemd-run it still says what to do, just without the button.
     if ! have systemd-run || { [ "$kind" = staged ] && ! have gnome-session-quit; }; then
         if [ "$kind" = available ]; then
-            body="Build ${version} is published; you have ${booted}. To download it: sudo pulsar update"
+            body="Build ${version} is out. You have ${booted}. To download it, run: sudo pulsar update"
         fi
         notify-send --app-name="Pulsar" --icon=software-update-available "$title" "$body" || true
         return 0
@@ -6221,7 +6221,7 @@ usage: sudo pulsar checkpoint [--no-home] [note]
 
 Take one before handing the machine to an agent. "Your settings" are the
 dotfiles in your home folder, ~/.config (without caches), ~/.local/bin and
-~/.ssh, for whoever ran sudo; over 512 MB, they are skipped. Documents,
+~/.ssh, for whoever ran sudo. Settings over 512 MB are skipped. Documents,
 projects, ~/.local/share, /var and Flatpak data are not included. restore
 does not reboot and does not delete files added since (it lists them).
 EOF

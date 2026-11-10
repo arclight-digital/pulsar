@@ -247,7 +247,7 @@ SH
         run "$PULSAR" $c
         [ "$status" -ne 0 ]
         # the exact command to rerun, not a neighbor that does something else
-        [[ "$output" == *"try: sudo pulsar ${c}"* ]]
+        [[ "$output" == *"Run: sudo pulsar ${c}"* ]]
     done
 }
 
@@ -555,7 +555,7 @@ CHECK_STAGED='{"deployments":[
     # still not staged a day later -- on battery all day, say: now it asks
     PULSAR_UPDATE_AUTO_GRACE=0 run "$PULSAR" update --check --notify
     [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
-    grep -q "Pulsar update available Build 44.2 is published; you have 44.1." "$NOTIFY_LOG"
+    grep -q "Pulsar update available Build 44.2 is out. You have 44.1." "$NOTIFY_LOG"
 }
 
 @test "update --notify names the release when the staged image moves to a new one, and only then" {
@@ -2073,7 +2073,7 @@ EOF
     unshare -r true 2>/dev/null || skip "no unprivileged user namespaces"
     run unshare -r env "PATH=${PATH}" "HOME=${HOME}" "$PULSAR" agent add claude
     [ "$status" -ne 0 ]
-    [[ "$output" == *"must not run as root"* ]]
+    [[ "$output" == *"so run it without sudo"* ]]
     [ ! -s "$TOOLBOX_LOG" ]
 }
 
