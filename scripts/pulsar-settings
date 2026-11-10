@@ -522,7 +522,7 @@ class Settings(Adw.ApplicationWindow):
     def end_session(self, s):
         back = " Its conversation is kept: Start brings it back." if s.get("agent") == "claude" else ""
         self.confirm(f"End {s['name']}?", f"The agent stops, and the session closes.{back}",
-                     "end", "End", lambda: self._agent_cmd("Could not end the session",
+                     "end", "End Session", lambda: self._agent_cmd("Could not end the session",
                                                                     "sessions", "--kill", s["name"]))
 
     def forget_session(self, s):
