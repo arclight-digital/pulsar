@@ -2184,6 +2184,50 @@ EOF
     [ "$(readlink "${HOME}/.config/opencode/AGENTS.md")" = "$REPO_AGENTS_MD" ]
 }
 
+@test "agent list --json says which agents read the guide, and the line that gives it to the rest" {
+    # The welcome reads this after agent add: add exits 0 whether or not the
+    # guide was linked, and its prose is for people.
+    agent_env
+    guide() { jq -r --arg n "$1" '.[] | select(.name == $n) | .guide | [.state, .file, .line] | join("|")' <<<"$output"; }
+    mkdir -p "${HOME}/.codex"
+    printf 'my own rules\n' > "${HOME}/.codex/AGENTS.md"
+    "$PULSAR" agent add claude >/dev/null
+    "$PULSAR" agent add codex >/dev/null
+    "$PULSAR" agent add gemini >/dev/null
+    run "$PULSAR" agent list --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(guide claude)" = "linked|${HOME}/.claude/rules/pulsar.md|" ]
+    [ "$(guide codex)" = "add-line|${HOME}/.codex/AGENTS.md|Read ${REPO_AGENTS_MD} before changing anything outside the project." ]
+    [ "$(guide gemini)" = "add-line|${HOME}/.gemini/GEMINI.md|@${REPO_AGENTS_MD}" ]
+    [ "$(guide opencode)" = "unlinked|${HOME}/.config/opencode/AGENTS.md|" ]
+    [ "$(guide aider)" = "unlinked||" ]
+    # the line, once added, is what gives it the guide
+    printf 'mine\n@%s\n' "$REPO_AGENTS_MD" > "${HOME}/.gemini/GEMINI.md"
+    run "$PULSAR" agent list --json
+    [ "$(guide gemini)" = "linked|${HOME}/.gemini/GEMINI.md|" ]
+    # an image without the guide has nothing to link
+    PULSAR_AGENTS_MD="${BATS_TEST_TMPDIR}/nope.md" run "$PULSAR" agent list --json
+    [ "$(guide claude)" = "missing||" ]
+}
+
+@test "aider: its shim reads the guide, and a native aider gets the config line to add" {
+    agent_env
+    guide() { jq -r '.[] | select(.name == "aider") | .guide | [.state, .file, .line] | join("|")' <<<"$output"; }
+    "$PULSAR" agent add aider >/dev/null
+    run "$PULSAR" agent list --json
+    [ "$(guide)" = "linked|${HOME}/.local/bin/aider|" ]
+    "$PULSAR" agent remove aider >/dev/null
+    printf '#!/bin/sh\necho mine\n' > "${HOME}/.local/bin/aider"; chmod +x "${HOME}/.local/bin/aider"
+    run "$PULSAR" agent add aider
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"the guide was not linked"*"${HOME}/.aider.conf.yml"*"read: ${REPO_AGENTS_MD}"* ]] || fail "$output"
+    run "$PULSAR" agent list --json
+    [ "$(guide)" = "add-line|${HOME}/.aider.conf.yml|read: ${REPO_AGENTS_MD}" ]
+    printf 'read: %s\n' "$REPO_AGENTS_MD" > "${HOME}/.aider.conf.yml"
+    run "$PULSAR" agent list --json
+    [ "$(guide)" = "linked|${HOME}/.aider.conf.yml|" ]
+}
+
 @test "agent add leaves an existing instructions file alone" {
     agent_env
     mkdir -p "${HOME}/.codex"
@@ -4192,6 +4236,26 @@ wt_env() {
     [ -f "${PROJ}/.worktrees/dirty/new.txt" ]
 }
 
+@test "agent sessions --forget --json: what was left behind, for Pulsar Settings to say so" {
+    # Settings forgets a session with this; it exits 0 whether or not the
+    # worktree went, and its prose is for people.
+    wt_env
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux dirty --worktree >/dev/null 2>&1
+    echo work > "${PROJ}/.worktrees/dirty/new.txt"
+    mkdir -p "${PROJ}/sub"
+    "$PULSAR" agent run claude --tmux side --dir "${PROJ}/sub" >/dev/null 2>&1
+    rm "${TMUX_LIVE}/fix" "${TMUX_LIVE}/dirty" "${TMUX_LIVE}/side"; rm -rf "${PROJ}/sub"
+    run "$PULSAR" agent sessions --forget fix --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '[.name, .snapshots, .worktree, .dir] | join("|")' <<<"$output")" = "fix|dropped|removed|${PROJ}/.worktrees/fix" ]
+    run "$PULSAR" agent sessions --forget dirty --json
+    [ "$(jq -r '[.snapshots, .worktree, .dir] | join("|")' <<<"$output")" = "dropped|kept|${PROJ}/.worktrees/dirty" ] || fail "$output"
+    run "$PULSAR" agent sessions --forget side --json
+    [ "$(jq -r '[.snapshots, .worktree] | join("|")' <<<"$output")" = "left|none" ] || fail "$output"
+    [ ! -e "${REC}/side.session" ]
+}
+
 @test "agent run --worktree: one removed by hand is made again" {
     wt_env
     "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
@@ -4346,6 +4410,24 @@ agent_works() {
     [ "$(cat untracked.txt)" = z ]
     run "$PULSAR" agent undo work --redo --yes
     [[ "$output" == *"no undo of work to take back"* ]]
+}
+
+@test "agent undo --redo --dry-run lists what Redo does, files it leaves included, and changes nothing" {
+    # Pulsar Settings shows this before it runs Redo, as it does for Undo
+    undo_env
+    printf 'v1\n' > notes.txt
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1; rm "${TMUX_LIVE}/work"
+    agent_works
+    run "$PULSAR" agent undo work --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    printf 'notes.txt\n' >> .gitignore; printf 'v3\n' > notes.txt
+    run "$PULSAR" agent undo work --redo --dry-run </dev/null
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == "Takes back the undo, as of "* ]] || fail "$output"
+    [[ "$output" == *"! notes.txt  (git ignores it now)"* ]] || fail "$output"
+    [ ! -e added.txt ]
+    [ "$(cat notes.txt)" = v3 ]
+    [ -n "$(git for-each-ref 'refs/pulsar/undone/work/')" ]
 }
 
 @test "agent undo: names with glob or pathspec characters are restored as themselves" {
@@ -4654,6 +4736,32 @@ PY
     [ "${lines[7]}" = "[('Folder', '/srv/x')]" ]
     [ "${lines[8]}" = "fix a b" ]
     [ "${lines[9]}" = "0 min 1 h 2 days 950 3k 3.2M" ]
+}
+
+@test "Settings' Forget says when the worktree or the undo snapshots stayed behind" {
+    python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Adw' 2>/dev/null \
+        || skip "no PyGObject GTK 4 / libadwaita here"
+    wt_env
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux dirty --worktree >/dev/null 2>&1
+    echo work > "${PROJ}/.worktrees/dirty/new.txt"
+    rm "${TMUX_LIVE}/fix" "${TMUX_LIVE}/dirty"
+    # what Settings runs, read the way Settings reads it
+    "$PULSAR" agent sessions --forget fix --json > "${BATS_TEST_TMPDIR}/fix.json"
+    "$PULSAR" agent sessions --forget dirty --json > "${BATS_TEST_TMPDIR}/dirty.json"
+    run python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-settings" "$BATS_TEST_TMPDIR" <<'PY'
+import importlib.machinery, importlib.util, json, sys
+path, d = sys.argv[1], sys.argv[2]; sys.argv = [path]
+loader = importlib.machinery.SourceFileLoader("ps", path)
+spec = importlib.util.spec_from_loader("ps", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+print(m.forget_left(json.load(open(f"{d}/fix.json"))))
+print("|".join(m.forget_left(json.load(open(f"{d}/dirty.json")))))
+print("|".join(m.forget_left({"name": "side", "snapshots": "left", "worktree": "none", "dir": "/gone/sub"})))
+PY
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "None" ]
+    [ "${lines[1]}" = "Worktree kept|dirty is forgotten. Its worktree ~/code/proj/.worktrees/dirty is still there: git won't remove a worktree with uncommitted changes. In a terminal, git worktree remove ${PROJ}/.worktrees/dirty says why." ] || fail "$output"
+    [ "${lines[2]}" = "Undo snapshots kept|side is forgotten. /gone/sub is gone, so its undo snapshots couldn't be deleted. If it was in a git repository, git for-each-ref refs/pulsar/undo/side/ there lists them." ]
 }
 
 # ---------------------------------------------------------------------------

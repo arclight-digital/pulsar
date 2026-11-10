@@ -147,6 +147,25 @@ def session_rows(s):
     return rows
 
 
+def forget_left(r):
+    """(heading, body) for what `agent sessions --forget --json` left behind,
+    or None when it all went."""
+    if not isinstance(r, dict):
+        return None
+    name, folder = r.get("name", ""), home(r.get("dir"))
+    said = []
+    if r.get("worktree") == "kept":
+        said.append(f"Its worktree {folder} is still there: git won't remove a worktree with uncommitted "
+                    f"changes. In a terminal, git worktree remove {r.get('dir')} says why.")
+    if r.get("snapshots") == "left":
+        said.append(f"{folder} is gone, so its undo snapshots couldn't be deleted. If it was in a git repository, "
+                    f"git for-each-ref refs/pulsar/undo/{name}/ there lists them.")
+    if not said:
+        return None
+    heading = "Worktree kept" if r.get("worktree") == "kept" else "Undo snapshots kept"
+    return heading, f"{name} is forgotten. " + " ".join(said)
+
+
 def session_order(s):
     return ({"waiting": 0, "running": 1}.get(s.get("state"), 2), s.get("name", ""))
 
@@ -532,8 +551,17 @@ class Settings(Adw.ApplicationWindow):
         body = "Start can no longer bring its conversation back, and its undo snapshots are deleted."
         if s.get("worktree_of"):
             body += " Its worktree is removed if it has no uncommitted changes. The branch is kept."
-        self.confirm(f"Forget {s['name']}?", body, "forget", "Forget",
-                     lambda: self._agent_cmd("Could not forget the session", "sessions", "--forget", s["name"]))
+        self.confirm(f"Forget {s['name']}?", body, "forget", "Forget", lambda: self._forget(s["name"]))
+
+    def _forget(self, name):
+        def done(ok, out):
+            if not ok:
+                self.alert("Could not forget the session", out.strip()[-600:])
+            elif (left := forget_left(parse(out.strip().splitlines()[-1] if out.strip() else ""))):
+                self.alert(*left)
+            self.refresh_agents()
+        # --json: whether the worktree and the undo snapshots went too
+        run([PULSAR, "agent", "sessions", "--forget", name, "--json"], done)
 
     def _agent_cmd(self, failure, *args):
         def done(ok, out):
@@ -562,11 +590,22 @@ class Settings(Adw.ApplicationWindow):
                                 body="The listed files are back to how they were when the session started. "
                                      "Redo takes the undo back.")
             d.add_response("close", "Close")
-            d.add_response("redo", "Redo")
-            d.connect("response", lambda _d, r: r == "redo" and self._agent_cmd(
-                "Could not redo", "undo", name, "--redo", "--yes"))
+            d.add_response("redo", "Redo…")
+            d.connect("response", lambda _d, r: r == "redo" and self.redo_session(name))
             d.present(self)
         run([PULSAR, "agent", "undo", name, "--dry-run"], shown)
+
+    def redo_session(self, name):
+        """Like undo: the CLI's list first (what it puts back and any file it
+        leaves as it is), then do it."""
+        def shown(ok, out):
+            text = out.strip()
+            if not ok or text.startswith("nothing to do"):
+                self.alert("Nothing to redo" if ok else "Could not redo", text[-600:])
+                return
+            self.confirm(f"Take back the undo in {name}?", text[-1200:], "redo", "Redo",
+                         lambda: self._agent_cmd("Could not redo", "undo", name, "--redo", "--yes"))
+        run([PULSAR, "agent", "undo", name, "--redo", "--dry-run"], shown)
 
     def alert(self, heading, body):
         d = Adw.AlertDialog(heading=heading, body=body)

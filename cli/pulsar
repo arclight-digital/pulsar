@@ -1777,36 +1777,84 @@ agent_context_path() {
     esac
 }
 
-link_agent_context() {
-    local target
-    if ! target=$(agent_context_path "$A_NAME"); then
-        case "$A_NAME" in
-            gemini) printf 'to give it the guide, add this line to ~/.gemini/GEMINI.md:\n  @%s\n' "$AGENTS_MD" ;;
-            aider)
-                if [ "${1:-}" = native ]; then
-                    printf 'to give it the guide, add this to ~/.aider.conf.yml:\n  read: %s\n' "$AGENTS_MD"
-                else
-                    printf 'the shim passes --read %s whenever the image has it, so aider starts with the guide\n' "$AGENTS_MD"
-                fi ;;
-        esac
-        return 0
-    fi
-    [ -r "$AGENTS_MD" ] || {
-        printf 'this image has no %s yet; after the next update, rerun this to link the guide\n' "$AGENTS_MD"
-        return 0
-    }
+# What an agent has of the guide, as three lines: state, file, line.
+#
+#   linked    it reads the guide: Pulsar's link at <file>, aider's shim
+#             (<file>), or the line the user added to <file>
+#   add-line  Pulsar can't link it: adding <line> to <file> gives it the
+#             guide. Always so for gemini and a native aider, and for any
+#             agent whose file is already the user's own
+#   unlinked  nothing there yet; pulsar agent add <name> links it
+#   missing   this image has no guide
+#
+# Read by `agent add` for what it prints and by `agent list --json` for the
+# welcome, so a GUI learns the outcome without reading the prose.
+agent_guide_state() {
+    local target conf
+    if [ ! -r "$AGENTS_MD" ]; then printf 'missing\n\n\n'; return 0; fi
+    case "$A_NAME" in
+        gemini)
+            conf="$HOME/.gemini/GEMINI.md"
+            if [ -f "$conf" ] && grep -qF "@${AGENTS_MD}" "$conf"; then
+                printf 'linked\n%s\n\n' "$conf"
+            else
+                printf 'add-line\n%s\n@%s\n' "$conf" "$AGENTS_MD"
+            fi
+            return 0 ;;
+        aider)
+            conf="$HOME/.aider.conf.yml"
+            if is_our_shim "${AGENT_SHIMS}/${A_BIN}"; then
+                printf 'linked\n%s\n\n' "${AGENT_SHIMS}/${A_BIN}"
+            elif ! native_launcher "$A_BIN" >/dev/null; then
+                printf 'unlinked\n\n\n'
+            elif [ -f "$conf" ] && grep -qF "$AGENTS_MD" "$conf"; then
+                printf 'linked\n%s\n\n' "$conf"
+            else
+                printf 'add-line\n%s\nread: %s\n' "$conf" "$AGENTS_MD"
+            fi
+            return 0 ;;
+    esac
+    target=$(agent_context_path "$A_NAME") || return 1
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$AGENTS_MD" ]; then
-        printf 'the guide is already linked at %s\n' "$target"
+        printf 'linked\n%s\n\n' "$target"
     elif [ -e "$target" ] || [ -L "$target" ]; then
         # Never overwritten: it is the user's file, and a guide is not worth
-        # losing someone's instructions over.
-        printf '%s already exists; left alone. The guide is %s (or: pulsar agent guide)\n' \
-            "$target" "$AGENTS_MD"
+        # losing someone's instructions over. Any agent follows a sentence.
+        printf 'add-line\n%s\nRead %s before changing anything outside the project.\n' "$target" "$AGENTS_MD"
     else
-        mkdir -p "$(dirname "$target")"
-        ln -s "$AGENTS_MD" "$target"
-        printf 'linked the guide at %s\n' "$target"
+        printf 'unlinked\n%s\n\n' "$target"
     fi
+}
+
+link_agent_context() {
+    local state file line
+    { read -r state; read -r file; read -r line; } < <(agent_guide_state)
+    if [ "$state" = unlinked ] && [ -n "$file" ]; then
+        mkdir -p "$(dirname "$file")"
+        ln -s "$AGENTS_MD" "$file"
+        printf 'linked the guide at %s\n' "$file"
+        return 0
+    fi
+    case "$state" in
+        linked)
+            if [ "$A_NAME" = aider ] && is_our_shim "$file"; then
+                printf 'the shim passes --read %s whenever the image has it, so aider starts with the guide\n' "$AGENTS_MD"
+            elif [ -L "$file" ]; then
+                printf 'the guide is already linked at %s\n' "$file"
+            else
+                printf 'the guide is already in %s\n' "$file"
+            fi ;;
+        add-line)
+            if [ "$file" = "$(agent_context_path "$A_NAME")" ]; then
+                printf '%s already exists; left alone. The guide was not linked. To give it the guide, add this line to it:\n  %s\n' \
+                    "$file" "$line"
+            else
+                printf 'the guide was not linked: %s has no file Pulsar can link it into. To give it the guide, add this line to %s:\n  %s\n' \
+                    "$A_DESC" "$file" "$line"
+            fi ;;
+        missing)
+            printf 'this image has no %s yet; after the next update, rerun this to link the guide\n' "$AGENTS_MD" ;;
+    esac
 }
 
 # Skills: /usr/share/pulsar/skills/<name>/SKILL.md, in the Agent Skills
@@ -2021,7 +2069,7 @@ EOF
 }
 
 agent_list() {
-    local n b m p d state native notes=""
+    local n b m p d state native notes="" gs gf gl
     if [ "${JSON:-0}" = 1 ]; then
         need jq
         while IFS=$'\t' read -r n b m p _ d; do
@@ -2029,8 +2077,14 @@ agent_list() {
             if is_our_shim "${AGENT_SHIMS}/${b}"; then state=installed
             elif native_launcher "$b" >/dev/null; then state=native
             fi
+            # guide: what agent_guide_state says, for the welcome to report
+            # after an add without reading add's prose
+            agent_row "$n"
+            { read -r gs; read -r gf; read -r gl; } < <(agent_guide_state)
             jq -n -c --arg n "$n" --arg b "$b" --arg m "$m" --arg p "$p" --arg d "$d" --arg s "$state" \
-                '{name: $n, command: $b, installer: $m, package: $p, description: $d, state: $s}'
+                --arg gs "$gs" --arg gf "$gf" --arg gl "$gl" \
+                '{name: $n, command: $b, installer: $m, package: $p, description: $d, state: $s,
+                  guide: {state: $gs, file: $gf, line: $gl}}'
         done <<<"$AGENTS_TABLE" | jq -s '.'
         return 0
     fi
@@ -2058,7 +2112,7 @@ agent_install() {
     if native=$(native_launcher "$A_BIN"); then
         printf '%s is already installed by its own installer at %s\n' "$A_DESC" "$native"
         printf 'leaving it as it is: it runs on the host, not in the %s toolbox\n' "$AGENT_BOX"
-        link_agent_context native
+        link_agent_context
         link_agent_skills
         register_mcp host
         printf 'done; nothing was installed in the toolbox\n'
@@ -3805,7 +3859,7 @@ agent_sessions() {
         --forget)
             [ "$running" = 0 ] || die "$2 is running; end it first (pulsar agent sessions --kill $2)"
             [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
-            local repo dir top="" r
+            local repo dir top="" r snaps=none wt=none
             repo=$(session_get "$2" repo) || repo=""
             dir=$(session_get "$2" dir) || dir=""
             # the snapshots, so a later session of this name starts clean;
@@ -3816,20 +3870,30 @@ agent_sessions() {
             if [ -n "$top" ]; then
                 while IFS= read -r r; do git -C "$top" update-ref -d "$r"; done \
                     < <(git -C "$top" for-each-ref --format='%(refname)' "refs/pulsar/undo/$2/" "refs/pulsar/undone/$2/")
+                snaps=dropped
             elif [ -n "$dir" ] && [ ! -d "$dir" ]; then
-                printf 'note: %s is gone, so its undo snapshots could not be dropped; if it was in a git repository, git for-each-ref refs/pulsar/undo/%s/ refs/pulsar/undone/%s/ there lists them (git update-ref -d each)\n' \
-                    "${dir/#"$HOME"/\~}" "$2" "$2"
+                snaps=left
             fi
             if [ -n "$repo" ] && [ -d "$dir" ]; then
                 # never forced: what is in it might be the only copy
-                if git -C "$repo" worktree remove "$dir" 2>/dev/null; then
-                    printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2"
-                else
-                    printf 'kept the worktree %s: git would not remove it (git worktree remove %s says why)\n' \
-                        "${dir/#"$HOME"/\~}" "$dir"
-                fi
+                if git -C "$repo" worktree remove "$dir" 2>/dev/null; then wt=removed; else wt=kept; fi
             fi
             rm -f "${AGENT_SESSIONS}/$2.session"
+            # --json: what was left behind, for Pulsar Settings to say so
+            # (snapshots: dropped|left|none, worktree: removed|kept|none)
+            if [ "${JSON:-0}" = 1 ]; then
+                need jq
+                jq -n -c --arg n "$2" --arg s "$snaps" --arg w "$wt" --arg d "$dir" \
+                    '{name: $n, snapshots: $s, worktree: $w, dir: $d}'
+                return 0
+            fi
+            [ "$snaps" != left ] || printf 'note: %s is gone, so its undo snapshots could not be dropped; if it was in a git repository, git for-each-ref refs/pulsar/undo/%s/ refs/pulsar/undone/%s/ there lists them (git update-ref -d each)\n' \
+                "${dir/#"$HOME"/\~}" "$2" "$2"
+            case "$wt" in
+                removed) printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2" ;;
+                kept)    printf 'kept the worktree %s: git would not remove it (git worktree remove %s says why)\n' \
+                             "${dir/#"$HOME"/\~}" "$dir" ;;
+            esac
             printf 'forgot %s (the agent'"'"'s own history is not touched)\n' "$2"
             return 0 ;;
     esac
