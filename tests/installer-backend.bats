@@ -365,6 +365,35 @@ PY
     [ "${lines[${#lines[@]}-1]}" = "wrote after the stop: False" ]
 }
 
+@test "a signal that lands while a command is being started still ends that command before the clean-up" {
+    # the signal arrives as Popen() returns, before run_stream (or run_logged)
+    # holds the process: it used to be raised inside Popen(), leaving the
+    # command running
+    for step in run_stream run_logged; do
+        rm -f "$T/wrote"
+        run --separate-stderr python3 - "$SYS" "$T/wrote" "$step" <<'PY'
+import importlib.machinery as M, importlib.util as U, os, signal, sys, time
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+m.stop_on_signals()
+real = m.subprocess.Popen
+
+def popen(*a, **k):
+    p = real(*a, **k)
+    os.kill(os.getpid(), signal.SIGTERM)
+    return p
+m.subprocess.Popen = popen
+try:
+    getattr(m, sys.argv[3])("sh", "-c", 'sleep 1; echo done > "$0"', sys.argv[2])
+    print("not stopped")
+except m.Stopped as e:
+    print(e)
+time.sleep(2)
+print("wrote after the stop:", os.path.exists(sys.argv[2]))
+PY
+        [ "$output" = "$(printf '%s\n' 'stopped by SIGTERM' 'wrote after the stop: False')" ]
+    done
+}
+
 FED=8c3e7a52-1d4f-4a6b-9e0c-2f5b7d9a1c34
 custom_cfg() { cat "$(find "$T/run" -path '*/target/boot/grub2/custom.cfg')" 2>/dev/null; }
 plan_field() { echo "$output" | jq -c "select(.stage? == \"plan\") | .$1"; }

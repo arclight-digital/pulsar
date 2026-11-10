@@ -103,11 +103,37 @@ class Stopped(Failed):
     any failure. Never a clean-up while bootc or the disk tool still writes."""
 
 
+# A stop signal that arrives while a command is being started waits here
+# until the caller holds the Popen: raised inside Popen(), it left the
+# command running with nothing to end it (seen once under load).
+STARTING, PENDING = [False], []
+
+
 def stop_on_signals():
     def stop(signum, _frame):
+        if STARTING[0]:
+            PENDING.append(signum)
+            return
         raise Stopped(f"stopped by {signal.Signals(signum).name}")
     for s in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(s, stop)
+
+
+def start(cmd, **kw):
+    """subprocess.Popen, with a stop signal held while it starts; the
+    caller calls stop_if_signalled() inside the block that ends p."""
+    STARTING[0] = True
+    try:
+        return subprocess.Popen(cmd, **kw)
+    finally:
+        STARTING[0] = False
+
+
+def stop_if_signalled():
+    if PENDING:
+        signum = PENDING.pop(0)
+        PENDING.clear()
+        raise Stopped(f"stopped by {signal.Signals(signum).name}")
 
 
 def hold_signals():
@@ -199,9 +225,10 @@ def run_stream(*cmd, watch=None, expected_bytes=None):
     a mounted path: while it runs, how much of the announced copy has landed
     there, as {"progress": 0..1}."""
     say("+ " + shlex.join(cmd))
-    p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+    p = start(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
     tail, expected = [], [expected_bytes]
     try:
+        stop_if_signalled()
         if watch:
             def used():
                 st = os.statvfs(watch)
@@ -240,9 +267,10 @@ def run_logged(*cmd):
     of its stderr is passed on as {"log": ...} the moment it is printed, so
     a slow step shows which part of it is slow. Returns its stdout."""
     say("+ " + shlex.join(cmd))
-    p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p = start(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, tail = [], []
     try:
+        stop_if_signalled()
         reader = threading.Thread(target=lambda: out.append(p.stdout.read()), daemon=True)
         reader.start()
         for line in p.stderr:
