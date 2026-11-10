@@ -16,10 +16,10 @@
   --view-fg-color: {{foreground}};
   --headerbar-bg-color: {{headerbar_bg}};
   --headerbar-fg-color: {{foreground}};
-  --headerbar-backdrop-color: {{window_backdrop}};
+  --headerbar-backdrop-color: {{headerbar_backdrop}};
   --sidebar-bg-color: {{sidebar_bg}};
   --sidebar-fg-color: {{foreground}};
-  --sidebar-backdrop-color: {{window_backdrop}};
+  --sidebar-backdrop-color: {{sidebar_backdrop}};
   --secondary-sidebar-bg-color: {{window}};
   --secondary-sidebar-fg-color: {{foreground}};
   --secondary-sidebar-backdrop-color: {{window}};

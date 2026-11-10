@@ -2661,11 +2661,16 @@ const GLASSY = new WeakSet();
 
 const GLASS_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG, Meta.WindowType.UTILITY];
 
-// Whether each process, by pid, has GTK 4 loaded (null: its maps could not
+// Whether each process, by pid, gets window glass (GTK 4, or GTK 3 not
+// drawing its own window; null: its maps could not
 // be read), read once per process: see WindowGlass.wanted(). An entry goes
 // with the process's last window (Glass._watchGeometry), since its pid may
 // be the next process's.
-const GTK4 = new Map();
+const GTK = new Map();
+// What in a GTK 3 process's maps says it draws its whole window itself:
+// Firefox and Thunderbird, Chromium-based apps and Electron (they ship
+// libffmpeg.so), CEF (Steam's web views), Sublime Text.
+const OPAQUE_GTK3 = ['/libxul.so', '/libffmpeg.so', '/libcef.so', '/sublime_text'];
 
 // The live blur inside one window actor, under its surfaces, cut to the
 // window's frame and corners. Only GTK apps get one: they are the ones the
@@ -2782,11 +2787,14 @@ class WindowGlass {
         this._cull.recull();
     }
 
-    // gtk.css is GTK 4's, so a window gets glass if its process has GTK 4
-    // loaded: an app's own windows, a libadwaita dialog floating with no
-    // parent, and the helpers that are no GtkApplication and carry no
-    // application id at all (the portal's file chooser and "Open With",
-    // the VPN password prompt). A GTK 3 app is opaque, and gets none.
+    // The theme makes GTK 4 and GTK 3 windows translucent, so a window gets
+    // glass if its process has either loaded: an app's own windows, a
+    // libadwaita dialog floating with no parent, and the helpers that are
+    // no GtkApplication and carry no application id at all (the portal's
+    // file chooser and "Open With", the VPN password prompt). A GTK 3
+    // process that draws its whole window itself (Firefox, Chromium and
+    // Electron apps, Steam's web views, Sublime Text) loads GTK 3 too; its
+    // window is opaque, so it gets none (OPAQUE_GTK3).
     // A process whose maps cannot be read is judged the old way: a window
     // with an application id is a GTK app's, and so is any window of the
     // same process. `gtkPids` gives the processes with such a window, made
@@ -2796,29 +2804,35 @@ class WindowGlass {
         if (!w || !GLASS_TYPES.includes(w.get_window_type()))
             return false;
         const pid = w.get_pid();
-        const gtk4 = WindowGlass.gtk4(pid);
-        if (gtk4 !== null)
-            return gtk4;
+        const gtk = WindowGlass.gtk(pid);
+        if (gtk !== null)
+            return gtk;
         if (w.get_gtk_application_id?.())
             return true;
         return pid > 0 && gtkPids().has(pid);
     }
 
-    // Read once per process: a GTK 4 app loads GTK before it opens a window.
+    // Read once per process: a GTK app loads GTK before it opens a window.
     // A Flatpak app's pid is the host's, and its maps name the runtime's
     // copy of the library, which matches all the same.
-    static gtk4(pid) {
+    static gtk(pid) {
         if (!(pid > 0))
             return null;
-        if (!GTK4.has(pid)) {
+        if (!GTK.has(pid)) {
             let found = null;
             try {
                 const [, maps] = GLib.file_get_contents(`/proc/${pid}/maps`);
-                found = new TextDecoder().decode(maps).includes('/libgtk-4.so');
+                found = WindowGlass.glassyMaps(new TextDecoder().decode(maps));
             } catch {}
-            GTK4.set(pid, found);
+            GTK.set(pid, found);
         }
-        return GTK4.get(pid);
+        return GTK.get(pid);
+    }
+
+    static glassyMaps(maps) {
+        if (maps.includes('/libgtk-4.so'))
+            return true;
+        return maps.includes('/libgtk-3.so') && !OPAQUE_GTK3.some(m => maps.includes(m));
     }
 
     static gtkPids() {
@@ -3326,7 +3340,7 @@ export class Glass {
                 // the process's last window: its pid is free for another
                 const pid = win.get_pid();
                 if (!global.display.list_all_windows().some(o => o !== win && o.get_pid() === pid))
-                    GTK4.delete(pid);
+                    GTK.delete(pid);
                 cover();
             },
             this);
@@ -3975,7 +3989,7 @@ export class Glass {
             this.forgetWindow(a);
         // nothing sees windows close while this is off (a lock): their
         // pids may be other processes' by the next Glass
-        GTK4.clear();
+        GTK.clear();
         this._colors?.destroy();
         this._colors = null;
         for (const [a, cull] of this._popups ?? []) {

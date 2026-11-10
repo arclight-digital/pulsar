@@ -505,12 +505,19 @@ class Variant:
         # Views take none of their own: a view is the window's ground, so
         # the page is the same 80%, not 80% over 80%.
         c["view_bg"] = glass("view", 0)
-        # The header bar and sidebar paint over that ground: none of their
-        # own, or they stack to ~87% over the 80% and the window is not one
-        # level (Nick 2026-11-09: "consistency man").
-        c["headerbar_bg"] = glass("headerbar", 0)
+        # GNOME's own structure, in glass (Nick 2026-11-10, after seeing four
+        # renderings): the whole window is the 80% ground, sidebar and main
+        # area alike, and a flat title bar (libadwaita's default) is part of
+        # its pane, so it is glass with it. What stock draws as a bar of its
+        # own is solid: a raised top bar (Image Viewer), a plain header bar,
+        # tab, search and action bars, all in the header color. The sidebar
+        # paints nothing over the ground, or it stacks to ~87% and the window
+        # is not one level. Files' grid read busy when its main area had no
+        # ground at all; at 80% it reads as the terminal does.
+        c["headerbar_bg"] = self.p["headerbar"].hex
+        c["headerbar_backdrop"] = self.p["window"].hex
         c["sidebar_bg"] = glass("sidebar", 0)
-        c["window_backdrop"] = glass("window", 0)
+        c["sidebar_backdrop"] = glass("window", 0)
         # Menus and popovers are windows of their own, and the extension blurs
         # what is beneath each one; so are dialogs that float. Their ground is
         # the glass's (Nick 2026-11-08), drawn in the popover's color, lighter
@@ -544,29 +551,12 @@ class Variant:
             c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
                                  f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
                                  f"window.fullscreen {{\n{full}}}\n"
-                                 # Beside a sidebar (a split view: Files, Settings), only
-                                 # the sidebar is glass; the content pane is solid, in
-                                 # the ground stock gives it -- the view's in a window
-                                 # styled .view (Files), else the window's (Nick
-                                 # 2026-11-09: a clear content pane read busy behind
-                                 # Files' list).
-                                 f".content-pane {{\n  background-color: {self.p['window'].hex};\n}}\n"
-                                 f"window.view .content-pane {{\n  background-color: {self.p['view'].hex};\n}}\n"
                                  # A window styled .view (Files) paints the view's
                                  # ground, which is none under glass, so its sidebar
                                  # sat on bare glass, ~4.5x as see-through as every
                                  # other window: it gets the window ground, 80% of
                                  # the background like every other.
-                                 f"window.view:not(.fullscreen) {{\n  background-color: alpha({self.p['background'].hex}, {GLASS_GROUND});\n}}\n"
-                                 # Text Editor is the other way round: its document
-                                 # is a split view's content pane too (beside the
-                                 # properties sidebar, mostly hidden), and it stays
-                                 # glass; the header and tab bars across the top are
-                                 # solid (Nick 2026-11-09).
-                                 f"window.org-gnome-TextEditor .content-pane {{\n  background-color: transparent;\n}}\n"
-                                 f"window.org-gnome-TextEditor {{\n"
-                                 f"  --headerbar-bg-color: {self.p['headerbar'].hex};\n"
-                                 f"  --headerbar-backdrop-color: {self.p['window'].hex};\n}}\n")
+                                 f"window.view:not(.fullscreen) {{\n  background-color: alpha({self.p['background'].hex}, {GLASS_GROUND});\n}}\n")
             # the glass is the filter's (backdrop_svg): it paints the
             # whole sheet, so GTK paints none over it
             c["sheet_glass"] = "".join(
@@ -575,6 +565,21 @@ class Variant:
                 for sel in (sheet, alert, "toast"))
         else:
             c["glass_sheets"] = c["sheet_glass"] = ""
+        # GTK 3 windows the same (Nick 2026-11-10): the window's ground at
+        # GLASS_GROUND, views and sidebars none of their own over it, header
+        # bars solid (a GTK 3 header bar is a bar of its own, as a raised one
+        # is; adw-gtk3 paints it in headerbar_bg_color, which stays solid). Keyed on a real window (.csd): the named colors stay solid,
+        # because Firefox reads them for its own toolbars through style
+        # lookups that are no window. Not fullscreen: no blur behind it there.
+        if g:
+            win3 = "window.background.csd:not(.fullscreen)"
+            clear = ", ".join(f"{win3} {x}" for x in (
+                ".view:not(:selected)", "textview text", "iconview:not(:selected)",
+                ".sidebar", "placessidebar", "stacksidebar", "scrolledwindow", "viewport"))
+            c["glass3"] = (f"{win3} {{\n  background-color: alpha({self.p['background'].hex}, {GLASS_GROUND});\n}}\n"
+                           f"{clear} {{\n  background-color: transparent;\n}}\n")
+        else:
+            c["glass3"] = ""
         # Over the blur the ground is close in value to the cards on it, and
         # they sank into it: a step lighter, and a hairline of light round
         # each (cards, boxed lists and their separate rows).
@@ -1690,6 +1695,7 @@ class Gtk3(Target):
         mode = mode if mode in theme.variants else theme.prefer
         v = theme.variants[mode]
         v.glow = glow_on()
+        v.window_glass = window_glass()
         block = render_tpl(template("gtk3.css"), v.ctx(), "gtk3.css")
         p = CONFIG / "gtk-3.0" / "gtk.css"
         tx.edit(p, managed(p, f"/* {css_comment(theme.name)} ({mode}) */\n" + block), {"kind": "block"})
