@@ -24,7 +24,7 @@
     <key name="window-glass" type="b">
       <default>true</default>
       <summary>Glass windows</summary>
-      <description>App windows' chrome (the window ground, header bars, sidebars) is a little translucent over a blur of the wallpaper; content stays solid. Apps opened afterwards pick it up.</description>
+      <description>GTK 4 app windows show a blur of what is behind them through an 80% ground. Beside a sidebar the content pane is solid. Apps opened afterwards pick it up.</description>
     </key>
     <key name="power-on" type="b">
       <default>true</default>
