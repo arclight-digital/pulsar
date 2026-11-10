@@ -54,7 +54,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 need_root() {
     [ "$(id -u)" -eq 0 ] && return 0
-    die "'$1' needs root -- try: sudo pulsar $1"
+    die "'$1' needs root; try: sudo pulsar $1"
 }
 
 # The mirror image, for setup recipes: they write to $HOME and talk to the
@@ -63,7 +63,7 @@ need_root() {
 # points nowhere near the actual mistake.
 need_user() {
     [ "$(id -u)" -ne 0 ] && return 0
-    die "'$1' configures your session and must not run as root -- drop the sudo"
+    die "'$1' configures your session and must not run as root; drop the sudo"
 }
 
 need() { have "$1" || die "required tool not found: $1"; }
@@ -151,8 +151,7 @@ check_scheduler() {
         # build detected that, and scx.service is skipped rather than failed.
         # Reporting it as a warning forever would be indistinguishable from
         # something the user could fix, and there is nothing to fix here.
-        record scheduler ok "EEVDF: scx.service is enabled, but this kernel cannot load a BPF scheduler" \
-               "scx kfuncs carry the implicit prog-aux argument (Fedora kernel BTF)"
+        record scheduler ok "EEVDF: scx.service is enabled, but this kernel cannot load a BPF scheduler"
     else
         # Warn, not fail. The machine runs fine on EEVDF -- but this is the
         # check that catches the failure `systemctl is-active scx.service`
@@ -168,7 +167,7 @@ check_scheduler() {
         local last
         last=$(journalctl -u scx.service -b -n 1 -o cat --no-pager 2>/dev/null | head -c 200) || true
         [ -z "$last" ] || unit="${unit}; last: ${last}"
-        record scheduler warn "scx.service is enabled but sched_ext is '${state}' -- running EEVDF" \
+        record scheduler warn "scx.service is enabled but sched_ext is '${state}', so EEVDF is running" \
                "scx.service: ${unit}"
     fi
 }
@@ -224,7 +223,7 @@ check_gamemode() {
 
     if ! id -nG "$user" 2>/dev/null | tr ' ' '\n' | grep -qx "$group"; then
         record gamemode warn "${user} is not in the ${group} group; renice=${renice} does nothing" \
-               "sudo pulsar setup gamemode -- then log out and back in"
+               "sudo pulsar setup gamemode, then log out and back in"
         return
     fi
 
@@ -308,12 +307,12 @@ check_greenboot() {
     [ -n "$enabled" ] || enabled=not-found
     if [ "$enabled" = "not-found" ] || [ "$enabled" = "masked" ]; then
         record greenboot warn "greenboot is not installed on this deployment" \
-               "automatic rollback is not armed"
+               "a boot that fails its health checks will not be rolled back"
         return
     fi
     if [ "$enabled" = "disabled" ]; then
         record greenboot warn "greenboot is installed but disabled" \
-               "automatic rollback is not armed: sudo systemctl enable greenboot-healthcheck.service"
+               "a boot that fails its health checks will not be rolled back: sudo systemctl enable greenboot-healthcheck.service"
         return
     fi
     # Result=success is also what a unit that has NEVER RUN reports, so on
@@ -370,11 +369,11 @@ check_nvidia() {
         # module, it is the wrong image -- and it is also every VM this image
         # is boot-tested on. Only a GPU that is there and unserved is a fail.
         if ! nvidia_gpu_present; then
-            record nvidia warn "nvidia image, but this machine has no NVIDIA GPU" \
+            record nvidia warn "NVIDIA image, but this machine has no NVIDIA GPU" \
                    "the vanilla image fits it: bootc switch ghcr.io/arclight-digital/pulsar:latest"
             return
         fi
-        record nvidia fail "nvidia variant but no nvidia module is loaded" \
+        record nvidia fail "NVIDIA image, but no nvidia module is loaded" \
                "Secure Boot may have rejected an unsigned module: dmesg | grep -i taint"
         return
     fi
@@ -392,8 +391,10 @@ check_nvidia() {
         *[!0-9.]*|'') expected="" ;;
     esac
     if [ -n "$expected" ] && [ "$running" != "$expected" ]; then
-        record nvidia warn "driver ${running}, image expects ${expected}" \
-               "a reboot into the staged deployment usually reconciles this"
+        # TODO(copy): what should this tell the user to do? It used to say
+        # "a reboot into the staged deployment usually reconciles this", but
+        # nothing here looks for a staged deployment.
+        record nvidia warn "driver ${running}, image expects ${expected}"
     else
         record nvidia ok "nvidia-open ${running} loaded"
     fi
@@ -513,11 +514,11 @@ check_flatpak_gl() {
     case "$FGL_STATUS" in
         skip) return 0 ;;
         missing)
-            record flatpak-gl warn "Flatpak GL driver for nvidia ${FGL_DRIVER} is missing or incomplete; Flatpak games run on the wrong GPU" \
+            record flatpak-gl warn "Flatpak GL driver for NVIDIA ${FGL_DRIVER} is missing or incomplete; Flatpak games run on the wrong GPU" \
                    "sudo systemctl start pulsar-gl-nvidia.service" ;;
         stale)
             record flatpak-gl warn "${FGL_APPS} started without the NVIDIA ${FGL_DRIVER} driver" \
-                   "quit fully and reopen; until then its games get the iGPU and can show a black window" ;;
+                   "quit fully and reopen; until then, games launched from it get the iGPU and can show a black window" ;;
         ok)
             record flatpak-gl ok "running Flatpak apps have the NVIDIA ${FGL_DRIVER} driver" ;;
     esac
@@ -571,7 +572,7 @@ check_gpu_containers() {
                "sudo systemctl restart nvidia-cdi-refresh.service; journalctl -b -u nvidia-cdi-refresh.service"
     elif [ -n "$stale" ]; then
         record gpu-containers warn "stale CDI spec for driver ${running}: ${stale}" \
-               "the boot unit owns /var/run/cdi; a hand-written spec in /etc/cdi goes stale on every driver bump -- delete it"
+               "the boot unit owns /var/run/cdi; a hand-written spec in /etc/cdi goes stale on every driver update, so delete it"
     elif [ -r "$sebool" ] && [ "$(cut -d' ' -f1 "$sebool" 2>/dev/null)" = 0 ]; then
         record gpu-containers warn "CDI spec matches ${running}, but SELinux blocks containers from the GPU" \
                "container_use_xserver_devices is off: systemctl status pulsar-gpu-containers.service"
@@ -592,7 +593,7 @@ check_flathub() {
     elif grep -q filter <<<"$opts"; then
         # Fedora ships a filtered flathub; the whole point of the shipped
         # remotes.d file is that this system does not.
-        record flathub warn "flathub is FILTERED" "most applications will be hidden"
+        record flathub warn "flathub is filtered" "apps outside its filter cannot be installed from it"
     else
         record flathub ok "flathub present and unfiltered"
     fi
@@ -688,9 +689,9 @@ check_updates() {
     # Worth surfacing even when everything is healthy: it changes which tool
     # `pulsar update` runs, and it is the reason an update takes minutes
     # instead of seconds.
-    [ "${lay:-0}" -gt 0 ] && detail="${detail}, ${lay} layered -- updates go through rpm-ostree"
+    [ "${lay:-0}" -gt 0 ] && detail="${detail}, ${lay} layered, so updates go through rpm-ostree"
     if [ "${staged:-0}" -gt 0 ]; then
-        record updates ok "update staged: ${ver}" "reboot to apply"
+        record updates ok "update staged: ${ver}" "restart to use it"
     else
         record updates ok "no update staged" "$detail"
     fi
@@ -714,7 +715,7 @@ check_cli() {
     first=$(command -v pulsar 2>/dev/null) || first=""
     if [ -n "$first" ] && [ "$first" != "$sys" ] && ! grep -qxF "$PULSAR_SELF_MARK" "$first" 2>/dev/null; then
         record cli warn "another 'pulsar' comes first on PATH: ${first}" \
-               "probably the Pulsar code editor; typing 'pulsar' runs it. use ${sys}, or rename that one"
+               "probably the Pulsar code editor; typing 'pulsar' runs it. Use ${sys}, or rename that one"
         return
     fi
     record cli ok "'pulsar' is this system's CLI"
@@ -730,7 +731,7 @@ check_disk() {
     # A bootc system needs room to stage a whole new image. Under ~10GB free
     # an upgrade starts failing in ways that look like network errors.
     if [ "$pct" -ge 90 ]; then
-        record disk fail "${root} is ${pct}% full (${avail} free)" "staging an update needs several GB"
+        record disk fail "${root} is ${pct}% full (${avail} free)" "staging an update needs about 10 GB free"
     elif [ "$pct" -ge 80 ]; then
         record disk warn "${root} is ${pct}% full (${avail} free)"
     else
@@ -1586,10 +1587,10 @@ cmd_update() {
         # Refused rather than run: the upgrade would re-pull the same digest
         # and report success, which is how this went unnoticed.
         fix=$(pinned_origin_fix "$(rpm-ostree status --json 2>/dev/null || echo '{}')")
-        [ -z "$fix" ] || die "this system follows one image digest, so there is nothing to upgrade to; run: ${fix}"
+        [ -z "$fix" ] || die "this system follows one image digest, so there is nothing to update to; run: ${fix}"
         lay=$(rpm-ostree status --json 2>/dev/null | jq -r "$JQ_LAYERED" 2>/dev/null) \
-            || die "could not read deployment status; refusing to guess which upgrade path is right"
-        [ -n "$lay" ] || die "could not read deployment status; refusing to guess which upgrade path is right"
+            || die "could not read deployment status; refusing to guess whether to update through bootc or rpm-ostree"
+        [ -n "$lay" ] || die "could not read deployment status; refusing to guess whether to update through bootc or rpm-ostree"
     else
         lay=0   # nothing to layer with, so nothing can be layered
     fi
@@ -1599,7 +1600,7 @@ cmd_update() {
         exec bootc upgrade "$@"
     fi
 
-    printf '%spulsar:%s %s local package modification(s) on this deployment -- upgrading through rpm-ostree so they survive\n' \
+    printf '%spulsar:%s %s local package modification(s) on this deployment, so updating through rpm-ostree, which keeps them\n' \
         "$C_KEY" "$C_RESET" "$lay" >&2
     need rpm-ostree
     # The flags pulsar documents are bootc's, and --apply has an exact
@@ -4344,7 +4345,7 @@ cmd_pin() {
     # rollback or a pick from GRUB the booted one is index 1 -- so `0` pinned
     # the OTHER deployment and reported the booted one pinned, at exactly the
     # moment a pin is wanted.
-    ostree admin pin booted && printf 'pinned the booted deployment; it will survive GC\n'
+    ostree admin pin booted && printf 'pinned the booted deployment; it is kept when old deployments are cleaned up\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -5686,7 +5687,7 @@ cmd_report() {
     printf '%s\n' "$js" | jq -r '
       def rows(f): if (f | length) == 0 then "  (none)" else (f[] | "  " + .) end;
       "pulsar report  \(.report.generated)  (\(.report.tool))",
-      "", "doctor: \(if .doctor.ok then "no failures" elif .doctor == null then "unavailable" else "FAILURES" end)",
+      "", "doctor: \(if .doctor.ok then "no failures" elif .doctor == null then "unavailable" else "failures" end)",
       rows([.doctor.checks[]? | "\(.status)\t\(.id)\t\(.summary)"]),
       "", "deployments",
       rows([.status.deployments[]? | "\(if .booted then "booted" elif .staged then "staged" else "-" end)\t\(.version // "?")\t\(if .pinned then "pinned" else "" end)"]),
@@ -6045,7 +6046,7 @@ checkpoint_create() {
     if [ -n "$checksum" ]; then
         if [ "$pinned" = true ]; then printf '  deployment %s pinned\n' "${version:-?}"
         elif [ "$already" = true ]; then printf '  deployment %s was already pinned\n' "${version:-?}"
-        else printf '  deployment %s NOT pinned (ostree refused); it can be garbage collected\n' "${version:-?}"; fi
+        else printf '  deployment %s not pinned (ostree refused); it can be deleted when old deployments are cleaned up\n' "${version:-?}"; fi
     fi
     printf 'see what changed: sudo pulsar checkpoint diff %s\n' "$id"
     printf 'undo it:          sudo pulsar checkpoint restore %s\n' "$id"
@@ -6142,11 +6143,11 @@ checkpoint_restore() {
             || printf 'could not discard the staged deployment; run: sudo rpm-ostree cleanup --pending\n'
     fi
     if grep -q '^booted' <<<"$dep"; then
-        printf 'the system has BOOTED a newer deployment since; to go back: sudo pulsar rollback, then reboot\n'
+        printf 'a different deployment has booted since; to go back: sudo pulsar rollback, then restart\n'
     elif grep -q '^gone' <<<"$dep"; then
         printf "the checkpoint's deployment is gone; only /etc could be restored\n"
     fi
-    printf 'services read /etc when they start: restart what changed, or reboot\n'
+    printf 'services read /etc when they start: restart the ones whose files changed, or restart the computer\n'
 }
 
 # The home half of restore: the same rule as /etc -- changed and deleted

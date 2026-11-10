@@ -1494,7 +1494,7 @@ exit 1
 EOF
     run bash -c "'$PULSAR' doctor --json | jq -r '.checks[] | select(.id==\"greenboot\") | .status + \" \" + .detail'"
     [[ "$output" == warn* ]]
-    [[ "$output" == *"not armed"* ]]
+    [[ "$output" == *"will not be rolled back"* ]]
 }
 
 @test "doctor: a failing flatpak still yields a whole json report" {
