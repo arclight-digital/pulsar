@@ -202,6 +202,8 @@ entry first, then key-only for signatures from before Rekor logging. Hosts
 don't enforce signatures; there is no `policy.json`.
 
 On 2026-11-09 halo was deleted, and its cosign private key had no copy, so
-the key was replaced with one generated on the rebuilt halo. ISOs and images
-signed before that verify only with the old key, kept as
-`keys/cosign-before-2026-11-09.pub`.
+the key was replaced with one generated on the rebuilt halo. On 2026-11-10
+every image the old key had signed was signed again with the new one, so
+`keys/cosign.pub` verifies every published image, and the old key, kept as
+`keys/cosign-before-2026-11-09.pub`, still verifies the old signatures. ISOs
+published before the change are signed with the old key only.

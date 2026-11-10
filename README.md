@@ -151,7 +151,8 @@ cosign verify --key https://raw.githubusercontent.com/arclight-digital/pulsar/ma
 On an installed system, `pulsar verify` runs the same check on the booted
 image against the key the image ships. Machines don't enforce signatures when
 they update: there is no `policy.json`. The key was replaced on 2026-11-09,
-and signatures from before then verify with
+and every image signed before then was signed again with the new key. ISOs
+from before the change verify with
 [`keys/cosign-before-2026-11-09.pub`](keys/cosign-before-2026-11-09.pub).
 [Provenance](https://getpulsar.dev/docs/provenance) shows how to check an ISO.
 
