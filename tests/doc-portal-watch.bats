@@ -10,11 +10,12 @@
 # Pinned here: a healthy or not-yet-started portal is left alone; a missing
 # mount and an unanswered GetMountPoint each restart it, by SIGKILL and then
 # a start, never a plain stop (TERM is ignored while deadlocked); its stacks
-# are saved before the kill; and the apps that were running are named, since
-# they keep a dead view of the mount until reopened. Only the notification's
-# button closes them, and only by asking each one through its own quit
-# action: one that quits is started again, one that does not (a save prompt)
-# or cannot be asked is left open and named. Nothing is ever killed.
+# are saved before the kill; and the apps that were running are named, by
+# their launchers' names, since they keep a dead view of the mount until
+# reopened. Only the notification's button closes them, and only by asking
+# each one through its own quit action: one that quits is started again, one
+# that does not (a save prompt) or cannot be asked is left open and named.
+# Nothing is ever killed.
 #
 # systemctl, systemd-run, gdbus, flatpak, gio, notify-send and eu-stack are
 # stubs; timeout is the real one, so the hang test times out for real.
@@ -40,11 +41,14 @@ setup() {
     # out (a modal prompt inside the action), NOQUIT have no quit action.
     # Anything else owns no bus name (Steam, Electron apps).
     export QUITS="" STAYS="" SLOW="" NOQUIT=""
+    unset LC_ALL LC_MESSAGES
+    export LANG=C
     # The running Flatpak apps, one per line; a quit or a kill takes one out.
     export APPS="${BATS_TEST_TMPDIR}/apps"
     : > "$APPS"
     # Steam, Discord, Loupe and Text Editor have launchers; NautilusPreviewer,
-    # a helper, does not.
+    # a helper, does not. Loupe's name is nothing like its ID's tail, and
+    # translated; its action's names are not the app's.
     export PULSAR_FLATPAK_EXPORTS="${BATS_TEST_TMPDIR}/exports"
     mkdir -p "$PULSAR_FLATPAK_EXPORTS"
     printf '[Desktop Entry]\nName=Steam\nExec=steam\n' \
@@ -53,8 +57,19 @@ setup() {
         > "$PULSAR_FLATPAK_EXPORTS/com.discordapp.Discord.desktop"
     printf '[Desktop Entry]\nName=Text Editor\nExec=gnome-text-editor\n' \
         > "$PULSAR_FLATPAK_EXPORTS/org.gnome.TextEditor.desktop"
-    printf '[Desktop Entry]\nName=Image Viewer\nExec=loupe %%U\n' \
-        > "$PULSAR_FLATPAK_EXPORTS/org.gnome.Loupe.desktop"
+    cat > "$PULSAR_FLATPAK_EXPORTS/org.gnome.Loupe.desktop" <<'EOF2'
+[Desktop Entry]
+# Name=Commented Out
+Name[de]=Bildbetrachter
+Name[pt_BR]=Visualizador de imagens
+Name = Image Viewer
+Name[pt]=Visualizador de imagem
+Exec=loupe %U
+
+[Desktop Action new-window]
+Name=New Window
+Name[fr]=Nouvelle fenêtre
+EOF2
     # The portal's line, as /proc/self/mountinfo shows it.
     printf '36 25 0:50 / %s/doc rw,nosuid,nodev,relatime - fuse.portal portal rw,user_id=1000\n' \
         "$XDG_RUNTIME_DIR" > "$PULSAR_MOUNTINFO"
@@ -181,6 +196,25 @@ EOF
     grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Quit and Reopen Pulsar restarted file access for Flatpak apps Apps that were running before the restart can't open or save files until they're reopened: Discord, Steam. Quit and Reopen asks each one to quit, as its own Quit command does, and opens it again once it has. Apps that stay open are listed afterward for you to close yourself." "$LOG"
 }
 
+@test "apps are named by their launchers, in the user's language, else by their ID" {
+    printf '%s\n' org.gnome.Loupe org.gnome.NautilusPreviewer com.valvesoftware.Steam > "$APPS"
+    HANG=1 run -0 "$SCRIPT"
+    grep -Fq "until they're reopened: Image Viewer, org.gnome.NautilusPreviewer, Steam. " "$LOG"
+    # Name[de] for de_DE; the most specific match first; the language alone
+    # when the country has none; LC_ALL over LANG; and never a name from an
+    # action's group.
+    : > "$LOG"; LANG=de_DE.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
+    grep -Fq "reopened: Bildbetrachter. " "$LOG"
+    : > "$LOG"; LANG=pt_BR.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
+    grep -Fq "reopened: Visualizador de imagens. " "$LOG"
+    : > "$LOG"; LANG=pt_PT.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
+    grep -Fq "reopened: Visualizador de imagem. " "$LOG"
+    : > "$LOG"; LANG=de_DE.UTF-8 LC_ALL=pt_BR.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
+    grep -Fq "reopened: Visualizador de imagens. " "$LOG"
+    : > "$LOG"; LANG=fr_FR.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
+    grep -Fq "reopened: Image Viewer. " "$LOG"
+}
+
 @test "without a click nothing is asked, closed or started" {
     printf '%s\n' org.gnome.Loupe com.discordapp.Discord > "$APPS"
     QUITS=org.gnome.Loupe HANG=1 run -0 "$SCRIPT"
@@ -226,8 +260,8 @@ EOF
     [[ "$output" == *"org.gnome.TextEditor is still open; leaving it to the user"* ]]
     [[ "$output" == *"com.valvesoftware.Steam has no quit action to call; leaving it open"* ]]
     [[ "$output" == *"org.gnome.NautilusPreviewer has no quit action to call; leaving it open"* ]]
-    # The rest are named, alphabetically.
-    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning Close and reopen these apps yourself Still open: Discord, NautilusPreviewer, Steam, TextEditor. They didn't quit when asked, or have no Quit command Pulsar can call, and can't open or save files until you close and reopen them." "$LOG"
+    # The rest are named, by their launchers' names, alphabetically.
+    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning Close and reopen these apps yourself Still open: Discord, org.gnome.NautilusPreviewer, Steam, Text Editor. They didn't quit when asked, or have no Quit command Pulsar can call, and can't open or save files until you close and reopen them." "$LOG"
     # and every one of them is still running
     [ "$(sort "$APPS" | paste -sd' ')" = "com.discordapp.Discord com.valvesoftware.Steam org.gnome.NautilusPreviewer org.gnome.TextEditor" ]
 }

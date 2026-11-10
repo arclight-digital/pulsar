@@ -35,10 +35,10 @@
 # THE COST. A Flatpak app already running when the portal restarts keeps its
 # view of the old mount, which now fails with "Transport endpoint is not
 # connected": it cannot open or save files through the portal until it is
-# reopened. The notification names those apps and offers a "Quit and Reopen"
-# button. Nothing is closed unless that is clicked: the apps may be holding
-# work (a game in Steam, a half-written message), and closing them is the
-# user's call.
+# reopened. The notification names those apps, by their launchers' names, and
+# offers a "Quit and Reopen" button. Nothing is closed unless that is
+# clicked: the apps may be holding work (a game in Steam, a half-written
+# message), and closing them is the user's call.
 #
 # The button asks each app still running to quit through its own "quit"
 # action (org.freedesktop.Application.ActivateAction on the app's bus name),
@@ -76,11 +76,45 @@ launcher() {
     return 1
 }
 
+# The app's Name= from its launcher, in the user's language when the launcher
+# has it (Name[de_DE], then Name[de], as the desktop entry spec looks them up),
+# else the Flatpak ID: a helper with no launcher (NautilusPreviewer).
+display_name() {
+    local desktop name=""
+    if desktop=$(launcher "$1"); then
+        name=$(awk -v loc="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" '
+            BEGIN {
+                l = loc; mod = ""; country = ""
+                if ((i = index(l, "@"))) { mod = substr(l, i + 1); l = substr(l, 1, i - 1) }
+                if ((i = index(l, "."))) l = substr(l, 1, i - 1)
+                lang = l
+                if ((i = index(l, "_"))) { lang = substr(l, 1, i - 1); country = substr(l, i + 1) }
+                n = 0
+                if (lang != "" && lang != "C" && lang != "POSIX") {
+                    if (country != "" && mod != "") key[++n] = "Name[" lang "_" country "@" mod "]"
+                    if (country != "") key[++n] = "Name[" lang "_" country "]"
+                    if (mod != "") key[++n] = "Name[" lang "@" mod "]"
+                    key[++n] = "Name[" lang "]"
+                }
+                key[++n] = "Name"
+            }
+            /^\[/ { group = $0; next }
+            group == "[Desktop Entry]" && (i = index($0, "=")) {
+                k = substr($0, 1, i - 1); sub(/[ \t]+$/, "", k)
+                v = substr($0, i + 1); sub(/^[ \t]+/, "", v)
+                if (!(k in val)) val[k] = v
+            }
+            END { for (j = 1; j <= n; j++) if (val[key[j]] != "") { print val[key[j]]; exit } }
+        ' "$desktop")
+    fi
+    printf '%s\n' "${name:-$1}"
+}
+
 # The apps' names, alphabetical, for a notification.
 names() {
     local a
     local -a out=()
-    mapfile -t out < <(for a in "$@"; do printf '%s\n' "${a##*.}"; done | sort -f)
+    mapfile -t out < <(for a in "$@"; do display_name "$a"; done | sort -f)
     join "${out[@]}"
 }
 
