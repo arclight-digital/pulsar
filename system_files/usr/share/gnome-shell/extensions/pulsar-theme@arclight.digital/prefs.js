@@ -8,7 +8,7 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 // key, title, subtitle, the key it needs on
 const EFFECTS = [
     ['glass', 'Glass', 'The top bar, the dash, menus, dialogs, notifications and on-screen displays blur what is behind them'],
-    ['window-glass', 'Glass windows', 'GTK 4 app windows are 80% opaque over the same blur. GTK 3 apps and fullscreen windows stay solid, and so does the main area beside a sidebar, except Text Editor\'s document', 'glass'],
+    ['window-glass', 'Glass windows', 'GTK 4 and GTK 3 app windows are 80% opaque over the same blur, sidebars included. Bars drawn apart from the window, such as Image Viewer\'s title bar and tab bars, stay solid, and so do fullscreen windows', 'glass'],
     ['lighting', 'Lighting', 'A menu\'s edge is lit from the button that opened it, and turns warmer when the battery is low'],
     ['power-on', 'Power-on', 'As a menu opens, its lit edge traces out from the button that opened it', 'lighting'],
     ['glow', 'Glow', 'Switches that are on, checked boxes, slider fills, progress bars and default buttons glow in the accent color'],

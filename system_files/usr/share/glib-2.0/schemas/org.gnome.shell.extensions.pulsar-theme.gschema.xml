@@ -24,7 +24,7 @@
     <key name="window-glass" type="b">
       <default>true</default>
       <summary>Glass windows</summary>
-      <description>GTK 4 app windows are 80% opaque over the same blur as Glass. GTK 3 apps and fullscreen windows stay solid, and so does the main area beside a sidebar, except Text Editor's document. Applies to apps opened after a change. Needs Glass.</description>
+      <description>GTK 4 and GTK 3 app windows are 80% opaque over the same blur as Glass, sidebars included. Bars drawn apart from the window, such as Image Viewer's title bar and tab bars, stay solid, and so do fullscreen windows. Apps that draw their own window, such as Firefox, are unchanged. Apps opened afterwards pick it up.</description>
     </key>
     <key name="power-on" type="b">
       <default>true</default>

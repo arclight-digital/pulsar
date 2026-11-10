@@ -104,11 +104,12 @@ Super+Space opens Pulsar Commands. The desktop is GNOME 51.
   theme's colors, so a menu keeps its theme over any page or wallpaper,
   and a colored window behind it tints it a little. The button that opened
   a menu lights the glass nearest it.
-- With Glass windows on, every app window is the theme's background color
-  at 80% opacity, like the terminal, with no separate color for its header
-  bar, sidebar or page. Beside a sidebar (Files, Settings) the main area is
-  solid. In Text Editor the document is glass and the header and tab bars
-  are solid. Fullscreen windows are solid.
+- With Glass windows on, every app window, GTK 4 or GTK 3, is the theme's
+  background color at 80% opacity, like the terminal, sidebar and page
+  alike. A title bar is part of the window, except where an app draws a bar
+  apart from it, such as Image Viewer's title bar and tab bars: those are
+  solid. Fullscreen windows are solid. Apps that draw their own window, such
+  as Firefox, are unchanged.
 - Dialogs that open in their own window are 80% opaque too, in the color
   the theme uses for menus inside apps. Dialogs inside a window
   (preferences, an alert) and toasts get the top bar menus' glass on
