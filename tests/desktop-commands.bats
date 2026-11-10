@@ -653,7 +653,7 @@ print(it.matches("100 usd in eur"), it.title, "|", it.subtitle)'
         "\$100 usd in eur = None"
         "True = … | Getting the exchange rates | [] 1"
         "True = 86.98 EUR | ECB rate of 2026-11-05 · Enter copies 86.98"
-        "True = ? | No exchange rates: offline, and none saved yet"
+        "True = ? | No exchange rates: couldn't get them, and none saved yet"
     )
     for i in "${!expected[@]}"; do
         [ "${lines[$i]}" = "${expected[$i]}" ] || fail "line $i: '${lines[$i]}' != '${expected[$i]}'"

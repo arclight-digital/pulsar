@@ -75,10 +75,10 @@ def base_items():
              "camera-photo-symbolic", [f"{LIBEXEC}/pulsar-screen", "qr"], "qr code barcode scan link url", "Screen"),
         Item("themes", "Themes", "Switch the whole desktop's colors",
              "applications-graphics-symbolic", [f"{LIBEXEC}/pulsar-theme-picker"],
-             "theme color colour palette dark light wallpaper look appearance", "Look"),
-        Item("theme-next", "Next theme", "Try the next theme in the list",
-             "media-skip-forward-symbolic", [PULSAR, "theme", "next"], "theme color colour cycle", "Look"),
-        Item("sessions", "Agent sessions", "The coding agents running in sessions, in Pulsar Settings",
+             "theme color colour palette dark light wallpaper look appearance", "Appearance"),
+        Item("theme-next", "Next theme", "Apply the next theme in the list",
+             "media-skip-forward-symbolic", [PULSAR, "theme", "next"], "theme color colour cycle", "Appearance"),
+        Item("sessions", "Agent sessions", "The Agents page of Pulsar Settings",
              "utilities-terminal-symbolic", [f"{LIBEXEC}/pulsar-settings", "agents"],
              "agent claude codex tmux session usage undo", "Agents"),
         Item("updates", "Updates", "Check for a new Pulsar image, in Pulsar Settings",
@@ -596,7 +596,7 @@ class CalcItem(Item):
             if self.rates is None:
                 self.answer, self.argv = None, []
                 if self.rates_failed:
-                    self.title, self.subtitle = "= ?", "No exchange rates: offline, and none saved yet"
+                    self.title, self.subtitle = "= ?", "No exchange rates: couldn't get them, and none saved yet"
                     return True
                 if self.want_rates:
                     self.want_rates()
@@ -620,7 +620,7 @@ class CalcItem(Item):
 
 def agent_item(name):
     agent = AGENT_NAMES.get(name, name)
-    return Item("ask", f"Ask {agent} about this machine", "Starts it on a private report of this machine",
+    return Item("ask", f"Ask {agent} about this machine", "Starts it on a redacted report (redaction is best effort)",
                 "dialog-question-symbolic", terminal(PULSAR, "agent", "ask", hold=False),
                 "agent ask help question report diagnose", "Agents")
 
@@ -971,7 +971,7 @@ def window_class():
             Gtk.StyleContext.add_provider_for_display(self.get_display(), css,
                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            self.entry = Gtk.SearchEntry(placeholder_text="Search apps, files and Pulsar", hexpand=True,
+            self.entry = Gtk.SearchEntry(placeholder_text="Search apps, files and Pulsar actions", hexpand=True,
                                          margin_top=10, margin_bottom=8, margin_start=14, margin_end=14)
             self.entry.add_css_class("search")
             box.append(self.entry)
