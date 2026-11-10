@@ -1347,9 +1347,10 @@ cmd_update_check() {
     if [ "$staged_digest" = "$remote_digest" ]; then
         # Staged by the background unit or the Update button: the one thing
         # left is a restart, so that is what the notification offers.
-        [ "$notify" = 0 ] || update_notify_once staged "$remote_digest" "$remote_version" "$local_version"
+        [ "$notify" = 0 ] || update_notify_once staged "$remote_digest" "$remote_version" "$local_version" \
+            "$(staged_release "$js")"
         if [ "${JSON:-0}" = 1 ]; then check_json staged; return 0; fi
-        printf 'staged: %s -- reboot to apply\n' "$remote_version"
+        printf 'staged: %s; restart to use it\n' "$remote_version"
         return 0
     fi
 
@@ -1379,14 +1380,26 @@ cmd_update_check() {
 # ---------------------------------------------------------------------------
 UPDATE_AUTO_GRACE=${PULSAR_UPDATE_AUTO_GRACE:-86400}
 
+# The release (YY.M.N) the staged deployment carries, read from its own tree:
+# the registry label is the build, and only the image knows its release.
+# Prints nothing when that tree cannot be read.
+staged_release() {
+    local d
+    d=$(printf '%s' "$1" | jq -r '[ .deployments[]? | select(.staged == true) ][0] // {}
+        | if .osname and .checksum then "\(.osname)/deploy/\(.checksum).\(.serial // 0)" else "" end' 2>/dev/null) || d=""
+    [ -n "$d" ] || return 0
+    cat "${PULSAR_OSTREE_DEPLOY:-/ostree/deploy}/${d}/usr/share/pulsar/release" 2>/dev/null || true
+}
+
 update_auto_enabled() {
     have systemctl || return 1
     [ "$(systemctl is-enabled pulsar-update-auto.timer 2>/dev/null)" = enabled ]
 }
 
 # $1 kind (available|staged) $2 digest $3 new version $4 booted version
+# $5 the staged release, when it could be read
 update_notify_once() {
-    local kind=$1 digest=$2 version=$3 booted=$4 state_file seen=""
+    local kind=$1 digest=$2 version=$3 booted=$4 release=${5:-} state_file seen=""
     # "notified-digest" is the file every earlier release wrote for the
     # available notice; keeping the name keeps an upgraded machine from
     # announcing the same build again.
@@ -1409,26 +1422,34 @@ update_notify_once() {
         [ $((now - first)) -ge "$UPDATE_AUTO_GRACE" ] || return 0
     fi
 
-    update_notify_send "$kind" "$digest" "$version" "$booted"
+    update_notify_send "$kind" "$digest" "$version" "$booted" "$release"
     printf '%s\n' "$digest" > "$state_file"
 }
 
 update_notify_send() {
-    local kind=$1 digest=$2 version=$3 booted=$4 title body
+    local kind=$1 digest=$2 version=$3 booted=$4 release=${5:-} title body
     have notify-send || return 0
     if [ "$kind" = available ]; then
-        title="Pulsar ${version} is available"
-        body="You are on ${booted}. Update downloads it now, and it takes over when you restart."
+        # The registry says only the build; the release is inside the image.
+        title="Pulsar update available"
+        body="Build ${version} is published; you have ${booted}. Update downloads it; then restart to use it."
     else
-        title="Pulsar ${version} is ready"
-        body="Restart to start using it. Nothing changes until you do."
+        title="Pulsar update ready"
+        # The release only when it differs from the booted one (VERSION);
+        # unread, the build alone, which is true either way.
+        if [ -n "$release" ] && [ "$release" != "$VERSION" ]; then
+            body="Restart to use ${release} (build ${version})."
+        else
+            body="Restart to use build ${version}."
+        fi
     fi
     # The click has to outlive this oneshot unit, so the waiting notification
     # runs as a transient unit of its own, as crash_notify_one's does. Without
     # systemd-run it still says what to do, just without the button.
     if ! have systemd-run || { [ "$kind" = staged ] && ! have gnome-session-quit; }; then
-        if [ "$kind" = available ]; then body="You are on ${booted} -- run 'sudo pulsar update'"
-        else body="Restart to start using it."; fi
+        if [ "$kind" = available ]; then
+            body="Build ${version} is published; you have ${booted}. To download it: sudo pulsar update"
+        fi
         notify-send --app-name="Pulsar" --icon=software-update-available "$title" "$body" || true
         return 0
     fi
@@ -1443,7 +1464,7 @@ update_notify_send() {
 [ "$a" = update ] || exit 0
 if err=$(systemctl start pulsar-update-stage.service 2>&1); then exec "$3" update --check --notify; fi
 case "$err" in *[Aa]uthenticat*|*"Access denied"*|*[Cc]ancel*) exit 0 ;; esac
-exec notify-send --app-name=Pulsar --icon=dialog-warning "Pulsar $4 could not be downloaded" "See why: journalctl -u pulsar-update-stage"'
+exec notify-send --app-name=Pulsar --icon=dialog-warning "Pulsar update failed" "Build $4 did not install. See why: journalctl -u pulsar-update-stage"'
     else
         # gnome-session-quit shows GNOME's restart dialog; the user confirms
         # there. This never reboots on its own.
@@ -1618,10 +1639,12 @@ flatpak_gl_notify() {
     done
     [ "$fresh" = 1 ] || return 0
     if have notify-send; then
+        local body="It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it fully, not just its window."
+        case "$FGL_APPS" in *", "*)
+            body="They started without the NVIDIA ${FGL_DRIVER} driver, so their games get the iGPU and can show a black window. Quit them fully, not just their windows." ;;
+        esac
         notify-send --app-name="Pulsar" --icon=dialog-warning \
-            "Restart ${FGL_APPS} to use the NVIDIA GPU" \
-            "It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it fully and reopen it." \
-            || true
+            "Restart ${FGL_APPS} to use the NVIDIA GPU" "$body" || true
     fi
     mkdir -p "$UPDATE_STATE" && printf '%s\n' "$FGL_IDS" > "$state_file"
 }
@@ -5052,8 +5075,8 @@ xid_parse() {
 # itself; skip: not news on its own.
 xid_meaning() {
     case "$1" in
-        13|69) printf 'game\ta fault in its graphics work' ;;
-        31)    printf 'game\ta GPU memory access outside its own memory' ;;
+        13|69) printf 'game\ta fault in graphics work' ;;
+        31)    printf "game\\ta GPU memory access outside the program's own memory" ;;
         32)    printf 'game\ta corrupted stream of GPU commands' ;;
         8|109) printf 'game\tGPU work that hung and had to be stopped' ;;
         43)    printf 'game\tGPU work the driver had to stop' ;;
@@ -5063,7 +5086,7 @@ xid_meaning() {
         79)    printf 'gpu\tThe NVIDIA GPU stopped answering the system' ;;
         62|119|120) printf "gpu\\tThe NVIDIA GPU's firmware stopped responding" ;;
         154)   printf 'gpu\tThe NVIDIA driver says the GPU needs a reset' ;;
-        *)     printf 'game\tan error the NVIDIA driver logs as Xid %s' "$1" ;;
+        *)     printf 'game\tone Pulsar has no description for (see docs.nvidia.com/deploy/xid-errors)' ;;
     esac
 }
 
@@ -5113,6 +5136,12 @@ gpu_fault_who() {
 }
 
 GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS and frame generation in its settings (try FSR or TSR) and undo any GPU overclock."
+
+# The advice, for the Xids the one known case ties to DLSS: Hell Is Us faulted
+# with Xid 13 and Xid 109 until DLSS was off (see above). Nothing for others.
+gpu_fault_advice() {
+    case "$1" in 13|109) printf '%s' "$GPU_FAULT_ADVICE" ;; esac
+}
 
 gpu_fault_boot() { cat "${PULSAR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null || echo unknown; }
 
@@ -5167,12 +5196,15 @@ gpu_fault_notify_one() {
     elif [ -z "$name" ]; then
         # The driver did not log which program: say what happened, name none.
         title="A program hit a GPU fault"
-        body="Xid ${xid}: ${what}. The NVIDIA driver did not log which program. That is usually a bug in the program or in the NVIDIA driver, not a failing GPU. ${GPU_FAULT_ADVICE}"
+        body="Xid ${xid}: ${what}. The NVIDIA driver did not log which program."
+        [ -z "$(gpu_fault_advice "$xid")" ] || body+=" $(gpu_fault_advice "$xid")"
+        body+=" Details: pulsar doctor gpu-faults"
         q="A program hit an NVIDIA GPU fault (Xid ${xid}, ${what}) and the driver did not log which; pulsar doctor gpu-faults lists this boot's. Explain what this Xid means, how to find which program it was, and what to try."
     else
         title="${name} hit a GPU fault"
-        body="Xid ${xid}: ${what}. That is usually a bug in ${name} or in the NVIDIA driver, not a failing GPU."
-        [ "$game" = 1 ] && body+=" ${GPU_FAULT_ADVICE}"
+        body="Xid ${xid}: ${what}."
+        [ "$game" != 1 ] || [ -z "$(gpu_fault_advice "$xid")" ] || body+=" $(gpu_fault_advice "$xid")"
+        body+=" Details: pulsar doctor gpu-faults"
         q="${name} hit an NVIDIA GPU fault (Xid ${xid}, ${what}); pulsar doctor gpu-faults lists this boot's. Explain what this Xid means, search for reports of it with ${name} and this driver, and tell me what to try."
     fi
     if ! have systemd-run; then
@@ -5268,7 +5300,11 @@ check_gpu_faults() {
     summary=$(printf '%s\n' "$list" | awk -F'\t' '{ k = $3 " (Xid " $2 ")"; if (!c[k]++) o[++m] = k }
         END { for (i = 1; i <= m; i++) printf "%s%s%s", (i > 1 ? ", " : ""), o[i], (c[o[i]] > 1 ? " x" c[o[i]] : "") }')
     detail=$(printf '%s\n' "$list" | awk -F'\t' '{ k = "Xid " $2 ": " $4; if (!s[k]++) printf "%s%s", (n++ ? "; " : ""), k }')
-    record gpu-faults warn "${n} GPU fault(s) this boot: ${summary}" "${detail}. ${GPU_FAULT_ADVICE}"
+    local advice=""
+    if printf '%s\n' "$list" | awk -F'\t' '$2 == 13 || $2 == 109 { f = 1 } END { exit !f }'; then
+        advice=" ${GPU_FAULT_ADVICE}"
+    fi
+    record gpu-faults warn "${n} GPU fault(s) this boot: ${summary}" "${detail}.${advice}"
 }
 
 # ---------------------------------------------------------------------------
