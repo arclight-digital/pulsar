@@ -1649,6 +1649,92 @@ JS
     [ "${lines[-1]}" = ok ]
 }
 
+@test "glass: a fresh blur partly redrawn where it reads takes its copy whole again; an old one patches around it" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, fakeLoop, FakeActor, Signals} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+globalThis.global = {stage: Object.assign(new Signals(), {context: fake('context')}), get_window_actors: () => []};
+const loop = fakeLoop();
+let now = 0;    // ms
+provide('GLib', fake('GLib', {...loop, PRIORITY_HIGH: -100, SOURCE_REMOVE: false, get_monotonic_time: () => now * 1000}));
+const [OUT, IN, PART] = [0, 1, 2];
+provide('Mtk', fake('Mtk', {RegionOverlap: {OUT, IN, PART}, Rectangle: class { x = 0; y = 0; width = 0; height = 0; }}));
+const g = await load(`${process.env.EXT}/glass.js`, ['LiveBlur', 'Views', 'FRESH_MS', 'TILE']);
+assert.equal(g.TILE, 32);
+// one 1920x1080 view at scale 1
+const fb = {get_width: () => 1920, get_height: () => 1080, blit: () => true, draw_textured_rectangle() {}, flush() {}};
+g.Views._map.set(fb, {x: 0, y: 0, w: 1920, h: 1080, scale: 1});
+// a redraw clip of stage rects [x, y, w, h]
+const region = (...rects) => ({
+    contains_rectangle(q) {
+        const holds = ([x, y, w, h]) => q.x >= x && q.y >= y && q.x + q.width <= x + w && q.y + q.height <= y + h;
+        const meets = ([x, y, w, h]) => q.x < x + w && x < q.x + q.width && q.y < y + h && y < q.y + q.height;
+        return rects.some(holds) ? IN : rects.some(meets) ? PART : OUT;
+    },
+});
+// a menu's backdrop: 400x300 at (100, 100), the surface inside it BLUR_PAD in
+const actor = Object.assign(new FakeActor({width: 400, height: 300}), {
+    mapped: true, redraws: 0,
+    get_transformed_position: () => [100, 100], get_transformed_size: () => [400, 300],
+    is_in_clone_paint: () => false, get_paint_opacity: () => 255,
+});
+actor.queue_redraw = () => actor.redraws++;
+const blur = new g.LiveBlur();
+blur.vfunc_set_actor(actor);
+blur.setShape([64, 64, 272, 172], 12);
+let blurs = 0;
+const pyramid = blur._blur;
+blur._blur = function (...a) {
+    blurs++;
+    return pyramid.apply(this, a);
+};
+// one frame: whether it blurred afresh, and whether it asked for a redraw
+const paint = (at, ...rects) => {
+    now = at;
+    const [b, d] = [blurs, actor.redraws];
+    blur._paint(null, {get_framebuffer: () => fb, get_redraw_clip: () => region(...rects)}, actor);
+    loop.run();
+    return {blurred: blurs > b, redraw: actor.redraws > d};
+};
+const key = () => [...blur._states.values()][0].key[0];
+const screen = [0, 0, 1920, 1080];
+const self = [100, 100, 400, 300];         // its own box: a fade, or the redraw it asks for
+const caret = [250, 250, 10, 10];          // inside one tile, under the surface
+assert.ok(g.FRESH_MS >= 300 && g.FRESH_MS <= 500);
+
+// first paint: the whole copy, young from now
+assert.deepEqual(paint(0, screen), {blurred: true, redraw: false});
+// young, a tile under the surface redrawn in part: no patch-and-blur of old
+// pixels; the last blur, the copy taken whole next, and a redraw of all of it
+assert.deepEqual(paint(16, caret), {blurred: false, redraw: true});
+assert.ok(Number.isNaN(key()));
+assert.deepEqual(paint(33, self), {blurred: true, redraw: false});
+assert.equal(key(), 100);
+// its own fade redraws its box: only the outer ring of tiles is partial
+// (the clip has no pixel to spare there), which the blur never reads
+assert.deepEqual(paint(50, self), {blurred: true, redraw: false});
+// that retake did not make it young again: past FRESH_MS from the first
+// copy, a partial tile is left as it is, and costs nothing
+assert.deepEqual(paint(g.FRESH_MS + 1, caret), {blurred: false, redraw: false});
+assert.equal(key(), 100);
+// old, whole tiles beside a partial one are patched in as before
+assert.deepEqual(paint(1000, [164, 164, 100, 100]), {blurred: true, redraw: false});
+
+// hidden and shown again in place (a menu switched to along the top bar):
+// taken whole, young again
+actor.mapped = false;
+actor.emit('notify::mapped');
+actor.mapped = true;
+assert.ok(Number.isNaN(key()));
+assert.deepEqual(paint(2000, screen), {blurred: true, redraw: false});
+assert.deepEqual(paint(2016, caret), {blurred: false, redraw: true});
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
+}
+
 @test "glass: the terminal, the window ground and a floating dialog are one level, 80%" {
     glass_env
     reply 1.0

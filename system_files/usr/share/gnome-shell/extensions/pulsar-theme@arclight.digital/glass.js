@@ -85,6 +85,16 @@ const BLUR_LEVELS = 2;
 const BLUR_OFFSET = 1.85;
 // how finely a partial redraw is probed, in logical pixels
 const TILE = 32;
+// How long a copy taken whole stays young (LiveBlur): while it is, a texel
+// the blur reads that a redraw touched but the copy could not take sends it
+// to be taken whole again, instead of patching around it. A surface arrives
+// as GNOME animates (a menu 150ms, a banner 200ms, a window 250ms), and the
+// arrival sets off changes beneath it: the panel button lights up, the
+// window that lost focus goes to its backdrop look (GTK's 200ms, from a
+// frame or two later). Past that, a partly redrawn tile is patched around
+// as before, so a caret blinking beneath (GTK's off phase is 400ms) never
+// costs a whole redraw.
+const FRESH_MS = 400;
 // The blurred copy reaches this far past a surface on every side, so the
 // blur has real pixels to draw on at the edge, and the shadow has room.
 const BLUR_PAD = 64;
@@ -721,6 +731,24 @@ function probe(clip, q, x0, y0, x1, y1, r) {
     return clip.contains_rectangle(q);
 }
 
+// Whether the redraw clip reaches into the stage rect (x0, y0)-(x1, y1) at
+// all (within the view). The clip is rounded outward from the device pixels
+// repainted, so a device pixel inside the rect that was repainted always
+// shows here.
+function touches(clip, q, x0, y0, x1, y1, r) {
+    q.x = Math.max(r.vx0, x0);
+    q.y = Math.max(r.vy0, y0);
+    q.width = Math.min(r.vx1, x1) - q.x;
+    q.height = Math.min(r.vy1, y1) - q.y;
+    return q.width > 0 && q.height > 0 && clip.contains_rectangle(q) !== Mtk.RegionOverlap.OUT;
+}
+
+// Whether the half-texel rect (x0, y0)-(x1, y1) of a copy holds a texel the
+// blur reads (`b`, the copy's read box: see LiveBlur's s.box).
+function reads(b, x0, y0, x1, y1) {
+    return x1 > b[0] && x0 < b[2] && y1 > b[1] && y0 < b[3];
+}
+
 // The live blur: under the actor's own paint, a blurred copy of what is
 // already drawn beneath it, cut to a rounded shape, graded, and shadowed.
 // `pad` lets it draw past the actor's edges (the shadow of a surface it is
@@ -734,6 +762,16 @@ function probe(clip, q, x0, y0, x1, y1, r) {
 // the last frame whole, the glass's own window and everything over it
 // included; blurring those pixels drew dark squares. Inside it, at this
 // point in the paint, only what is beneath has been drawn.
+//
+// A patch takes only whole tiles (TILE): a tile the redraw covered in part
+// keeps its old pixels where it was redrawn, a straight-edged block of what
+// was there before. Steady, that is the price of a caret or a cursor costing
+// nothing. Fresh (FRESH_MS after a copy taken whole: a surface appearing,
+// shown again, moved), what is beneath is still changing -- the window that
+// lost focus, the button that opened the menu -- and the blur showed a hard
+// edge on the tile grid until a later frame redrew the whole tile. So a young
+// copy that cannot take every texel the blur reads is not patched: the last
+// blur is shown one frame more, and the copy is taken whole on the next.
 const LiveBlur = GObject.registerClass(
 class PulsarLiveBlur extends Clutter.Effect {
     constructor(params = {}) {
@@ -970,7 +1008,10 @@ class PulsarLiveBlur extends Clutter.Effect {
     }
 
     // Moved, and this redraw shows only part of what is beneath at the new
-    // place: redraw all of it on the very next frame.
+    // place (or a young copy could not take all it reads): redraw all of it
+    // on the very next frame. The actor's paint volume is the whole padded
+    // rect (the backdrop's own box, or vfunc_modify_paint_volume's pad), so
+    // that frame passes _covered's loose test.
     _redrawSoon() {
         if (this._redrawPending)
             return;
@@ -986,6 +1027,18 @@ class PulsarLiveBlur extends Clutter.Effect {
             LIVE_BLURS.add(this);
         else
             LIVE_BLURS.delete(this);
+        // Hidden, what is beneath may change anywhere: shown again (a menu
+        // reopened in place, as switching menus along the top bar does, an
+        // OSD), the copy is taken whole, and is young again.
+        this.get_actor()?.disconnectObject(this);
+        actor?.connectObject('notify::mapped', () => {
+            if (!actor.mapped) {
+                for (const s of this._states.values()) {
+                    s.key[0] = NaN;
+                    s.retake = false;
+                }
+            }
+        }, this);
         if (!actor && this._redrawPending) {
             GLib.source_remove(this._redrawPending);
             this._redrawPending = 0;
@@ -1083,6 +1136,19 @@ class PulsarLiveBlur extends Clutter.Effect {
         }
         const clip = paintContext.get_redraw_clip();
         const covered = this._covered(clip, r);
+        // What the blur may read, in the copy's half-size texels: the
+        // surface's own shape and EDGE_SAMPLE beyond it, on screen, so what
+        // is beside the surface bleeds in at its edge as through frosted
+        // glass. (Clamped to the shape alone, the edge pixels repeated
+        // outward and the edge looked unstable as anything beside it moved.)
+        const sp = this._shape, fw = fb.get_width(), fh = fb.get_height();
+        const kx = r.w / w / 2, ky = r.h / h / 2;
+        const m = EDGE_SAMPLE;
+        const bx = s.box ??= [0, 0, 0, 0];
+        bx[0] = Math.max((sp[0] - m - x0) * kx, (Math.max(r.x, 0) - r.x) / 2, 0);
+        bx[1] = Math.max((sp[1] - m - y0) * ky, (Math.max(r.y, 0) - r.y) / 2, 0);
+        bx[2] = Math.min((sp[0] + sp[2] + m - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2, r.w / 2);
+        bx[3] = Math.min((sp[1] + sp[3] + m - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2, r.h / 2);
 
         // Moving, the strict test would almost never pass (the redraw is the
         // window's own old and new place, no pixel to spare): there a stale
@@ -1118,10 +1184,29 @@ class PulsarLiveBlur extends Clutter.Effect {
             k[1] = r.y;
             k[2] = r.w;
             k[3] = r.h;
+            // young from here (FRESH_MS), unless this is the retake youth
+            // itself asked for: that would keep it young for as long as
+            // anything beneath kept changing
+            if (s.retake)
+                s.retake = false;
+            else if (onView)
+                s.young = GLib.get_monotonic_time() + FRESH_MS * 1000;
         } else {
             this._patched = 0;
-            if (!this._capture(fb, r, s, covered ? null : clip))
+            this._stale = false;
+            const young = onView && s.young > GLib.get_monotonic_time();
+            if (!this._capture(fb, r, s, covered ? null : clip, young ? bx : null))
                 return;
+            // Young, and a texel the blur reads was redrawn where the copy
+            // could not take it: the last blur one frame more, and all of it
+            // taken again on the next, which _redrawSoon() redraws whole.
+            if (this._stale) {
+                k[0] = NaN;
+                s.retake = true;
+                this._draw(fb, actor, x0, y0, w, h, s);
+                this._redrawSoon();
+                return;
+            }
             // nothing beneath it redrawn (only the glass's own window): the
             // blur it has is still right
             if (!covered && !this._patched) {
@@ -1131,19 +1216,6 @@ class PulsarLiveBlur extends Clutter.Effect {
         }
         s.hw = hw;
         s.hh = hh;
-        // What the blur may read, in the copy's half-size texels: the
-        // surface's own shape and EDGE_SAMPLE beyond it, on screen, so what
-        // is beside the surface bleeds in at its edge as through frosted
-        // glass. (Clamped to the shape alone, the edge pixels repeated
-        // outward and the edge looked unstable as anything beside it moved.)
-        const sp = this._shape, fw = fb.get_width(), fh = fb.get_height();
-        const kx = r.w / w / 2, ky = r.h / h / 2;
-        const m = EDGE_SAMPLE;
-        const bx = s.box ??= [0, 0, 0, 0];
-        bx[0] = Math.max((sp[0] - m - x0) * kx, (Math.max(r.x, 0) - r.x) / 2, 0);
-        bx[1] = Math.max((sp[1] - m - y0) * ky, (Math.max(r.y, 0) - r.y) / 2, 0);
-        bx[2] = Math.min((sp[0] + sp[2] + m - x0) * kx, (Math.min(r.x + r.w, fw) - r.x) / 2, r.w / 2);
-        bx[3] = Math.min((sp[1] + sp[3] + m - y0) * ky, (Math.min(r.y + r.h, fh) - r.y) / 2, r.h / 2);
         this._blur(s, r.scale);
         // what is beneath the preview may change anywhere before the next
         // overview: its next paint copies all of it again
@@ -1158,7 +1230,12 @@ class PulsarLiveBlur extends Clutter.Effect {
     // Copy what is beneath into the kept half-size copy: all of it, or
     // (given the redraw's clip) only the parts this redraw repainted,
     // trimmed inward to whole half-size texels so no stale pixel mixes in.
-    _capture(fb, r, s, clip) {
+    // `young`, a young copy's read box: a tile in it that the redraw touched
+    // but did not cover sets this._stale, and patching stops there (the copy
+    // is to be taken whole). A texel a patch trims off at a run's edge needs
+    // no test of its own: the run's last tile counts as covered only with a
+    // pixel of the clip to spare, so the tile beside it is touched.
+    _capture(fb, r, s, clip, young = null) {
         const fw = fb.get_width(), fh = fb.get_height();
         // on screen, in the rect's own device pixels
         const ox0 = Math.max(r.x, 0) - r.x, oy0 = Math.max(r.y, 0) - r.y;
@@ -1187,6 +1264,8 @@ class PulsarLiveBlur extends Clutter.Effect {
             if (ax1 > ax0 && ay1 > ay0)
                 this._patch(fb, r, s, full, ax0, ay0, ax1, ay1, false);
         };
+        // a tile's stage rect, in the copy's half texels
+        const half = (sx, sy) => [((sx - v.x) * v.scale - r.x) / 2, ((sy - v.y) * v.scale - r.y) / 2];
         for (let ty = y0; ty < y1; ty += TILE) {
             const ty1 = Math.min(ty + TILE, y1);
             // a row wholly in or wholly out is one probe, not one per tile
@@ -1196,7 +1275,14 @@ class PulsarLiveBlur extends Clutter.Effect {
             for (let tx = x0; tx < x1 + TILE; tx += TILE) {
                 let inside = row === Mtk.RegionOverlap.IN && tx < x1;
                 if (row === Mtk.RegionOverlap.PART && tx < x1) {
-                    inside = probe(clip, q, tx, ty, Math.min(tx + TILE, x1), ty1, r) === Mtk.RegionOverlap.IN;
+                    const tx1 = Math.min(tx + TILE, x1);
+                    inside = probe(clip, q, tx, ty, tx1, ty1, r) === Mtk.RegionOverlap.IN;
+                    // young: a tile redrawn in part, where the blur reads
+                    if (!inside && young && touches(clip, q, tx, ty, tx1, ty1, r) &&
+                        reads(young, ...half(tx, ty), ...half(tx1, ty1))) {
+                        this._stale = true;
+                        return true;
+                    }
                 }
                 if (inside && start < 0) {
                     start = tx;
