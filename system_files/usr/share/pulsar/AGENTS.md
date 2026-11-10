@@ -17,7 +17,7 @@ and guard state.
   removals, and `systemctl reboot` with no password. Ask anyway.
   `pulsar agent guard` shows whether rpm-ostree and system Flatpak changes
   prompt; `sudo pulsar agent guard on` makes them prompt (the user's call).
-- **Never reboot**, and never pass `--apply`.
+- **Never reboot**, and never run `pulsar update --apply`.
 - Call the CLI as **`/usr/bin/pulsar`** in scripts. The Pulsar code editor
   also ships a `pulsar` that may come first on `PATH`.
 
@@ -28,7 +28,7 @@ and guard state.
 | `/usr` | The OS image. Read-only. Never edit, remount or work around it. |
 | `/etc` | Writable, local, per deployment. Three-way merged into each update. |
 | `/var` | Writable, persistent, shared by all deployments. `/home` = `/var/home`. |
-| `/usr/local`, `/opt` | Symlinks into `/var`. Not in the image, shadow it on `PATH`, survive every update and rollback, invisible to `rpm-ostree status`. Don't install there. |
+| `/usr/local`, `/opt` | Symlinks into `/var`. Not in the image, shadow it on `PATH`, survive every update and rollback, invisible to `rpm-ostree status`. Don't install there (`sudo make install`, vendor `.sh` installers); use a toolbox, `mise` or `~/.local/bin`. |
 | `$HOME` | User data. Nothing rolls it back. |
 | `/tmp` | tmpfs: held in RAM, up to half of it. What you leave there pushes the user's apps into swap. Keep it to small files. Disk images, VM images and build trees go in `/var/tmp` or `~/.cache` (on disk; `TMPDIR=/var/tmp` for tools and tests that make them). Delete them when you're done. |
 
@@ -40,8 +40,8 @@ and guard state.
 | Per-project toolchains | `mise`, `direnv` | On the host, install into `$HOME`. |
 | Python/Node packages | venv, toolbox, `mise` | Never `sudo pip install` / `sudo npm install -g`. |
 | GUI apps | Flatpak | `flatpak install --user flathub <id>` is yours to do. Without `--user` it is a system change: ask. Remotes: `flathub` (unfiltered), `fedora`. |
-| GPU / CUDA / local models | podman | `podman run --device nvidia.com/gpu=all <image>` (nvidia image). Never install CUDA or a driver on the host. |
-| Kernel modules, udev rules, host daemons | `rpm-ostree install` | Last resort, never for dev tools. New deployment, needs a reboot, slows every update. Ask first. |
+| GPU / CUDA / local models | podman | `podman run --device nvidia.com/gpu=all <image>` (NVIDIA image). Never install CUDA or a driver on the host. |
+| Kernel modules, udev rules, host daemons | `rpm-ostree install` | Last resort, never for dev tools. New deployment, needs a reboot. Ask first. |
 
 `pulsar setup devbox` makes a distrobox `pulsar-dev`. `toolbox` can't see it
 and `distrobox enter` can hang without a TTY; use it only if the user already
@@ -119,7 +119,7 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
 | `pulsar doctor gpu-faults` | This boot's NVIDIA GPU faults (Xid lines in the kernel log), by program, in words. A game that froze or quit without a crash usually has one. |
 | `pulsar update --check --json` | Exit 0 current or staged, 10 newer available, 1 couldn't tell. |
 | `pulsar pin --json` | Whether the booted deployment is pinned. |
-| `pulsar agent guard --json` | `on`: layering and system Flatpak installs ask for a password. `off`: they don't. |
+| `pulsar agent guard --json` | `on`: layering, rollback, cleanup, and system Flatpak installs and removals ask for a password. `off`: they don't. |
 | `pulsar verify` | Whether the running image's signature checks out. |
 
 ## Updates and rollback
@@ -130,7 +130,8 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
   unmetered only). Nothing reboots by itself. Disabling the timer is the
   user's call.
 - `sudo pulsar rollback` makes the previous deployment the next boot's
-  default. greenboot rolls back on its own after a boot fails health checks.
+  default. greenboot rolls back on its own after three boots in a row fail
+  its health checks.
 - `sudo pulsar pin on` keeps the booted deployment from garbage collection.
 - **Rollback covers the OS image only.** Not `$HOME`, `/var` (incl.
   `/usr/local`, `/opt`), Flatpaks or their data, toolboxes, containers.
@@ -160,11 +161,14 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
 - `systemctl --failed`, `systemctl --user --failed`.
 - `journalctl -u <unit>` (system), `journalctl --user -u <unit>` (user).
 
-| Pulsar units | |
+| Pulsar units worth checking | |
 |---|---|
 | System | `pulsar-flatpaks.service` (default Flatpaks, first online boot), `pulsar-gamemode-group.service`, `scx.service` (opt-in scheduler, off by default), `greenboot-healthcheck.service`, `pulsar-update-auto.timer`, `pulsar-update-stage.service` (the Update button), `pulsar-esp-fallback.service`, `pulsar-steam-grants.service` (Steam's and Faugus's sandbox grants) |
-| System, nvidia image | `pulsar-gl-nvidia.service` (Flatpak GL driver), `nvidia-cdi-refresh.service`, `pulsar-gpu-containers.service`, `pulsar-akmods-cert.service` |
+| System, NVIDIA image | `pulsar-gl-nvidia.service` (Flatpak GL driver), `nvidia-cdi-refresh.service`, `pulsar-gpu-containers.service`, `pulsar-akmods-cert.service` |
 | User | `pulsar-update-check.timer` (update notification), `pulsar-gl-check.path`, `pulsar-crash-watch.path`, `pulsar-steam-gpu-watch.service`, `pulsar-doc-portal-watch.timer` (restarts a hung document portal), `gamescale-reconcile.service`, `pulsar-theme-init.service`, `pulsar-presence.service` (shows the game being played in Flatpak Discord), `podman-auto-update.timer` |
+
+`systemctl list-unit-files 'pulsar-*'`, and the same with `--user`, list the
+rest.
 
 ## Skills
 
@@ -174,12 +178,8 @@ If your agent doesn't load skills, read the `SKILL.md` when a task fits.
 
 ## Do not
 
-- Edit or replace anything under `/usr`, or remount it read-write.
 - `rpm-ostree install|override|rebase|reset`, `bootc switch`, or any
   `ostree admin` write, unless the user asked for exactly that.
-- Reboot, or run `pulsar update --apply`.
-- Install into `/usr/local` or `/opt` (`sudo make install`, vendor `.sh`
-  installers). Use a toolbox, `mise` or `~/.local/bin`.
 - `flatpak install|uninstall` without `--user`, or `flatpak remote-add|
   remote-modify`, unless asked.
 - Disable `greenboot-healthcheck.service`: it is what rolls back a bad update.
