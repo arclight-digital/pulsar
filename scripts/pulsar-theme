@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""pulsar-theme -- one-command whole-desktop theming for GNOME on Pulsar.
+"""Recolor the whole desktop in one step.
 
 Installed as /usr/libexec/pulsar/pulsar-theme; `pulsar theme ...` execs it.
 
@@ -2262,7 +2262,7 @@ def restart_apps(apps, wait=6.0):
                 cmd = ["flatpak", "run", a["id"]] if a["flatpak"] else desktop_exec(a["desktop"])
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                 out.append((a, "restarted"))
-    out += [(a, "kept open: it is asking about unsaved work") for a in pending.values()]
+    out += [(a, "still open, so not restarted (it may be asking to save changes)") for a in pending.values()]
     return out
 
 
@@ -2277,17 +2277,17 @@ def after_switch(policy="ask"):
         print(f"pulsar-theme: {NOTE}" + (f" ({', '.join(a['name'] for a in restart + manual)})"))
         return
     if manual:
-        print(f"  reopen these yourself (no graceful quit): {', '.join(a['name'] for a in manual)}")
+        print(f"  reopen these yourself (they can't be quit from here): {', '.join(a['name'] for a in manual)}")
     if not restart:
         return
     if ask:
-        ans = input(f"Restart {len(restart)} open app{'s' if len(restart) != 1 else ''} to apply the theme? "
+        ans = input(f"Restart {len(restart)} open app{'s' if len(restart) != 1 else ''} so they show the new colors? "
                     f"({', '.join(a['name'] for a in restart)})\n[R]estart  [l]ater  [d]on't ask again: ").strip().lower()
         if ans.startswith("l"):
             return
         if ans.startswith("d"):
             conf_put("restart-prompt", "off")
-            print(f"  won't ask again ({CONF}); turn it back on with: pulsar-theme config restart-prompt on")
+            print(f"  won't ask again ({CONF}); turn it back on with: pulsar theme config restart-prompt on")
             print(f"pulsar-theme: {NOTE}")
             return
     for a, outcome in restart_apps(restart):
@@ -2336,7 +2336,7 @@ def cmd_audit(names, quiet=False):
             status = ("FAIL %d" % len(fails)) if fails else "PASS"
             lo = min(res[:5], key=lambda x: x[1])
             print(f"{th.slug:14} {mode:5} {status:7} body text >= {lo[1]:.1f}:1"
-                  + (f"  (below AAA 7:1 on {len(warns)} surfaces -- upstream palette)" if warns else ""))
+                  + (f"  (below AAA 7:1 on {len(warns)} surfaces)" if warns else ""))
             for label, got, floor, _ in fails:
                 print(f"    FAIL {label}: {got:.2f} < {floor}")
     return bad
@@ -2447,7 +2447,7 @@ def bind_picker(tx):
     cur = parse_gv_list(gsettings_get("org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"))
     if PICKER_PATH not in cur:
         tx.set(f"{MK}/custom-keybindings", "[" + ", ".join(gv_str(x) for x in cur + [PICKER_PATH]) + "]")
-    tx.set(PICKER_PATH + "name", gv_str("Theme picker"))
+    tx.set(PICKER_PATH + "name", gv_str("Open Themes"))
     tx.set(PICKER_PATH + "command", gv_str(PICKER_CMD))
     tx.set(PICKER_PATH + "binding", gv_str(PICKER_ACCEL))
     return True
@@ -2553,7 +2553,7 @@ def cmd_init(theme="pulsar", force=False):
             atomic_write(STATE / WELCOME_PENDING, json.dumps({"shortcut": rec["shortcut"]}).encode())
         else:
             notify("Pulsar theme applied",
-                   ("Super+T" if bound else "Themes, in the app grid,") + " switches the whole desktop's colors. "
+                   ("Super+T opens Themes, which" if bound else "Themes, in the app grid,") + " switches the whole desktop's colors. "
                    "pulsar theme revert puts stock GNOME back.")
     atomic_write(stamp, json.dumps(rec, indent=1).encode())
     pending.unlink(missing_ok=True)
@@ -2890,7 +2890,7 @@ def hue_audit(p, src):
         hue = math.degrees(math.atan2(b, a)) % 360
         off = min(abs(hue - want), 360 - abs(hue - want))
         if chroma < 0.03 or off > 70:
-            print(f"  warning: {k} is {p[k]} (oklch hue {hue:.0f}, chroma {chroma:.2f}) -- not {k}. "
+            print(f"  warning: {k} is {p[k]} (oklch hue {hue:.0f}, chroma {chroma:.2f}), which is not a {k}. "
                   f"Fix with --set {k}=#rrggbb", file=sys.stderr)
 
 
@@ -2962,7 +2962,7 @@ def generated_wallpaper(v):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="pulsar-theme", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="pulsar theme", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("set")
     s.add_argument("theme")
