@@ -165,7 +165,7 @@ def check(mode, plan):
     if len(esps) != 1 or esps[0]["activity"] != "unchanged":
         raise Refused("installing alongside needs exactly one existing EFI system partition")
     if not any(p["type"] not in OURS for p in plan):
-        raise Refused("nothing to install alongside: the disk has no other system")
+        raise Refused("nothing to install alongside: the disk has only EFI, boot and root partitions")
 
 
 def main():

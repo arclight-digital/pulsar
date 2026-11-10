@@ -211,7 +211,7 @@ def preflight_alongside(disk, scratch):
     finally:
         run("umount", mnt)
     if free < ESP_MIN_FREE:
-        raise Failed(f"The EFI system partition has {free // 2**20} MiB free. Pulsar needs "
+        raise Failed(f"The startup files (EFI) partition has {free // 2**20} MiB free. Pulsar needs "
                      f"{ESP_MIN_FREE // 2**20} MiB free there for its boot files.")
 
 

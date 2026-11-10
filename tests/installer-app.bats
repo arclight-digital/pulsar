@@ -46,7 +46,7 @@ PY
 
 @test "Windows with room beside it: both ways offered, alongside says Windows stays" {
     run py 'm.options(D["/dev/nvme1n1"])'
-    [[ "$output" == *"'alongside': (True, 'Uses the free space (462 GB in the largest block). Windows stays as it is.')"* ]]
+    [[ "$output" == *"'alongside': (True, \"Uses free space on the disk (up to 462 GB in one place). The Windows partitions aren't changed.\")"* ]]
     [[ "$output" == *"'erase': (True,"* ]]
 }
 
@@ -59,7 +59,7 @@ PY
     run py 'm.options(D["/dev/nvme0n1"])["alongside"][0]'
     [ "$output" = "False" ]
     # the free number is the largest single gap, and says so
-    [[ "$(py 'm.options(D["/dev/nvme0n1"])["alongside"][1]')" == "Needs a 39 GB block of free space. The largest here is "*" Shrink a partition from Linux first." ]]
+    [[ "$(py 'm.options(D["/dev/nvme0n1"])["alongside"][1]')" == "Needs 39 GB of free space in one place. This disk has at most "*" in one place. Shrink a partition from inside Linux first." ]]
     run py 'm.options(D["/dev/sdb"])["alongside"]'
     [ "$output" = "(False, 'There is nothing on this disk to keep.')" ]
     run py 'm.options(D["/dev/sdb"])["erase"][0]'
@@ -197,10 +197,10 @@ PY
 
 @test "encryption on: the passphrase, the unlock stage and the unlock prompt" {
     [ "$(py 'm.passphrase_heading(True)[0]')" = "Choose a passphrase" ]
-    [ "$(py 'm.encryption_summary(True)')" = "On. Your passphrase unlocks the disk at every start." ]
-    [ "$(py 'm.stages(True)["disk"][0]')" = "Partitioning and encrypting the disk" ]
+    [ "$(py 'm.encryption_summary(True)')" = "On. You'll type your passphrase every time Pulsar starts." ]
+    [ "$(py 'm.stages(True)["disk"][0]')" = "Partitioning the disk and setting up encryption" ]
     [ "$(py 'm.stages(True)["unlock"][0]')" = "Unlocking the new partition" ]
-    [[ "$(py 'm.first_start(True)')" == *"type your passphrase to unlock the disk"* ]]
+    [ "$(py 'm.first_start(True)')" = "When Pulsar starts, type your passphrase, then create your account." ]
     [ "$(py 'm.secret_args("/run/user/1000/k")')" = "['--key-file', '/run/user/1000/k']" ]
 }
 
@@ -238,8 +238,8 @@ PY
 }
 
 @test "the ready page's red panel says what the erase deletes, by name" {
-    [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, is deleted when you press Erase and Install. It can't be recovered." ]
-    [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it is deleted when you press Erase and Install. It can't be recovered." ]
+    [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, will be deleted when you press Erase and Install. It can't be recovered." ]
+    [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it will be deleted when you press Erase and Install. It can't be recovered." ]
     [ "$(py 'm.options(D["/dev/nvme1n1"])["erase"][1]')" = "Deletes everything on this disk, including Windows." ]
 }
 
