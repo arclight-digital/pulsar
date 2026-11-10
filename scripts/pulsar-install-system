@@ -211,8 +211,8 @@ def preflight_alongside(disk, scratch):
     finally:
         run("umount", mnt)
     if free < ESP_MIN_FREE:
-        raise Failed(f"the EFI system partition has {free // 2**20} MiB free; Pulsar needs "
-                     f"{ESP_MIN_FREE // 2**20} MiB beside the system already on it")
+        raise Failed(f"The EFI system partition has {free // 2**20} MiB free. Pulsar needs "
+                     f"{ESP_MIN_FREE // 2**20} MiB free there for its boot files.")
 
 
 def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
