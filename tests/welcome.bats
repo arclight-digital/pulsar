@@ -281,7 +281,7 @@ MD
     news_env
     run python3 "$WHATS_NEW" --notify
     [ "$status" -eq 0 ]
-    grep -qx "Pulsar 26.12.1 is here" "$NOTIFY_LOG"
+    grep -qx "Updated to Pulsar 26.12.1" "$NOTIFY_LOG"
     grep -qx "Snow, and pulsar snow for it." "$NOTIFY_LOG"
     grep -qx -- "--action=open=See what's new" "$NOTIFY_LOG"
     [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.12.1 ]
@@ -294,14 +294,14 @@ MD
     sed -i 's/^## 26.11.1$/## 27.1.1/' "$PULSAR_RELEASE_NOTES"
     echo 27.1.1 > "$PULSAR_RELEASE_FILE"
     CLICK=1 python3 "$WHATS_NEW" --notify
-    grep -qx "Pulsar 27.1.1 is here" "$NOTIFY_LOG"
+    grep -qx "Updated to Pulsar 27.1.1" "$NOTIFY_LOG"
     [ "$(cat "${BATS_TEST_TMPDIR}/opened")" = "welcome --whats-new" ]
 }
 
 @test "what's new: a rollback says nothing, and neither does rolling forward again" {
     news_env
     python3 "$WHATS_NEW" --notify
-    grep -qx "Pulsar 26.12.1 is here" "$NOTIFY_LOG"
+    grep -qx "Updated to Pulsar 26.12.1" "$NOTIFY_LOG"
     # greenboot or the user rolls back: 26.11.1 has notes, and is not news
     : > "$NOTIFY_LOG"
     echo 26.11.1 > "$PULSAR_RELEASE_FILE"
@@ -323,7 +323,7 @@ MD
     echo 26.9.1 > "$XDG_STATE_HOME/pulsar-welcome/release"
     echo 26.10.1 > "$PULSAR_RELEASE_FILE"
     python3 "$WHATS_NEW" --notify
-    grep -qx "Pulsar 26.10.1 is here" "$NOTIFY_LOG"
+    grep -qx "Updated to Pulsar 26.10.1" "$NOTIFY_LOG"
     [ "$(cat "$XDG_STATE_HOME/pulsar-welcome/release")" = 26.10.1 ]
     # and back to 26.9.1, which sorts after 26.10.1 as a string
     : > "$NOTIFY_LOG"
@@ -338,9 +338,9 @@ MD
     mkdir -p "$XDG_STATE_HOME/pulsar-welcome"
     echo 26.10.1 > "$XDG_STATE_HOME/pulsar-welcome/release"
     python3 "$WHATS_NEW" --notify
-    [ "$(grep -cx "Pulsar 26.12.1 is here" "$NOTIFY_LOG")" -eq 1 ]
+    [ "$(grep -cx "Updated to Pulsar 26.12.1" "$NOTIFY_LOG")" -eq 1 ]
     python3 "$WHATS_NEW" --notify
-    [ "$(grep -cx "Pulsar 26.12.1 is here" "$NOTIFY_LOG")" -eq 1 ]
+    [ "$(grep -cx "Updated to Pulsar 26.12.1" "$NOTIFY_LOG")" -eq 1 ]
 }
 
 @test "what's new: a new account gets the tour, not the notice; a release without notes says nothing" {

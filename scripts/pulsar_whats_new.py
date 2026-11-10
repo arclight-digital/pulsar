@@ -143,10 +143,10 @@ def notify():
     n = notes(release)
     if new_account() or n is None:
         return 0
-    body = re.sub(r"<[^>]+>", "", n["lede"]) or "See what changed in this release."
+    body = re.sub(r"<[^>]+>", "", n["lede"])
     try:
         r = subprocess.run(["notify-send", "--app-name=Pulsar", "--icon=digital.arclight.Pulsar.Welcome",
-                            "--action=open=See what's new", f"Pulsar {release} is here", html.unescape(body)],
+                            "--action=open=See what's new", f"Updated to Pulsar {release}", html.unescape(body)],
                            capture_output=True, text=True)
     except OSError:
         return 0
