@@ -19,7 +19,10 @@ grub2:
     - name: "Install Pulsar"
       linux: "${kernelpath} ${root}"
       initrd: "${initrdpath}"
-    - name: "Check this ISO for errors, then install Pulsar"
+    # TODO(copy): rd.live.check needs an MD5 implanted in the ISO. image-builder's contract
+    # lists implantisomd5 (Containerfile.installer), but nothing here shows a built ISO has
+    # one, and no test boots this entry. Confirm with checkisomd5 on a published ISO.
+    - name: "Check this media for errors, then install Pulsar"
       linux: "${kernelpath} ${root} rd.live.check"
       initrd: "${initrdpath}"
     - name: "Install Pulsar in basic graphics mode"
