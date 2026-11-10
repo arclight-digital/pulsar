@@ -147,18 +147,30 @@ def hold_existing(defs, existing, scratch):
     """The layout, with one placeholder ahead of Pulsar's own definitions for
     each partition already on the disk of a type Pulsar creates. repart
     matches existing partitions to definitions by type alone, in file-name
-    order: without these, another Linux's root was given to 30-root.conf and
+    order (the Nth partition of a type in the table to the Nth definition of
+    it): without these, another Linux's root was given to 30-root.conf and
     grown to fit it, and its XBOOTLDR /boot to 20-boot.conf. A placeholder
-    has no Format= and Weight=0, so its partition is left as it is."""
-    held = collections.Counter(p["type"] for p in existing if p["type"] in CREATED["alongside"])
+    has no Format= and holds its partition at exactly the size it has.
+    Weight=0 alone did not: run as root, with the root encrypted, repart
+    still planned to grow the held root into the free space after it (as a
+    user it didn't). repart sizes in 4096-byte steps, so a partition whose
+    size isn't one can't be held, and is refused."""
+    held = collections.defaultdict(list)
+    for p in sorted(existing, key=lambda p: p["partno"]):
+        if p["type"] in CREATED["alongside"]:
+            held[p["type"]].append(p)
     if not held:
         return defs
     out = os.path.join(scratch, "held")
     shutil.copytree(defs, out)
-    for t, n in held.items():
-        for i in range(n):
+    for t, parts in held.items():
+        for i, p in enumerate(parts):
+            size = p["raw_size"]
+            if size % 4096:
+                raise Refused(f"partition {p['type']} ({p['label']}) is {size} bytes, not a multiple of 4096: "
+                              "systemd-repart can't keep it at that size")
             with open(os.path.join(out, f"00-existing-{t}-{i}.conf"), "w") as f:
-                f.write(f"[Partition]\nType={t}\nWeight=0\n")
+                f.write(f"[Partition]\nType={t}\nSizeMinBytes={size}\nSizeMaxBytes={size}\nWeight=0\n")
     return out
 
 
@@ -187,8 +199,10 @@ def same_disk(disk, size, serial):
                       "Was a disk unplugged or swapped?")
 
 
-def check(mode, plan):
-    """The whole safety argument. Each refusal names what it caught."""
+def check(mode, plan, existing=()):
+    """The whole safety argument. Each refusal names what it caught.
+    existing: the partitions on the disk before (survey()), each of which an
+    alongside plan must keep where it is, at the size it is."""
     created = sorted(p["type"] for p in plan if p["activity"] == "create")
     if created != sorted(CREATED[mode]):
         raise Refused(f"plan would create {created}, expected {sorted(CREATED[mode])}")
@@ -200,6 +214,10 @@ def check(mode, plan):
         if kept:
             raise Refused(f"an erase plan kept partition {kept[0]['type']} ({kept[0]['label']})")
         return
+    for e in existing:
+        p = next((p for p in plan if p["uuid"] == e["uuid"]), None)
+        if p is None or (p["activity"], p["offset"], p["raw_size"]) != ("unchanged", e["offset"], e["raw_size"]):
+            raise Refused(f"plan would move or resize partition {e['type']} ({e['label']})")
     esps = [p for p in plan if p["type"] == "esp"]
     if len(esps) != 1 or esps[0]["activity"] != "unchanged":
         raise Refused("installing alongside needs exactly one existing EFI system partition")
@@ -227,10 +245,10 @@ def main():
         with tempfile.TemporaryDirectory(prefix="pulsar-layouts-") as scratch:
             defs = definitions(a.mode, not a.no_encrypt, scratch)
             same_disk(a.disk, a.expect_size, a.expect_serial)
-            if a.mode == "alongside":
-                defs = hold_existing(defs, survey(a.mode, a.disk, scratch), scratch)
+            existing = survey(a.mode, a.disk, scratch) if a.mode == "alongside" else []
+            defs = hold_existing(defs, existing, scratch)
             plan = repart(a.mode, defs, a.disk, a.key_file, dry_run=True)
-            check(a.mode, plan)
+            check(a.mode, plan, existing)
             if a.action == "apply":
                 # again, just before writing: planning takes seconds, and a
                 # drive can be swapped in them

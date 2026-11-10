@@ -50,8 +50,8 @@ EOF
 # commands fail ("bootc" fails the stand-in bootc after it has written).
 # ESP_SHIMS="ubuntu ...": other systems' shims already on the ESP, there once
 # it is mounted; ESP_FALLBACK=TEXT: the ESP's EFI/BOOT/BOOTX64.EFI before the
-# install. ESP_BOOT_RO=1: bootc leaves EFI/BOOT read-only, so it can't be put
-# back. ESP_WINDOWS=1: Windows' boot manager is on the ESP. APP_GONE_AFTER=N:
+# install. ESP_BOOT_STUCK=1: bootc leaves a directory where EFI/BOOT/BOOTX64.EFI
+# goes, so the file can't be put back, by root either. ESP_WINDOWS=1: Windows' boot manager is on the ESP. APP_GONE_AFTER=N:
 # the app goes away after N event lines, closing both pipes (each print after
 # that fails as a closed pipe does). SIGNAL_AT_BOOTC=TERM|HUP: that signal
 # arrives while bootc runs. stdout: the backend's events; $T/calls: every command run(), in order.
@@ -138,9 +138,13 @@ def run_stream(*cmd, **kw):
     for f in (payload + "/shimx64.efi", "boot/efi/EFI/fedora/shimx64.efi"):
         open(os.path.join(target, f), "w").close()
     for f in ("BOOTX64.EFI", "fbx64.efi"):
+        if os.environ.get("ESP_BOOT_STUCK") and f == "BOOTX64.EFI":
+            stuck = os.path.join(target, "boot/efi/EFI/BOOT", f)
+            if os.path.isfile(stuck):
+                os.unlink(stuck)
+            os.makedirs(stuck, exist_ok=True)
+            continue
         open(os.path.join(target, "boot/efi/EFI/BOOT", f), "w").write("PULSAR-SHIM")
-    if os.environ.get("ESP_BOOT_RO"):
-        os.chmod(os.path.join(target, "boot/efi/EFI/BOOT"), 0o555)
     if os.environ.get("SIGNAL_AT_BOOTC"):
         import signal
         os.kill(os.getpid(), getattr(signal, "SIG" + os.environ["SIGNAL_AT_BOOTC"]))
@@ -173,10 +177,6 @@ PY
 }
 
 ID=(--expect-size 1000204886016 --expect-serial S6B0NX0R123456A)
-
-teardown() {
-    chmod -R u+w "$BATS_TEST_TMPDIR"
-}
 
 # the failed event's restored, its disk and esp, and the partitions sfdisk
 # was told to delete
@@ -270,7 +270,7 @@ deleted() { grep '^sfdisk --delete' "$T/calls" | sed "s|^sfdisk --delete $DISK |
       "$(grep -n 'removed the 2 partitions' <<<"$stderr" | cut -d: -f1)" ]
     # it can't be put back: the event says EFI/BOOT may be Pulsar's
     rm -rf "$T/run"
-    ESP_FALLBACK=WINDOWS-BOOTMGR ESP_BOOT_RO=1 FAIL_AT=bootc run --separate-stderr system alongside "${ID[@]}"
+    ESP_FALLBACK=WINDOWS-BOOTMGR ESP_BOOT_STUCK=1 FAIL_AT=bootc run --separate-stderr system alongside "${ID[@]}"
     [ "$(known)" = "removed fallback" ]
 }
 
