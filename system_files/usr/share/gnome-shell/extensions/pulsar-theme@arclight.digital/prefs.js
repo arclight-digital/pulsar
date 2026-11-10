@@ -7,19 +7,19 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 
 // key, title, subtitle, the key it needs on
 const EFFECTS = [
-    ['glass', 'Glass', 'Menus, the top bar, OSDs and banners are translucent over a blur of what is behind them'],
-    ['window-glass', 'Glass windows', 'App windows are a little translucent too; apps opened afterwards pick it up', 'glass'],
-    ['lighting', 'Lighting', 'Menus catch light from the button that opened them; the edge warms when the battery is low'],
-    ['power-on', 'Power-on', 'The edge traces out from the light as a menu opens', 'lighting'],
-    ['glow', 'Glow', 'What is filled with the accent glows softly; apps opened afterwards pick it up'],
-    ['focus-brackets', 'Focus brackets', 'Corner brackets lock onto the control the keyboard is on'],
-    ['glass-off-gaming', 'Disable glass when gaming', 'While a game is running'],
-    ['glass-off-power-saver', 'Disable glass in Power Saver', 'While the power mode is Power Saver'],
+    ['glass', 'Glass', 'Menus, the top bar, on-screen displays and notification banners are translucent over a blur of what is behind them'],
+    ['window-glass', 'Glass windows', 'App windows are 80% opaque over the same blur; apps opened afterwards pick it up', 'glass'],
+    ['lighting', 'Lighting', 'A menu\'s edge is lit from the button that opened it, and turns warmer when the battery is low'],
+    ['power-on', 'Power-on', 'As a menu opens, its lit edge traces out from the button that opened it', 'lighting'],
+    ['glow', 'Glow', 'Controls filled with the accent color, such as switches and sliders, glow in it; apps opened afterwards pick it up'],
+    ['focus-brackets', 'Focus brackets', 'Four corner brackets mark the control the keyboard is on'],
+    ['glass-off-gaming', 'Disable glass when gaming', 'Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun); app windows stay glass'],
+    ['glass-off-power-saver', 'Disable glass in Power Saver', 'Glass and lighting turn off while the power mode is Power Saver; app windows stay glass'],
 ];
 
 // Glass tint: clear to fully tinted, like the slider it is modeled on.
 function tintRow(settings) {
-    const row = new Adw.ActionRow({title: 'Glass tint', subtitle: 'From clear to fully tinted'});
+    const row = new Adw.ActionRow({title: 'Glass tint'});
     const scale = new Gtk.Scale({
         adjustment: new Gtk.Adjustment({lower: 0, upper: 1, step_increment: 0.05, page_increment: 0.1}),
         draw_value: false, hexpand: true, width_request: 200, valign: Gtk.Align.CENTER,
@@ -38,7 +38,7 @@ export default class PulsarThemePrefs extends ExtensionPreferences {
         const page = new Adw.PreferencesPage();
         const group = new Adw.PreferencesGroup({
             title: 'Effects',
-            description: 'High contrast turns them all off.',
+            description: 'High contrast turns them all off, except in app windows already open.',
         });
         // every effect and the tint back to the defaults; live only while
         // something differs from them
