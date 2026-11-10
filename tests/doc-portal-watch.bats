@@ -11,9 +11,10 @@
 # mount and an unanswered GetMountPoint each restart it, by SIGKILL and then
 # a start, never a plain stop (TERM is ignored while deadlocked); its stacks
 # are saved before the kill; and the apps that were running are named, since
-# they keep a dead view of the mount until reopened. They are closed and
-# started again only when the notification's button is clicked, never by
-# the watcher itself.
+# they keep a dead view of the mount until reopened. Only the notification's
+# button closes them, and only by asking each one through its own quit
+# action: one that quits is started again, one that does not (a save prompt)
+# or cannot be asked is left open and named. Nothing is ever killed.
 #
 # systemctl, systemd-run, gdbus, flatpak, gio, notify-send and eu-stack are
 # stubs; timeout is the real one, so the hang test times out for real.
@@ -33,14 +34,27 @@ setup() {
     export PULSAR_MOUNTINFO="${BATS_TEST_TMPDIR}/mountinfo"
     export PULSAR_DOC_PORTAL_TIMEOUT=1
     export ACTIVE=0 HANG=0 RESTART_RC=0 ANSWER="" PULSAR_DOC_PORTAL_POLL=0
-    # The running Flatpak apps, one per line; flatpak kill takes its app out.
+    export PULSAR_DOC_PORTAL_QUIT_WAIT=2
+    # The apps that own their ID on the bus, by what their quit action does:
+    # QUITS quit, STAYS stay (a save prompt), SLOW stay and the call times
+    # out (a modal prompt inside the action), NOQUIT have no quit action.
+    # Anything else owns no bus name (Steam, Electron apps).
+    export QUITS="" STAYS="" SLOW="" NOQUIT=""
+    # The running Flatpak apps, one per line; a quit or a kill takes one out.
     export APPS="${BATS_TEST_TMPDIR}/apps"
     : > "$APPS"
-    # Steam and Discord have launchers; NautilusPreviewer, a helper, does not.
+    # Steam, Discord, Loupe and Text Editor have launchers; NautilusPreviewer,
+    # a helper, does not.
     export PULSAR_FLATPAK_EXPORTS="${BATS_TEST_TMPDIR}/exports"
     mkdir -p "$PULSAR_FLATPAK_EXPORTS"
-    touch "$PULSAR_FLATPAK_EXPORTS/com.valvesoftware.Steam.desktop" \
-          "$PULSAR_FLATPAK_EXPORTS/com.discordapp.Discord.desktop"
+    printf '[Desktop Entry]\nName=Steam\nExec=steam\n' \
+        > "$PULSAR_FLATPAK_EXPORTS/com.valvesoftware.Steam.desktop"
+    printf '[Desktop Entry]\nName=Discord\nExec=discord\n' \
+        > "$PULSAR_FLATPAK_EXPORTS/com.discordapp.Discord.desktop"
+    printf '[Desktop Entry]\nName=Text Editor\nExec=gnome-text-editor\n' \
+        > "$PULSAR_FLATPAK_EXPORTS/org.gnome.TextEditor.desktop"
+    printf '[Desktop Entry]\nName=Image Viewer\nExec=loupe %%U\n' \
+        > "$PULSAR_FLATPAK_EXPORTS/org.gnome.Loupe.desktop"
     # The portal's line, as /proc/self/mountinfo shows it.
     printf '36 25 0:50 / %s/doc rw,nosuid,nodev,relatime - fuse.portal portal rw,user_id=1000\n' \
         "$XDG_RUNTIME_DIR" > "$PULSAR_MOUNTINFO"
@@ -57,8 +71,28 @@ EOF
     cat > "${BIN}/gdbus" <<EOF
 #!/usr/bin/env bash
 echo "gdbus \$*" >> "${LOG}"
-[ "\${HANG}" = 1 ] && exec sleep 30
-echo "(b'${XDG_RUNTIME_DIR}/doc',)"
+has() { case " \$1 " in *" \$2 "*) return 0 ;; esac; return 1; }
+dest=""; prev=""
+for a in "\$@"; do [ "\$prev" = --dest ] && dest=\$a; prev=\$a; done
+case "\$*" in
+  *GetMountPoint*)
+    [ "\${HANG}" = 1 ] && exec sleep 30
+    echo "(b'${XDG_RUNTIME_DIR}/doc',)" ;;
+  *NameHasOwner*)
+    if has "\$QUITS \$STAYS \$SLOW \$NOQUIT" "\${!#}"; then echo '(true,)'; else echo '(false,)'; fi ;;
+  *ActivateAction*)
+    if has "\$QUITS" "\$dest"; then
+      # LINGER: it takes that long to quit after answering, as a real app does
+      ( sleep "\${LINGER:-0}"; exec 9>"\${APPS}.lock"; flock 9; grep -vx "\$dest" "\${APPS}" > "\${APPS}.\$\$"; mv "\${APPS}.\$\$" "\${APPS}" ) >/dev/null 2>&1 &
+      [ "\${LINGER:-0}" = 0 ] && wait
+      echo '()'
+    elif has "\$STAYS" "\$dest"; then echo '()'
+    elif has "\$SLOW" "\$dest"; then echo 'Error: Timeout was reached' >&2; exit 1
+    elif has "\$NOQUIT" "\$dest"; then
+      echo "Error: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: Unknown action 'quit'" >&2; exit 1
+    else echo "Error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name is not activatable" >&2; exit 1
+    fi ;;
+esac
 EOF
     cat > "${BIN}/flatpak" <<EOF
 #!/usr/bin/env bash
@@ -144,53 +178,85 @@ EOF
     HANG=1 run -0 "$SCRIPT"
     # In a unit of its own, which does not take the apps it starts with it.
     grep -q '^systemd-run --user --collect --quiet -p KillMode=process --unit=pulsar-doc-portal-reopen-[0-9]* -- .*doc-portal-watch.sh --offer com.discordapp.Discord com.valvesoftware.Steam$' "$LOG"
-    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Force Quit and Reopen Pulsar restarted file access for Flatpak apps Apps that were running before the restart can't open or save files until they're reopened: Discord, Steam. Force quitting them loses unsaved work." "$LOG"
+    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Quit and Reopen Pulsar restarted file access for Flatpak apps Apps that were running before the restart can't open or save files until they're reopened: Discord, Steam. Quit and Reopen asks each one to quit, as its own Quit command does, and opens it again once it has. Apps that stay open are listed afterward for you to close yourself." "$LOG"
 }
 
-@test "without a click nothing is closed or started" {
-    printf '%s\n' com.valvesoftware.Steam com.discordapp.Discord > "$APPS"
-    HANG=1 run -0 "$SCRIPT"
+@test "without a click nothing is asked, closed or started" {
+    printf '%s\n' org.gnome.Loupe com.discordapp.Discord > "$APPS"
+    QUITS=org.gnome.Loupe HANG=1 run -0 "$SCRIPT"
     grep -q '^notify-send' "$LOG"
     ! grep -q '^flatpak kill' "$LOG" || false
+    ! grep -q 'ActivateAction' "$LOG" || false
     ! grep -q '^gio' "$LOG"
 }
 
-@test "the button closes each app and starts it again, each one gone before it starts" {
-    printf '%s\n' com.valvesoftware.Steam com.discordapp.Discord > "$APPS"
+@test "the button asks each app to quit and starts it again, each one gone before it starts" {
+    printf '%s\n' org.gnome.Loupe org.gnome.TextEditor > "$APPS"
     SECONDS=0
-    # A real poll interval: an app that has closed is not waited on further.
-    PULSAR_DOC_PORTAL_POLL=1 ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    # A real poll interval: apps that have quit are not waited on further.
+    # They quit a second after they are asked, and are started only after.
+    LINGER=1 QUITS="org.gnome.Loupe org.gnome.TextEditor" PULSAR_DOC_PORTAL_POLL=1 ANSWER=reopen HANG=1 run -0 "$SCRIPT"
     [ "$SECONDS" -lt 8 ]
-    grep -Fxq 'flatpak kill com.valvesoftware.Steam' "$LOG"
-    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/com.valvesoftware.Steam.desktop" "$LOG"
-    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/com.discordapp.Discord.desktop" "$LOG"
-    [ "$(grep -n '^flatpak kill com.valvesoftware.Steam' "$LOG" | cut -d: -f1)" -lt \
-      "$(grep -n '^gio launch .*Steam' "$LOG" | cut -d: -f1)" ]
+    # Through the app's own quit action at its GApplication path, never a kill.
+    grep -Fxq "gdbus call --session --timeout 5 --dest org.gnome.Loupe --object-path /org/gnome/Loupe --method org.freedesktop.Application.ActivateAction quit [] {}" "$LOG"
+    grep -Fxq "gdbus call --session --timeout 5 --dest org.gnome.TextEditor --object-path /org/gnome/TextEditor --method org.freedesktop.Application.ActivateAction quit [] {}" "$LOG"
+    ! grep -q '^flatpak kill' "$LOG" || false
+    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/org.gnome.Loupe.desktop" "$LOG"
+    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/org.gnome.TextEditor.desktop" "$LOG"
+    [ "$(grep -n 'dest org.gnome.Loupe .*ActivateAction' "$LOG" | cut -d: -f1)" -lt \
+      "$(grep -n '^gio launch .*Loupe' "$LOG" | cut -d: -f1)" ]
+    # All of them reopened: no notification about any left open.
+    [ "$(grep -c '^notify-send' "$LOG")" -eq 1 ]
+}
+
+@test "an app that does not quit, or cannot be asked, is left open and named" {
+    printf '%s\n' org.gnome.Loupe org.gnome.TextEditor com.valvesoftware.Steam com.discordapp.Discord org.gnome.NautilusPreviewer > "$APPS"
+    SECONDS=0
+    QUITS=org.gnome.Loupe STAYS=org.gnome.TextEditor SLOW=com.discordapp.Discord NOQUIT=org.gnome.NautilusPreviewer \
+        ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    # The wait for the one with a save prompt up is bounded.
+    [ "$SECONDS" -lt 8 ]
+    ! grep -q '^flatpak kill' "$LOG" || false
+    # Steam owns no bus name: it is not called at all, so not activated.
+    ! grep -q 'dest com.valvesoftware.Steam' "$LOG" || false
+    grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/org.gnome.Loupe.desktop" "$LOG"
+    [ "$(grep -c '^gio launch' "$LOG")" -eq 1 ]
+    [[ "$output" == *"asked org.gnome.TextEditor to quit"* ]]
+    [[ "$output" == *"asked com.discordapp.Discord to quit"* ]]
+    [[ "$output" == *"org.gnome.TextEditor is still open; leaving it to the user"* ]]
+    [[ "$output" == *"com.valvesoftware.Steam has no quit action to call; leaving it open"* ]]
+    [[ "$output" == *"org.gnome.NautilusPreviewer has no quit action to call; leaving it open"* ]]
+    # The rest are named, alphabetically.
+    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning Close and reopen these apps yourself Still open: Discord, NautilusPreviewer, Steam, TextEditor. They didn't quit when asked, or have no Quit command Pulsar can call, and can't open or save files until you close and reopen them." "$LOG"
+    # and every one of them is still running
+    [ "$(sort "$APPS" | paste -sd' ')" = "com.discordapp.Discord com.valvesoftware.Steam org.gnome.NautilusPreviewer org.gnome.TextEditor" ]
 }
 
 @test "an app closed before the click is not started again" {
     printf '%s\n' com.valvesoftware.Steam com.discordapp.Discord > "$APPS"
-    CLOSED=com.discordapp.Discord ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    QUITS="com.valvesoftware.Steam com.discordapp.Discord" CLOSED=com.discordapp.Discord ANSWER=reopen HANG=1 run -0 "$SCRIPT"
     [[ "$output" == *"com.discordapp.Discord is closed already; not starting it"* ]]
     # the one still open is reopened, the closed one is left alone
-    grep -Fxq 'flatpak kill com.valvesoftware.Steam' "$LOG"
+    grep -q 'dest com.valvesoftware.Steam .*ActivateAction' "$LOG"
     grep -Fxq "gio launch ${PULSAR_FLATPAK_EXPORTS}/com.valvesoftware.Steam.desktop" "$LOG"
-    [ "$(grep -c '^flatpak kill' "$LOG")" -eq 1 ]
+    [ "$(grep -c 'ActivateAction' "$LOG")" -eq 1 ]
     [ "$(grep -c '^gio launch' "$LOG")" -eq 1 ]
 }
 
-@test "a helper with no launcher is closed and not started" {
+@test "a helper with no launcher is asked to quit and not started" {
     printf '%s\n' org.gnome.NautilusPreviewer > "$APPS"
-    ANSWER=reopen HANG=1 run -0 "$SCRIPT"
-    grep -Fxq 'flatpak kill org.gnome.NautilusPreviewer' "$LOG"
+    QUITS=org.gnome.NautilusPreviewer ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    grep -q 'dest org.gnome.NautilusPreviewer .*ActivateAction quit' "$LOG"
+    [[ "$output" == *"org.gnome.NautilusPreviewer quit and has no launcher; not starting it"* ]]
+    ! grep -q '^flatpak kill' "$LOG" || false
     ! grep -q '^gio' "$LOG"
 }
 
 @test "an app that will not close is not started again into its old sandbox" {
     printf '%s\n' com.valvesoftware.Steam > "$APPS"
-    STUBBORN=1 ANSWER=reopen HANG=1 run -0 "$SCRIPT"
-    grep -Fxq 'flatpak kill com.valvesoftware.Steam' "$LOG"
-    [[ "$output" == *"com.valvesoftware.Steam did not close; not starting it again"* ]]
+    STAYS=com.valvesoftware.Steam ANSWER=reopen HANG=1 run -0 "$SCRIPT"
+    grep -q 'dest com.valvesoftware.Steam .*ActivateAction quit' "$LOG"
+    [[ "$output" == *"com.valvesoftware.Steam is still open; leaving it to the user"* ]]
     ! grep -q '^gio' "$LOG"
 }
 

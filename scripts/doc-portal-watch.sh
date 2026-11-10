@@ -35,13 +35,23 @@
 # THE COST. A Flatpak app already running when the portal restarts keeps its
 # view of the old mount, which now fails with "Transport endpoint is not
 # connected": it cannot open or save files through the portal until it is
-# reopened. The notification names those apps and offers a "Force Quit and
-# Reopen" button. Nothing is closed unless that is clicked: the apps may be holding
+# reopened. The notification names those apps and offers a "Quit and Reopen"
+# button. Nothing is closed unless that is clicked: the apps may be holding
 # work (a game in Steam, a half-written message), and closing them is the
-# user's call. The button closes each one still running and starts it again;
-# one the user closed meanwhile stays closed, and a background helper with no
-# launcher (NautilusPreviewer) is only closed, and starts again the next time
-# it is asked for.
+# user's call.
+#
+# The button asks each app still running to quit through its own "quit"
+# action (org.freedesktop.Application.ActivateAction on the app's bus name),
+# which is what the app's Quit command and the dash's Quit both run, so an app
+# with unsaved work asks about it as it always does. It waits up to QUIT_WAIT
+# seconds, starts again each one that quit, and names the rest in a second
+# notification for the user to close: those either did not quit (a save
+# prompt may be up) or have no quit action to call (Steam, Electron apps).
+# Nothing is ever killed. A force-quit button for the rest would lose the very
+# work a save prompt is guarding, and closing an app by hand costs the user
+# one click more. One the user closed meanwhile stays closed, and a
+# background helper with no launcher (NautilusPreviewer) is only asked to
+# quit, and starts again the next time it is asked for.
 set -uo pipefail
 
 UNIT=xdg-document-portal.service
@@ -49,13 +59,14 @@ TIMEOUT=${PULSAR_DOC_PORTAL_TIMEOUT:-15}
 MOUNT=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/doc
 MOUNTINFO=${PULSAR_MOUNTINFO:-/proc/self/mountinfo}
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/pulsar
+QUIT_WAIT=${PULSAR_DOC_PORTAL_QUIT_WAIT:-20}
 # Where Flatpak exports the launchers of user and system installs.
 EXPORTS=${PULSAR_FLATPAK_EXPORTS:-${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/exports/share/applications /var/lib/flatpak/exports/share/applications}
 
 log() { echo "doc-portal-watch: $*"; }
 
-# com.valvesoftware.Steam com.discordapp.Discord -> "Steam, Discord"
-short_names() { printf '%s\n' "$@" | sed 's/.*\.//' | paste -sd, - | sed 's/,/, /g'; }
+# "Steam" "Image Viewer" -> "Steam, Image Viewer"
+join() { local out="" x; for x in "$@"; do out+="${out:+, }$x"; done; printf '%s' "$out"; }
 
 launcher() {
     local d
@@ -65,31 +76,78 @@ launcher() {
     return 1
 }
 
+# The apps' names, alphabetical, for a notification.
+names() {
+    local a
+    local -a out=()
+    mapfile -t out < <(for a in "$@"; do printf '%s\n' "${a##*.}"; done | sort -f)
+    join "${out[@]}"
+}
+
 running() { flatpak ps --columns=application 2>/dev/null | grep -x "$1" >/dev/null; }
+
+# Ask APP to quit through its own "quit" action, the one its Quit command
+# runs. Fails when there is nobody to ask: the app owns no bus name of its
+# own ID (Steam, Electron apps), or has no quit action. A call that times out
+# was asked: an app that puts up a modal save prompt from inside the action
+# answers only once the prompt is dealt with.
+ask_to_quit() {
+    local err rc
+    # Only an owned name: calling an unowned one could D-Bus activate the app.
+    [ "$(timeout -k 2 10 gdbus call --session --dest org.freedesktop.DBus \
+        --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner \
+        "$1" 2>/dev/null)" = "(true,)" ] || return 1
+    # GApplication's object path: org.gnome.Loupe -> /org/gnome/Loupe, - -> _
+    err=$(timeout -k 2 10 gdbus call --session --timeout 5 --dest "$1" \
+        --object-path "/$(printf '%s' "$1" | tr .- /_)" \
+        --method org.freedesktop.Application.ActivateAction quit '[]' '{}' 2>&1 >/dev/null)
+    rc=$?
+    [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [[ "$err" == *"Timeout was reached"* ]]
+}
 
 # --offer APP...: the notification and its button. Run as a transient unit of
 # its own, because the click can come long after this check has finished.
 offer() {
-    local answer app desktop n
-    answer=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen="Force Quit and Reopen" \
+    local answer app desktop deadline still
+    local -A state=()
+    local -a asked=() left=()
+    answer=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen="Quit and Reopen" \
         "Pulsar restarted file access for Flatpak apps" \
-        "Apps that were running before the restart can't open or save files until they're reopened: $(short_names "$@"). Force quitting them loses unsaved work.") || return 0
+        "Apps that were running before the restart can't open or save files until they're reopened: $(names "$@"). Quit and Reopen asks each one to quit, as its own Quit command does, and opens it again once it has. Apps that stay open are listed afterward for you to close yourself.") || return 0
     [ "$answer" = reopen ] || return 0
     for app in "$@"; do
         # The list is from the restart; the click can come much later. One
         # the user has closed since is not started again.
         if ! running "$app"; then log "$app is closed already; not starting it"; continue; fi
-        log "reopening $app"
-        flatpak kill "$app" 2>/dev/null
-        # Gone before it starts again, or the launch only opens another
-        # window in the old sandbox, which still has the dead mount.
-        for ((n = 0; n < 20; n++)); do
-            running "$app" || break
-            sleep "${PULSAR_DOC_PORTAL_POLL:-0.5}"
-        done
-        if running "$app"; then log "$app did not close; not starting it again"; continue; fi
-        if desktop=$(launcher "$app"); then gio launch "$desktop"; fi
+        if ask_to_quit "$app"; then
+            log "asked $app to quit"; state[$app]=asked; asked+=("$app")
+        else
+            log "$app has no quit action to call; leaving it open"; state[$app]=open
+        fi
     done
+    # Gone before it starts again, or the launch only opens another window in
+    # the old sandbox, which still has the dead mount. Bounded: an app with a
+    # save prompt up stays until the user answers it.
+    deadline=$((SECONDS + QUIT_WAIT))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        still=0
+        for app in "${asked[@]}"; do running "$app" && { still=1; break; }; done
+        [ "$still" = 1 ] || break
+        sleep "${PULSAR_DOC_PORTAL_POLL:-0.5}"
+    done
+    for app in "${asked[@]}"; do
+        if running "$app"; then log "$app is still open; leaving it to the user"; state[$app]=open; continue; fi
+        if desktop=$(launcher "$app"); then
+            log "reopening $app"; gio launch "$desktop"
+        else
+            log "$app quit and has no launcher; not starting it"
+        fi
+    done
+    for app in "$@"; do [ "${state[$app]:-}" = open ] && left+=("$app"); done
+    [ ${#left[@]} -gt 0 ] || return 0
+    notify-send --app-name=Pulsar --icon=dialog-warning \
+        "Close and reopen these apps yourself" \
+        "Still open: $(names "${left[@]}"). They didn't quit when asked, or have no Quit command Pulsar can call, and can't open or save files until you close and reopen them."
 }
 if [ "${1:-}" = --offer ]; then shift; offer "$@"; exit 0; fi
 
