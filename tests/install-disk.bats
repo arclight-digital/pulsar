@@ -235,6 +235,51 @@ linux_disk() {
     [ "$stderr" = "pulsar-install-disk: refused: nothing to install alongside: the disk has only an EFI system partition" ]
 }
 
+@test "alongside: each held partition is pinned at exactly its size, and a plan that moves or grows one is refused" {
+    # repart, run as root with an encrypted root, planned to grow a partition
+    # held by Weight=0 alone into the free space after it (root-check image,
+    # systemd 259): the placeholder must give the size itself
+    run python3 - "$BIN" "$T/scratch" <<'PY'
+import importlib.machinery as M, importlib.util as U, os, sys
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+os.makedirs(sys.argv[2] + "/defs")
+existing = [{"type": "root-x86-64", "label": "home", "uuid": "b", "partno": 3, "offset": 2 << 30, "raw_size": 8 << 30},
+            {"type": "root-x86-64", "label": "root", "uuid": "a", "partno": 2, "offset": 1 << 30, "raw_size": 300 << 20},
+            {"type": "esp", "label": "EFI", "uuid": "e", "partno": 0, "offset": 1 << 20, "raw_size": 100 << 20}]
+out = m.hold_existing(sys.argv[2] + "/defs", existing, sys.argv[2])
+for n in sorted(os.listdir(out)):
+    print(n, open(os.path.join(out, n)).read().replace("\n", " "))
+plan = [dict(e, activity="unchanged") for e in existing] + [
+    {"type": "xbootldr", "activity": "create", "label": "boot", "uuid": "n1", "offset": 0, "raw_size": 0},
+    {"type": "root-x86-64", "activity": "create", "label": "pulsar", "uuid": "n2", "offset": 0, "raw_size": 0}]
+m.check("alongside", plan, existing)
+print("as they were: allowed")
+for change in ({"raw_size": 301 << 20}, {"offset": (1 << 30) + 4096}, {"activity": "resize"}):
+    try:
+        m.check("alongside", [dict(p, **change) if p["uuid"] == "a" else p for p in plan], existing)
+        print(change, "allowed")
+    except m.Refused as e:
+        print(e)
+PY
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf '%s\n' \
+        "00-existing-root-x86-64-0.conf [Partition] Type=root-x86-64 SizeMinBytes=314572800 SizeMaxBytes=314572800 Weight=0 " \
+        "00-existing-root-x86-64-1.conf [Partition] Type=root-x86-64 SizeMinBytes=8589934592 SizeMaxBytes=8589934592 Weight=0 " \
+        "as they were: allowed" \
+        "plan would move or resize partition root-x86-64 (root)" \
+        "plan would move or resize partition root-x86-64 (root)" \
+        "plan would resize partition root-x86-64 (root)")" ]
+}
+
+@test "alongside: a partition repart can't hold at its size (not a multiple of 4096 bytes) is refused, not resized" {
+    needs_disk_tools
+    # 300 MiB and one sector
+    linux_disk "$T/l.img" 128G 614401
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/l.img"
+    [ "$status" -eq 2 ]
+    [ "$stderr" = "pulsar-install-disk: refused: partition root-x86-64 (root) is 314573312 bytes, not a multiple of 4096: systemd-repart can't keep it at that size" ]
+}
+
 @test "erase: a plan that keeps any partition is refused, whatever its type" {
     run python3 - "$BIN" <<'PY'
 import importlib.machinery as M, importlib.util as U, sys
