@@ -338,9 +338,12 @@ PY
 }
 
 @test "the ready page's red panel says what the erase deletes, by name" {
-    [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, will be deleted when you press Erase and Install. It can't be recovered." ]
-    [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it will be deleted when you press Erase and Install. It can't be recovered." ]
+    [ "$(py 'm.erase_warning(D["/dev/nvme1n1"])')" = "Everything on it, including Windows, will be deleted when you press Erase and Install. It can't be undone." ]
+    [ "$(py 'm.erase_warning(D["/dev/sde"])')" = "Everything on it will be deleted when you press Erase and Install. It can't be undone." ]
     [ "$(py 'm.options(D["/dev/nvme1n1"])["erase"][1]')" = "Deletes everything on this disk, including Windows." ]
+    # the erase page says it the same way
+    grep -qF '"The whole disk will be formatted for Pulsar, and that can'"'"'t be undone. These partitions "' "$APP"
+    ! grep -qF "can't be recovered:" "$APP" || false
 }
 
 @test "a Ventoy stick running the installer is never offered: its live label and mount are a level down" {

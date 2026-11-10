@@ -133,11 +133,9 @@ def install_button(mode, d):
 def erase_warning(d):
     """The ready page's red panel: what an erase deletes, by name."""
     what = f"Everything on it, including {d['holds']}," if d["holds"] in ("Windows", "Linux") else "Everything on it"
-    # TODO(copy): "can't be recovered" is kept as the safe side of the warning, but the repo
-    # doesn't back it: repart writes a new GPT and formats, and discards (its default) only
-    # where the disk supports it, so on a spinning disk old blocks survive until overwritten.
-    # Keep it, or say "The installer can't undo this."?
-    return f"{what} will be deleted when you press Erase and Install. It can't be recovered."
+    # "can't be undone", not "can't be recovered": repart writes a new GPT and formats, and
+    # discards only where the disk supports it, so old blocks may survive on some disks
+    return f"{what} will be deleted when you press Erase and Install. It can't be undone."
 
 
 def needs_erase_confirm(d):
@@ -818,8 +816,8 @@ def main():
                 label(f"Erase {d['name']}?", ["in-title"]),
                 label(f"{identity(d)} · {d['path']}", ["in-note"]),
                 Gtk.Box(height_request=4),
-                label("The whole disk will be formatted for Pulsar. These partitions and everything in them "
-                      "will be deleted, and can't be recovered:", ["in-lede"]),
+                label("The whole disk will be formatted for Pulsar, and that can't be undone. These partitions "
+                      "and everything in them will be deleted:", ["in-lede"]),
                 parts, sure,
                 label("Nothing is deleted until you press Erase and Install on the last step.", ["in-note"])),
                 back=back_button(self.nav), nxt=go)
