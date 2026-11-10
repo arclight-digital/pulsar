@@ -2677,16 +2677,20 @@ def leave_users(tx, first_login=False):
 def cmd_set(theme, variant="both", only=None, dry=False, wallpaper_index=None, restart_policy="ask", extra=None,
             without=None, gentle=None):
     """`only` is a subset (bg-next is only=['wallpaper']): stale files and the
-    recorded target list are left as they were. `extra` adds opt-in targets
-    (--with flatpak) to a full switch, which is still a full switch. `gentle`
-    marks a run nobody asked for, "follow" or "init": see leave_users()."""
+    recorded target list are left as they were. `extra` (--with flatpak) turns
+    back on targets turned off with --without, in a full switch, which is still
+    a full switch. Every target is on by default, so that is all --with does
+    today. `gentle` marks a run nobody asked for, "follow" or "init": see
+    leave_users()."""
     extra = list(extra or [])
     # a default target turned off with --without stays off across every
     # later full switch (the picker's included) until --with brings it back
     off = (set(current_state().get("off", [])) | set(without or [])) - set(extra)
     if only is None:
-        # an opt-in target that is on stays on across any full switch (the
-        # picker's included) until it is turned off with --without
+        # an opt-in target (default = False) that is on would stay on across
+        # any full switch (the picker's included) until turned off with
+        # --without. Every target defaults on today, so this finds none; it is
+        # kept for the next target that ships off.
         on = [t.name for t in TARGETS if not t.default and t.name in current_state().get("targets", [])]
         extra += [n for n in on if n not in extra and n not in (without or [])]
     selected = [t for t in TARGETS

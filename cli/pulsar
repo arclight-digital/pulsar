@@ -1500,6 +1500,22 @@ update_notify_once() {
     printf '%s\n' "$digest" > "$state_file"
 }
 
+# Stages the update through pulsar-update-stage.service and says how it
+# ended, in a notification: the notification's Update button runs this, and
+# so does `update --download` (Pulsar Settings' Download), each in a
+# transient unit of its own, so the report comes whether or not whoever
+# started it is still there. $1 the CLI, $2 the build, when known.
+#
+# A cancelled password prompt is the user saying no, not a failure. After a
+# stage, the check runs again and posts "ready" itself, so there is one place
+# that words it. Exits 1 when the stage failed, for `update --download`.
+# shellcheck disable=SC2016  # expanded by the transient unit's sh
+UPDATE_STAGE_SCRIPT='if err=$(systemctl start pulsar-update-stage.service 2>&1); then "$1" update --check --notify; exit 0; fi
+case "$err" in *[Aa]uthenticat*|*"Access denied"*|*[Cc]ancel*) exit 0 ;; esac
+if [ -n "${2:-}" ]; then what="Build $2"; else what="The update"; fi
+notify-send --app-name=Pulsar --icon=dialog-warning "Pulsar update failed" "$what did not install. See why: journalctl -u pulsar-update-stage"
+exit 1'
+
 update_notify_send() {
     local kind=$1 digest=$2 version=$3 booted=$4 release=${5:-} title body
     have notify-send || return 0
@@ -1530,15 +1546,11 @@ update_notify_send() {
     local script unit="pulsar-update-${kind}-${digest#sha256:}"
     unit=${unit:0:48}
     if [ "$kind" = available ]; then
-        # A cancelled password prompt is the user saying no, not a failure.
-        # After a stage, the check runs again and posts "ready" itself, so
-        # there is one place that words it.
         # shellcheck disable=SC2016  # expanded by the transient unit's sh
         script='a=$(notify-send --app-name=Pulsar --icon=software-update-available --action=update=Update "$1" "$2") || exit 0
 [ "$a" = update ] || exit 0
-if err=$(systemctl start pulsar-update-stage.service 2>&1); then exec "$3" update --check --notify; fi
-case "$err" in *[Aa]uthenticat*|*"Access denied"*|*[Cc]ancel*) exit 0 ;; esac
-exec notify-send --app-name=Pulsar --icon=dialog-warning "Pulsar update failed" "Build $4 did not install. See why: journalctl -u pulsar-update-stage"'
+shift 2
+'"$UPDATE_STAGE_SCRIPT"
     else
         # gnome-session-quit shows GNOME's restart dialog; the user confirms
         # there. This never reboots on its own.
@@ -1549,6 +1561,18 @@ exec gnome-session-quit --reboot'
     fi
     systemd-run --user --collect --quiet --unit="$unit" \
         -- sh -c "$script" sh "$title" "$body" "$(realpath "$SELF")" "$version" 2>/dev/null || true
+}
+
+# update --download: what the notification's Update button does, for Pulsar
+# Settings' Download button. The stage runs in a transient unit, so closing
+# the window neither stops it nor loses its report; this waits for it, so a
+# window still open can show the result too. Exit 0 staged (or the password
+# prompt dismissed), 1 failed.
+update_download() {
+    need_user "update --download"
+    have systemd-run || die "'update --download' needs systemd-run; run: sudo pulsar update"
+    systemd-run --user --wait --collect --quiet --unit="pulsar-update-download-$$" \
+        -- sh -c "$UPDATE_STAGE_SCRIPT" sh "$(realpath "$SELF")"
 }
 
 # ---------------------------------------------------------------------------
@@ -1619,6 +1643,13 @@ usage: sudo pulsar update [--apply]   download and stage the newest image; it
                                       pulsar-update-auto.timer is on, the
                                       first waits a day
          --json                       with --check: the answer as JSON
+       pulsar update --download       what the update notification's Update
+                                      button does: stage the newest image
+                                      through pulsar-update-stage.service
+                                      (no password for an administrator),
+                                      then a notification says how it ended.
+                                      No root. Waits for it: exit 0 staged,
+                                      1 failed
        sudo pulsar update --background
                                       stage a newer image if there is one,
                                       unless on battery or a metered
@@ -1632,15 +1663,22 @@ EOF
 }
 
 cmd_update() {
-    local arg check=0 notify=0 background=0
+    local arg check=0 notify=0 background=0 download=0
     for arg in "$@"; do
         case "$arg" in
             -h|--help) update_help; return 0 ;;
             --check) check=1 ;;
             --notify) notify=1 ;;
             --background) background=1 ;;
+            --download) download=1 ;;
         esac
     done
+    if [ "$download" = 1 ]; then
+        [ "$#" -eq 1 ] || die "--download takes no other flags: pulsar update --download"
+        no_json update
+        update_download
+        return $?
+    fi
     if [ "$background" = 1 ]; then
         [ "$#" -eq 1 ] || die "--background takes no other flags: sudo pulsar update --background"
         no_json update
@@ -1848,36 +1886,84 @@ agent_context_path() {
     esac
 }
 
-link_agent_context() {
-    local target
-    if ! target=$(agent_context_path "$A_NAME"); then
-        case "$A_NAME" in
-            gemini) printf 'to give it the guide, add this line to ~/.gemini/GEMINI.md:\n  @%s\n' "$AGENTS_MD" ;;
-            aider)
-                if [ "${1:-}" = native ]; then
-                    printf 'to give it the guide, add this to ~/.aider.conf.yml:\n  read: %s\n' "$AGENTS_MD"
-                else
-                    printf 'the shim passes --read %s whenever the image has it, so aider starts with the guide\n' "$AGENTS_MD"
-                fi ;;
-        esac
-        return 0
-    fi
-    [ -r "$AGENTS_MD" ] || {
-        printf 'this image has no %s yet; after the next update, rerun this to link the guide\n' "$AGENTS_MD"
-        return 0
-    }
+# What an agent has of the guide, as three lines: state, file, line.
+#
+#   linked    it reads the guide: Pulsar's link at <file>, aider's shim
+#             (<file>), or the line the user added to <file>
+#   add-line  Pulsar can't link it: adding <line> to <file> gives it the
+#             guide. Always so for gemini and a native aider, and for any
+#             agent whose file is already the user's own
+#   unlinked  nothing there yet; pulsar agent add <name> links it
+#   missing   this image has no guide
+#
+# Read by `agent add` for what it prints and by `agent list --json` for the
+# welcome, so a GUI learns the outcome without reading the prose.
+agent_guide_state() {
+    local target conf
+    if [ ! -r "$AGENTS_MD" ]; then printf 'missing\n\n\n'; return 0; fi
+    case "$A_NAME" in
+        gemini)
+            conf="$HOME/.gemini/GEMINI.md"
+            if [ -f "$conf" ] && grep -qF "@${AGENTS_MD}" "$conf"; then
+                printf 'linked\n%s\n\n' "$conf"
+            else
+                printf 'add-line\n%s\n@%s\n' "$conf" "$AGENTS_MD"
+            fi
+            return 0 ;;
+        aider)
+            conf="$HOME/.aider.conf.yml"
+            if is_our_shim "${AGENT_SHIMS}/${A_BIN}"; then
+                printf 'linked\n%s\n\n' "${AGENT_SHIMS}/${A_BIN}"
+            elif ! native_launcher "$A_BIN" >/dev/null; then
+                printf 'unlinked\n\n\n'
+            elif [ -f "$conf" ] && grep -qF "$AGENTS_MD" "$conf"; then
+                printf 'linked\n%s\n\n' "$conf"
+            else
+                printf 'add-line\n%s\nread: %s\n' "$conf" "$AGENTS_MD"
+            fi
+            return 0 ;;
+    esac
+    target=$(agent_context_path "$A_NAME") || return 1
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$AGENTS_MD" ]; then
-        printf 'the guide is already linked at %s\n' "$target"
+        printf 'linked\n%s\n\n' "$target"
     elif [ -e "$target" ] || [ -L "$target" ]; then
         # Never overwritten: it is the user's file, and a guide is not worth
-        # losing someone's instructions over.
-        printf '%s already exists; left alone. The guide is %s (or: pulsar agent guide)\n' \
-            "$target" "$AGENTS_MD"
+        # losing someone's instructions over. Any agent follows a sentence.
+        printf 'add-line\n%s\nRead %s before changing anything outside the project.\n' "$target" "$AGENTS_MD"
     else
-        mkdir -p "$(dirname "$target")"
-        ln -s "$AGENTS_MD" "$target"
-        printf 'linked the guide at %s\n' "$target"
+        printf 'unlinked\n%s\n\n' "$target"
     fi
+}
+
+link_agent_context() {
+    local state file line
+    { read -r state; read -r file; read -r line; } < <(agent_guide_state)
+    if [ "$state" = unlinked ] && [ -n "$file" ]; then
+        mkdir -p "$(dirname "$file")"
+        ln -s "$AGENTS_MD" "$file"
+        printf 'linked the guide at %s\n' "$file"
+        return 0
+    fi
+    case "$state" in
+        linked)
+            if [ "$A_NAME" = aider ] && is_our_shim "$file"; then
+                printf 'the shim passes --read %s whenever the image has it, so aider starts with the guide\n' "$AGENTS_MD"
+            elif [ -L "$file" ]; then
+                printf 'the guide is already linked at %s\n' "$file"
+            else
+                printf 'the guide is already in %s\n' "$file"
+            fi ;;
+        add-line)
+            if [ "$file" = "$(agent_context_path "$A_NAME")" ]; then
+                printf '%s already exists; left alone. The guide was not linked. To give it the guide, add this line to it:\n  %s\n' \
+                    "$file" "$line"
+            else
+                printf 'the guide was not linked: %s has no file Pulsar can link it into. To give it the guide, add this line to %s:\n  %s\n' \
+                    "$A_DESC" "$file" "$line"
+            fi ;;
+        missing)
+            printf 'this image has no %s yet; after the next update, rerun this to link the guide\n' "$AGENTS_MD" ;;
+    esac
 }
 
 # Skills: /usr/share/pulsar/skills/<name>/SKILL.md, in the Agent Skills
@@ -2092,7 +2178,7 @@ EOF
 }
 
 agent_list() {
-    local n b m p d state native notes=""
+    local n b m p d state native notes="" gs gf gl
     if [ "${JSON:-0}" = 1 ]; then
         need jq
         while IFS=$'\t' read -r n b m p _ d; do
@@ -2100,8 +2186,14 @@ agent_list() {
             if is_our_shim "${AGENT_SHIMS}/${b}"; then state=installed
             elif native_launcher "$b" >/dev/null; then state=native
             fi
+            # guide: what agent_guide_state says, for the welcome to report
+            # after an add without reading add's prose
+            agent_row "$n"
+            { read -r gs; read -r gf; read -r gl; } < <(agent_guide_state)
             jq -n -c --arg n "$n" --arg b "$b" --arg m "$m" --arg p "$p" --arg d "$d" --arg s "$state" \
-                '{name: $n, command: $b, installer: $m, package: $p, description: $d, state: $s}'
+                --arg gs "$gs" --arg gf "$gf" --arg gl "$gl" \
+                '{name: $n, command: $b, installer: $m, package: $p, description: $d, state: $s,
+                  guide: {state: $gs, file: $gf, line: $gl}}'
         done <<<"$AGENTS_TABLE" | jq -s '.'
         return 0
     fi
@@ -2129,7 +2221,7 @@ agent_install() {
     if native=$(native_launcher "$A_BIN"); then
         printf '%s is already installed by its own installer at %s\n' "$A_DESC" "$native"
         printf 'leaving it as it is: it runs on the host, not in the %s toolbox\n' "$AGENT_BOX"
-        link_agent_context native
+        link_agent_context
         link_agent_skills
         register_mcp host
         printf 'done; nothing was installed in the toolbox\n'
@@ -3876,7 +3968,7 @@ agent_sessions() {
         --forget)
             [ "$running" = 0 ] || die "$2 is running; end it first (pulsar agent sessions --kill $2)"
             [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
-            local repo dir top="" r
+            local repo dir top="" r snaps=none wt=none why=""
             repo=$(session_get "$2" repo) || repo=""
             dir=$(session_get "$2" dir) || dir=""
             # the snapshots, so a later session of this name starts clean;
@@ -3887,26 +3979,39 @@ agent_sessions() {
             if [ -n "$top" ]; then
                 while IFS= read -r r; do git -C "$top" update-ref -d "$r"; done \
                     < <(git -C "$top" for-each-ref --format='%(refname)' "refs/pulsar/undo/$2/" "refs/pulsar/undone/$2/")
+                snaps=dropped
             elif [ -n "$dir" ] && [ ! -d "$dir" ]; then
-                printf 'note: %s is gone, so its undo snapshots could not be dropped; if it was in a git repository, git for-each-ref refs/pulsar/undo/%s/ refs/pulsar/undone/%s/ there lists them (git update-ref -d each)\n' \
-                    "${dir/#"$HOME"/\~}" "$2" "$2"
+                snaps=left
             fi
             if [ -n "$repo" ] && [ -d "$dir" ]; then
                 # never forced: what is in it might be the only copy. git's
                 # own refusal is the reason, so it is passed on as it is.
-                local why
                 if why=$(git -C "$repo" worktree remove "$dir" 2>&1); then
-                    printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2"
+                    wt=removed; why=""
                 else
+                    wt=kept
                     why=$(printf '%s\n' "$why" | sed '/^[[:space:]]*$/d' | paste -sd ';' - | sed 's/;/; /g')
-                    if [ -n "$why" ]; then
-                        printf 'kept the worktree %s; git worktree remove said: %s\n' "${dir/#"$HOME"/\~}" "$why"
-                    else
-                        printf 'kept the worktree %s; git worktree remove failed and gave no reason\n' "${dir/#"$HOME"/\~}"
-                    fi
                 fi
             fi
             rm -f "${AGENT_SESSIONS}/$2.session"
+            # --json: what was left behind, for Pulsar Settings to say so
+            # (snapshots: dropped|left|none, worktree: removed|kept|none)
+            if [ "${JSON:-0}" = 1 ]; then
+                need jq
+                jq -n -c --arg n "$2" --arg s "$snaps" --arg w "$wt" --arg d "$dir" --arg r "$why" \
+                    '{name: $n, snapshots: $s, worktree: $w, dir: $d, reason: $r}'
+                return 0
+            fi
+            [ "$snaps" != left ] || printf 'note: %s is gone, so its undo snapshots could not be dropped; if it was in a git repository, git for-each-ref refs/pulsar/undo/%s/ refs/pulsar/undone/%s/ there lists them (git update-ref -d each)\n' \
+                "${dir/#"$HOME"/\~}" "$2" "$2"
+            case "$wt" in
+                removed) printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2" ;;
+                kept)    if [ -n "$why" ]; then
+                             printf 'kept the worktree %s; git worktree remove said: %s\n' "${dir/#"$HOME"/\~}" "$why"
+                         else
+                             printf 'kept the worktree %s; git worktree remove failed and gave no reason\n' "${dir/#"$HOME"/\~}"
+                         fi ;;
+            esac
             printf 'forgot %s (the agent'"'"'s own history is not touched)\n' "$2"
             return 0 ;;
     esac

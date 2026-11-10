@@ -46,10 +46,10 @@ stub_tools() {
 }
 
 @test "--push refuses to move the floating tags onto a -dev version" {
-  # The belt across the seam: next-version.sh produces the -dev version and
-  # nightly.sh passes --no-floating-tags beside it. Two flags that must agree
-  # can disagree, and one direction of that puts a debugging image on every
-  # user's next bootc upgrade. So the version string itself vetoes it.
+  # A -dev version is a debugging build, given by hand: next-version.sh has
+  # not made one since 2026-10-01, when manual builds joined the numbered
+  # series. Whatever the flags say, the version string itself vetoes moving
+  # the floating tags onto it.
   run "${BUILD}" --version "44.20260808.0-dev" --image localhost/pulsar --push
   [ "$status" -eq 2 ]
   [[ "$output" == *"--no-floating-tags"* ]]

@@ -376,7 +376,8 @@ class Welcome(Adw.ApplicationWindow):
                           ["wl-lede"]))
         self.agent_list = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE,
                                       margin_top=6)
-        self.agent_status = label("", ["wl-note"], wrap=True, visible=False)
+        # selectable: it can hold a line to copy into an agent's file
+        self.agent_status = label("", ["wl-note"], wrap=True, visible=False, selectable=True)
         facts = Gtk.Box(spacing=12, homogeneous=True, margin_top=6)
         facts.append(fact("dialog-warning-symbolic", "Crashes",
                           "A crash notification has a button that opens your agent in a terminal with the "
@@ -385,6 +386,7 @@ class Welcome(Adw.ApplicationWindow):
                           "AGENTS.md, Pulsar's guide for agents, tells them to ask first. "
                           "<tt>sudo pulsar agent guard on</tt> makes "
                           "system installs ask for your password."))
+        self._just_added = None
         self.fill_agents()
         return page(head, self.agent_list, self.agent_status, facts, width=760, top=8)
 
@@ -487,6 +489,7 @@ class Welcome(Adw.ApplicationWindow):
             self.agent_list.remove(row)
         rows = agent_rows(out) if proc else []
         if not rows:
+            self._just_added = None
             self.agent_list.set_visible(False)
             self._status_markup("From a terminal: <tt>pulsar agent add &lt;name&gt;</tt>. "
                                          "<tt>pulsar agent list</tt> shows the choices.")
@@ -507,6 +510,10 @@ class Welcome(Adw.ApplicationWindow):
                 b.connect("clicked", lambda *_, c=a["command"]: open_terminal(c))
             row.add_suffix(b)
             self.agent_list.append(row)
+        added = next((a for a in rows if a["name"] == self._just_added), None)
+        if added:
+            self._status_markup(added_status(added))
+        self._just_added = None
 
     def _add(self, btn, a):
         spin = Adw.Spinner()
@@ -526,9 +533,10 @@ class Welcome(Adw.ApplicationWindow):
             self.fill_agents()
             return
         # The one just picked is the one `agent ask` and crash notices use.
+        # The list that follows says whether it got the guide (added_status).
+        self._just_added = a["name"]
+        self._status_markup(added_status(dict(a, guide={})))
         self._run([PULSAR, "agent", "default", a["name"]], lambda *_: self.fill_agents())
-        self._status_markup(f"{GLib.markup_escape_text(a['title'])} is ready. Sign in once, "
-                                     f"then run <tt>{a['command']}</tt> from any terminal.")
 
     # ------------------------------------------------------------ theme ----
 
@@ -627,8 +635,33 @@ def agent_rows(text):
         m = re.match(r"^(.*?)\s*\((.*)\)$", a.get("description", ""))
         title, vendor = (m.group(1), m.group(2)) if m else (a.get("description") or a.get("name", "?"), "")
         rows.append({"name": a.get("name", ""), "command": a.get("command", ""), "state": a.get("state", ""),
-                     "title": title, "vendor": vendor})
+                     "title": title, "vendor": vendor, "guide": a.get("guide") or {}})
     return sorted(rows, key=lambda r: r["name"])
+
+
+def added_status(a):
+    """What the agents page says once `pulsar agent add` has installed a:
+    ready, and, when Pulsar couldn't give it the guide, the line that does.
+    a is an agent_rows row; its guide is what `agent list --json` read from
+    the agent's files, so the line is there until someone adds it."""
+    esc = GLib.markup_escape_text
+    text = (f"{esc(a['title'])} is ready. Sign in once, then run <tt>{esc(a['command'])}</tt> "
+            "from any terminal.")
+    g = a.get("guide") or {}
+    home = str(pathlib.Path.home())
+    file = g.get("file") or ""
+    if file == home or file.startswith(home + "/"):
+        file = "~" + file[len(home):]
+    if g.get("state") == "add-line" and file and g.get("line"):
+        text += (f"\nIt doesn't have Pulsar's guide for agents. Add this line to <tt>{esc(file)}</tt> "
+                 f"to give it the guide:\n<tt>{esc(g['line'])}</tt>")
+    elif g.get("state") == "unlinked":
+        text += (f"\nIt doesn't have Pulsar's guide for agents. Run <tt>pulsar agent add {esc(a['name'])}</tt> "
+                 "again to link it.")
+    elif g.get("state") == "missing":
+        text += (f"\nThis image has no guide for agents yet. After the next update, run "
+                 f"<tt>pulsar agent add {esc(a['name'])}</tt> again to link it.")
+    return text
 
 
 def agent_default():
