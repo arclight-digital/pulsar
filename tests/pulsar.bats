@@ -4381,6 +4381,8 @@ wt_env() {
     run "$PULSAR" agent sessions --forget dirty
     [[ "$output" == *"kept the worktree ~/code/proj/.worktrees/dirty"* ]] || fail "$output"
     [ -f "${PROJ}/.worktrees/dirty/new.txt" ]
+    # and why, in git's words
+    [[ "$output" == *"kept the worktree ~/code/proj/.worktrees/dirty; git worktree remove said: fatal: "*"contains modified or untracked files"* ]] || fail "$output"
 }
 
 @test "agent run --worktree: one removed by hand is made again" {

@@ -3892,12 +3892,18 @@ agent_sessions() {
                     "${dir/#"$HOME"/\~}" "$2" "$2"
             fi
             if [ -n "$repo" ] && [ -d "$dir" ]; then
-                # never forced: what is in it might be the only copy
-                if git -C "$repo" worktree remove "$dir" 2>/dev/null; then
+                # never forced: what is in it might be the only copy. git's
+                # own refusal is the reason, so it is passed on as it is.
+                local why
+                if why=$(git -C "$repo" worktree remove "$dir" 2>&1); then
                     printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2"
                 else
-                    printf 'kept the worktree %s: git would not remove it (git worktree remove %s says why)\n' \
-                        "${dir/#"$HOME"/\~}" "$dir"
+                    why=$(printf '%s\n' "$why" | sed '/^[[:space:]]*$/d' | paste -sd ';' - | sed 's/;/; /g')
+                    if [ -n "$why" ]; then
+                        printf 'kept the worktree %s; git worktree remove said: %s\n' "${dir/#"$HOME"/\~}" "$why"
+                    else
+                        printf 'kept the worktree %s; git worktree remove failed and gave no reason\n' "${dir/#"$HOME"/\~}"
+                    fi
                 fi
             fi
             rm -f "${AGENT_SESSIONS}/$2.session"
