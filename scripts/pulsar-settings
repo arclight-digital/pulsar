@@ -414,16 +414,21 @@ class Settings(Adw.ApplicationWindow):
 
     def _download(self):
         self.update_row.set_title("Downloading the update")
-        self.update_row.set_subtitle("You can close this window.")
+        self.update_row.set_subtitle("You can close this window. A notification says when it's done.")
         self._slot(Adw.Spinner())
-        # the same unit as the update notification's button (see its polkit rule)
-        run(["systemctl", "start", "pulsar-update-stage.service"], self._downloaded)
+        # What the update notification's Update button does: the stage runs
+        # in a unit of its own, which posts how it ended (ready, or failed)
+        # whether or not this window is still open. This waits for it only
+        # to update the row; the notification is the one report.
+        run([PULSAR, "update", "--download"], self._downloaded)
 
-    def _downloaded(self, ok, out):
-        if not ok:
-            self.alert("Could not download the update",
-                       (out.strip()[-600:] or "") + "\n\nSee why: journalctl -u pulsar-update-stage")
-        self.refresh_updates()
+    def _downloaded(self, ok, _out):
+        if ok:
+            self.refresh_updates()
+            return
+        self.update_row.set_title("Could not download the update")
+        self.update_row.set_subtitle("See why: journalctl -u pulsar-update-stage")
+        self._slot(button("Try Again", lambda *_: self._download(), "flat"))
 
     def _restart(self):
         # GNOME's own restart dialog; the user confirms there

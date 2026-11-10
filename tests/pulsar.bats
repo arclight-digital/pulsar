@@ -530,6 +530,48 @@ CHECK_STAGED='{"deployments":[
     grep -q "journalctl -u pulsar-update-stage" "$NOTIFY_LOG"
 }
 
+# Pulsar Settings' Download runs this. The report has to come from the unit,
+# not the window: a window closed mid-download used to leave no word of it.
+@test "update --download stages in a unit of its own, which says it is ready, as the Update button does" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    cat > "${STUB}/systemd-run" <<EOF
+#!/bin/sh
+echo "\$*" >> "${BATS_TEST_TMPDIR}/run.log"
+while [ "\$#" -gt 0 ] && [ "\$1" != -- ]; do shift; done
+shift
+exec "\$@"
+EOF
+    printf '%s' "$CHECK_STAGED" > "${BATS_TEST_TMPDIR}/staged.json"
+    STAGE_TO="${BATS_TEST_TMPDIR}/staged.json" run "$PULSAR" update --download
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -q -- "--user --wait --collect" "${BATS_TEST_TMPDIR}/run.log"
+    grep -qx "systemctl start pulsar-update-stage.service" "$ACTION_LOG"
+    grep -q "Pulsar update ready Restart to use build 44.2." "$NOTIFY_LOG"
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
+    ! grep -q "gnome-session-quit" "$ACTION_LOG" || false
+}
+
+@test "update --download: a failed stage is a notification and exit 1; a dismissed prompt is neither" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    STAGE_FAILS="Job for pulsar-update-stage.service failed" run "$PULSAR" update --download
+    [ "$status" -eq 1 ]
+    grep -q "Pulsar update failed The update did not install. See why: journalctl -u pulsar-update-stage" "$NOTIFY_LOG"
+    : > "$NOTIFY_LOG"
+    STAGE_FAILS="Failed to start pulsar-update-stage.service: Access denied" run "$PULSAR" update --download
+    [ "$status" -eq 0 ]
+    [ ! -s "$NOTIFY_LOG" ]
+}
+
+@test "Pulsar Settings' Download goes through update --download, not straight to the system unit" {
+    local s="${BATS_TEST_DIRNAME}/../scripts/pulsar-settings"
+    grep -qF '[PULSAR, "update", "--download"]' "$s"
+    ! grep -qF '"systemctl", "start", "pulsar-update-stage.service"' "$s" || false
+}
+
 @test "update --notify: a staged update is announced once, and Restart asks GNOME" {
     stub_ostree "$CHECK_STAGED"
     stub_skopeo "sha256:bbb" "44.2"
