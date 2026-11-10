@@ -281,8 +281,8 @@ signatures when they update: there is no signature policy (`policy.json`).
 ```text
 Containerfile          -> ghcr.io/arclight-digital/pulsar
 Containerfile.nvidia   -> ghcr.io/arclight-digital/pulsar-nvidia
-scripts/nightly.sh     version, build, push, publish; runs on the build host at 8pm Mountain
-scripts/weekly.sh      installer ISOs, weekly, signed with keys/cosign.pub
+scripts/nightly.sh     version, build, push, publish; runs on the build host at 7:45 p.m. Mountain
+scripts/weekly.sh      installer ISOs, Sundays at 1:45 a.m. Mountain, signed with keys/cosign.pub
 scripts/publish.sh     SBOMs, the changelog and the site's data after each nightly
 iso-config.toml        what the installer asks before it partitions
 assets/                source of truth for art; branding in system_files/ is generated
@@ -290,8 +290,6 @@ system_files.nvidia/   overlay for the NVIDIA image only
 scripts/build.sh       the build pipeline, the same on a workstation and the build host
 docs/                  published to getpulsar.dev/docs with each nightly
 ```
-
-<!-- TODO(copy): which night does weekly.sh run? This said Saturday; commit e4b70d77 says "Sunday's ISO". -->
 
 Changes pushed to `main` go out with the next nightly build. A build started
 by hand runs the same pipeline and takes the next version number, but it
