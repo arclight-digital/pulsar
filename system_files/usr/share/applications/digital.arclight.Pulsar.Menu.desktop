@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Pulsar Commands
-Comment=Apps, files and Pulsar's own actions, one search away: copy text from the screen, themes, updates, agent sessions
+Comment=Search apps, files and Pulsar's own actions: copy text from the screen, themes, updates, agent sessions
 Keywords=pulsar;command;menu;palette;launcher;search;apps;files;ocr;qr;theme;update;agent;session;checkpoint;
 Exec=/usr/libexec/pulsar/pulsar-menu
 Icon=digital.arclight.Pulsar.Settings

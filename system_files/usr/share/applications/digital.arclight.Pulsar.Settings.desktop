@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Pulsar Settings
-Comment=Glass and lighting effects, system updates and rollback
-Keywords=pulsar;settings;effects;glass;lighting;update;rollback;pin;image;
+Comment=Theme and effects, system updates and rollback, agent sessions
+Keywords=pulsar;settings;effects;glass;lighting;update;rollback;pin;image;agent;session;
 Exec=/usr/libexec/pulsar/pulsar-settings
 Icon=digital.arclight.Pulsar.Settings
 Categories=Settings;GTK;
