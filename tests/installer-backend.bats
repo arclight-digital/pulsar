@@ -51,7 +51,7 @@ EOF
 # ESP_SHIMS="ubuntu ...": other systems' shims already on the ESP, there once
 # it is mounted; ESP_FALLBACK=TEXT: the ESP's EFI/BOOT/BOOTX64.EFI before the
 # install. ESP_BOOT_RO=1: bootc leaves EFI/BOOT read-only, so it can't be put
-# back. stdout: the backend's events; $T/calls: every command run(), in order.
+# back. ESP_WINDOWS=1: Windows' boot manager is on the ESP. stdout: the backend's events; $T/calls: every command run(), in order.
 system() {
     local mode=$1; shift
     PULSAR_INSTALL_DISK="$T/disk-tool" python3 - "$SYS" "$T" "$DISK" "$mode" "$@" <<'PY'
@@ -84,6 +84,9 @@ def run(*cmd, **kw):
             for n, k, t, u, f, fu in parts]}]})
     if cmd[0] == "sfdisk" and cmd[1] == "-J":
         return json.dumps({"partitiontable": {"partitions": [{"node": disk + n, "uuid": u} for n, _, _, u, _, _ in parts]}})
+    if cmd[0] == "mount" and os.environ.get("ESP_WINDOWS") and cmd[-1].endswith(("/boot/efi", "/esp-check")):
+        os.makedirs(os.path.join(cmd[-1], "EFI/Microsoft/Boot"), exist_ok=True)
+        open(os.path.join(cmd[-1], "EFI/Microsoft/Boot/bootmgfw.efi"), "w").close()
     if cmd[0] == "mount" and cmd[-1].endswith("/boot/efi"):
         for v in os.environ.get("ESP_SHIMS", "").split():
             os.makedirs(os.path.join(cmd[-1], "EFI", v), exist_ok=True)
@@ -240,6 +243,21 @@ deleted() { grep '^sfdisk --delete' "$T/calls" | sed "s|^sfdisk --delete $DISK |
     rm -rf "$T/run"
     ESP_FALLBACK=WINDOWS-BOOTMGR ESP_BOOT_RO=1 FAIL_AT=bootc run --separate-stderr system alongside "${ID[@]}"
     [ "$(known)" = "removed fallback" ]
+}
+
+@test "the plan says whether Windows' boot manager is on the ESP it shares, the test the menu entry uses" {
+    ESP_WINDOWS=1 run --separate-stderr system alongside --plan-only "${ID[@]}"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r 'select(.stage? == "plan") | .windows')" = true ]
+    grep -q '^mount -o ro .*/esp-check$' "$T/calls"
+    run --separate-stderr system alongside --plan-only "${ID[@]}"
+    [ "$(echo "$output" | jq -r 'select(.stage? == "plan") | .windows')" = false ]
+    # an erase shares no ESP
+    run --separate-stderr system erase --plan-only "${ID[@]}"
+    [ "$(echo "$output" | jq -r 'select(.stage? == "plan") | .windows')" = null ]
+    # and the install itself makes the entry on the same test
+    ESP_WINDOWS=1 run --separate-stderr system alongside "${ID[@]}"
+    [ "$(echo "$output" | jq -r 'select(.stage? == "done") | .windows_entry')" = true ]
 }
 
 # page_says MODE: the failure page's sentence about the disk, as the installer

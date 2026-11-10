@@ -50,8 +50,10 @@ say what is known, for the installer app to tell the person:
         "fallback"   bootc ran, and EFI/BOOT could not be put back: the
                      other system's fallback loader may be replaced too
 --plan-only prints
-{"stage": "plan", "plan": [...]} (pulsar-install-disk's dry run) and
-writes nothing; it needs no key (--no-encrypt plans the unencrypted layout).
+{"stage": "plan", "plan": [...], "windows": ...} (pulsar-install-disk's dry
+run; windows, alongside only, whether Windows' boot manager is on the ESP,
+which gets it a startup menu entry) and writes nothing; it needs no key
+(--no-encrypt plans the unencrypted layout).
 
 PULSAR_BOOTC_PREFIX, if set, runs bootc through a wrapper (the test bench
 runs it in the image with podman); the default is the live system's own.
@@ -219,6 +221,9 @@ def esp_of(disk):
 
 
 def preflight_alongside(disk, scratch):
+    """Check the shared ESP, mounted read-only, before anything is written:
+    it must have room for Pulsar's boot files. Returns whether Windows' boot
+    manager is on it, the test windows_entry makes for its menu entry."""
     esp = esp_of(disk)
     mnt = os.path.join(scratch, "esp-check")
     os.makedirs(mnt)
@@ -226,11 +231,13 @@ def preflight_alongside(disk, scratch):
     try:
         st = os.statvfs(mnt)
         free = st.f_bavail * st.f_frsize
+        windows = os.path.isfile(os.path.join(mnt, WINDOWS_LOADER))
     finally:
         run("umount", mnt)
     if free < ESP_MIN_FREE:
         raise Failed(f"The startup files (EFI) partition has {free // 2**20} MiB free. Pulsar needs "
                      f"{ESP_MIN_FREE // 2**20} MiB free there for its boot files.")
+    return windows
 
 
 def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
@@ -474,11 +481,11 @@ def main():
     snap, bootc_ran = None, False
     try:
         emit(stage="check")
-        if a.mode == "alongside":
-            preflight_alongside(a.disk, scratch)
+        windows = preflight_alongside(a.disk, scratch) if a.mode == "alongside" else None
         if a.plan_only:
             ok = True
-            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, *ident, a.disk)))
+            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, *ident, a.disk)),
+                 windows=windows)
             return 0
         emit(stage="disk")
         disk = "unknown"

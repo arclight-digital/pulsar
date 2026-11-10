@@ -92,6 +92,35 @@ PY
     [ "$(py 'D["/dev/sde"]["windows"]')" = "False" ]
 }
 
+@test "an NTFS partition on a Linux disk doesn't make it Windows; Windows Setup's reserved partition does" {
+    # lsblk's shape: ESP, a Linux root, and an NTFS data partition made from Linux
+    run py '(lambda d: (d["holds"], d["windows"]))(m.describe({"name": "sdh", "path": "/dev/sdh", "type": "disk",
+        "size": 10**12, "children": [
+        {"size": 600 * 10**6, "start": 2048, "fstype": "vfat", "parttype": m.ESP},
+        {"size": 200 * 10**9, "start": 1230848, "fstype": "ext4", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"},
+        {"size": 300 * 10**9, "start": 400000000, "fstype": "ntfs", "parttype": m.WINDOWS_DATA, "label": "Shared"}]}))'
+    [ "$output" = "('Linux', False)" ]
+    # the same disk with a Microsoft reserved partition: Windows, beside Linux
+    run py '(lambda d: (d["holds"], d["windows"]))(m.describe({"name": "sdh", "path": "/dev/sdh", "type": "disk",
+        "size": 10**12, "children": [
+        {"size": 600 * 10**6, "start": 2048, "fstype": "vfat", "parttype": m.ESP},
+        {"size": 16 * 2**20, "start": 1230848, "parttype": m.MSR},
+        {"size": 200 * 10**9, "start": 1300000, "fstype": "ext4", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"},
+        {"size": 300 * 10**9, "start": 400000000, "fstype": "ntfs", "parttype": m.WINDOWS_DATA}]}))'
+    [ "$output" = "('Windows', True)" ]
+}
+
+@test "the ready page tells the person to choose Windows in the startup menu only when the backend found its boot manager" {
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], True)')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it. To start Windows, choose it in the startup menu." ]
+    # called Windows by lsblk, but no boot manager on the ESP: no entry, so no instruction
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], False)')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], False)')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
+    # the boot manager's there whatever the disk was called: the entry is made, so say so
+    [[ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], True)')" == *" To start Windows, choose it in the startup menu." ]]
+    [ "$(py 'm.what_happens("erase", D["/dev/sdb"], False)')" = "Pulsar uses the whole disk." ]
+    [ "$(py 'm.what_happens("erase", D["/dev/nvme1n1"], True)')" = "None" ]
+}
+
 @test "the erase page names partitions in words" {
     run py '[p["what"] for p in D["/dev/nvme1n1"]["partitions"]]'
     [ "$output" = "['Startup files (EFI)', 'Microsoft reserved', 'Windows', 'Windows recovery']" ]

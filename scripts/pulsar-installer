@@ -55,6 +55,7 @@ NEEDS_ERASE = 36 * GiB
 NEEDS_ALONGSIDE = 36 * GiB
 ESP = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 WINDOWS_DATA = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+MSR = "e3c9e316-0b5c-4db8-817d-f92df00215ae"
 LINUX_FS = {"ext4", "ext3", "btrfs", "xfs", "crypto_LUKS", "swap", "f2fs"}
 LSBLK_COLS = "NAME,PATH,TYPE,SIZE,RO,RM,TRAN,MODEL,VENDOR,SERIAL,FSTYPE,PARTTYPE,PARTLABEL,LABEL,START,MOUNTPOINTS"
 
@@ -206,6 +207,25 @@ def failure_state(mode, known, planning=False):
     return " ".join(said)
 
 
+def what_happens(mode, d, windows_loader):
+    """The ready page's "What happens" row, or None when the red erase
+    panel says it. windows_loader is the backend's plan saying whether
+    Windows' boot manager is on the ESP Pulsar shares, which is what gets
+    Windows an entry in Pulsar's startup menu (pulsar-install-system
+    windows_entry); the disk's label is only lsblk's guess."""
+    if mode == "alongside":
+        # TODO(copy): the startup menu shows for 1 s (see done_page). Say how to reach it?
+        # TODO(copy): how does the person start the other Linux? Pulsar's GRUB has no entry
+        # for it; its own firmware entry is kept, behind Pulsar's. A Fedora-family Linux
+        # shares EFI/fedora, which bootupd writes Pulsar's boot files into.
+        kept = {"Windows": "The Windows partitions aren't changed.",
+                "Linux": "The Linux partitions aren't changed."}.get(d["holds"],
+                                                                     "The partitions with your files aren't changed.")
+        start = " To start Windows, choose it in the startup menu." if windows_loader else ""
+        return f"Pulsar goes in the free space. {kept} Once Pulsar is installed, the computer starts it.{start}"
+    return None if install_destroys(mode, d) else "Pulsar uses the whole disk."
+
+
 def disk_state(events):
     """What is known about the disk after a failed install: the backend's
     failed event says (its disk and esp, documented in
@@ -276,8 +296,12 @@ def describe(disk):
         "size": disk["size"],
         "usb": disk.get("tran") == "usb" or bool(disk.get("rm")),
         # a Windows that starts from this disk: its startup files (an ESP)
-        # beside NTFS or BitLocker. A lone NTFS disk is data, not Windows.
-        "windows": ESP in ptypes and ("ntfs" in fs or "BitLocker" in fs),
+        # beside NTFS or BitLocker. A lone NTFS disk is data, not Windows, and
+        # so is an NTFS partition on a Linux disk: there, only the Microsoft
+        # reserved partition Windows Setup makes says Windows is on it. This
+        # is lsblk's guess; whether Windows' boot manager is on the ESP (what
+        # gets it a startup menu entry) is the backend's to say, in its plan.
+        "windows": ESP in ptypes and ("ntfs" in fs or "BitLocker" in fs) and (MSR in ptypes or not fs & LINUX_FS),
         "bitlocker": "BitLocker" in fs,
         "linux": bool(fs & LINUX_FS),
         "esp": ESP in ptypes,
@@ -293,7 +317,7 @@ def describe(disk):
     return d
 
 
-PART_NAMES = {ESP: "Startup files (EFI)", "e3c9e316-0b5c-4db8-817d-f92df00215ae": "Microsoft reserved",
+PART_NAMES = {ESP: "Startup files (EFI)", MSR: "Microsoft reserved",
               "de94bba4-06d1-4d40-a16a-bfd50179d6ac": "Windows recovery"}
 
 
@@ -802,13 +826,13 @@ def main():
 
         def planned(self, events, code):
             self.nav.pop()
-            plan = next((e["plan"] for e in events if e.get("stage") == "plan"), None)
-            if code != 0 or plan is None:
+            ev = next((e for e in events if e.get("stage") == "plan"), None)
+            if code != 0 or ev is None:
                 self.nav.push(self.failed_page(self.error_of(events), {"disk": "unchanged"}, planning=True))
                 return
-            self.nav.push(self.summary_page(plan))
+            self.nav.push(self.summary_page(ev["plan"], bool(ev.get("windows"))))
 
-        def summary_page(self, plan):
+        def summary_page(self, plan, windows_loader=False):
             d = self.disk
             root = next((p for p in plan if p["type"].startswith("root")), None)
             destroys = install_destroys(self.mode, d)
@@ -817,18 +841,9 @@ def main():
                     ("Encryption", encryption_summary(self.encrypt))]
             # an erase says so first, in red, above everything else; an
             # install that deletes nothing says what it does in the list
-            if self.mode == "alongside":
-                # TODO(copy): the startup menu shows for 1 s (see done_page). Say how to reach it?
-                # TODO(copy): how does the person start the other Linux? Pulsar's GRUB has no entry
-                # for it; its own firmware entry is kept, behind Pulsar's. A Fedora-family Linux
-                # shares EFI/fedora, which bootupd writes Pulsar's boot files into.
-                rows.insert(1, ("What happens", "Pulsar goes in the free space. " + {
-                    "Windows": "The Windows partitions aren't changed. Once Pulsar is installed, the "
-                               "computer starts it. To start Windows, choose it in the startup menu.",
-                    "Linux": "The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it."}
-                    .get(d["holds"], "The partitions with your files aren't changed.")))
-            elif not destroys:
-                rows.insert(1, ("What happens", "Pulsar uses the whole disk."))
+            happens = what_happens(self.mode, d, windows_loader)
+            if happens:
+                rows.insert(1, ("What happens", happens))
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             for k, v in rows:
                 listbox.append(row(title=k, subtitle=v, subtitle_selectable=True, css_classes=["property"]))
@@ -1030,7 +1045,7 @@ def main():
             win.mode = mode
             win.encrypt = encrypt
             win.passphrase = "x" * 8 if encrypt else None
-            win.nav.push(win.summary_page(plan))
+            win.nav.push(win.summary_page(plan, windows_loader=True))
         steps = [("welcome", lambda: None),
                  ("disks", lambda: win.nav.push(win.disk_page())),
                  ("method", lambda: win.pick_disk(d)),
