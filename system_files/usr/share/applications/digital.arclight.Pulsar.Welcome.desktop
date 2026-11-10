@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Welcome to Pulsar
-Comment=Themes, updates and rollback, games and coding agents: a short tour
+Comment=Pick a theme and tour updates, games and coding agents on Pulsar
 Keywords=welcome;tour;intro;getting started;
 Exec=/usr/libexec/pulsar/pulsar-welcome
 Icon=digital.arclight.Pulsar.Welcome
