@@ -31,17 +31,18 @@ JSON
     # doctor's disk check reads this, not the disk the tests happen to run on:
     # a nearly full build host would otherwise fail every test that expects a
     # clean `doctor` exit, with errors about gamemode or mangohud.
-    stub_df 50 "100G"
+    stub_df 50 100000000000
 }
 
-# stub_df <percent used> <free>: what doctor's disk check sees.
+# stub_df <percent used> <free bytes>: what doctor's disk check sees, in the
+# shape `df -B1 --output=pcent,avail` prints it.
 stub_df() {
     export PULSAR_DF="${BATS_TEST_TMPDIR}/df"
     cat > "$PULSAR_DF" <<EOF
 #!/bin/sh
 case "\$*" in
-    *pcent*) printf 'Use%%\n %s%%\n' "$1" ;;
-    *avail*) printf 'Avail\n %s\n' "$2" ;;
+    *-B1*pcent,avail*) printf 'Use%%        Avail\n %s%% %s\n' "$1" "$2" ;;
+    *) exit 1 ;;
 esac
 EOF
     chmod +x "$PULSAR_DF"
@@ -52,18 +53,32 @@ EOF
 # Prints why and fails the test.
 fail() { printf '%s\n' "$*" >&2; return 1; }
 
-@test "doctor: a disk 90% full fails, 80% warns, less is ok" {
-    stub_df 91 "88G"
+@test "doctor: the disk check goes by free space, not percent used" {
+    disk() { jq -r '.checks[] | select(.id=="disk") | .status + " " + .summary + " | " + .detail' <<<"$output"; }
+    # a 64 GB disk 85% used: 9.6 GB free is not enough to stage an update
+    stub_df 85 9600000000
     run "$PULSAR" doctor --json
     [ "$status" -eq 1 ]
-    disk=$(jq -r '.checks[] | select(.id=="disk") | .status + " " + .summary' <<<"$output")
-    [[ "$disk" == "fail "*" is 91% full (88G free)" ]]
-    stub_df 85 "140G"
+    [[ "$(disk)" == "fail "*" has 9.6 GB free | staging an update needs about 10 GB free; "* ]] || fail "$(disk)"
+    # a 2 TB disk 91% used: 180 GB free is plenty
+    stub_df 91 180000000000
+    run "$PULSAR" doctor --json
+    [[ "$(disk)" == "ok "*" has 180.0 GB free (91% used) | " ]] || fail "$(disk)"
+    # room for one update, not two
+    stub_df 60 14000000000
+    run "$PULSAR" doctor --json
+    [[ "$(disk)" == "warn "*" has 14.0 GB free | staging an update needs about 10 GB free" ]] || fail "$(disk)"
+    # the edges: exactly 10 GB is enough, 20 GB is no longer a warning
+    stub_df 50 10000000000
     run "$PULSAR" doctor --json
     [ "$(jq -r '.checks[] | select(.id=="disk") | .status' <<<"$output")" = warn ]
-    stub_df 77 "214G"
+    stub_df 50 20000000000
     run "$PULSAR" doctor --json
     [ "$(jq -r '.checks[] | select(.id=="disk") | .status' <<<"$output")" = ok ]
+    # df failing is a warning, not a pass
+    printf '#!/bin/sh\nexit 1\n' > "$PULSAR_DF"
+    run "$PULSAR" doctor --json
+    [[ "$(disk)" == "warn could not read free space on "* ]] || fail "$(disk)"
 }
 
 @test "runs and reports a version" {

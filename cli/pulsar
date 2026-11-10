@@ -723,21 +723,28 @@ check_cli() {
     record cli ok "'pulsar' is this system's CLI"
 }
 
+# Staging an update writes a whole new image beside the booted one. Under
+# about this much free space an upgrade starts failing in ways that look like
+# network errors. Fail below it, warn below twice it. Free space in bytes, not
+# percent used: 90% of a 2 TB disk is 200 GB free, and 85% of a 64 GB one is
+# under 10 GB.
+DISK_UPDATE_BYTES=$((10 * 1000 * 1000 * 1000))
+
 check_disk() {
     local root=/sysroot df=${PULSAR_DF:-df}
     [ -d "$root" ] || root=/
-    local pct avail
-    pct=$("$df" --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc '0-9') || true
-    avail=$("$df" -h --output=avail "$root" 2>/dev/null | tail -1 | tr -d ' ') || true
-    [ -n "$pct" ] || { record disk warn "could not read disk usage for ${root}"; return; }
-    # A bootc system needs room to stage a whole new image. Under ~10GB free
-    # an upgrade starts failing in ways that look like network errors.
-    if [ "$pct" -ge 90 ]; then
-        record disk fail "${root} is ${pct}% full (${avail} free)" "fails at 90% used: staging an update needs room for a whole new image"
-    elif [ "$pct" -ge 80 ]; then
-        record disk warn "${root} is ${pct}% full (${avail} free)"
+    local pct avail gb need
+    read -r pct avail < <("$df" -B1 --output=pcent,avail "$root" 2>/dev/null | tail -1) || true
+    pct=${pct//[!0-9]/}
+    case "$avail" in ''|*[!0-9]*) record disk warn "could not read free space on ${root}"; return ;; esac
+    gb=$(awk -v b="$avail" 'BEGIN { printf "%.1f", b / 1e9 }')
+    need="staging an update needs about $((DISK_UPDATE_BYTES / 1000000000)) GB free"
+    if [ "$avail" -lt "$DISK_UPDATE_BYTES" ]; then
+        record disk fail "${root} has ${gb} GB free" "${need}; with less, it fails, often with what looks like a network error"
+    elif [ "$avail" -lt $((DISK_UPDATE_BYTES * 2)) ]; then
+        record disk warn "${root} has ${gb} GB free" "$need"
     else
-        record disk ok "${root} ${pct}% used, ${avail} free"
+        record disk ok "${root} has ${gb} GB free${pct:+ (${pct}% used)}"
     fi
 }
 
