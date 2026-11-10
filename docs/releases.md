@@ -15,18 +15,19 @@ while the builds go on, so the About page may read
 
 ## 26.11.1
 
-Agents you can leave running, a command menu, and GNOME 51.
+Agent sessions that outlive their terminal, Pulsar Commands, and GNOME 51.
 
 ### Agents
 
 - `pulsar agent run <agent> --tmux <name>` keeps a coding agent in a named
   session that outlives its terminal window. `pulsar agent attach <name>`
-  comes back to it from any terminal, and `pulsar agent attach` alone to
-  the one you were on last; with Claude Code, the same conversation picks
-  up where it was, and a sandboxed session stays sandboxed. The sessions run on a tmux of their
-  own, tuned for agents, apart from yours. tmux is now in the image.
-- When an agent in a session you aren't looking at finishes or needs you,
-  a notification says so, and its Open button takes you to that session.
+  goes back to it from any terminal, and `pulsar agent attach` alone goes
+  to the one you used last. Claude Code picks up the same conversation, and
+  a sandboxed session stays sandboxed. Sessions run on their own tmux
+  server, apart from yours. tmux is now in the image.
+- When an agent in a session you aren't looking at rings the terminal bell,
+  a notification says so (for Claude Code, whether it finished or needs
+  you), and its Open button takes you to that session.
 - `--worktree` gives a session its own git worktree and branch, so several
   agents can work in one project without touching each other's files. It
   works in the sandbox too.
@@ -34,47 +35,46 @@ Agents you can leave running, a command menu, and GNOME 51.
   the session started (in a git repository), however often it was restarted
   since, and `--redo` takes that back. It never touches files git ignores,
   never overwrites a file it couldn't take back (it names those), and never
-  moves a branch.
+  moves a branch. Untracked files over 50 MB aren't saved.
 - `pulsar agent sessions` lists the sessions and what each is doing, and
   `pulsar agent usage <name>` shows a Claude Code session's tokens.
-- Pulsar Settings has an Agents page: each session, its folder and usage,
-  with Open, Undo and End.
+- Pulsar Settings has an Agents page listing each session with its folder
+  and usage, and Open, Undo and End buttons.
 
-### Command menu
+### Pulsar Commands
 
-- Super+Space opens a search over what Pulsar does: copy text off the
-  screen, themes, updates, agent sessions, a health check, a checkpoint
-  before a risky change, asking your agent. With one keyboard layout,
-  Super+Space switches layouts to no effect, so the menu takes it;
-  Shift+Super+Space still switches if you add a second. With several
-  layouts, the menu is on Super+/.
-- It answers too. Type a sum (`2^10`, `15% of 80`), a conversion
-  (`5 mi in km`, `100 f in c`, `2 GiB in MB`, `255 in hex`), money
-  (`100 usd in eur`) or a date (`in 90 days`, `days until dec 25`), and
-  Enter copies the answer. Exchange rates are the European Central Bank's,
-  fetched from frankfurter.dev only when you type a conversion, and kept
-  for 12 hours.
-- It finds apps and files too. Type part of an app's name and Enter opens
-  it. Files come from GNOME's own file index, by name: Enter opens one,
-  Ctrl+Enter shows it in its folder. A long name scrolls into view when its
-  row is picked.
-- It's made of the same glass as the Shell's menus, lit from its top left.
+- Super+Space opens Pulsar Commands, a search over what Pulsar does: copy
+  text off the screen, themes, updates, agent sessions, a health check, a
+  checkpoint before a risky change, asking your agent. With one keyboard
+  layout, Super+Space has no layout to switch to, so Pulsar Commands takes
+  it; Shift+Super+Space still switches if you add a second. With several
+  layouts, Pulsar Commands is on Super+/.
+- Type a sum (`2^10`, `15% of 80`), a conversion (`5 mi in km`,
+  `100 f in c`, `2 GiB in MB`, `255 in hex`), money (`100 usd in eur`) or a
+  date (`in 90 days`, `days until dec 25`), and Enter copies the answer.
+  Exchange rates are the European Central Bank's, fetched from
+  frankfurter.dev only when you type a conversion, and kept for 12 hours.
+- Type part of an app's name and Enter opens it. Files come from GNOME's
+  own file index, by name: Enter opens one, Ctrl+Enter shows it in its
+  folder. A long name scrolls into view when its row is selected.
+- It uses the same glass as the Shell's menus, lit from its top left.
 - It has a few easter eggs.
 
 ### Screen
 
-- Super+Print copies the text in any part of the screen: pick the area and
-  it is on the clipboard (English). `pulsar screen qr` reads a QR code the
-  same way, and a link in it can be opened from the notification.
-- Both shortcuts are offered once. If your account already uses the keys,
-  they're left alone, and you can change either in Settings > Keyboard.
+- Super+Print copies the text in an area of the screen you select (English
+  only). `pulsar screen qr` reads a QR code the same way, and a link in it
+  can be opened from the notification.
+- Super+Print and the Pulsar Commands shortcut are each set once. If your
+  account already uses the key, it's left alone, and you can change either
+  in Settings > Keyboard.
 
 ### Gaming
 
 - When a game hits a GPU fault on NVIDIA, a notification names the game and
-  what to try, where before it just froze or vanished. If it keeps
-  happening, the usual fix is turning DLSS or frame generation off.
-  `pulsar doctor gpu-faults` lists this boot's.
+  what to try; before, the game froze or quit with no word why. If it keeps
+  happening, the notification suggests turning DLSS and frame generation
+  off. `pulsar doctor gpu-faults` lists this boot's faults.
 - Faugus games run the image's `gamescale`, as Steam games do. A game with
   `gamescale` in its launch arguments no longer hangs on its splash.
 - Steam's window comes back when it stops redrawing after a resume on
@@ -85,34 +85,33 @@ Agents you can leave running, a command menu, and GNOME 51.
 - Super+F makes any window fullscreen, and pressing it again puts it back.
   A Windows game whose borderless fullscreen sits under the top bar fills
   the screen with one press.
-- Discord shows the game you're playing, as it does on Windows. The Discord
-  Flatpak's sandbox hides other programs from it, so it never could here.
-  Now Pulsar spots the game (a Steam game by its Steam ID, any other by its
-  program) and tells Discord. Your Activity Privacy settings in Discord
-  still decide who sees it. Windows games with their own Discord status
-  reach it too, from Faugus as well as Steam.
+- Discord shows the game you're playing. The Discord Flatpak's sandbox
+  hides other programs from it, so Pulsar finds the game (a Steam game by
+  its Steam ID, any other by its program) and tells Discord. Your Activity
+  Privacy settings in Discord still decide who sees it. Windows games that
+  set their own Discord status reach it too, from Faugus as well as Steam.
 
 ### Desktop
 
-- GNOME 51, on Fedora 45. Themes, glass and the top bar carry over.
-- Menus, Quick Settings, notifications and the on-screen displays have new
-  glass. What's behind them is redrawn in the theme's own colors and
-  softly blurred, so a menu keeps its theme over any page or wallpaper,
-  and a colored window behind tints it a little. The button that opened a
-  menu lights the glass nearest it.
-- Glass on windows and the top bar sits closer to the theme's own color: a
-  bright wallpaper or page behind shows through as shape and hue, without
-  lifting the glass far above the theme.
-- The lock screen is glass in the theme's colors: your wallpaper shows
-  through, toned so the clock, notifications and login text stay readable
-  on any wallpaper.
+- GNOME 51, on Fedora 45.
+- Menus, Quick Settings, notifications, the on-screen displays and the top
+  bar have new glass: what's behind them is blurred and redrawn in the
+  theme's colors, so a menu keeps its theme over any page or wallpaper,
+  and a colored window behind it tints it a little. The button that opened
+  a menu lights the glass nearest it.
+- With Glass windows on, a window's ground is the theme's background at
+  80%, as the terminal's is, and header bars, sidebars and pages add
+  nothing over it. Beside a sidebar (Files, Settings) the content pane is
+  solid; in Text Editor the document is glass and the header and tab bars
+  are solid. Fullscreen windows are solid.
+- Dialogs that float have the same 80% ground, in the popover's lighter
+  color. Dialogs inside a window (preferences, an alert) and toasts get the
+  menus' glass on GTK 4.22 and later, and are solid on older GTK.
+- The lock screen is glass in the theme's colors over your wallpaper,
+  toned so the clock, notifications and login text stay readable on any
+  wallpaper.
 - The Glass tint slider now sets how much of the color behind the glass
   comes through. All the way up, the glass is the theme's color alone.
-- Dialogs inside a window (preferences, an alert, a toast) are the same
-  glass as menus and windows, in the theme's colors, on GTK 4.22 and later.
-- Content panes (a file list, a settings page) and dialogs that float are
-  glass too, with no ground of their own. Dialogs keep the popover's
-  lighter color.
 - If the glass extension fails to load (after a GNOME update, say), apps
   open with solid windows instead of see-through ones with no glass behind.
 - A window's glass no longer sits off to one side after you unmaximize it.
@@ -123,18 +122,18 @@ Agents you can leave running, a command menu, and GNOME 51.
   one Pulsar shipped kept GNOME Shell on efficiency cores, and animations
   stuttered. `scx.service` is still there to turn on.
 - Opening a file in a Flatpak app no longer hangs when the document portal
-  has deadlocked: Pulsar restarts it within a minute and offers to reopen
+  has deadlocked: Pulsar restarts it within 90 seconds and offers to reopen
   the apps it cut off.
-- AppImages run. Most still need FUSE 2, which Fedora no longer installs,
-  and stopped at "AppImages require FUSE to run".
-- The welcome opens on a new account's first login again; on Fedora 45 it
-  never did. And after an update to a new release, a notification offers
-  what's new in it, as Welcome to Pulsar shows here.
+- AppImages that stopped at "AppImages require FUSE to run" now run. Most
+  need FUSE 2, which Fedora no longer installs, and it's now in the image.
+- Welcome to Pulsar opens on a new account's first login again; on Fedora
+  45 it never did. After an update to a new release, a notification opens
+  What's New for it.
 
 ### Installer
 
-- Erasing a disk is unmistakable: a warning, the disk and what is on it
-  in red, and a red Erase and Install button.
+- Before it erases a disk, the installer shows a warning, the disk and what
+  is on it in red, and a red Erase and Install button.
 - The disk step shows what it is doing. The install log is at
   `~/pulsar-install.log` while the installer runs, named on the failure
   page, and a finished install keeps it at `/var/log/pulsar-install.log`.
