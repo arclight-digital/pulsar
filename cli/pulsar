@@ -756,8 +756,8 @@ usage: pulsar doctor [check...]      health checks; exit 1 if one fails
        pulsar doctor gpu-faults --watch
                                      follow the kernel log and notify when a
                                      program hits an NVIDIA GPU fault (Xid),
-                                     naming the game and what to try
-                                     (pulsar-gpu-fault-watch; nvidia image)
+                                     naming the program
+                                     (pulsar-gpu-fault-watch; NVIDIA image)
 
 checks: ${DOCTOR_CHECKS}
 --json gives {checks: [{id, status, summary, detail}], ok}. A check that
@@ -1512,14 +1512,17 @@ update_background() {
 
 update_help() {
     cat <<'EOF'
-usage: sudo pulsar update [--apply]   fetch and stage the newest image; it
+usage: sudo pulsar update [--apply]   download and stage the newest image; it
                                       takes effect on the next boot. --apply
                                       also reboots into it
        pulsar update --check          is a newer image published? no root.
                                       exit 0 up to date or already staged,
                                       10 available, 1 could not tell
-         --notify                     with --check: a desktop notification,
-                                      once per published build
+         --notify                     with --check: a desktop notification
+                                      when an image is published, and one
+                                      when it is staged. While
+                                      pulsar-update-auto.timer is on, the
+                                      first waits a day
          --json                       with --check: the answer as JSON
        sudo pulsar update --background
                                       stage a newer image if there is one,
@@ -1529,9 +1532,7 @@ usage: sudo pulsar update [--apply]   fetch and stage the newest image; it
                                       sudo systemctl disable --now pulsar-update-auto.timer
 
 Through bootc, or through rpm-ostree when packages are layered (bootc would
-drop them). Other flags pass through to whichever of the two runs. Staging
-changes nothing until the next boot, and nothing here reboots unless you
-pass --apply.
+drop them). Other flags pass through to whichever of the two runs.
 EOF
 }
 
@@ -2184,7 +2185,8 @@ agent_guard() {
             cat <<'EOF'
 usage: pulsar agent guard           what polkit answers for your session
        sudo pulsar agent guard on   layering, rollback, cleanup and system
-                                    Flatpak installs ask for a password
+                                    Flatpak installs and removals ask for
+                                    a password
        sudo pulsar agent guard off  back to the Fedora default (no prompt)
 
 It applies to you and to anything you run, a coding agent included.
@@ -3750,7 +3752,7 @@ agent_attach() {
 }
 
 agent_sessions() {
-    local usage="usage: pulsar agent sessions [--kill <name> | --forget <name>]"
+    local usage="usage: pulsar agent sessions [--kill <name> | --forget <name>] [--json]"
     case "${1:-}" in
         -h|--help) printf '%s\n' "$usage"; return 0 ;;
         --kill|--forget)
@@ -4136,11 +4138,13 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      and a crash if you name one
        pulsar agent sandbox [on|off] [--here]
                                      run agents in a container that sees only the
-                                     project; push goes through a gate that keeps
-                                     your credentials. --here: this project only
+                                     project and the paths you allow; push goes
+                                     through a gate that keeps your credentials.
+                                     --here: this project only
        pulsar agent sandbox push on|off|branches [--here]
-                                     what the gate lets through (never force-push,
-                                     deletes or tags)
+                                     what the gate lets through; branches: every
+                                     branch but the remote's default. Never
+                                     force-push, deletes or tags
        pulsar agent sandbox allow <path> [--rw] [--here] | disallow <path>
                                      let one more file or folder in (read-only
                                      unless --rw): a tool the agent's hooks run
@@ -4157,7 +4161,7 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      on the host; a claude session that died comes
                                      back on its own conversation. --new: a fresh one.
                                      When it waits for you in a session you are not
-                                     looking at, a notification opens it.
+                                     looking at, a notification offers to open it.
                                      --worktree: its own git worktree and branch,
                                      <repo>/.worktrees/<session>
        pulsar agent attach [<session>]
@@ -4174,13 +4178,18 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      its model, how full the context is, and tokens
                                      read and written (Claude Code; no prices)
        pulsar agent sessions [--kill <name> | --forget <name>] [--json]
-                                     the tmux sessions; --kill ends one (it can come
-                                     back), --forget drops its conversation
+                                     the tmux sessions; --kill ends one (attach
+                                     brings it back). --forget deletes an ended
+                                     one's record and undo snapshots, and its
+                                     worktree unless it has uncommitted changes.
+                                     The conversation stays in the agent's history
        pulsar agent model [on|off] [--model <hf-repo[:quant]>] [--at-login] [--purge]
                                      a local model server (llama.cpp, rootless podman,
-                                     127.0.0.1 only) for agents with no cloud account
-       pulsar agent guard [on|off]   make layering and system Flatpak installs ask
-                                     for a password (on and off need root)
+                                     127.0.0.1 only) for agents with no cloud account.
+                                     --at-login: start it at each login
+       pulsar agent guard [on|off]   make layering, rollback, cleanup and system
+                                     Flatpak installs and removals ask for a
+                                     password (on and off need root)
 
 Agents: $(agent_names). None is installed by default.
 
@@ -4277,7 +4286,8 @@ cmd_pin() {
     [ $# -le 1 ] || die "usage: pulsar pin [on | off]"
     case "$sub" in
         -h|--help)
-            printf 'usage: pulsar pin            is the booted deployment pinned (kept through GC)?
+            printf 'usage: pulsar pin            is the booted deployment pinned (kept when old
+                             deployments are cleaned up)?
        sudo pulsar pin on    pin it
        sudo pulsar pin off   unpin it
 '
@@ -4417,11 +4427,13 @@ cmd_changelog() {
 SETUP_HELP='usage: pulsar setup <recipe>
 
   apps        install the default Flatpaks (root)
-  devbox      create the default distrobox
-  gamemode    enroll accounts in the gamemode group, for renice (root)
-  quadlet     install the quadlet template and enable auto-update
-  gamescale   grant Flatpak launchers other than Steam and Faugus, with gg and ggm (its own flags pass through);
-              Steam and Faugus need nothing: the image grants them, and this moves an older home setup over'
+  devbox      create the default distrobox, pulsar-dev
+  gamemode    add every user account to the gamemode group, for renice (root)
+  quadlet     copy the example quadlet to ~/.config/containers/systemd; enable podman auto-update
+  gamescale   Steam and Faugus get gg, ggm and gamescale from the image. Run bare, this points an
+              older Steam setup at the copies in the image and removes the ones Pulsar put in
+              ~/.local/bin. --platform <name>: install for another Flatpak launcher (other
+              flags go to the gamescale installer)'
 
 # gg and ggm, the Steam launch options, go beside the gamescale that
 # `setup gamescale` just put in ~/.local/bin. A Flatpak launcher's sandbox
@@ -4973,7 +4985,7 @@ cmd_crashes() {
                         echo "nothing ignored: every crash is announced"
                     fi ;;
                 add)
-                    [ -n "$pat" ] || die "usage: pulsar crashes ignore add <program name or path end>"
+                    [ -n "$pat" ] || die "usage: pulsar crashes ignore add <pattern>"
                     mkdir -p "$(dirname "$CRASH_IGNORE_FILE")"
                     if grep -qxF -- "$pat" "$CRASH_IGNORE_FILE" 2>/dev/null; then
                         echo "already ignored: ${pat}"
@@ -4989,14 +5001,15 @@ cmd_crashes() {
                     grep -vxF -- "$pat" "$CRASH_IGNORE_FILE" > "$tmp" || true
                     mv -f "$tmp" "$CRASH_IGNORE_FILE"
                     echo "crashes of ${pat} are announced again" ;;
-                *) die "usage: pulsar crashes ignore [list | add <pattern> | remove <pattern>]" ;;
+                *) die "usage: pulsar crashes [ignore [list | add <pattern> | remove <pattern>]]" ;;
             esac ;;
         -h|--help)
-            echo "usage: pulsar crashes [ignore list | ignore add <pattern> | ignore remove <pattern>]"
+            echo "usage: pulsar crashes [ignore [list | add <pattern> | remove <pattern>]]"
             echo "  with no arguments: this boot's crashes (pulsar doctor crashes)"
-            echo "  ignore: programs whose crashes are not announced. A name matches that program"
-            echo "  wherever it ran from; a pattern with a / matches the end of its path." ;;
-        *) die "usage: pulsar crashes [ignore list | add <pattern> | remove <pattern>]" ;;
+            echo "  ignore: programs whose crashes and GPU faults are not announced. A name"
+            echo "  matches that program wherever it ran from; a pattern with a / matches the"
+            echo "  end of its path." ;;
+        *) die "usage: pulsar crashes [ignore [list | add <pattern> | remove <pattern>]]" ;;
     esac
 }
 
@@ -5381,28 +5394,31 @@ unreadable, which the report then says.
 
 Included
   doctor      `pulsar doctor --json`
-  status      deployments from `rpm-ostree status --json`, trimmed to the
-              fields that matter (version, digest, pins, layered packages)
+  status      deployments from `rpm-ostree status --json`: booted, staged,
+              pinned, version, timestamp, checksum, image and digest, and
+              layered packages
   manifest    `pulsar manifest --json`, host facts included
   units       failed system units and failed user units, by name
   journal     this boot's warning+ lines, last N (default 50, max 500), from
               pulsar-*, greenboot*, akmods*, gamescale* and the failed units:
               time, unit, priority and message only
-  graphics    kernel release, taint, command line, loaded nvidia version,
-              display devices and the driver bound to each, Secure Boot state
-  flatpak     remotes with their options, app IDs with branch and origin,
-              runtime count
-  crash       with --crash: one of your crashes as systemd-coredump saw it --
-              program, signal, package, unit, command line, the crashing
-              thread's stack trace, and that process's journal lines. Never
-              the core file itself
+  graphics    kernel release, taint, command line, loaded NVIDIA driver
+              version, GPU names, display devices and the driver bound to
+              each, Secure Boot state
+  flatpak     remotes with their options, app IDs with branch, origin and
+              installation, runtime count
+  crash       with --crash: one of your crashes as systemd-coredump recorded
+              it: program, signal, package, unit, command line, the crashing
+              thread's stack trace (up to 40 frames), and that process's last
+              30 journal lines. Never the core file itself
 
 Not included
   the full journal, anything from a previous boot, environment variables,
-  tokens, the machine ID, file contents from $HOME or /etc, Flatpak app data
+  the machine ID, file contents from $HOME or /etc, Flatpak app data
 
 Redacted, best effort
-  the hostname, your username and home path (as ~), MAC and IPv4 addresses,
+  the hostname (not a stock one: fedora, localhost, pulsar, silverblue,
+  toolbox), your username and home path (as ~), MAC and IPv4 addresses,
   email addresses, values after words like token=, password:, api_key=,
   Authorization and Bearer, and tokens recognizable by their prefix (GitHub
   ghp_/github_pat_, GitLab glpat-, sk- API keys, Slack xox*-, AWS AKIA,
@@ -5681,15 +5697,17 @@ usage: pulsar theme <command>
   next | prev               cycle themes
   bg-next                   cycle the current theme's wallpapers
   current                   what is applied, and what it wrote
-  revert [--to image]       put everything back: stock GNOME, or with
-                            --to image the Pulsar image defaults
+  revert [--to image]       back to stock GNOME, or with --to image to
+                            the Pulsar image defaults
   audit [theme...]          WCAG contrast checks
-  restart-apps [--yes]      open apps still showing the previous palette
+  restart-apps [--yes]      list the open GTK apps still showing the
+                            previous palette; --yes restarts them
   config [key [value]]      restart-prompt on|off
   import base16 <file|url>  add a base16/base24 scheme as your own theme
 
-The picker is Themes in the app grid (Super+T if it was free).
-Themes live in /usr/share/pulsar/themes; your own in ~/.local/share/pulsar/themes.
+The Themes app does this too (Super+T, if the shortcut was free).
+The image's themes are in /usr/share/pulsar/themes; yours in
+~/.local/share/pulsar/themes.
 EOF
 }
 
@@ -5712,9 +5730,11 @@ cmd_screen() {
         -h|--help|help|"")
             cat <<'EOF'
 usage: pulsar screen text    pick an area of the screen; its text goes on
-                             the clipboard (English). Super+Print does this.
+                             the clipboard (English). Super+Print does this,
+                             if the shortcut was free
        pulsar screen qr      pick an area; the QR code's contents go on the
-                             clipboard, and a link can be opened
+                             clipboard. A code that is one http(s) link gets
+                             an Open link button
 EOF
             return 0 ;;
         *) die "usage: pulsar screen text | qr" ;;
@@ -5911,7 +5931,7 @@ deployment_index() {
 
 checkpoint_create() {
     local note=${1:-}
-    [ $# -le 1 ] || die "usage: pulsar checkpoint [create] [note]"
+    [ $# -le 1 ] || die "usage: sudo pulsar checkpoint [--no-home] [note]"
     local js='{}' checksum="" version="" pinned=false idx=""
     if have rpm-ostree; then js=$(rpm-ostree status --json 2>/dev/null) || js='{}'; fi
     checksum=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.booted == true)][0].checksum // ""' 2>/dev/null) || checksum=""
@@ -6147,22 +6167,26 @@ checkpoint_drop() {
 }
 
 checkpoint_help() {
+    # TODO(copy): this help linked docs/AGENTS-SAFETY.md, which the image does
+    # not install, and AGENTS.md (pulsar agent guide) only names the command.
+    # Where should it point for why to take a checkpoint before an agent runs?
     cat <<'EOF'
 usage: sudo pulsar checkpoint [--no-home] [note]
                                            snapshot /etc and your settings, and pin
-                                           the booted deployment
-       sudo pulsar checkpoint list
+                                           the booted deployment. --no-home, first
+                                           on the line: /etc only
+       sudo pulsar checkpoint list         id, build, whether it pinned, note
        sudo pulsar checkpoint diff [id]    what changed in /etc, your settings and
-                                           the OS since
+                                           the deployment since (default: the newest)
        sudo pulsar checkpoint restore <id> put back changed and deleted files,
                                            discard a deployment staged since
        sudo pulsar checkpoint drop <id>    delete it, unpinning what it pinned
 
 Take one before handing the machine to an agent. "Your settings" are the
 dotfiles in your home folder, ~/.config (without caches), ~/.local/bin and
-~/.ssh, for whoever ran sudo -- not documents, projects, ~/.local/share,
-/var or Flatpak data. restore does not reboot and does not delete files
-added since (it lists them). See docs/AGENTS-SAFETY.md.
+~/.ssh, for whoever ran sudo; over 512 MB, they are skipped. Documents,
+projects, ~/.local/share, /var and Flatpak data are not included. restore
+does not reboot and does not delete files added since (it lists them).
 EOF
 }
 
@@ -6195,45 +6219,51 @@ cmd_checkpoint() {
 
 usage() {
     cat <<'EOF'
-pulsar -- manage a Pulsar system
+pulsar: manage a Pulsar system
 
 Health
   pulsar doctor [check]    health checks; exit 1 if one fails. the default
                            command. see: pulsar doctor --help
-  pulsar status            deployments: booted, staged, rollback, pins
+  pulsar status            every deployment, marked booted, staged or pinned
   pulsar report            a diagnosis bundle to paste: doctor, status,
                            manifest, failed units, recent warnings, graphics,
                            Flatpak. JSON; --text for people. redacted
   pulsar crashes           this boot's crashes. ignore list | add | remove:
-                           programs whose crashes are not announced
+                           programs whose crashes and GPU faults are not
+                           announced
 
 This image
   pulsar manifest          what is in this image, and what it runs on
-  pulsar changelog         packages that moved in the latest published build
+  pulsar changelog         packages upgraded, added and removed in the latest
+                           published image
   pulsar sbom              this system's packages as SPDX 2.3
   pulsar verify            check the running image's signature
 
 Updates and undo
-  pulsar update            fetch and stage the newest image       (root)
+  pulsar update            download and stage the newest image    (root)
   pulsar update --check    is a newer image published? exit 10 if so
   pulsar rollback          boot the previous deployment next      (root)
-  pulsar pin [on|off]      keep the booted deployment through GC  (root)
-  pulsar checkpoint        snapshot /etc, your settings and pin,  (root)
-                           to diff or restore later:
-                           list | diff | restore | drop
+  pulsar pin [on|off]      keep the booted deployment when old ones
+                           are cleaned up (on and off need root)
+  pulsar checkpoint        snapshot /etc and your settings and pin the
+                           booted deployment, to diff or restore later:
+                           list | diff | restore | drop           (root)
 
 Desktop
-  pulsar theme <command>   recolor the whole desktop: list | set <theme> |
+  pulsar theme <command>   recolor the desktop: list | set <theme> |
                            revert | ...
   pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
   pulsar screen text|qr    the text or QR code in an area of the screen,
-                           onto the clipboard (Super+Print: text)
+                           onto the clipboard (Super+Print: text, if the
+                           shortcut was free)
 
 Agents
-  pulsar agent             what this machine gives a coding agent:
+  pulsar agent             the guide, installed agents, guard state:
                            guide | list | add | remove | default | run |
+                           attach | sessions | undo | usage |
                            sandbox [on|off] | guard [on|off]
-  pulsar agent model on    a local model for agents, on this machine's GPU
+  pulsar agent model on    a local model server for agents, on the GPU
+                           when there is one
   pulsar agent ask         start your agent on a redacted report of this
                            machine; --crash latest for the last crash
   pulsar mcp               this machine's facts as MCP tools, for any agent
@@ -6241,7 +6271,7 @@ Agents
 
 Options
   --json                   JSON output, anywhere on the line. A command
-                           without it says so rather than print text.
+                           without it says so instead of printing text.
                            `manifest --json` puts host facts under "host", so
                            `jq 'del(.host)'` is the baked manifest
   --logo, --no-logo        force or suppress the mark in `manifest`
