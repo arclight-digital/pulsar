@@ -130,7 +130,11 @@ def install_button(mode, d):
 def erase_warning(d):
     """The ready page's red panel: what an erase deletes, by name."""
     what = f"Everything on it, including {d['holds']}," if d["holds"] in ("Windows", "Linux") else "Everything on it"
-    return f"{what} is deleted when you press Erase and Install. It can't be recovered."
+    # TODO(copy): "can't be recovered" is kept as the safe side of the warning, but the repo
+    # doesn't back it: repart writes a new GPT and formats, and discards (its default) only
+    # where the disk supports it, so on a spinning disk old blocks survive until overwritten.
+    # Keep it, or say "The installer can't undo this."?
+    return f"{what} will be deleted when you press Erase and Install. It can't be recovered."
 
 
 def needs_erase_confirm(d):
@@ -313,13 +317,18 @@ def options(d):
         along = (False, "This disk has no startup files (EFI) partition for Pulsar to share.")
     elif d["free"] < NEEDS_ALONGSIDE:
         # d["free"] is the largest single gap, not the total
-        how = (f"Shrink a partition from {d['holds']} first." if d["holds"] in ("Windows", "Linux")
+        how = (f"Shrink a partition from inside {d['holds']} first." if d["holds"] in ("Windows", "Linux")
                else "Make room by shrinking a partition first.")
-        along = (False, f"Needs a {human(NEEDS_ALONGSIDE)} block of free space. "
-                        f"The largest here is {human(d['free'])}. " + how)
+        along = (False, f"Needs {human(NEEDS_ALONGSIDE)} of free space in one place. "
+                        f"This disk has at most {human(d['free'])} in one place. " + how)
     else:
-        along = (True, f"Uses the free space ({human(d['free'])} in the largest block). {d['holds']} stays as it is."
-                 if d["holds"] != "other data" else f"Uses the free space ({human(d['free'])} in the largest block).")
+        # Windows' partitions are untouched (pulsar-install-disk check()), but the shared ESP
+        # is written to and Pulsar's firmware entry goes first: the ready page says so.
+        # "Linux stays as it is" is left as it was: beside a Linux with its own shim the
+        # install fails (one-shim check in pulsar-install-system), a code bug.
+        keep = {"Windows": " The Windows partitions aren't changed.", "Linux": " Linux stays as it is."}
+        along = (True, f"Uses free space on the disk (up to {human(d['free'])} in one place)."
+                       + keep.get(d["holds"], ""))
     return {"alongside": along, "erase": erase}
 
 
@@ -423,7 +432,7 @@ def passphrase_heading(encrypt):
 
 def encryption_summary(encrypt):
     """The review page's Encryption row."""
-    return ("On. Your passphrase unlocks the disk at every start." if encrypt
+    return ("On. You'll type your passphrase every time Pulsar starts." if encrypt
             else f"Off. {UNENCRYPTED}")
 
 
@@ -431,16 +440,16 @@ def stages(encrypt):
     """What the installing page says at each backend stage, and where the
     bar goes. Without encryption there is no "unlock" stage."""
     st = [("check", "Checking the disk", 0.02),
-          ("disk", "Partitioning and encrypting the disk" if encrypt else "Partitioning the disk", 0.06),
+          ("disk", "Partitioning the disk and setting up encryption" if encrypt else "Partitioning the disk", 0.06),
           ("unlock", "Unlocking the new partition", 0.10),
           ("install", "Copying Pulsar to the disk", 0.12),
-          ("boot", "Making the computer start Pulsar", 0.94)]
+          ("boot", "Putting Pulsar first in the boot order", 0.94)]
     return {k: (text, frac) for k, text, frac in st if encrypt or k != "unlock"}
 
 
 def first_start(encrypt):
     """The done page's note on what happens when Pulsar first starts."""
-    return ("When Pulsar starts, type your passphrase to unlock the disk, then create your account."
+    return ("When Pulsar starts, type your passphrase, then create your account."
             if encrypt else "When Pulsar starts, create your account.")
 
 
@@ -600,9 +609,7 @@ def main():
         def _close_request(self, *_):
             if not self.installing:
                 return False
-            d = Adw.AlertDialog(heading="Pulsar is still installing",
-                                body="Closing the installer now would stop the install partway. "
-                                     "Wait for it to finish.")
+            d = Adw.AlertDialog(heading="Pulsar is still installing", body="Wait for it to finish.")
             d.add_response("ok", "Keep Installing")
             d.present(self)
             return True
@@ -614,11 +621,11 @@ def main():
                                halign=Gtk.Align.CENTER)
             start.connect("clicked", lambda *_: self.nav.push(self.disk_page()))
             body = [mark(), label("Install Pulsar", ["in-display"]),
-                    label("Nothing on any disk changes until you confirm on the last step.", ["in-lede"]),
+                    label("Nothing is written to a disk until you confirm on the last step.", ["in-lede"]),
                     Gtk.Box(height_request=12), start]
             if not self.payload:
                 start.set_sensitive(False)
-                body.append(label("This installer is damaged: it has no copy of Pulsar to install. "
+                body.append(label("The installer can't read payload.json, which says what to install. "
                                   "Download the installer again.", ["in-note", "in-warn"]))
             return nav_page("Install Pulsar", "welcome", column(*body))
 
@@ -635,7 +642,7 @@ def main():
                 usable = any(ok for ok, _ in opts.values())
                 sub = identity(d)
                 if not d["empty"] and d["free"] >= GiB:
-                    sub += f" · {human(d['free'])} free in one block"
+                    sub += f" · {human(d['free'])} free in one place"
                 if not usable:
                     sub += f"\n{opts['erase'][1]}"
                 r = row(title=d["name"], subtitle=sub, activatable=usable, sensitive=usable)
@@ -647,9 +654,7 @@ def main():
                 listbox.append(r)
             if found == [] or (found and not any(any(ok for ok, _ in options(d).values()) for d in found)):
                 if found == []:
-                    listbox.append(row(
-                        title="No disk found",
-                        subtitle="The USB stick the installer is running from isn't listed."))
+                    listbox.append(row(title="No disk found"))
                 extra.append(label(f"Connect a disk of at least {human(NEEDS_ERASE)}, then press Refresh.",
                                    ["in-note"]))
                 again = Gtk.Button(label="Refresh", css_classes=["in-pill"], halign=Gtk.Align.CENTER)
@@ -706,8 +711,8 @@ def main():
                 label(f"Erase {d['name']}?", ["in-title"]),
                 label(f"{identity(d)} · {d['path']}", ["in-note"]),
                 Gtk.Box(height_request=4),
-                label("The whole disk is formatted for Pulsar. These partitions and everything in them "
-                      "are deleted, and can't be recovered:", ["in-lede"]),
+                label("The whole disk will be formatted for Pulsar. These partitions and everything in them "
+                      "will be deleted, and can't be recovered:", ["in-lede"]),
                 parts, sure,
                 label("Nothing is deleted until you press Erase and Install on the last step.", ["in-note"])),
                 back=back_button(self.nav), nxt=go)
@@ -734,8 +739,10 @@ def main():
                 srcs = []
             self.layout, self.variant = current_layout(srcs)
             self.keymap = console_keymap(self.layout, self.variant)
-            kbd = label(f"Keyboard layout: {layout_name(self.layout, self.variant)}. "
-                        "Pulsar's startup screen uses the same layout.", ["in-note"])
+            # TODO(copy): say that the passphrase prompt at startup uses this layout? Only the
+            # karg is tested (tests/install-disk.bats); nothing boots a non-US keymap through
+            # the graphical prompt, and console_keymap falls back to the XKB code itself.
+            kbd = label(f"Keyboard layout: {layout_name(self.layout, self.variant)}.", ["in-note"])
             nxt = Gtk.Button(label="Next", css_classes=["suggested-action", "in-pill"], sensitive=False)
 
             title, lede = (label(t, [c]) for t, c in zip(passphrase_heading(True), ("in-title", "in-lede")))
@@ -788,14 +795,16 @@ def main():
             root = next((p for p in plan if p["type"].startswith("root")), None)
             destroys = install_destroys(self.mode, d)
             rows = [("Disk", f"{d['name']}\n{identity(d)} · {d['path']}"),
-                    ("Space for Pulsar", human(root["raw_size"]) if root else "Decided by the disk's free space"),
+                    ("Space for Pulsar", human(root["raw_size"]) if root else "Unknown"),
                     ("Encryption", encryption_summary(self.encrypt))]
             # an erase says so first, in red, above everything else; an
             # install that deletes nothing says what it does in the list
             if self.mode == "alongside":
-                rows.insert(1, ("What happens", "Pulsar goes in the free space. " + (
-                    f"{d['holds']} stays as it is." if d["holds"] in ("Windows", "Linux")
-                    else "Your files stay as they are.")))
+                # TODO(copy): the startup menu shows for 1 s (see done_page). Say how to reach it?
+                rows.insert(1, ("What happens", "Pulsar goes in the free space. " + {
+                    "Windows": "The Windows partitions aren't changed. Once Pulsar is installed, the "
+                               "computer starts it. To start Windows, choose it in the startup menu.",
+                    "Linux": "Linux stays as it is."}.get(d["holds"], "The partitions with your files aren't changed.")))
             elif not destroys:
                 rows.insert(1, ("What happens", "Pulsar uses the whole disk."))
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
@@ -894,11 +903,14 @@ def main():
             if done.get("windows_entry"):
                 # TODO(copy): the menu shows for 1 s (timeout=1 in bootupd's grub-static-pre.cfg;
                 # Pulsar doesn't override it). Say how to reach it, e.g. hold an arrow key?
-                extra.append(label("Windows is still on this computer. Choose it in the startup menu.",
+                extra.append(label("To start Windows, choose it in the startup menu.",
                                    ["in-note"]))
             page = nav_page("Done", "done", column(
                 mark(120), label("Pulsar is installed", ["in-display"]),
-                label("Restart the computer. When the screen goes dark, remove the USB stick.", ["in-lede"]),
+                # TODO(copy): when is it safe to take the USB stick out? The repo doesn't say.
+                # Pulsar's firmware entry is first after the install (tests/installer-vm/README.md),
+                # so a stick left in shouldn't start the installer again.
+                label("Restart the computer and remove the USB stick.", ["in-lede"]),
                 label(first_start(self.encrypt), ["in-note"]),
                 *extra, Gtk.Box(height_request=8), restart))
             page.set_can_pop(False)
@@ -906,10 +918,10 @@ def main():
             return page
 
         def failed_page(self, error, restored, planning=False):
-            head = "Pulsar can't go on this disk" if planning else "The install didn't finish"
+            head = "The install can't start" if planning else "The install didn't finish"
             more = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             more.append(label(error, ["in-log"], 0, selectable=True, max_width_chars=70))
-            more.append(label(f"The installer's full log is {LOG}. Restarting the computer deletes it.",
+            more.append(label(f"The full log is in {LOG} until the computer restarts.",
                               ["in-note"], 0, selectable=True, max_width_chars=70))
             details = Gtk.Expander(label="Details", halign=Gtk.Align.CENTER, child=more)
             again = Gtk.Button(label="Start Over", css_classes=["suggested-action", "in-pill"],
@@ -928,7 +940,7 @@ def main():
                 if e.get("stage") == "failed":
                     return e.get("error") or "unknown error"
             logs = [e["log"] for e in events if "log" in e]
-            return (logs[-1] if logs else "") or "The installer stopped without saying why."
+            return (logs[-1] if logs else "") or "The install stopped without an error message."
 
         # ------------------------------------------- the backend, async
 
