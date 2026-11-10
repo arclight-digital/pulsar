@@ -35,8 +35,7 @@ sudo systemctl reboot
 ```
 
 The NVIDIA image needs a GPU that nvidia-open supports. The standard image
-has no hardware requirements beyond Fedora's. Pulsar is developed on a laptop
-with a Core Ultra 9 275HX and an RTX 5080 Max-Q.
+has no hardware requirements beyond Fedora's.
 
 ### NVIDIA and Secure Boot
 
