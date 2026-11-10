@@ -4355,11 +4355,47 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     [ "$(sd_arg 5)" = work ]
     [ "$(sed -n 2p "${TMUX_LIVE}/.work.opt")" = Stop ]
     # the button: a terminal on that session
-    printf '#!/bin/sh\necho attach\n' > "${STUB}/notify-send"
-    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\n' "${BATS_TEST_TMPDIR}/ptyxis.args" > "${STUB}/ptyxis"
-    chmod +x "${STUB}/ptyxis"
-    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)"
+    notify_stub 7 attach tok-1
+    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)"
     [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+}
+
+# notify-send as GNOME answers it: the id, then the action clicked (empty:
+# dismissed), and the click's activation token on fd 3. ptyxis records its
+# arguments and the token it was started with.
+notify_stub() {
+    local d="${BATS_TEST_TMPDIR}"
+    printf '#!/bin/sh\nprintf "%%s\\0" "$@" > "%s/notify.args"\nprintf "%%s\\n" "%s" "%s"\n[ -n "%s" ] && printf "%%s" "%s" >&3\nexit 0\n' \
+        "$d" "$1" "$2" "$3" "$3" > "${STUB}/notify-send"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/ptyxis.args"\nprintf "%%s" "$XDG_ACTIVATION_TOKEN" > "%s/ptyxis.token"\n' \
+        "$d" "$d" > "${STUB}/ptyxis"
+    chmod +x "${STUB}/notify-send" "${STUB}/ptyxis"
+}
+notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
+
+@test "agent notify: a newer alert replaces the last notification, so its button is never a dead one; the click's token reaches the terminal" {
+    notify_env
+    mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
+    run "$PULSAR" agent notify work
+    [ "$status" -eq 0 ] || fail "$output"
+    local script idf
+    script=$(sd_arg -1); idf=$(sd_arg 6)
+    [ -n "$idf" ]
+    # the first alert, dismissed: it keeps its notification's id, opens nothing
+    notify_stub 41 "" ""
+    sh -c "$script" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$idf"
+    [ "$(cat "$idf")" = 41 ]
+    ! notify_args | grep -q -- '--replace-id' || false
+    [ ! -e "${BATS_TEST_TMPDIR}/ptyxis.args" ]
+    # the next alert for the session replaces that notification, not a second one
+    notify_stub 41 attach "gnome-shell//1-2-host_TIME3"
+    sh -c "$script" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$idf"
+    notify_args | grep -qx -- '--replace-id=41'
+    notify_args | grep -qx -- '--activation-token-fd=3'
+    # clicked: a terminal on the session, at the front, and nothing left to replace
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/ptyxis.token")" = "gnome-shell//1-2-host_TIME3" ]
+    [ ! -e "$idf" ]
 }
 
 @test "agent notify: a permission prompt says what Claude asked; its 60-second 'still waiting' does not repeat Stop" {

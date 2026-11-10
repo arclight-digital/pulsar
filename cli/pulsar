@@ -3882,17 +3882,32 @@ agent_notify() {
         notify-send --app-name=Pulsar --icon=utilities-terminal "$title" "$body" || true
         return 0
     fi
-    # One notification per session at a time: a newer one replaces the
-    # button of the last (its click would only attach again anyway).
+    # One notification per session at a time. The newer alert's unit takes
+    # over from the last one's, and its notification REPLACES the last one
+    # (--replace-id, the id kept in idf): stopping the old unit alone left
+    # its notification on screen with nothing behind its button, and Claude
+    # rings on every Stop and question, so the one people clicked was
+    # usually such a dead one. The click's activation token goes to the
+    # terminal, so its window comes to the front as it does from Pulsar
+    # Settings, instead of opening behind or as "is ready".
     local unit="pulsar-agent-${tname}" self script
+    local idf="${XDG_RUNTIME_DIR}/pulsar-agent-${tname}.notification"
     self=$(realpath "$SELF")
     systemctl --user stop "${unit}.service" 2>/dev/null || true
     # shellcheck disable=SC2016  # expanded by the transient unit's sh
-    script='a=$(notify-send --app-name=Pulsar --icon=utilities-terminal --action=attach=Open "$1" "$2") || exit 0
-[ "$a" = attach ] || exit 0
-exec ptyxis --new-window -- "$3" agent run "$4" --tmux "$5"'
+    script='rid=$(cat "$6" 2>/dev/null)
+tok=$(mktemp) || exit 0
+notify-send --app-name=Pulsar --icon=utilities-terminal --print-id ${rid:+--replace-id="$rid"} \
+    --action=attach=Open --activation-token-fd=3 "$1" "$2" 3>"$tok" | {
+    read -r id && printf "%s\n" "$id" > "$6"
+    read -r a
+    t=$(cat "$tok"); rm -f "$tok"
+    [ "$a" = attach ] || exit 0
+    rm -f "$6"
+    XDG_ACTIVATION_TOKEN=$t exec ptyxis --new-window -- "$3" agent run "$4" --tmux "$5"
+}'
     systemd-run --user --collect --quiet --unit="$unit" \
-        -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" 2>/dev/null || true
+        -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" "$idf" 2>/dev/null || true
 }
 
 # Onto the session: switch to it from inside the agents' server, attach from
