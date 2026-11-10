@@ -19,7 +19,10 @@ is still that drive (a name like /dev/sda can pass to another).
      entry named like ours ("Fedora": a Fedora installed beside us lost
      its entry) before adding one, so it runs where efivarfs is read-only,
      which bootupd takes as "leave the firmware alone"
-  5. if Windows is on the ESP, GRUB gets an entry for it
+  5. if Windows is on the ESP, GRUB gets an entry for it; so does a
+     Fedora-family Linux whose EFI/fedora Pulsar's boot files replace, when
+     its /boot and grub.cfg were found (read-only) before anything was
+     written
   6. the firmware gets a "Pulsar" entry, replacing only older "Pulsar"
      entries on this same ESP
   7. a finished install keeps this run's log in its own /var/log
@@ -50,10 +53,15 @@ say what is known, for the installer app to tell the person:
         "fallback"   bootc ran, and EFI/BOOT could not be put back: the
                      other system's fallback loader may be replaced too
 --plan-only prints
-{"stage": "plan", "plan": [...], "windows": ...} (pulsar-install-disk's dry
-run; windows, alongside only, whether Windows' boot manager is on the ESP,
-which gets it a startup menu entry) and writes nothing; it needs no key
-(--no-encrypt plans the unencrypted layout).
+{"stage": "plan", "plan": [...], "windows": ..., "fedora_linux": ...,
+"other_loaders": [...]} (pulsar-install-disk's dry run; the rest, alongside
+only, preflight_alongside's survey of the shared ESP: whether Windows' boot
+manager is on it, the Fedora-family Linux whose EFI/fedora Pulsar replaces
+and whether it gets a startup menu entry, and other Linux boot loaders the
+computer's own boot menu starts) and writes nothing; it needs no key
+(--no-encrypt plans the unencrypted layout). The done event repeats
+fedora_linux and other_loaders, with linux_entry, the title of the menu
+entry made for the Fedora-family Linux (or null).
 
 PULSAR_BOOTC_PREFIX, if set, runs bootc through a wrapper (the test bench
 runs it in the image with podman); the default is the live system's own.
@@ -264,7 +272,7 @@ def partitions(disk):
     # lsblk lists flat or as a tree depending on the columns asked for:
     # take every device whose parent is this disk, whichever it gave
     real = os.path.realpath(disk)
-    out = json.loads(run("lsblk", "-J", "-p", "-o", "PATH,PKNAME,PARTTYPE,PARTN,PARTUUID,UUID,FSTYPE", real))
+    out = json.loads(run("lsblk", "-J", "-p", "-o", "PATH,PKNAME,PARTTYPE,PARTN,PARTUUID,UUID,FSTYPE,LABEL", real))
 
     def walk(devs):
         for d in devs:
@@ -280,10 +288,100 @@ def esp_of(disk):
     return esps[0]
 
 
+# Boot loaders another Linux puts in its own EFI/<vendor> directory: that
+# directory and its firmware entry are left alone, and the computer's own boot
+# menu starts it. (Pulsar's GRUB can't start it under Secure Boot: it only
+# trusts kernels signed for Fedora.)
+OTHER_LOADERS = ("shimx64.efi", "grubx64.efi", "systemd-bootx64.efi")
+# For a Fedora-family /boot: GRUB's module for its filesystem, and how to
+# mount it read-only without writing to it (a read-only mount of an ext4 or
+# XFS whose journal needs replaying replays it, unless told not to)
+GRUB_FS = {"ext4": ("ext2", "ro,noload"), "ext3": ("ext2", "ro,noload"), "ext2": ("ext2", "ro"),
+           "xfs": ("xfs", "ro,norecovery"), "btrfs": ("btrfs", "ro,rescue=nologreplay")}
+UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+
+
+def fedora_boot_ref(stub, bootuuid):
+    """The /boot a Fedora-family Linux's EFI/fedora starts, as its ESP files
+    name it: ("uuid", UUID) or ("label", LABEL), or None. Fedora's own stub
+    grub.cfg says `search ... --fs-uuid --set=dev UUID`; bootupd's (Fedora
+    Atomic, bootc) puts `set BOOT_UUID="UUID"` in bootuuid.cfg, and searches
+    by the label "boot" without it."""
+    m = re.search(r'BOOT_UUID="?(' + UUID_RE + ')', bootuuid)
+    if m:
+        return ("uuid", m.group(1).lower())
+    for line in stub.splitlines():
+        if "search" in line and "--fs-uuid" in line:
+            m = re.search(UUID_RE, line)
+            if m:
+                return ("uuid", m.group(0).lower())
+    m = re.search(r"--label\s+([^\s$\"']+)", stub)
+    return ("label", m.group(1)) if m else None
+
+
+def bls_title(boot):
+    """The name a Fedora /boot's newest boot entry gives its system, without
+    the kernel version or ostree index: "Fedora Linux 42 (Workstation
+    Edition)". None when it has no entries."""
+    for d in ("loader/entries", "boot/loader/entries"):
+        path = os.path.join(boot, d)
+        if not os.path.isdir(path):
+            continue
+        for name in sorted(os.listdir(path), reverse=True):
+            if not name.endswith(".conf"):
+                continue
+            for line in open(os.path.join(path, name), errors="replace"):
+                if line.startswith("title "):
+                    title = re.sub(r"\s*\((?:\d[^)]*|ostree:\d+)\)", "", line[6:].strip())
+                    title = re.sub(r"[^\w .,()+-]", "", title).strip()
+                    if title:
+                        return title
+    return None
+
+
+def fedora_linux(disk, scratch, stub, bootuuid):
+    """The Fedora-family Linux whose boot files are in EFI/fedora, which
+    Pulsar's bootupd is about to overwrite: where its /boot is, so Pulsar's
+    GRUB can get an entry that starts it through its own GRUB configuration.
+    {"menu": True, "title", "uuid", "fs", "grub_dir"}, or {"menu": False,
+    "why"} when its /boot or that configuration can't be found."""
+    ref = fedora_boot_ref(stub, bootuuid)
+    if not ref:
+        return {"menu": False, "why": "EFI/fedora names no /boot"}
+    kind, value = ref
+    found = [p for p in partitions(disk)
+             if (kind == "uuid" and (p.get("uuid") or "").lower() == value)
+             or (kind == "label" and p.get("label") == value)]
+    if len(found) != 1:
+        return {"menu": False, "why": f"{len(found)} partitions on {disk} have the {kind} {value}"}
+    part = found[0]
+    if part.get("fstype") not in GRUB_FS:
+        return {"menu": False, "why": f"its /boot is {part.get('fstype') or 'no filesystem'}"}
+    mod, opts = GRUB_FS[part["fstype"]]
+    mnt = os.path.join(scratch, "linux-boot-check")
+    os.makedirs(mnt)
+    try:
+        run("mount", "-t", part["fstype"], "-o", opts, part["path"], mnt)
+    except Failed as e:
+        return {"menu": False, "why": f"can't mount its /boot: {e}"}
+    try:
+        grub_dir = next((d for d in ("grub2", "boot/grub2") if os.path.isfile(os.path.join(mnt, d, "grub.cfg"))), None)
+        title = bls_title(mnt)
+    finally:
+        run("umount", mnt)
+    if not grub_dir:
+        return {"menu": False, "why": f"no grub2/grub.cfg on {part['path']}"}
+    return {"menu": True, "title": title or "Fedora Linux", "uuid": part["uuid"].lower(), "fs": part["fstype"],
+            "grub_mod": mod, "grub_dir": grub_dir}
+
+
 def preflight_alongside(disk, scratch):
     """Check the shared ESP, mounted read-only, before anything is written:
-    it must have room for Pulsar's boot files. Returns whether Windows' boot
-    manager is on it, the test windows_entry makes for its menu entry."""
+    it must have room for Pulsar's boot files. Returns what starts from it
+    besides: whether Windows' boot manager is on it (the test windows_entry
+    makes for its menu entry), the Fedora-family Linux whose EFI/fedora
+    Pulsar's boot files will replace (fedora_linux, or None), and the other
+    vendor directories with a Linux boot loader of their own."""
     esp = esp_of(disk)
     mnt = os.path.join(scratch, "esp-check")
     os.makedirs(mnt)
@@ -292,12 +390,25 @@ def preflight_alongside(disk, scratch):
         st = os.statvfs(mnt)
         free = st.f_bavail * st.f_frsize
         windows = os.path.isfile(os.path.join(mnt, WINDOWS_LOADER))
+        efi = os.path.join(mnt, "EFI")
+        vendors = sorted(d for d in os.listdir(efi) if os.path.isdir(os.path.join(efi, d))) if os.path.isdir(efi) else []
+        fedora = next((d for d in vendors if d.lower() == "fedora"), None)
+
+        def text(*path):
+            try:
+                return open(os.path.join(efi, *path), errors="replace").read()
+            except OSError:
+                return ""
+        stub, bootuuid = (text(fedora, "grub.cfg"), text(fedora, "bootuuid.cfg")) if fedora else ("", "")
+        others = [d for d in vendors if d.lower() not in ("boot", "fedora", "microsoft")
+                  and any(os.path.isfile(os.path.join(efi, d, f)) for f in OTHER_LOADERS)]
     finally:
         run("umount", mnt)
     if free < ESP_MIN_FREE:
         raise Failed(f"The startup files (EFI) partition has {free // 2**20} MiB free. Pulsar needs "
                      f"{ESP_MIN_FREE // 2**20} MiB free there for its boot files.")
-    return windows
+    return {"windows": windows, "fedora_linux": fedora_linux(disk, scratch, stub, bootuuid) if fedora else None,
+            "other_loaders": others}
 
 
 def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
@@ -463,6 +574,30 @@ def own_shim(target):
     return vendors[0]
 
 
+def linux_entry(target, fedora):
+    """Beside a Fedora-family Linux, a startup menu entry that starts it
+    through its own GRUB configuration, the way its EFI/fedora stub did
+    before Pulsar's boot files replaced it: find its /boot by filesystem
+    UUID, point the prefix there, and load its grub.cfg (which lists its BLS
+    entries). Kept where windows_entry keeps Windows' entry, in /boot's
+    custom.cfg, which bootupd's static config sources and never rewrites.
+    Returns the entry's title, or None when there is none to make."""
+    if not fedora or not fedora.get("menu"):
+        return None
+    with open(os.path.join(target, "boot/grub2/custom.cfg"), "a") as f:
+        f.write(f"""
+menuentry '{fedora['title']}' --class fedora --class gnu-linux --class os {{
+\tinsmod part_gpt
+\tinsmod {fedora['grub_mod']}
+\tsearch --no-floppy --fs-uuid --set=dev {fedora['uuid']}
+\tset prefix=($dev)/{fedora['grub_dir']}
+\texport prefix
+\tconfigfile $prefix/grub.cfg
+}}
+""")
+    return fedora["title"]
+
+
 def firmware_entry(disk, esp, target):
     if not os.path.isdir(EFIVARS):
         return "not booted via EFI: no firmware entry"
@@ -542,11 +677,13 @@ def main():
     snap, bootc_ran = None, False
     try:
         emit(stage="check")
-        windows = preflight_alongside(a.disk, scratch) if a.mode == "alongside" else None
+        # what else starts from the shared ESP; an erase shares none
+        found = (preflight_alongside(a.disk, scratch) if a.mode == "alongside"
+                 else {"windows": None, "fedora_linux": None, "other_loaders": []})
         if a.plan_only:
             ok = True
             emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, *ident, a.disk)),
-                 windows=windows)
+                 **found)
             return 0
         emit(stage="disk")
         disk = "unknown"
@@ -613,9 +750,11 @@ def main():
         if snap is not None:
             restore_fallback(os.path.join(target, "boot/efi"), snap, os.path.join(target, "boot/pulsar/esp-fallback"))
         win = windows_entry(target, esp)
+        lin = linux_entry(target, found["fedora_linux"])
         fw = firmware_entry(a.disk, esp, target)
         ok = True
-        emit(stage="done", ok=True, windows_entry=win, firmware=fw)
+        emit(stage="done", ok=True, windows_entry=win, linux_entry=lin, fedora_linux=found["fedora_linux"],
+             other_loaders=found["other_loaders"], firmware=fw)
         return 0
     except Failed as e:
         error = str(e)
