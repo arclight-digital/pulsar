@@ -54,7 +54,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 need_root() {
     [ "$(id -u)" -eq 0 ] && return 0
-    die "'$1' needs root -- try: sudo pulsar $1"
+    die "'$1' needs root; try: sudo pulsar $1"
 }
 
 # The mirror image, for setup recipes: they write to $HOME and talk to the
@@ -63,7 +63,7 @@ need_root() {
 # points nowhere near the actual mistake.
 need_user() {
     [ "$(id -u)" -ne 0 ] && return 0
-    die "'$1' configures your session and must not run as root -- drop the sudo"
+    die "'$1' configures your session and must not run as root; drop the sudo"
 }
 
 need() { have "$1" || die "required tool not found: $1"; }
@@ -151,8 +151,7 @@ check_scheduler() {
         # build detected that, and scx.service is skipped rather than failed.
         # Reporting it as a warning forever would be indistinguishable from
         # something the user could fix, and there is nothing to fix here.
-        record scheduler ok "EEVDF: scx.service is enabled, but this kernel cannot load a BPF scheduler" \
-               "scx kfuncs carry the implicit prog-aux argument (Fedora kernel BTF)"
+        record scheduler ok "EEVDF: scx.service is enabled, but this kernel cannot load a BPF scheduler"
     else
         # Warn, not fail. The machine runs fine on EEVDF -- but this is the
         # check that catches the failure `systemctl is-active scx.service`
@@ -168,7 +167,7 @@ check_scheduler() {
         local last
         last=$(journalctl -u scx.service -b -n 1 -o cat --no-pager 2>/dev/null | head -c 200) || true
         [ -z "$last" ] || unit="${unit}; last: ${last}"
-        record scheduler warn "scx.service is enabled but sched_ext is '${state}' -- running EEVDF" \
+        record scheduler warn "scx.service is enabled but sched_ext is '${state}', so EEVDF is running" \
                "scx.service: ${unit}"
     fi
 }
@@ -224,7 +223,7 @@ check_gamemode() {
 
     if ! id -nG "$user" 2>/dev/null | tr ' ' '\n' | grep -qx "$group"; then
         record gamemode warn "${user} is not in the ${group} group; renice=${renice} does nothing" \
-               "sudo pulsar setup gamemode -- then log out and back in"
+               "sudo pulsar setup gamemode, then log out and back in"
         return
     fi
 
@@ -308,12 +307,12 @@ check_greenboot() {
     [ -n "$enabled" ] || enabled=not-found
     if [ "$enabled" = "not-found" ] || [ "$enabled" = "masked" ]; then
         record greenboot warn "greenboot is not installed on this deployment" \
-               "automatic rollback is not armed"
+               "a boot that fails its health checks will not be rolled back"
         return
     fi
     if [ "$enabled" = "disabled" ]; then
         record greenboot warn "greenboot is installed but disabled" \
-               "automatic rollback is not armed: sudo systemctl enable greenboot-healthcheck.service"
+               "a boot that fails its health checks will not be rolled back: sudo systemctl enable greenboot-healthcheck.service"
         return
     fi
     # Result=success is also what a unit that has NEVER RUN reports, so on
@@ -370,11 +369,11 @@ check_nvidia() {
         # module, it is the wrong image -- and it is also every VM this image
         # is boot-tested on. Only a GPU that is there and unserved is a fail.
         if ! nvidia_gpu_present; then
-            record nvidia warn "nvidia image, but this machine has no NVIDIA GPU" \
+            record nvidia warn "NVIDIA image, but this machine has no NVIDIA GPU" \
                    "the vanilla image fits it: bootc switch ghcr.io/arclight-digital/pulsar:latest"
             return
         fi
-        record nvidia fail "nvidia variant but no nvidia module is loaded" \
+        record nvidia fail "NVIDIA image, but no nvidia module is loaded" \
                "Secure Boot may have rejected an unsigned module: dmesg | grep -i taint"
         return
     fi
@@ -392,8 +391,10 @@ check_nvidia() {
         *[!0-9.]*|'') expected="" ;;
     esac
     if [ -n "$expected" ] && [ "$running" != "$expected" ]; then
-        record nvidia warn "driver ${running}, image expects ${expected}" \
-               "a reboot into the staged deployment usually reconciles this"
+        # TODO(copy): what should this tell the user to do? It used to say
+        # "a reboot into the staged deployment usually reconciles this", but
+        # nothing here looks for a staged deployment.
+        record nvidia warn "driver ${running}, image expects ${expected}"
     else
         record nvidia ok "nvidia-open ${running} loaded"
     fi
@@ -513,11 +514,11 @@ check_flatpak_gl() {
     case "$FGL_STATUS" in
         skip) return 0 ;;
         missing)
-            record flatpak-gl warn "Flatpak GL driver for nvidia ${FGL_DRIVER} is missing or incomplete; Flatpak games run on the wrong GPU" \
+            record flatpak-gl warn "Flatpak GL driver for NVIDIA ${FGL_DRIVER} is missing or incomplete; Flatpak games run on the wrong GPU" \
                    "sudo systemctl start pulsar-gl-nvidia.service" ;;
         stale)
             record flatpak-gl warn "${FGL_APPS} started without the NVIDIA ${FGL_DRIVER} driver" \
-                   "quit fully and reopen; until then its games get the iGPU and can show a black window" ;;
+                   "quit fully and reopen; until then, games launched from it get the iGPU and can show a black window" ;;
         ok)
             record flatpak-gl ok "running Flatpak apps have the NVIDIA ${FGL_DRIVER} driver" ;;
     esac
@@ -571,7 +572,7 @@ check_gpu_containers() {
                "sudo systemctl restart nvidia-cdi-refresh.service; journalctl -b -u nvidia-cdi-refresh.service"
     elif [ -n "$stale" ]; then
         record gpu-containers warn "stale CDI spec for driver ${running}: ${stale}" \
-               "the boot unit owns /var/run/cdi; a hand-written spec in /etc/cdi goes stale on every driver bump -- delete it"
+               "the boot unit owns /var/run/cdi; a hand-written spec in /etc/cdi goes stale on every driver update, so delete it"
     elif [ -r "$sebool" ] && [ "$(cut -d' ' -f1 "$sebool" 2>/dev/null)" = 0 ]; then
         record gpu-containers warn "CDI spec matches ${running}, but SELinux blocks containers from the GPU" \
                "container_use_xserver_devices is off: systemctl status pulsar-gpu-containers.service"
@@ -592,7 +593,7 @@ check_flathub() {
     elif grep -q filter <<<"$opts"; then
         # Fedora ships a filtered flathub; the whole point of the shipped
         # remotes.d file is that this system does not.
-        record flathub warn "flathub is FILTERED" "most applications will be hidden"
+        record flathub warn "flathub is filtered" "apps outside its filter cannot be installed from it"
     else
         record flathub ok "flathub present and unfiltered"
     fi
@@ -688,9 +689,9 @@ check_updates() {
     # Worth surfacing even when everything is healthy: it changes which tool
     # `pulsar update` runs, and it is the reason an update takes minutes
     # instead of seconds.
-    [ "${lay:-0}" -gt 0 ] && detail="${detail}, ${lay} layered -- updates go through rpm-ostree"
+    [ "${lay:-0}" -gt 0 ] && detail="${detail}, ${lay} layered, so updates go through rpm-ostree"
     if [ "${staged:-0}" -gt 0 ]; then
-        record updates ok "update staged: ${ver}" "reboot to apply"
+        record updates ok "update staged: ${ver}" "restart to use it"
     else
         record updates ok "no update staged" "$detail"
     fi
@@ -714,7 +715,7 @@ check_cli() {
     first=$(command -v pulsar 2>/dev/null) || first=""
     if [ -n "$first" ] && [ "$first" != "$sys" ] && ! grep -qxF "$PULSAR_SELF_MARK" "$first" 2>/dev/null; then
         record cli warn "another 'pulsar' comes first on PATH: ${first}" \
-               "probably the Pulsar code editor; typing 'pulsar' runs it. use ${sys}, or rename that one"
+               "probably the Pulsar code editor; typing 'pulsar' runs it. Use ${sys}, or rename that one"
         return
     fi
     record cli ok "'pulsar' is this system's CLI"
@@ -730,7 +731,7 @@ check_disk() {
     # A bootc system needs room to stage a whole new image. Under ~10GB free
     # an upgrade starts failing in ways that look like network errors.
     if [ "$pct" -ge 90 ]; then
-        record disk fail "${root} is ${pct}% full (${avail} free)" "staging an update needs several GB"
+        record disk fail "${root} is ${pct}% full (${avail} free)" "staging an update needs about 10 GB free"
     elif [ "$pct" -ge 80 ]; then
         record disk warn "${root} is ${pct}% full (${avail} free)"
     else
@@ -756,8 +757,8 @@ usage: pulsar doctor [check...]      health checks; exit 1 if one fails
        pulsar doctor gpu-faults --watch
                                      follow the kernel log and notify when a
                                      program hits an NVIDIA GPU fault (Xid),
-                                     naming the game and what to try
-                                     (pulsar-gpu-fault-watch; nvidia image)
+                                     naming the program
+                                     (pulsar-gpu-fault-watch; NVIDIA image)
 
 checks: ${DOCTOR_CHECKS}
 --json gives {checks: [{id, status, summary, detail}], ok}. A check that
@@ -1347,9 +1348,10 @@ cmd_update_check() {
     if [ "$staged_digest" = "$remote_digest" ]; then
         # Staged by the background unit or the Update button: the one thing
         # left is a restart, so that is what the notification offers.
-        [ "$notify" = 0 ] || update_notify_once staged "$remote_digest" "$remote_version" "$local_version"
+        [ "$notify" = 0 ] || update_notify_once staged "$remote_digest" "$remote_version" "$local_version" \
+            "$(staged_release "$js")"
         if [ "${JSON:-0}" = 1 ]; then check_json staged; return 0; fi
-        printf 'staged: %s -- reboot to apply\n' "$remote_version"
+        printf 'staged: %s; restart to use it\n' "$remote_version"
         return 0
     fi
 
@@ -1379,14 +1381,26 @@ cmd_update_check() {
 # ---------------------------------------------------------------------------
 UPDATE_AUTO_GRACE=${PULSAR_UPDATE_AUTO_GRACE:-86400}
 
+# The release (YY.M.N) the staged deployment carries, read from its own tree:
+# the registry label is the build, and only the image knows its release.
+# Prints nothing when that tree cannot be read.
+staged_release() {
+    local d
+    d=$(printf '%s' "$1" | jq -r '[ .deployments[]? | select(.staged == true) ][0] // {}
+        | if .osname and .checksum then "\(.osname)/deploy/\(.checksum).\(.serial // 0)" else "" end' 2>/dev/null) || d=""
+    [ -n "$d" ] || return 0
+    cat "${PULSAR_OSTREE_DEPLOY:-/ostree/deploy}/${d}/usr/share/pulsar/release" 2>/dev/null || true
+}
+
 update_auto_enabled() {
     have systemctl || return 1
     [ "$(systemctl is-enabled pulsar-update-auto.timer 2>/dev/null)" = enabled ]
 }
 
 # $1 kind (available|staged) $2 digest $3 new version $4 booted version
+# $5 the staged release, when it could be read
 update_notify_once() {
-    local kind=$1 digest=$2 version=$3 booted=$4 state_file seen=""
+    local kind=$1 digest=$2 version=$3 booted=$4 release=${5:-} state_file seen=""
     # "notified-digest" is the file every earlier release wrote for the
     # available notice; keeping the name keeps an upgraded machine from
     # announcing the same build again.
@@ -1409,26 +1423,34 @@ update_notify_once() {
         [ $((now - first)) -ge "$UPDATE_AUTO_GRACE" ] || return 0
     fi
 
-    update_notify_send "$kind" "$digest" "$version" "$booted"
+    update_notify_send "$kind" "$digest" "$version" "$booted" "$release"
     printf '%s\n' "$digest" > "$state_file"
 }
 
 update_notify_send() {
-    local kind=$1 digest=$2 version=$3 booted=$4 title body
+    local kind=$1 digest=$2 version=$3 booted=$4 release=${5:-} title body
     have notify-send || return 0
     if [ "$kind" = available ]; then
-        title="Pulsar ${version} is available"
-        body="You are on ${booted}. Update downloads it now, and it takes over when you restart."
+        # The registry says only the build; the release is inside the image.
+        title="Pulsar update available"
+        body="Build ${version} is published; you have ${booted}. Update downloads it; then restart to use it."
     else
-        title="Pulsar ${version} is ready"
-        body="Restart to start using it. Nothing changes until you do."
+        title="Pulsar update ready"
+        # The release only when it differs from the booted one (VERSION);
+        # unread, the build alone, which is true either way.
+        if [ -n "$release" ] && [ "$release" != "$VERSION" ]; then
+            body="Restart to use ${release} (build ${version})."
+        else
+            body="Restart to use build ${version}."
+        fi
     fi
     # The click has to outlive this oneshot unit, so the waiting notification
     # runs as a transient unit of its own, as crash_notify_one's does. Without
     # systemd-run it still says what to do, just without the button.
     if ! have systemd-run || { [ "$kind" = staged ] && ! have gnome-session-quit; }; then
-        if [ "$kind" = available ]; then body="You are on ${booted} -- run 'sudo pulsar update'"
-        else body="Restart to start using it."; fi
+        if [ "$kind" = available ]; then
+            body="Build ${version} is published; you have ${booted}. To download it: sudo pulsar update"
+        fi
         notify-send --app-name="Pulsar" --icon=software-update-available "$title" "$body" || true
         return 0
     fi
@@ -1443,7 +1465,7 @@ update_notify_send() {
 [ "$a" = update ] || exit 0
 if err=$(systemctl start pulsar-update-stage.service 2>&1); then exec "$3" update --check --notify; fi
 case "$err" in *[Aa]uthenticat*|*"Access denied"*|*[Cc]ancel*) exit 0 ;; esac
-exec notify-send --app-name=Pulsar --icon=dialog-warning "Pulsar $4 could not be downloaded" "See why: journalctl -u pulsar-update-stage"'
+exec notify-send --app-name=Pulsar --icon=dialog-warning "Pulsar update failed" "Build $4 did not install. See why: journalctl -u pulsar-update-stage"'
     else
         # gnome-session-quit shows GNOME's restart dialog; the user confirms
         # there. This never reboots on its own.
@@ -1512,14 +1534,17 @@ update_background() {
 
 update_help() {
     cat <<'EOF'
-usage: sudo pulsar update [--apply]   fetch and stage the newest image; it
+usage: sudo pulsar update [--apply]   download and stage the newest image; it
                                       takes effect on the next boot. --apply
                                       also reboots into it
        pulsar update --check          is a newer image published? no root.
                                       exit 0 up to date or already staged,
                                       10 available, 1 could not tell
-         --notify                     with --check: a desktop notification,
-                                      once per published build
+         --notify                     with --check: a desktop notification
+                                      when an image is published, and one
+                                      when it is staged. While
+                                      pulsar-update-auto.timer is on, the
+                                      first waits a day
          --json                       with --check: the answer as JSON
        sudo pulsar update --background
                                       stage a newer image if there is one,
@@ -1529,9 +1554,7 @@ usage: sudo pulsar update [--apply]   fetch and stage the newest image; it
                                       sudo systemctl disable --now pulsar-update-auto.timer
 
 Through bootc, or through rpm-ostree when packages are layered (bootc would
-drop them). Other flags pass through to whichever of the two runs. Staging
-changes nothing until the next boot, and nothing here reboots unless you
-pass --apply.
+drop them). Other flags pass through to whichever of the two runs.
 EOF
 }
 
@@ -1564,10 +1587,10 @@ cmd_update() {
         # Refused rather than run: the upgrade would re-pull the same digest
         # and report success, which is how this went unnoticed.
         fix=$(pinned_origin_fix "$(rpm-ostree status --json 2>/dev/null || echo '{}')")
-        [ -z "$fix" ] || die "this system follows one image digest, so there is nothing to upgrade to; run: ${fix}"
+        [ -z "$fix" ] || die "this system follows one image digest, so there is nothing to update to; run: ${fix}"
         lay=$(rpm-ostree status --json 2>/dev/null | jq -r "$JQ_LAYERED" 2>/dev/null) \
-            || die "could not read deployment status; refusing to guess which upgrade path is right"
-        [ -n "$lay" ] || die "could not read deployment status; refusing to guess which upgrade path is right"
+            || die "could not read deployment status; refusing to guess whether to update through bootc or rpm-ostree"
+        [ -n "$lay" ] || die "could not read deployment status; refusing to guess whether to update through bootc or rpm-ostree"
     else
         lay=0   # nothing to layer with, so nothing can be layered
     fi
@@ -1577,7 +1600,7 @@ cmd_update() {
         exec bootc upgrade "$@"
     fi
 
-    printf '%spulsar:%s %s local package modification(s) on this deployment -- upgrading through rpm-ostree so they survive\n' \
+    printf '%spulsar:%s %s local package modification(s) on this deployment, so updating through rpm-ostree, which keeps them\n' \
         "$C_KEY" "$C_RESET" "$lay" >&2
     need rpm-ostree
     # The flags pulsar documents are bootc's, and --apply has an exact
@@ -1617,10 +1640,12 @@ flatpak_gl_notify() {
     done
     [ "$fresh" = 1 ] || return 0
     if have notify-send; then
+        local body="It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it fully, not just its window."
+        case "$FGL_APPS" in *", "*)
+            body="They started without the NVIDIA ${FGL_DRIVER} driver, so their games get the iGPU and can show a black window. Quit them fully, not just their windows." ;;
+        esac
         notify-send --app-name="Pulsar" --icon=dialog-warning \
-            "Restart ${FGL_APPS} to use the NVIDIA GPU" \
-            "It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it fully and reopen it." \
-            || true
+            "Restart ${FGL_APPS} to use the NVIDIA GPU" "$body" || true
     fi
     mkdir -p "$UPDATE_STATE" && printf '%s\n' "$FGL_IDS" > "$state_file"
 }
@@ -1754,12 +1779,12 @@ link_agent_context() {
     local target
     if ! target=$(agent_context_path "$A_NAME"); then
         case "$A_NAME" in
-            gemini) printf 'to give it the machine guide, add this line to ~/.gemini/GEMINI.md:\n  @%s\n' "$AGENTS_MD" ;;
+            gemini) printf 'to give it the guide, add this line to ~/.gemini/GEMINI.md:\n  @%s\n' "$AGENTS_MD" ;;
             aider)
                 if [ "${1:-}" = native ]; then
-                    printf 'to give it the machine guide, add this to ~/.aider.conf.yml:\n  read: %s\n' "$AGENTS_MD"
+                    printf 'to give it the guide, add this to ~/.aider.conf.yml:\n  read: %s\n' "$AGENTS_MD"
                 else
-                    printf 'the shim passes --read %s whenever the image has it, so aider starts with the machine guide\n' "$AGENTS_MD"
+                    printf 'the shim passes --read %s whenever the image has it, so aider starts with the guide\n' "$AGENTS_MD"
                 fi ;;
         esac
         return 0
@@ -1769,16 +1794,16 @@ link_agent_context() {
         return 0
     }
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$AGENTS_MD" ]; then
-        printf 'machine guide already linked at %s\n' "$target"
+        printf 'the guide is already linked at %s\n' "$target"
     elif [ -e "$target" ] || [ -L "$target" ]; then
         # Never overwritten: it is the user's file, and a guide is not worth
         # losing someone's instructions over.
-        printf '%s already exists; left alone. The machine guide is %s (or: pulsar agent guide)\n' \
+        printf '%s already exists; left alone. The guide is %s (or: pulsar agent guide)\n' \
             "$target" "$AGENTS_MD"
     else
         mkdir -p "$(dirname "$target")"
         ln -s "$AGENTS_MD" "$target"
-        printf 'linked the machine guide at %s\n' "$target"
+        printf 'linked the guide at %s\n' "$target"
     fi
 }
 
@@ -2019,7 +2044,7 @@ agent_list() {
         printf '%-9s %-9s %-34s %-10s %s\n' "$n" "$b" "${m} ${p}" "$state" "$d"
     done <<<"$AGENTS_TABLE"
     [ -z "$notes" ] || printf '\nnative installs:\n%s' "$notes"
-    printf '\nnone is installed by default. box: %s  prefix: %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
+    printf '\nnone is installed by default. toolbox: %s  prefix: %s\n' "$AGENT_BOX" "$AGENT_PREFIX"
 }
 
 agent_install() {
@@ -2034,7 +2059,7 @@ agent_install() {
         link_agent_context native
         link_agent_skills
         register_mcp host
-        printf 'done: nothing installed\n'
+        printf 'done; nothing was installed in the toolbox\n'
         return 0
     fi
     need toolbox
@@ -2184,7 +2209,8 @@ agent_guard() {
             cat <<'EOF'
 usage: pulsar agent guard           what polkit answers for your session
        sudo pulsar agent guard on   layering, rollback, cleanup and system
-                                    Flatpak installs ask for a password
+                                    Flatpak installs and removals ask for
+                                    a password
        sudo pulsar agent guard off  back to the Fedora default (no prompt)
 
 It applies to you and to anything you run, a coding agent included.
@@ -2290,8 +2316,8 @@ agent_status() {
     fi
     printf 'sandbox  %s here (%s)  (pulsar agent sandbox)\n' "${sbx%%$'\t'*}" "${sbx#*$'\t'}"
     case "$guard" in
-        on)      printf 'guard    on: layering and system Flatpak installs ask for a password\n' ;;
-        off)     printf 'guard    off: layering and system Flatpak installs do not prompt  (sudo pulsar agent guard on)\n' ;;
+        on)      printf 'guard    on: layering, rollback, cleanup and system Flatpak installs and removals ask for a password\n' ;;
+        off)     printf 'guard    off: layering, rollback, cleanup and system Flatpak installs and removals need no password  (sudo pulsar agent guard on)\n' ;;
         partial) printf 'guard    partial  (see: pulsar agent guard)\n' ;;
         *)       printf 'guard    unknown  (run pulsar agent guard as yourself)\n' ;;
     esac
@@ -2355,7 +2381,7 @@ sandbox_image() {
 sandbox_build() {
     local img; img=$(sandbox_image)
     podman image exists "$img" 2>/dev/null && return 0
-    printf 'building the sandbox image %s (once; a few minutes)\n' "$img" >&2
+    printf 'building the sandbox image %s (once)\n' "$img" >&2
     sandbox_recipe | podman build --quiet -t "$img" -f - >&2 || die "could not build the sandbox image"
 }
 
@@ -2431,7 +2457,7 @@ sandbox_allow() {
     case "$HOME/" in "${path%/}/"*) die "that would let the whole of ${path} in; allow the one file or folder you need" ;; esac
     case "$path" in
         "$HOME/.ssh"*|"$HOME/.gnupg"*|"$HOME/.local/share/keyrings"*|"$HOME/.config/gh"*|"$HOME/.password-store"*)
-            printf 'warning: %s holds keys or tokens; the sandbox is weaker with it in\n' "$path" >&2 ;;
+            printf 'warning: %s holds keys or tokens; the agent in the sandbox can read them\n' "$path" >&2 ;;
     esac
     entry=$path; [ "$rw" = 0 ] || entry="${path}:rw"
     tmp=$(mktemp)
@@ -2969,7 +2995,7 @@ sandbox_run() {
     while [ ! -S "$sock" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
     [ -S "$sock" ] || die "the push gate did not start (see ${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log)"
 
-    printf 'sandboxed: only %s is visible; push %s through the gate\n' "$root" "$policy" >&2
+    printf 'sandboxed: %s and the paths you allowed are visible; push: %s, through the gate\n' "$root" "$policy" >&2
     [ "$name" != aider ] || [ ! -r "$AGENTS_MD" ] || set -- --read /usr/share/pulsar/AGENTS.md "$@"
     podman "${args[@]}" "$img" "$real" "$@"
 }
@@ -3750,7 +3776,7 @@ agent_attach() {
 }
 
 agent_sessions() {
-    local usage="usage: pulsar agent sessions [--kill <name> | --forget <name>]"
+    local usage="usage: pulsar agent sessions [--kill <name> | --forget <name>] [--json]"
     case "${1:-}" in
         -h|--help) printf '%s\n' "$usage"; return 0 ;;
         --kill|--forget)
@@ -4094,12 +4120,12 @@ agent_model() {
             systemctl --user restart "${MODEL_UNIT}.service" \
                 || die "the model server did not start: journalctl --user -u ${MODEL_UNIT}"
             model_opencode add "$model"
-            printf 'endpoint http://127.0.0.1:%s/v1\n' "$MODEL_PORT"
-            printf 'key:     %s (every request needs it)\n' "$MODEL_KEY"
+            printf 'endpoint http://127.0.0.1:%s/v1  (OpenAI-compatible)\n' "$MODEL_PORT"
+            printf 'key      %s  (every request needs it)\n' "$MODEL_KEY"
             # shellcheck disable=SC2016  # the $(cat) is for the user to run
-            printf 'aider:   aider --openai-api-base http://127.0.0.1:%s/v1 --openai-api-key "$(cat %s)" --model openai/%s\n' \
+            printf 'aider    aider --openai-api-base http://127.0.0.1:%s/v1 --openai-api-key "$(cat %s)" --model openai/%s\n' \
                 "$MODEL_PORT" "$MODEL_KEY" "$(basename "${model%%:*}")"
-            [ "$at_login" = 1 ] || printf 'it stops at logout; --at-login to keep it running\n'
+            [ "$at_login" = 1 ] || printf 'it stops at logout and does not start again; --at-login starts it at each login\n'
             ;;
         off)
             if [ -f "$unit" ]; then
@@ -4136,11 +4162,13 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      and a crash if you name one
        pulsar agent sandbox [on|off] [--here]
                                      run agents in a container that sees only the
-                                     project; push goes through a gate that keeps
-                                     your credentials. --here: this project only
+                                     project and the paths you allow; push goes
+                                     through a gate that keeps your credentials.
+                                     --here: this project only
        pulsar agent sandbox push on|off|branches [--here]
-                                     what the gate lets through (never force-push,
-                                     deletes or tags)
+                                     what the gate lets through; branches: every
+                                     branch but the remote's default. Never
+                                     force-push, deletes or tags
        pulsar agent sandbox allow <path> [--rw] [--here] | disallow <path>
                                      let one more file or folder in (read-only
                                      unless --rw): a tool the agent's hooks run
@@ -4157,7 +4185,7 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      on the host; a claude session that died comes
                                      back on its own conversation. --new: a fresh one.
                                      When it waits for you in a session you are not
-                                     looking at, a notification opens it.
+                                     looking at, a notification offers to open it.
                                      --worktree: its own git worktree and branch,
                                      <repo>/.worktrees/<session>
        pulsar agent attach [<session>]
@@ -4174,13 +4202,18 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      its model, how full the context is, and tokens
                                      read and written (Claude Code; no prices)
        pulsar agent sessions [--kill <name> | --forget <name>] [--json]
-                                     the tmux sessions; --kill ends one (it can come
-                                     back), --forget drops its conversation
+                                     the tmux sessions; --kill ends one (attach
+                                     brings it back). --forget deletes an ended
+                                     one's record and undo snapshots, and its
+                                     worktree unless it has uncommitted changes.
+                                     The conversation stays in the agent's history
        pulsar agent model [on|off] [--model <hf-repo[:quant]>] [--at-login] [--purge]
                                      a local model server (llama.cpp, rootless podman,
-                                     127.0.0.1 only) for agents with no cloud account
-       pulsar agent guard [on|off]   make layering and system Flatpak installs ask
-                                     for a password (on and off need root)
+                                     127.0.0.1 only) for agents with no cloud account.
+                                     --at-login: start it at each login
+       pulsar agent guard [on|off]   make layering, rollback, cleanup and system
+                                     Flatpak installs and removals ask for a
+                                     password (on and off need root)
 
 Agents: $(agent_names). None is installed by default.
 
@@ -4277,7 +4310,8 @@ cmd_pin() {
     [ $# -le 1 ] || die "usage: pulsar pin [on | off]"
     case "$sub" in
         -h|--help)
-            printf 'usage: pulsar pin            is the booted deployment pinned (kept through GC)?
+            printf 'usage: pulsar pin            is the booted deployment pinned (kept when old
+                             deployments are cleaned up)?
        sudo pulsar pin on    pin it
        sudo pulsar pin off   unpin it
 '
@@ -4311,7 +4345,7 @@ cmd_pin() {
     # rollback or a pick from GRUB the booted one is index 1 -- so `0` pinned
     # the OTHER deployment and reported the booted one pinned, at exactly the
     # moment a pin is wanted.
-    ostree admin pin booted && printf 'pinned the booted deployment; it will survive GC\n'
+    ostree admin pin booted && printf 'pinned the booted deployment; it is kept when old deployments are cleaned up\n'
 }
 
 # ---------------------------------------------------------------------------
@@ -4417,11 +4451,13 @@ cmd_changelog() {
 SETUP_HELP='usage: pulsar setup <recipe>
 
   apps        install the default Flatpaks (root)
-  devbox      create the default distrobox
-  gamemode    enroll accounts in the gamemode group, for renice (root)
-  quadlet     install the quadlet template and enable auto-update
-  gamescale   grant Flatpak launchers other than Steam and Faugus, with gg and ggm (its own flags pass through);
-              Steam and Faugus need nothing: the image grants them, and this moves an older home setup over'
+  devbox      create the default distrobox, pulsar-dev
+  gamemode    add every user account to the gamemode group, for renice (root)
+  quadlet     copy the example quadlet to ~/.config/containers/systemd; enable podman auto-update
+  gamescale   Steam and Faugus get gg, ggm and gamescale from the image. Run bare, this points an
+              older Steam setup at the copies in the image and removes the ones Pulsar put in
+              ~/.local/bin. --platform <name>: install for another Flatpak launcher (other
+              flags go to the gamescale installer)'
 
 # gg and ggm, the Steam launch options, go beside the gamescale that
 # `setup gamescale` just put in ~/.local/bin. A Flatpak launcher's sandbox
@@ -4973,7 +5009,7 @@ cmd_crashes() {
                         echo "nothing ignored: every crash is announced"
                     fi ;;
                 add)
-                    [ -n "$pat" ] || die "usage: pulsar crashes ignore add <program name or path end>"
+                    [ -n "$pat" ] || die "usage: pulsar crashes ignore add <pattern>"
                     mkdir -p "$(dirname "$CRASH_IGNORE_FILE")"
                     if grep -qxF -- "$pat" "$CRASH_IGNORE_FILE" 2>/dev/null; then
                         echo "already ignored: ${pat}"
@@ -4989,14 +5025,15 @@ cmd_crashes() {
                     grep -vxF -- "$pat" "$CRASH_IGNORE_FILE" > "$tmp" || true
                     mv -f "$tmp" "$CRASH_IGNORE_FILE"
                     echo "crashes of ${pat} are announced again" ;;
-                *) die "usage: pulsar crashes ignore [list | add <pattern> | remove <pattern>]" ;;
+                *) die "usage: pulsar crashes [ignore [list | add <pattern> | remove <pattern>]]" ;;
             esac ;;
         -h|--help)
-            echo "usage: pulsar crashes [ignore list | ignore add <pattern> | ignore remove <pattern>]"
+            echo "usage: pulsar crashes [ignore [list | add <pattern> | remove <pattern>]]"
             echo "  with no arguments: this boot's crashes (pulsar doctor crashes)"
-            echo "  ignore: programs whose crashes are not announced. A name matches that program"
-            echo "  wherever it ran from; a pattern with a / matches the end of its path." ;;
-        *) die "usage: pulsar crashes [ignore list | add <pattern> | remove <pattern>]" ;;
+            echo "  ignore: programs whose crashes and GPU faults are not announced. A name"
+            echo "  matches that program wherever it ran from; a pattern with a / matches the"
+            echo "  end of its path." ;;
+        *) die "usage: pulsar crashes [ignore [list | add <pattern> | remove <pattern>]]" ;;
     esac
 }
 
@@ -5039,8 +5076,8 @@ xid_parse() {
 # itself; skip: not news on its own.
 xid_meaning() {
     case "$1" in
-        13|69) printf 'game\ta fault in its graphics work' ;;
-        31)    printf 'game\ta GPU memory access outside its own memory' ;;
+        13|69) printf 'game\ta fault in graphics work' ;;
+        31)    printf "game\\ta GPU memory access outside the program's own memory" ;;
         32)    printf 'game\ta corrupted stream of GPU commands' ;;
         8|109) printf 'game\tGPU work that hung and had to be stopped' ;;
         43)    printf 'game\tGPU work the driver had to stop' ;;
@@ -5050,7 +5087,7 @@ xid_meaning() {
         79)    printf 'gpu\tThe NVIDIA GPU stopped answering the system' ;;
         62|119|120) printf "gpu\\tThe NVIDIA GPU's firmware stopped responding" ;;
         154)   printf 'gpu\tThe NVIDIA driver says the GPU needs a reset' ;;
-        *)     printf 'game\tan error the NVIDIA driver logs as Xid %s' "$1" ;;
+        *)     printf 'game\tone Pulsar has no description for (see docs.nvidia.com/deploy/xid-errors)' ;;
     esac
 }
 
@@ -5100,6 +5137,12 @@ gpu_fault_who() {
 }
 
 GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS and frame generation in its settings (try FSR or TSR) and undo any GPU overclock."
+
+# The advice, for the Xids the one known case ties to DLSS: Hell Is Us faulted
+# with Xid 13 and Xid 109 until DLSS was off (see above). Nothing for others.
+gpu_fault_advice() {
+    case "$1" in 13|109) printf '%s' "$GPU_FAULT_ADVICE" ;; esac
+}
 
 gpu_fault_boot() { cat "${PULSAR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null || echo unknown; }
 
@@ -5154,12 +5197,15 @@ gpu_fault_notify_one() {
     elif [ -z "$name" ]; then
         # The driver did not log which program: say what happened, name none.
         title="A program hit a GPU fault"
-        body="Xid ${xid}: ${what}. The NVIDIA driver did not log which program. That is usually a bug in the program or in the NVIDIA driver, not a failing GPU. ${GPU_FAULT_ADVICE}"
+        body="Xid ${xid}: ${what}. The NVIDIA driver did not log which program."
+        [ -z "$(gpu_fault_advice "$xid")" ] || body+=" $(gpu_fault_advice "$xid")"
+        body+=" Details: pulsar doctor gpu-faults"
         q="A program hit an NVIDIA GPU fault (Xid ${xid}, ${what}) and the driver did not log which; pulsar doctor gpu-faults lists this boot's. Explain what this Xid means, how to find which program it was, and what to try."
     else
         title="${name} hit a GPU fault"
-        body="Xid ${xid}: ${what}. That is usually a bug in ${name} or in the NVIDIA driver, not a failing GPU."
-        [ "$game" = 1 ] && body+=" ${GPU_FAULT_ADVICE}"
+        body="Xid ${xid}: ${what}."
+        [ "$game" != 1 ] || [ -z "$(gpu_fault_advice "$xid")" ] || body+=" $(gpu_fault_advice "$xid")"
+        body+=" Details: pulsar doctor gpu-faults"
         q="${name} hit an NVIDIA GPU fault (Xid ${xid}, ${what}); pulsar doctor gpu-faults lists this boot's. Explain what this Xid means, search for reports of it with ${name} and this driver, and tell me what to try."
     fi
     if ! have systemd-run; then
@@ -5255,7 +5301,11 @@ check_gpu_faults() {
     summary=$(printf '%s\n' "$list" | awk -F'\t' '{ k = $3 " (Xid " $2 ")"; if (!c[k]++) o[++m] = k }
         END { for (i = 1; i <= m; i++) printf "%s%s%s", (i > 1 ? ", " : ""), o[i], (c[o[i]] > 1 ? " x" c[o[i]] : "") }')
     detail=$(printf '%s\n' "$list" | awk -F'\t' '{ k = "Xid " $2 ": " $4; if (!s[k]++) printf "%s%s", (n++ ? "; " : ""), k }')
-    record gpu-faults warn "${n} GPU fault(s) this boot: ${summary}" "${detail}. ${GPU_FAULT_ADVICE}"
+    local advice=""
+    if printf '%s\n' "$list" | awk -F'\t' '$2 == 13 || $2 == 109 { f = 1 } END { exit !f }'; then
+        advice=" ${GPU_FAULT_ADVICE}"
+    fi
+    record gpu-faults warn "${n} GPU fault(s) this boot: ${summary}" "${detail}.${advice}"
 }
 
 # ---------------------------------------------------------------------------
@@ -5381,28 +5431,31 @@ unreadable, which the report then says.
 
 Included
   doctor      `pulsar doctor --json`
-  status      deployments from `rpm-ostree status --json`, trimmed to the
-              fields that matter (version, digest, pins, layered packages)
+  status      deployments from `rpm-ostree status --json`: booted, staged,
+              pinned, version, timestamp, checksum, image and digest, and
+              layered packages
   manifest    `pulsar manifest --json`, host facts included
   units       failed system units and failed user units, by name
   journal     this boot's warning+ lines, last N (default 50, max 500), from
               pulsar-*, greenboot*, akmods*, gamescale* and the failed units:
               time, unit, priority and message only
-  graphics    kernel release, taint, command line, loaded nvidia version,
-              display devices and the driver bound to each, Secure Boot state
-  flatpak     remotes with their options, app IDs with branch and origin,
-              runtime count
-  crash       with --crash: one of your crashes as systemd-coredump saw it --
-              program, signal, package, unit, command line, the crashing
-              thread's stack trace, and that process's journal lines. Never
-              the core file itself
+  graphics    kernel release, taint, command line, loaded NVIDIA driver
+              version, GPU names, display devices and the driver bound to
+              each, Secure Boot state
+  flatpak     remotes with their options, app IDs with branch, origin and
+              installation, runtime count
+  crash       with --crash: one of your crashes as systemd-coredump recorded
+              it: program, signal, package, unit, command line, the crashing
+              thread's stack trace (up to 40 frames), and that process's last
+              30 journal lines. Never the core file itself
 
 Not included
   the full journal, anything from a previous boot, environment variables,
-  tokens, the machine ID, file contents from $HOME or /etc, Flatpak app data
+  the machine ID, file contents from $HOME or /etc, Flatpak app data
 
 Redacted, best effort
-  the hostname, your username and home path (as ~), MAC and IPv4 addresses,
+  the hostname (not a stock one: fedora, localhost, pulsar, silverblue,
+  toolbox), your username and home path (as ~), MAC and IPv4 addresses,
   email addresses, values after words like token=, password:, api_key=,
   Authorization and Bearer, and tokens recognizable by their prefix (GitHub
   ghp_/github_pat_, GitLab glpat-, sk- API keys, Slack xox*-, AWS AKIA,
@@ -5634,7 +5687,7 @@ cmd_report() {
     printf '%s\n' "$js" | jq -r '
       def rows(f): if (f | length) == 0 then "  (none)" else (f[] | "  " + .) end;
       "pulsar report  \(.report.generated)  (\(.report.tool))",
-      "", "doctor: \(if .doctor.ok then "no failures" elif .doctor == null then "unavailable" else "FAILURES" end)",
+      "", "doctor: \(if .doctor.ok then "no failures" elif .doctor == null then "unavailable" else "failures" end)",
       rows([.doctor.checks[]? | "\(.status)\t\(.id)\t\(.summary)"]),
       "", "deployments",
       rows([.status.deployments[]? | "\(if .booted then "booted" elif .staged then "staged" else "-" end)\t\(.version // "?")\t\(if .pinned then "pinned" else "" end)"]),
@@ -5681,15 +5734,17 @@ usage: pulsar theme <command>
   next | prev               cycle themes
   bg-next                   cycle the current theme's wallpapers
   current                   what is applied, and what it wrote
-  revert [--to image]       put everything back: stock GNOME, or with
-                            --to image the Pulsar image defaults
+  revert [--to image]       back to stock GNOME, or with --to image to
+                            the Pulsar image defaults
   audit [theme...]          WCAG contrast checks
-  restart-apps [--yes]      open apps still showing the previous palette
+  restart-apps [--yes]      list the open GTK apps still showing the
+                            previous palette; --yes restarts them
   config [key [value]]      restart-prompt on|off
   import base16 <file|url>  add a base16/base24 scheme as your own theme
 
-The picker is Themes in the app grid (Super+T if it was free).
-Themes live in /usr/share/pulsar/themes; your own in ~/.local/share/pulsar/themes.
+The Themes app does this too (Super+T, if the shortcut was free).
+The image's themes are in /usr/share/pulsar/themes; yours in
+~/.local/share/pulsar/themes.
 EOF
 }
 
@@ -5712,9 +5767,11 @@ cmd_screen() {
         -h|--help|help|"")
             cat <<'EOF'
 usage: pulsar screen text    pick an area of the screen; its text goes on
-                             the clipboard (English). Super+Print does this.
+                             the clipboard (English). Super+Print does this,
+                             if the shortcut was free
        pulsar screen qr      pick an area; the QR code's contents go on the
-                             clipboard, and a link can be opened
+                             clipboard. A code that is one http(s) link gets
+                             an Open link button
 EOF
             return 0 ;;
         *) die "usage: pulsar screen text | qr" ;;
@@ -5911,7 +5968,7 @@ deployment_index() {
 
 checkpoint_create() {
     local note=${1:-}
-    [ $# -le 1 ] || die "usage: pulsar checkpoint [create] [note]"
+    [ $# -le 1 ] || die "usage: sudo pulsar checkpoint [--no-home] [note]"
     local js='{}' checksum="" version="" pinned=false idx=""
     if have rpm-ostree; then js=$(rpm-ostree status --json 2>/dev/null) || js='{}'; fi
     checksum=$(printf '%s' "$js" | jq -r '[.deployments[]? | select(.booted == true)][0].checksum // ""' 2>/dev/null) || checksum=""
@@ -5989,7 +6046,7 @@ checkpoint_create() {
     if [ -n "$checksum" ]; then
         if [ "$pinned" = true ]; then printf '  deployment %s pinned\n' "${version:-?}"
         elif [ "$already" = true ]; then printf '  deployment %s was already pinned\n' "${version:-?}"
-        else printf '  deployment %s NOT pinned (ostree refused); it can be garbage collected\n' "${version:-?}"; fi
+        else printf '  deployment %s not pinned (ostree refused); it can be deleted when old deployments are cleaned up\n' "${version:-?}"; fi
     fi
     printf 'see what changed: sudo pulsar checkpoint diff %s\n' "$id"
     printf 'undo it:          sudo pulsar checkpoint restore %s\n' "$id"
@@ -6086,11 +6143,11 @@ checkpoint_restore() {
             || printf 'could not discard the staged deployment; run: sudo rpm-ostree cleanup --pending\n'
     fi
     if grep -q '^booted' <<<"$dep"; then
-        printf 'the system has BOOTED a newer deployment since; to go back: sudo pulsar rollback, then reboot\n'
+        printf 'a different deployment has booted since; to go back: sudo pulsar rollback, then restart\n'
     elif grep -q '^gone' <<<"$dep"; then
         printf "the checkpoint's deployment is gone; only /etc could be restored\n"
     fi
-    printf 'services read /etc when they start: restart what changed, or reboot\n'
+    printf 'services read /etc when they start: restart the ones whose files changed, or restart the computer\n'
 }
 
 # The home half of restore: the same rule as /etc -- changed and deleted
@@ -6147,22 +6204,26 @@ checkpoint_drop() {
 }
 
 checkpoint_help() {
+    # TODO(copy): this help linked docs/AGENTS-SAFETY.md, which the image does
+    # not install, and AGENTS.md (pulsar agent guide) only names the command.
+    # Where should it point for why to take a checkpoint before an agent runs?
     cat <<'EOF'
 usage: sudo pulsar checkpoint [--no-home] [note]
                                            snapshot /etc and your settings, and pin
-                                           the booted deployment
-       sudo pulsar checkpoint list
+                                           the booted deployment. --no-home, first
+                                           on the line: /etc only
+       sudo pulsar checkpoint list         id, build, whether it pinned, note
        sudo pulsar checkpoint diff [id]    what changed in /etc, your settings and
-                                           the OS since
+                                           the deployment since (default: the newest)
        sudo pulsar checkpoint restore <id> put back changed and deleted files,
                                            discard a deployment staged since
        sudo pulsar checkpoint drop <id>    delete it, unpinning what it pinned
 
 Take one before handing the machine to an agent. "Your settings" are the
 dotfiles in your home folder, ~/.config (without caches), ~/.local/bin and
-~/.ssh, for whoever ran sudo -- not documents, projects, ~/.local/share,
-/var or Flatpak data. restore does not reboot and does not delete files
-added since (it lists them). See docs/AGENTS-SAFETY.md.
+~/.ssh, for whoever ran sudo; over 512 MB, they are skipped. Documents,
+projects, ~/.local/share, /var and Flatpak data are not included. restore
+does not reboot and does not delete files added since (it lists them).
 EOF
 }
 
@@ -6195,45 +6256,51 @@ cmd_checkpoint() {
 
 usage() {
     cat <<'EOF'
-pulsar -- manage a Pulsar system
+pulsar: manage a Pulsar system
 
 Health
   pulsar doctor [check]    health checks; exit 1 if one fails. the default
                            command. see: pulsar doctor --help
-  pulsar status            deployments: booted, staged, rollback, pins
+  pulsar status            every deployment, marked booted, staged or pinned
   pulsar report            a diagnosis bundle to paste: doctor, status,
                            manifest, failed units, recent warnings, graphics,
                            Flatpak. JSON; --text for people. redacted
   pulsar crashes           this boot's crashes. ignore list | add | remove:
-                           programs whose crashes are not announced
+                           programs whose crashes and GPU faults are not
+                           announced
 
 This image
   pulsar manifest          what is in this image, and what it runs on
-  pulsar changelog         packages that moved in the latest published build
+  pulsar changelog         packages upgraded, added and removed in the latest
+                           published image
   pulsar sbom              this system's packages as SPDX 2.3
   pulsar verify            check the running image's signature
 
 Updates and undo
-  pulsar update            fetch and stage the newest image       (root)
+  pulsar update            download and stage the newest image    (root)
   pulsar update --check    is a newer image published? exit 10 if so
   pulsar rollback          boot the previous deployment next      (root)
-  pulsar pin [on|off]      keep the booted deployment through GC  (root)
-  pulsar checkpoint        snapshot /etc, your settings and pin,  (root)
-                           to diff or restore later:
-                           list | diff | restore | drop
+  pulsar pin [on|off]      keep the booted deployment when old ones
+                           are cleaned up (on and off need root)
+  pulsar checkpoint        snapshot /etc and your settings and pin the
+                           booted deployment, to diff or restore later:
+                           list | diff | restore | drop           (root)
 
 Desktop
-  pulsar theme <command>   recolor the whole desktop: list | set <theme> |
+  pulsar theme <command>   recolor the desktop: list | set <theme> |
                            revert | ...
   pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
   pulsar screen text|qr    the text or QR code in an area of the screen,
-                           onto the clipboard (Super+Print: text)
+                           onto the clipboard (Super+Print: text, if the
+                           shortcut was free)
 
 Agents
-  pulsar agent             what this machine gives a coding agent:
+  pulsar agent             the guide, installed agents, guard state:
                            guide | list | add | remove | default | run |
+                           attach | sessions | undo | usage |
                            sandbox [on|off] | guard [on|off]
-  pulsar agent model on    a local model for agents, on this machine's GPU
+  pulsar agent model on    a local model server for agents, on the GPU
+                           when there is one
   pulsar agent ask         start your agent on a redacted report of this
                            machine; --crash latest for the last crash
   pulsar mcp               this machine's facts as MCP tools, for any agent
@@ -6241,7 +6308,7 @@ Agents
 
 Options
   --json                   JSON output, anywhere on the line. A command
-                           without it says so rather than print text.
+                           without it says so instead of printing text.
                            `manifest --json` puts host facts under "host", so
                            `jq 'del(.host)'` is the baked manifest
   --logo, --no-logo        force or suppress the mark in `manifest`

@@ -504,7 +504,7 @@ CHECK_STAGED='{"deployments":[
     grep -q -- "--action=update=Update" "$NOTIFY_LOG"
     grep -qx "systemctl start pulsar-update-stage.service" "$ACTION_LOG"
     # the stage ran, so the check that follows it posts "ready", with Restart
-    grep -q "Pulsar 44.2 is ready" "$NOTIFY_LOG"
+    grep -q "Pulsar update ready Restart to use build 44.2." "$NOTIFY_LOG"
     grep -q -- "--action=restart=Restart" "$NOTIFY_LOG"
     # and staging is all it did: no reboot without the user's say
     ! grep -q "gnome-session-quit" "$ACTION_LOG"
@@ -517,7 +517,7 @@ CHECK_STAGED='{"deployments":[
     NOTIFY_ACTION=update STAGE_FAILS="Failed to start pulsar-update-stage.service: Access denied" \
         run "$PULSAR" update --check --notify
     [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
-    ! grep -q "could not be downloaded" "$NOTIFY_LOG"
+    ! grep -q "Pulsar update failed" "$NOTIFY_LOG"
 }
 
 @test "update --notify says so when staging fails, and where to look" {
@@ -526,7 +526,7 @@ CHECK_STAGED='{"deployments":[
     stub_notify
     NOTIFY_ACTION=update STAGE_FAILS="Job for pulsar-update-stage.service failed" \
         run "$PULSAR" update --check --notify
-    grep -q "could not be downloaded" "$NOTIFY_LOG"
+    grep -q "Pulsar update failed Build 44.2 did not install." "$NOTIFY_LOG"
     grep -q "journalctl -u pulsar-update-stage" "$NOTIFY_LOG"
 }
 
@@ -536,7 +536,7 @@ CHECK_STAGED='{"deployments":[
     stub_notify
     NOTIFY_ACTION=restart run "$PULSAR" update --check --notify
     [ "$status" -eq 0 ]
-    grep -q "Pulsar 44.2 is ready" "$NOTIFY_LOG"
+    grep -q "Pulsar update ready Restart to use build 44.2." "$NOTIFY_LOG"
     # GNOME's own dialog, where the user confirms; never a reboot from here
     grep -qx "gnome-session-quit --reboot" "$ACTION_LOG"
     ! grep -q "systemctl reboot" "$ACTION_LOG"
@@ -555,7 +555,30 @@ CHECK_STAGED='{"deployments":[
     # still not staged a day later -- on battery all day, say: now it asks
     PULSAR_UPDATE_AUTO_GRACE=0 run "$PULSAR" update --check --notify
     [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
-    grep -q "Pulsar 44.2 is available" "$NOTIFY_LOG"
+    grep -q "Pulsar update available Build 44.2 is published; you have 44.1." "$NOTIFY_LOG"
+}
+
+@test "update --notify names the release when the staged image moves to a new one, and only then" {
+    stub_skopeo "sha256:bbb" "44.2"
+    stub_notify
+    export PULSAR_OSTREE_DEPLOY="${BATS_TEST_TMPDIR}/deploy" PULSAR_RELEASE_FILE="${BATS_TEST_TMPDIR}/release"
+    mkdir -p "${PULSAR_OSTREE_DEPLOY}/fedora/deploy/bbbsum.0/usr/share/pulsar"
+    echo 26.12.1 > "${PULSAR_OSTREE_DEPLOY}/fedora/deploy/bbbsum.0/usr/share/pulsar/release"
+    echo 26.11.1 > "$PULSAR_RELEASE_FILE"
+    stub_ostree '{"deployments":[
+      {"staged":true,"version":"44.2","osname":"fedora","checksum":"bbbsum","serial":0,
+       "container-image-reference-digest":"sha256:bbb"},
+      {"booted":true,"version":"44.1",
+       "container-image-reference":"ostree-unverified-registry:ghcr.io/x/pulsar:latest",
+       "container-image-reference-digest":"sha256:aaa"}]}'
+    run "$PULSAR" update --check --notify
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -q "Pulsar update ready Restart to use 26.12.1 (build 44.2)." "$NOTIFY_LOG" || fail "$(cat "$NOTIFY_LOG")"
+    # the same release: the build is the news
+    echo 26.12.1 > "$PULSAR_RELEASE_FILE"
+    rm -rf "$PULSAR_UPDATE_STATE"; : > "$NOTIFY_LOG"
+    run "$PULSAR" update --check --notify
+    grep -q "Pulsar update ready Restart to use build 44.2." "$NOTIFY_LOG" || fail "$(cat "$NOTIFY_LOG")"
 }
 
 # `update --background` is pulsar-update-auto.service's job. Root, like
@@ -1471,7 +1494,7 @@ exit 1
 EOF
     run bash -c "'$PULSAR' doctor --json | jq -r '.checks[] | select(.id==\"greenboot\") | .status + \" \" + .detail'"
     [[ "$output" == warn* ]]
-    [[ "$output" == *"not armed"* ]]
+    [[ "$output" == *"will not be rolled back"* ]]
 }
 
 @test "doctor: a failing flatpak still yields a whole json report" {
@@ -2835,7 +2858,7 @@ GONE_32='NVRM: Xid (PCI:0000:02:00): 32, pid=6161, name=StateOfDecay2-W, channel
     # Steam's name for it, from the manifest in the second library
     grep -q -- "--unit=pulsar-gpu-fault-4242 " "$RUN_LOG"
     grep -q "Hell Is Us hit a GPU fault" "$RUN_LOG"
-    grep -q "Xid 13: a fault in its graphics work" "$RUN_LOG"
+    grep -q "Xid 13: a fault in graphics work" "$RUN_LOG"
     grep -q "turn off DLSS and frame generation" "$RUN_LOG"
     # no agent installed: no Ask button, but Ignore is there, by the game's name
     ! grep -q "Ask Claude" "$RUN_LOG" || false
@@ -2908,7 +2931,7 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     [ "$status" -eq 0 ] || fail "$output"
     [ "$(grep -c "^--user" "$RUN_LOG")" -eq 1 ] || fail "$(cat "$RUN_LOG")"
     grep -q -- "--unit=pulsar-gpu-fault-xid31-" "$RUN_LOG"
-    grep -q "A program hit a GPU fault Xid 31: a GPU memory access outside its own memory. The NVIDIA driver did not log which program." "$RUN_LOG"
+    grep -q "A program hit a GPU fault Xid 31: a GPU memory access outside the program's own memory. The NVIDIA driver did not log which program. Details: pulsar doctor gpu-faults" "$RUN_LOG"
     run grep -c "<unknown>" "$RUN_LOG"
     [ "$output" = 0 ]
     # nothing to ignore it by: the last argument (the name to ignore) is empty
@@ -2972,7 +2995,7 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     run "$PULSAR" doctor gpu-faults
     [ "$status" -eq 0 ]
     [[ "$output" == warn*"2 GPU fault(s) this boot: Hell Is Us (Xid 13), StateOfDecay2-W (Xid 32)"* ]] || fail "$output"
-    [[ "$output" == *"Xid 13: a fault in its graphics work; Xid 32: a corrupted stream"* ]] || fail "$output"
+    [[ "$output" == *"Xid 13: a fault in graphics work; Xid 32: a corrupted stream"* ]] || fail "$output"
     # the same game twice is counted, once
     klog "${HIU_13/pid=4242/pid=4243}"
     run "$PULSAR" doctor gpu-faults
@@ -3179,7 +3202,7 @@ teardown() { [ -z "${XDG_RUNTIME_DIR:-}" ] || case "$XDG_RUNTIME_DIR" in /tmp/ps
     cd "$PROJ"
     run "$PULSAR" agent run claude --sandbox -- --version
     [ "$status" -eq 0 ] || fail "$output"
-    [[ "$output" == *"sandboxed: only ${PROJ} is visible; push on"* ]]
+    [[ "$output" == *"sandboxed: ${PROJ} and the paths you allowed are visible; push: on,"* ]]
     local a; a=$(cat "$PODMAN_LOG")
     # its own home, not the real one
     grep -qx "${HOME}/.local/share/pulsar/sandbox/claude:${HOME}" "$PODMAN_LOG"
@@ -4228,7 +4251,7 @@ wt_env() {
     cd "$WT"
     run "$PULSAR" agent run claude --sandbox -- --version
     [ "$status" -eq 0 ] || fail "$output"
-    [[ "$output" == *"sandboxed: only ${PROJ} is visible"* ]]
+    [[ "$output" == *"sandboxed: ${PROJ} and the paths you allowed are visible"* ]]
     grep -qx "${PROJ}:${PROJ}" "$PODMAN_LOG"
     grep -qx "${adm}:${adm}" "$PODMAN_LOG"
     local f
