@@ -209,22 +209,55 @@ def failure_state(mode, known, planning=False):
     return " ".join(said)
 
 
-def what_happens(mode, d, windows_loader):
+# Linux systems that keep their own boot loader in EFI/<vendor> on the ESP,
+# by that directory's name. Any other is "the other Linux".
+LOADER_NAMES = {"ubuntu": "Ubuntu", "debian": "Debian", "opensuse": "openSUSE", "arch": "Arch Linux",
+                "manjaro": "Manjaro", "endeavouros": "EndeavourOS", "pop": "Pop!_OS", "centos": "CentOS",
+                "rocky": "Rocky Linux", "almalinux": "AlmaLinux", "redhat": "Red Hat Enterprise Linux"}
+
+
+def startup_notes(boot):
+    """How to start each other system once Pulsar is installed, from the
+    backend's plan (the ready page) or its done event (the done page):
+    pulsar-install-system's preflight_alongside, which reads the shared ESP.
+    Windows, and a Fedora-family Linux whose /boot it found, get an entry in
+    Pulsar's startup menu. A Linux with its own boot loader (Ubuntu, Debian,
+    openSUSE) keeps its firmware entry, which the computer's own boot menu
+    starts: Pulsar's GRUB can't start it under Secure Boot. A Fedora-family
+    Linux whose /boot wasn't found has no way in, and the page says so."""
+    notes = []
+    if boot.get("windows") or boot.get("windows_entry"):
+        # TODO(copy): the startup menu shows for 1 s (timeout=1 in bootupd's grub-static-pre.cfg;
+        # Pulsar doesn't override it). Say how to reach it, e.g. hold an arrow key?
+        notes.append("To start Windows, choose it in the startup menu.")
+    fedora = boot.get("fedora_linux")
+    if fedora and fedora.get("menu"):
+        notes.append(f"To start {fedora['title']}, choose it in the startup menu.")
+    elif fedora:
+        notes.append("The installer couldn't find the other Linux's boot configuration, so it won't be in "
+                     "the startup menu. Its own boot entry will start Pulsar instead, because both use "
+                     "EFI/fedora.")
+    names = []
+    for d in boot.get("other_loaders") or []:
+        name = LOADER_NAMES.get(d.lower(), "the other Linux")
+        if name not in names:
+            names.append(name)
+    if names:
+        notes.append(f"To start {' or '.join(names)}, choose it in the computer's own boot menu. "
+                     "The key that opens it depends on the computer's maker.")
+    return notes
+
+
+def what_happens(mode, d, boot):
     """The ready page's "What happens" row, or None when the red erase
-    panel says it. windows_loader is the backend's plan saying whether
-    Windows' boot manager is on the ESP Pulsar shares, which is what gets
-    Windows an entry in Pulsar's startup menu (pulsar-install-system
-    windows_entry); the disk's label is only lsblk's guess."""
+    panel says it. boot is the backend's plan event: what the shared ESP
+    starts besides (startup_notes); the disk's label is only lsblk's guess."""
     if mode == "alongside":
-        # TODO(copy): the startup menu shows for 1 s (see done_page). Say how to reach it?
-        # TODO(copy): how does the person start the other Linux? Pulsar's GRUB has no entry
-        # for it; its own firmware entry is kept, behind Pulsar's. A Fedora-family Linux
-        # shares EFI/fedora, which bootupd writes Pulsar's boot files into.
         kept = {"Windows": "The Windows partitions aren't changed.",
                 "Linux": "The Linux partitions aren't changed."}.get(d["holds"],
                                                                      "The partitions with your files aren't changed.")
-        start = " To start Windows, choose it in the startup menu." if windows_loader else ""
-        return f"Pulsar goes in the free space. {kept} Once Pulsar is installed, the computer starts it.{start}"
+        return " ".join([f"Pulsar goes in the free space. {kept} Once Pulsar is installed, the computer starts it.",
+                         *startup_notes(boot)])
     return None if install_destroys(mode, d) else "Pulsar uses the whole disk."
 
 
@@ -862,9 +895,9 @@ def main():
             if code != 0 or ev is None:
                 self.nav.push(self.failed_page(self.error_of(events), {"disk": "unchanged"}, planning=True))
                 return
-            self.nav.push(self.summary_page(ev["plan"], bool(ev.get("windows"))))
+            self.nav.push(self.summary_page(ev["plan"], ev))
 
-        def summary_page(self, plan, windows_loader=False):
+        def summary_page(self, plan, boot=None):
             d = self.disk
             root = next((p for p in plan if p["type"].startswith("root")), None)
             destroys = install_destroys(self.mode, d)
@@ -873,7 +906,7 @@ def main():
                     ("Encryption", encryption_summary(self.encrypt))]
             # an erase says so first, in red, above everything else; an
             # install that deletes nothing says what it does in the list
-            happens = what_happens(self.mode, d, windows_loader)
+            happens = what_happens(self.mode, d, boot or {})
             if happens:
                 rows.insert(1, ("What happens", happens))
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
@@ -972,12 +1005,7 @@ def main():
             restart = Gtk.Button(label="Restart Now", css_classes=["suggested-action", "in-big"],
                                  halign=Gtk.Align.CENTER)
             restart.connect("clicked", lambda *_: subprocess.Popen(["systemctl", "reboot"]))
-            extra = []
-            if done.get("windows_entry"):
-                # TODO(copy): the menu shows for 1 s (timeout=1 in bootupd's grub-static-pre.cfg;
-                # Pulsar doesn't override it). Say how to reach it, e.g. hold an arrow key?
-                extra.append(label("To start Windows, choose it in the startup menu.",
-                                   ["in-note"]))
+            extra = [label(note, ["in-note"]) for note in startup_notes(done)]
             page = nav_page("Done", "done", column(
                 mark(120), label("Pulsar is installed", ["in-display"]),
                 # TODO(copy): when is it safe to take the USB stick out? The repo doesn't say.
@@ -1081,7 +1109,7 @@ def main():
             win.mode = mode
             win.encrypt = encrypt
             win.passphrase = "x" * 8 if encrypt else None
-            win.nav.push(win.summary_page(plan, windows_loader=True))
+            win.nav.push(win.summary_page(plan, {"windows": True}))
         steps = [("welcome", lambda: None),
                  ("disks", lambda: win.nav.push(win.disk_page())),
                  ("method", lambda: win.pick_disk(d)),

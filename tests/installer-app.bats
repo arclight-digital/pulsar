@@ -111,14 +111,34 @@ PY
 }
 
 @test "the ready page tells the person to choose Windows in the startup menu only when the backend found its boot manager" {
-    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], True)')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it. To start Windows, choose it in the startup menu." ]
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], {"windows": True})')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it. To start Windows, choose it in the startup menu." ]
     # called Windows by lsblk, but no boot manager on the ESP: no entry, so no instruction
-    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], False)')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
-    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], False)')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], {"windows": False})')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], {"windows": False})')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
     # the boot manager's there whatever the disk was called: the entry is made, so say so
-    [[ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], True)')" == *" To start Windows, choose it in the startup menu." ]]
-    [ "$(py 'm.what_happens("erase", D["/dev/sdb"], False)')" = "Pulsar uses the whole disk." ]
-    [ "$(py 'm.what_happens("erase", D["/dev/nvme1n1"], True)')" = "None" ]
+    [[ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], {"windows": True})')" == *" To start Windows, choose it in the startup menu." ]]
+    [ "$(py 'm.what_happens("erase", D["/dev/sdb"], {})')" = "Pulsar uses the whole disk." ]
+    [ "$(py 'm.what_happens("erase", D["/dev/nvme1n1"], {"windows": True})')" = "None" ]
+}
+
+@test "beside a Fedora-family Linux the ready and done pages say how to start it: the startup menu, or plainly that it can't be" {
+    local menu='"fedora_linux": {"menu": True, "title": "Fedora Linux 42 (Workstation Edition)"}'
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], {'"$menu"', "other_loaders": []})')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it. To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu." ]
+    # the done event says the same, from what the install made
+    [ "$(py 'm.startup_notes({"linux_entry": "Fedora Linux 42 (Workstation Edition)", '"$menu"', "windows_entry": False})')" = "['To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu.']" ]
+    # its /boot wasn't found: no entry, and the page says what that means
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], {"fedora_linux": {"menu": False, "why": "no grub2/grub.cfg"}})')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it. The installer couldn't find the other Linux's boot configuration, so it won't be in the startup menu. Its own boot entry will start Pulsar instead, because both use EFI/fedora." ]
+    [ "$(py 'len(m.startup_notes({"fedora_linux": {"menu": False}, "linux_entry": None}))')" = 1 ]
+}
+
+@test "beside a Linux with its own boot loader the pages point to the computer's own boot menu, not Pulsar's" {
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], {"fedora_linux": None, "other_loaders": ["ubuntu"]})')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it. To start Ubuntu, choose it in the computer's own boot menu. The key that opens it depends on the computer's maker." ]
+    # named by directory; an unknown one is "the other Linux", said once
+    [ "$(py 'm.startup_notes({"other_loaders": ["debian", "opensuse", "foo", "systemd"]})')" = "[\"To start Debian or openSUSE or the other Linux, choose it in the computer's own boot menu. The key that opens it depends on the computer's maker.\"]" ]
+    # Windows beside it too: both, each where it is
+    [ "$(py 'm.startup_notes({"windows_entry": True, "other_loaders": ["ubuntu"]})[0]')" = "To start Windows, choose it in the startup menu." ]
+    # nothing else on the ESP: nothing to say
+    [ "$(py 'm.startup_notes({"windows_entry": False, "linux_entry": None, "fedora_linux": None, "other_loaders": []})')" = "[]" ]
 }
 
 @test "the erase page names partitions in words" {

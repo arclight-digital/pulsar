@@ -468,6 +468,28 @@ done_field() { echo "$output" | jq -c "select(.stage? == \"done\") | .$1"; }
     [ "$(plan_field 'fedora_linux, .other_loaders')" = "$(printf 'null\n[]')" ]
 }
 
+# notes_say STAGE: the app's startup notes from the backend's STAGE event in $output
+notes_say() {
+    python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-installer" "$1" "$output" <<'PY'
+import importlib.machinery as M, importlib.util as U, json, sys
+l = M.SourceFileLoader("a", sys.argv[1]); a = U.module_from_spec(U.spec_from_loader("a", l)); l.exec_module(a)
+ev = next(e for e in map(json.loads, sys.argv[3].splitlines()) if e.get("stage") == sys.argv[2])
+print("\n".join(a.startup_notes(ev)))
+PY
+}
+
+@test "the app's pages say what the backend found and made: a menu entry, no entry, or the computer's boot menu" {
+    FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=grub2 run --separate-stderr system alongside --plan-only "${ID[@]}"
+    [ "$(notes_say plan)" = "To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu." ]
+    FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=grub2 run --separate-stderr system alongside "${ID[@]}"
+    [ "$(notes_say done)" = "To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu." ]
+    FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=none run --separate-stderr system alongside "${ID[@]}"
+    [[ "$(notes_say done)" == "The installer couldn't find the other Linux's boot configuration, so it won't be in the startup menu."* ]]
+    ESP_SHIMS=ubuntu ESP_WINDOWS=1 run --separate-stderr system alongside "${ID[@]}"
+    [ "$(notes_say done)" = "$(printf '%s\n' "To start Windows, choose it in the startup menu." \
+        "To start Ubuntu, choose it in the computer's own boot menu. The key that opens it depends on the computer's maker.")" ]
+}
+
 # page_says MODE: the failure page's sentence about the disk, as the installer
 # app words it from the events in $output
 page_says() {
