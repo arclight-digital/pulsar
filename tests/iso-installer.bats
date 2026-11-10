@@ -172,6 +172,33 @@ build() { # extra args...
   [ "$(grep -cE '^      initrd: "\$\{initrdpath\}"$' "${yaml}")" -eq 3 ]
 }
 
+# live_shell_check VERSION: Containerfile.installer's check of the live
+# extension's shell-version, run as written against the repo's metadata.json,
+# with `gnome-shell --version` answering VERSION
+live_shell_check() {
+  local ext=/usr/share/gnome-shell/extensions/pulsar-live@arclight.digital body
+  body=$(awk '/^RUN EXT=\/usr\/share\/gnome-shell\/extensions\/pulsar-live@/ { on = 1 }
+              on { print; if ($0 !~ /\\$/) exit }' "${REAL}/Containerfile.installer")
+  [ -n "${body}" ] || { echo "no shell-version check in Containerfile.installer"; return 3; }
+  body=${body#RUN }
+  body=${body//"${ext}"/"${REAL}/system_files.installer${ext}"}
+  printf '#!/usr/bin/env bash\necho "GNOME Shell %s"\n' "$1" > "${BIN}/gnome-shell"
+  chmod +x "${BIN}/gnome-shell"
+  bash -c "${body}"
+}
+
+@test "the live session's extension declares the Shell the image carries, and the build checks it" {
+  # the same versions as the theme extension, which the main image's build
+  # checks against its Shell and the theme gate runs on
+  local live="${REAL}/system_files.installer/usr/share/gnome-shell/extensions/pulsar-live@arclight.digital/metadata.json"
+  local theme="${REAL}/system_files/usr/share/gnome-shell/extensions/pulsar-theme@arclight.digital/metadata.json"
+  [ "$(jq -c '."shell-version"' "${live}")" = "$(jq -c '."shell-version"' "${theme}")" ]
+  run -0 live_shell_check 51.1
+  run -0 live_shell_check 50.2
+  run -1 live_shell_check 52.0
+  [ "${lines[0]}" = "FATAL: the pulsar-live extension does not declare GNOME Shell 52" ]
+}
+
 # ---------------------------------------------------------------------------
 # The host must know every SELinux type the image labels with. osbuild relabels
 # the live tree on the host, and the 2026-10-18 weekly died in setfiles on
@@ -209,6 +236,25 @@ EOF
 
 installer_build() { # expected status
   run "-$1" "${REAL}/scripts/build-installer-iso.sh" --out "${BATS_TEST_TMPDIR}/out"
+}
+
+@test "a tree without the installer app (or its backend) builds no ISO: no placeholder window stands in" {
+  # the real script, in a bare repo with everything the build copies but one
+  # piece of the installer; podman and the rest are setup()'s stubs
+  local f repo="${BATS_TEST_TMPDIR}/bare"
+  for f in pulsar-installer pulsar-install-system pulsar-install-disk; do
+    rm -rf "${repo}"; mkdir -p "${repo}/scripts" "${repo}/system_files.installer" \
+      "${repo}/system_files/usr/share/pulsar/installer/repart"
+    cp "${REAL}/Containerfile.installer" "${repo}/"
+    cp "${REAL}/scripts/build-installer-iso.sh" "${REAL}/scripts/pulsar-installer" \
+      "${REAL}/scripts/pulsar-install-system" "${REAL}/scripts/pulsar-install-disk" "${repo}/scripts/"
+    rm "${repo}/scripts/${f}"
+    : > "${LOG}"
+    run -1 "${repo}/scripts/build-installer-iso.sh" --out "${BATS_TEST_TMPDIR}/out"
+    [ "${output}" = "scripts/${f} is missing: an ISO without it can't install Pulsar" ]
+    # stopped before anything was pulled or built
+    [ ! -s "${LOG}" ]
+  done
 }
 
 @test "a host missing the image's policy modules is refused before image-builder, and told which" {

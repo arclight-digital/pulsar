@@ -163,6 +163,94 @@ luks_opens_with() {
     [ "$status" -eq 2 ]
 }
 
+# A Linux laid out with the partition types Pulsar's own use (a Fedora, Arch
+# or systemd-repart install): ESP, an XBOOTLDR /boot unless $4 is "-", a root
+# of the discoverable root-x86-64 type, then free space. $1 image, $2 size,
+# $3 root size. Random bytes at each start, as in windows_disk.
+linux_disk() {
+    truncate -s "$2" "$1"
+    {
+        echo "label: gpt"
+        echo 'start=2048, size=100MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="EFI System Partition"'
+        [ "${4:-}" = - ] || echo 'size=64MiB, type=BC13C2FF-59E6-4262-A352-B275FD6F7172, name="boot"'
+        echo "size=$3, type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, name=\"root\""
+    } | sfdisk -q "$1"
+    local s
+    for s in $(starts "$1"); do
+        head -c 1M /dev/urandom | dd of="$1" bs=512 seek="$s" conv=notrunc status=none
+    done
+}
+
+@test "alongside: another Linux's /boot and discoverable root are kept, not taken for Pulsar's (real layouts)" {
+    needs_disk_tools
+    linux_disk "$T/l.img" 128G 30GiB
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/l.img"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | plan_types | sort)" = "$(printf '%s\n' 'esp unchanged' 'root-x86-64 create' \
+        'root-x86-64 unchanged' 'xbootldr create' 'xbootldr unchanged')" ]
+    # the root made is Pulsar's, by its name; the one kept is the other Linux's
+    [ "$(echo "$output" | jq -r '.[] | select(.activity == "create" and .type == "root-x86-64") | .label')" = pulsar ]
+    [ "$(echo "$output" | jq -r '.[] | select(.activity == "unchanged" and .type == "root-x86-64") | .label')" = root ]
+    # an ESP and a discoverable root, nothing else, is another system too
+    linux_disk "$T/r.img" 128G 30GiB -
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/r.img"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | plan_types | sort)" = "$(printf '%s\n' 'esp unchanged' 'root-x86-64 create' \
+        'root-x86-64 unchanged' 'xbootldr create')" ]
+}
+
+@test "apply alongside another Linux: its partitions are byte-for-byte and entry-for-entry unchanged" {
+    needs_disk_tools
+    linux_disk "$T/l.img" 1G 300MiB
+    before=$(fingerprints "$T/l.img")
+    [ "$(echo "$before" | sort -u | grep -vc "$EMPTY_SHA")" -eq 3 ]
+    table_before=$(sfdisk -d "$T/l.img" | grep -E '^\S+[0-9] :')
+    PULSAR_INSTALLER_LAYOUTS="$SMALL" run --separate-stderr "$BIN" apply --mode alongside --key-file "$T/key" "$T/l.img"
+    [ "$status" -eq 0 ]
+    [ "$(sfdisk -d "$T/l.img" | grep -E '^\S+[0-9] :' | head -3)" = "$table_before" ]
+    [ "$(fingerprints "$T/l.img" | head -3)" = "$before" ]
+    [ "$(fingerprints "$T/l.img" | wc -l)" -eq 5 ]
+    [ "$(sfdisk -J "$T/l.img" | jq -r '.partitiontable.partitions[4].name')" = pulsar ]
+    luks_opens_with "$T/l.img" 5 "$PASS"
+}
+
+@test "alongside: a disk Pulsar is already on is refused, by its root's name" {
+    needs_disk_tools
+    # beside Windows, with room for another: a root named as Pulsar names its
+    # own is Pulsar, whatever else is there
+    windows_disk "$T/w.img" 128G 260000000
+    printf 'size=2GiB, type=BC13C2FF-59E6-4262-A352-B275FD6F7172, name="boot"\nsize=32GiB, type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, name="pulsar"\n' |
+        sfdisk -q --append "$T/w.img"
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/w.img"
+    [ "$status" -eq 2 ]
+    [ "$stderr" = "pulsar-install-disk: refused: Pulsar is already on this disk (a root partition named pulsar): erase the disk to install it again" ]
+}
+
+@test "alongside: a disk with nothing but its ESP is refused, and the ESP isn't grown into the free space" {
+    needs_disk_tools
+    truncate -s 128G "$T/d.img"
+    printf 'label: gpt\nsize=100MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n' | sfdisk -q "$T/d.img"
+    PULSAR_INSTALLER_LAYOUTS="$REAL" run --separate-stderr "$BIN" plan --mode alongside "$T/d.img"
+    [ "$status" -eq 2 ]
+    [ "$stderr" = "pulsar-install-disk: refused: nothing to install alongside: the disk has only an EFI system partition" ]
+}
+
+@test "erase: a plan that keeps any partition is refused, whatever its type" {
+    run python3 - "$BIN" <<'PY'
+import importlib.machinery as M, importlib.util as U, sys
+l = M.SourceFileLoader("m", sys.argv[1]); m = U.module_from_spec(U.spec_from_loader("m", l)); l.exec_module(m)
+new = [{"type": t, "activity": "create", "label": t} for t in ("esp", "xbootldr", "root-x86-64")]
+for kept in ({"type": "root-x86-64", "activity": "unchanged", "label": "root"},
+             {"type": "basic", "activity": "unchanged", "label": "Data"}):
+    try:
+        m.check("erase", new + [kept])
+        print("allowed")
+    except m.Refused as e:
+        print(e)
+PY
+    [ "$output" = "$(printf '%s\n' 'an erase plan kept partition root-x86-64 (root)' 'an erase plan kept partition basic (Data)')" ]
+}
+
 @test "apply alongside: Windows' partitions are byte-for-byte and entry-for-entry unchanged" {
     needs_disk_tools
     windows_disk "$T/w.img" 1G 2000000 300MiB

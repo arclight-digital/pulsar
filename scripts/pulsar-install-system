@@ -30,22 +30,42 @@ Progress goes to stdout as one JSON object per line, for the installer app:
 {"stage": "check" | "disk" | "unlock" | "install" | "boot"} as each step
 starts ("unlock" only when encrypted), {"log": "..."} for each line bootc
 and the disk tool print, then {"stage": "done", ...} or {"stage": "failed", "error": ...,
-"restored": true|false}. restored is whether the disk is as it was before:
-true only if nothing was written to it, or, installing alongside, every
-partition this install made was taken back. An erase that began writing is
-never restored: what was on the disk is gone. --plan-only prints
-{"stage": "plan", "plan": [...]} (pulsar-install-disk's dry run) and
-writes nothing; it needs no key (--no-encrypt plans the unencrypted layout).
+"restored": true|false, "disk": ..., "esp": ...}. restored is whether the disk
+is as it was before: true only if nothing was written to it, or, installing
+alongside, every partition this install made was taken back. An erase that
+began writing is never restored: what was on the disk is gone. disk and esp
+say what is known, for the installer app to tell the person:
+  disk  "unchanged"  nothing was written to the disk
+        "unknown"    the disk tool stopped without saying it refused (failed
+                     while writing, crashed, killed): what is on the disk is
+                     unknown
+        "removed"    the disk was partitioned, and every partition this install
+                     made has been deleted again
+        "left"       the disk was partitioned, and some or all of the partitions
+                     this install made are still there
+  esp   (alongside; null for an erase, whose ESP is Pulsar's own)
+        "unchanged"  bootc never ran: nothing was written to the shared ESP
+        "boot_files" bootc ran: its boot files (EFI/fedora) may be on the ESP;
+                     EFI/BOOT was put back as it was
+        "fallback"   bootc ran, and EFI/BOOT could not be put back: the
+                     other system's fallback loader may be replaced too
+--plan-only prints
+{"stage": "plan", "plan": [...], "windows": ...} (pulsar-install-disk's dry
+run; windows, alongside only, whether Windows' boot manager is on the ESP,
+which gets it a startup menu entry) and writes nothing; it needs no key
+(--no-encrypt plans the unencrypted layout).
 
 PULSAR_BOOTC_PREFIX, if set, runs bootc through a wrapper (the test bench
 runs it in the image with podman); the default is the live system's own.
 """
 
 import argparse
+import glob
 import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -57,6 +77,7 @@ DISK_TOOL = os.environ.get("PULSAR_INSTALL_DISK", os.path.join(HERE, "pulsar-ins
 ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 ESP_MIN_FREE = 32 * 2**20      # the install writes ~13.5 MiB; room for bootupd updates
 WINDOWS_LOADER = "EFI/Microsoft/Boot/bootmgfw.efi"
+EFIVARS = "/sys/firmware/efi/efivars"
 LABEL = "Pulsar"
 MAPPER = "pulsar-install-root"
 SCRATCH = "/run/pulsar-install"      # mount points for the target
@@ -66,6 +87,25 @@ class Failed(Exception):
     def __init__(self, msg, code=None):
         super().__init__(msg)
         self.code = code     # the failed command's exit status, when there was one
+
+
+class Stopped(Failed):
+    """SIGTERM or SIGHUP (the session ending): the step running is stopped,
+    its command ended and waited for, then everything is cleaned up as for
+    any failure. Never a clean-up while bootc or the disk tool still writes."""
+
+
+def stop_on_signals():
+    def stop(signum, _frame):
+        raise Stopped(f"stopped by {signal.Signals(signum).name}")
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, stop)
+
+
+def hold_signals():
+    """The clean-up runs to its end: a second signal can't cut it short."""
+    for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(s, signal.SIG_IGN)
 
 
 # pulsar-install-disk's exits: refused before writing anything, or failed
@@ -84,15 +124,46 @@ def note(line):
     RECORD.append(f"[{time.monotonic() - T0:7.1f}s] {line}")
 
 
+def tell(line, stream):
+    """A line for the installer app. If the app has gone (its end of the
+    pipe closed), the install carries on: a print that failed would
+    otherwise end it mid-step, and its clean-up would run while bootc still
+    wrote. The line is in RECORD either way, and the stream is pointed at
+    /dev/null so later lines, and the flush at exit, go nowhere quietly."""
+    try:
+        print(line, file=stream, flush=True)
+    except (OSError, ValueError):
+        try:
+            null = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(null, stream.fileno())
+            os.close(null)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
 def say(msg):
     note("stderr: " + msg)
-    print(msg, file=sys.stderr, flush=True)
+    tell(msg, sys.stderr)
 
 
 def emit(**event):
     line = json.dumps(event)
     note(line)
-    print(line, flush=True)
+    tell(line, sys.stdout)
+
+
+def ended(p):
+    """Stop p and wait for it: a step cut short (a signal, an error while
+    reading its output) never leaves its command running under the clean-up.
+    From here the run is failing: a second signal can't cut the wait short."""
+    hold_signals()
+    if p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
 
 
 UNITS = {"B": 1, "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
@@ -122,32 +193,37 @@ def run_stream(*cmd, watch=None, expected_bytes=None):
     say("+ " + shlex.join(cmd))
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
     tail, expected = [], [expected_bytes]
-    if watch:
-        def used():
-            st = os.statvfs(watch)
-            return (st.f_blocks - st.f_bfree) * st.f_frsize
-        base = used()
+    try:
+        if watch:
+            def used():
+                st = os.statvfs(watch)
+                return (st.f_blocks - st.f_bfree) * st.f_frsize
+            base = used()
 
-        def poll():
-            last = -1.0
-            while p.poll() is None:
-                f = copied_fraction(used(), base, expected[0])
-                if f - last >= 0.005:
-                    emit(progress=round(f, 3))
-                    last = f
-                time.sleep(1)
-        threading.Thread(target=poll, daemon=True).start()
-    for line in p.stdout:
-        line = line.rstrip()
-        if line:
-            emit(log=line)
-            # the larger of what bootc announces (compressed, from some
-            # sources: 3.3 GB for an 8 GB install) and what the ISO measured
-            announced = payload_bytes(line)
-            if announced:
-                expected[0] = max(announced, expected[0] or 0)
-            tail = (tail + [line])[-8:]
-    if p.wait() != 0:
+            def poll():
+                last = -1.0
+                while p.poll() is None:
+                    f = copied_fraction(used(), base, expected[0])
+                    if f - last >= 0.005:
+                        emit(progress=round(f, 3))
+                        last = f
+                    time.sleep(1)
+            threading.Thread(target=poll, daemon=True).start()
+        for line in p.stdout:
+            line = line.rstrip()
+            if line:
+                emit(log=line)
+                # the larger of what bootc announces (compressed, from some
+                # sources: 3.3 GB for an 8 GB install) and what the ISO measured
+                announced = payload_bytes(line)
+                if announced:
+                    expected[0] = max(announced, expected[0] or 0)
+                tail = (tail + [line])[-8:]
+        p.wait()
+    except BaseException:
+        ended(p)
+        raise
+    if p.returncode != 0:
         raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:], p.returncode)
 
 
@@ -157,17 +233,21 @@ def run_logged(*cmd):
     a slow step shows which part of it is slow. Returns its stdout."""
     say("+ " + shlex.join(cmd))
     p = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out = []
-    reader = threading.Thread(target=lambda: out.append(p.stdout.read()), daemon=True)
-    reader.start()
-    tail = []
-    for line in p.stderr:
-        line = line.rstrip()
-        if line:
-            emit(log=line)
-            tail = (tail + [line])[-8:]
-    reader.join()
-    if p.wait() != 0:
+    out, tail = [], []
+    try:
+        reader = threading.Thread(target=lambda: out.append(p.stdout.read()), daemon=True)
+        reader.start()
+        for line in p.stderr:
+            line = line.rstrip()
+            if line:
+                emit(log=line)
+                tail = (tail + [line])[-8:]
+        reader.join()
+        p.wait()
+    except BaseException:
+        ended(p)
+        raise
+    if p.returncode != 0:
         raise Failed(f"{cmd[0]} exited {p.returncode}: " + " | ".join(tail)[-500:], p.returncode)
     return out[0] if out else ""
 
@@ -201,6 +281,9 @@ def esp_of(disk):
 
 
 def preflight_alongside(disk, scratch):
+    """Check the shared ESP, mounted read-only, before anything is written:
+    it must have room for Pulsar's boot files. Returns whether Windows' boot
+    manager is on it, the test windows_entry makes for its menu entry."""
     esp = esp_of(disk)
     mnt = os.path.join(scratch, "esp-check")
     os.makedirs(mnt)
@@ -208,11 +291,13 @@ def preflight_alongside(disk, scratch):
     try:
         st = os.statvfs(mnt)
         free = st.f_bavail * st.f_frsize
+        windows = os.path.isfile(os.path.join(mnt, WINDOWS_LOADER))
     finally:
         run("umount", mnt)
     if free < ESP_MIN_FREE:
         raise Failed(f"The startup files (EFI) partition has {free // 2**20} MiB free. Pulsar needs "
                      f"{ESP_MIN_FREE // 2**20} MiB free there for its boot files.")
+    return windows
 
 
 def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
@@ -322,12 +407,13 @@ def snapshot_fallback(efi_root):
     return {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))}
 
 
-def restore_fallback(efi_root, snap, saved_dir):
+def restore_fallback(efi_root, snap, saved_dir=None):
     """Put EFI/BOOT back as the other system had it: its files as they were,
     what bootupd added there gone. Installing beside Windows leaves Windows'
     fallback loader alone (Nick, 2026-10-02: Ubuntu's way, not Fedora's).
-    Its BOOTX64.EFI is also kept in saved_dir, for pulsar-esp-fallback to
-    put back after a bootloader update replaces it again."""
+    A finished install also keeps its BOOTX64.EFI in saved_dir, for
+    pulsar-esp-fallback to put back after a bootloader update replaces it
+    again; a failed one passes none."""
     d = os.path.join(efi_root, "EFI", "BOOT")
     if os.path.isdir(d):
         for n in os.listdir(d):
@@ -335,10 +421,12 @@ def restore_fallback(efi_root, snap, saved_dir):
                 os.unlink(os.path.join(d, n))
         if not snap:
             os.rmdir(d)
+    if snap:
+        os.makedirs(d, exist_ok=True)
     for n, data in snap.items():
         with open(os.path.join(d, n), "wb") as f:
             f.write(data)
-    if "BOOTX64.EFI" in snap:
+    if "BOOTX64.EFI" in snap and saved_dir:
         os.makedirs(saved_dir, exist_ok=True)
         with open(os.path.join(saved_dir, "BOOTX64.EFI"), "wb") as f:
             f.write(snap["BOOTX64.EFI"])
@@ -361,21 +449,32 @@ menuentry 'Windows' --class windows --class os {{
     return True
 
 
-def firmware_entry(disk, esp, target):
-    if not os.path.isdir("/sys/firmware/efi/efivars"):
-        return "not booted via EFI: no firmware entry"
-    efi = os.path.join(target, "boot/efi/EFI")
-    vendors = [d for d in os.listdir(efi) if d != "BOOT" and os.path.isfile(os.path.join(efi, d, "shimx64.efi"))]
+def own_shim(target):
+    """The ESP directory holding Pulsar's shim: the vendor directory of the
+    installed image's own EFI payload (/usr/lib/efi/<component>/<version>/
+    EFI/<vendor>), which bootupd has just copied to the ESP. Another system's
+    shim beside it (EFI/ubuntu, EFI/debian, EFI/opensuse) is never Pulsar's."""
+    payload = glob.glob(os.path.join(target, "ostree/deploy/*/deploy/*/usr/lib/efi/*/*/EFI/*/shimx64.efi"))
+    vendors = sorted({os.path.basename(os.path.dirname(p)) for p in payload} - {"BOOT"})
     if len(vendors) != 1:
-        raise Failed(f"expected one shim on the ESP, found {vendors}")
+        raise Failed(f"expected one shim in the installed image's EFI payload, found {vendors}")
+    if not os.path.isfile(os.path.join(target, "boot/efi/EFI", vendors[0], "shimx64.efi")):
+        raise Failed(f"the image's shim is not on the ESP: no EFI/{vendors[0]}/shimx64.efi")
+    return vendors[0]
+
+
+def firmware_entry(disk, esp, target):
+    if not os.path.isdir(EFIVARS):
+        return "not booted via EFI: no firmware entry"
+    vendor = own_shim(target)
     partuuid = esp["partuuid"].lower()
     for line in run("efibootmgr", "-v").splitlines():
         m = re.match(r"Boot([0-9A-Fa-f]{4})\*?\s+(.*?)\s+HD\(\d+,GPT,([0-9a-fA-F-]+)", line)
         if m and m.group(2) == LABEL and m.group(3).lower() == partuuid:
             run("efibootmgr", "-b", m.group(1), "-B")
     run("efibootmgr", "--create", "--disk", disk, "--part", str(esp["partn"]),
-        "--loader", f"\\EFI\\{vendors[0]}\\shimx64.efi", "--label", LABEL)
-    return f"firmware entry {LABEL} -> \\EFI\\{vendors[0]}\\shimx64.efi"
+        "--loader", f"\\EFI\\{vendor}\\shimx64.efi", "--label", LABEL)
+    return f"firmware entry {LABEL} -> \\EFI\\{vendor}\\shimx64.efi"
 
 
 def remove_made(disk, made):
@@ -422,6 +521,7 @@ def main():
     if not a.plan_only and (a.expect_size is None or a.expect_serial is None):
         ap.error("installing needs --expect-size and --expect-serial: the disk that was chosen")
     note("$ " + shlex.join(sys.argv))
+    stop_on_signals()
     # what pulsar-install-disk is told: never neither, so it can't default
     plain = ["--no-encrypt"] if a.no_encrypt else []
     # and which drive it must find at a.disk
@@ -433,27 +533,33 @@ def main():
     scratch = tempfile.mkdtemp(prefix="install-", dir=SCRATCH)
     target = os.path.join(scratch, "target")
     mounted, opened, made, ok, error = [], False, set(), False, None
-    # whether anything may have been written to the disk: from the moment
-    # the disk tool starts writing, whether it finished or not
-    changed = False
+    # what is known about the disk (the failed event's disk and esp, above):
+    # unchanged until the disk tool starts, unknown while it runs and if it
+    # stops without refusing, written once it has finished
+    disk = "unchanged"
+    # the shared ESP, beside another system: what was in EFI/BOOT before
+    # bootc (snap), and whether bootc has run and may have written to it
+    snap, bootc_ran = None, False
     try:
         emit(stage="check")
-        if a.mode == "alongside":
-            preflight_alongside(a.disk, scratch)
+        windows = preflight_alongside(a.disk, scratch) if a.mode == "alongside" else None
         if a.plan_only:
             ok = True
-            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, *ident, a.disk)))
+            emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, *ident, a.disk)),
+                 windows=windows)
             return 0
         emit(stage="disk")
+        disk = "unknown"
         try:
             out = run_logged(DISK_TOOL, "apply", "--mode", a.mode, *(plain or ["--key-file", a.key_file]),
                              *ident, a.disk)
         except Failed as e:
             # refused: nothing was written. Anything else (failed partway,
-            # crashed, killed): the disk may have changed
-            changed = e.code != DISK_REFUSED
+            # crashed, killed): the disk may have changed, and how is unknown
+            if e.code == DISK_REFUSED:
+                disk = "unchanged"
             raise
-        changed = True
+        disk = "written"
         # the partitions this install made, by the partition UUIDs repart
         # reports: never guessed from labels or order, which another system
         # on the disk could share. Taken now, before anything else can fail,
@@ -485,12 +591,14 @@ def main():
             os.makedirs(path, exist_ok=True)
             run("mount", dev, path)
             mounted.append(path)
-        snap = snapshot_fallback(os.path.join(target, "boot/efi")) if a.mode == "alongside" else None
+        if a.mode == "alongside":
+            snap = snapshot_fallback(os.path.join(target, "boot/efi"))
         # The passphrase prompt at boot reads the console keymap from the
         # kernel command line: the keys typed into the installer, in the
         # live session's layout, must mean the same there.
         keymap = a.keymap or live_setting("/etc/vconsole.conf", "KEYMAP", "us")
         emit(stage="install")
+        bootc_ran = True
         # rhgb quiet: Silverblue's graphical boot (and passphrase prompt)
         # comes from Anaconda's kickstart, not the image; without them the
         # prompt sat in the boot log's text
@@ -517,6 +625,7 @@ def main():
         error = f"{type(e).__name__}: {e}"
         raise
     finally:
+        hold_signals()
         if ok and mounted:
             # the live session's log is gone at restart: the installed
             # system keeps this one. A log that can't be kept fails nothing
@@ -525,11 +634,21 @@ def main():
                 keep_log(target, RECORD)
             except (OSError, Failed) as e:
                 say(f"pulsar-install-system: could not keep the log in the installed system: {e}")
+        # beside another system, a failed install puts EFI/BOOT back too, as
+        # a finished one does: bootupd may have put Pulsar's loader there
+        esp_state = None if a.mode != "alongside" else "unchanged" if not bootc_ran else "fallback"
+        if not ok and bootc_ran and snap is not None and os.path.join(target, "boot/efi") in mounted:
+            try:
+                restore_fallback(os.path.join(target, "boot/efi"), snap)
+                esp_state = "boot_files"
+                say("pulsar-install-system: put EFI/BOOT on the ESP back as it was")
+            except OSError as e:
+                say(f"pulsar-install-system: could not put EFI/BOOT on the ESP back: {e}")
         for path in reversed(mounted):
             subprocess.run(["umount", path])
         if opened:
             subprocess.run(["cryptsetup", "close", MAPPER])
-        all_gone = not made
+        all_gone = False
         if not ok and made:
             try:
                 gone = remove_made(a.disk, made)
@@ -537,12 +656,16 @@ def main():
                 say(f"pulsar-install-system: removed the {len(gone)} partitions this install made")
             except Failed as e:
                 say(f"pulsar-install-system: could not remove the partitions this install made: {e}")
+        if disk == "written":
+            # made is empty only if repart's plan couldn't be read: then
+            # which partitions it made is unknown, and they are left
+            disk = "removed" if made and all_gone else "left"
         # as it was: nothing written; or, beside another system, everything
         # this install made taken back. An erase that wrote is never undone:
         # what was on the disk is gone, whatever happened to Pulsar's part
-        restored = not changed or (a.mode == "alongside" and bool(made) and all_gone)
+        restored = disk == "unchanged" or (a.mode == "alongside" and disk == "removed")
         if not ok:
-            emit(stage="failed", error=error or "interrupted", restored=restored)
+            emit(stage="failed", error=error or "interrupted", restored=restored, disk=disk, esp=esp_state)
 
 
 if __name__ == "__main__":

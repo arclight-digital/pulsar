@@ -50,6 +50,11 @@ PY
     [[ "$output" == *"'erase': (True,"* ]]
 }
 
+@test "Linux with room beside it: alongside says its partitions aren't changed, nothing more" {
+    run py 'm.options(D["/dev/nvme0n1"] | {"free": 100 * 10**9})["alongside"]'
+    [ "$output" = "(True, \"Uses free space on the disk (up to 100 GB in one place). The Linux partitions aren't changed.\")" ]
+}
+
 @test "BitLocker: alongside refused, with what to do about it" {
     run py 'm.options(D["/dev/sda"])["alongside"]'
     [[ "$output" == "(False, 'BitLocker is on."* ]]
@@ -85,6 +90,35 @@ PY
 
 @test "an NTFS data disk with no startup files is data, not a Windows install" {
     [ "$(py 'D["/dev/sde"]["windows"]')" = "False" ]
+}
+
+@test "an NTFS partition on a Linux disk doesn't make it Windows; Windows Setup's reserved partition does" {
+    # lsblk's shape: ESP, a Linux root, and an NTFS data partition made from Linux
+    run py '(lambda d: (d["holds"], d["windows"]))(m.describe({"name": "sdh", "path": "/dev/sdh", "type": "disk",
+        "size": 10**12, "children": [
+        {"size": 600 * 10**6, "start": 2048, "fstype": "vfat", "parttype": m.ESP},
+        {"size": 200 * 10**9, "start": 1230848, "fstype": "ext4", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"},
+        {"size": 300 * 10**9, "start": 400000000, "fstype": "ntfs", "parttype": m.WINDOWS_DATA, "label": "Shared"}]}))'
+    [ "$output" = "('Linux', False)" ]
+    # the same disk with a Microsoft reserved partition: Windows, beside Linux
+    run py '(lambda d: (d["holds"], d["windows"]))(m.describe({"name": "sdh", "path": "/dev/sdh", "type": "disk",
+        "size": 10**12, "children": [
+        {"size": 600 * 10**6, "start": 2048, "fstype": "vfat", "parttype": m.ESP},
+        {"size": 16 * 2**20, "start": 1230848, "parttype": m.MSR},
+        {"size": 200 * 10**9, "start": 1300000, "fstype": "ext4", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4"},
+        {"size": 300 * 10**9, "start": 400000000, "fstype": "ntfs", "parttype": m.WINDOWS_DATA}]}))'
+    [ "$output" = "('Windows', True)" ]
+}
+
+@test "the ready page tells the person to choose Windows in the startup menu only when the backend found its boot manager" {
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], True)')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it. To start Windows, choose it in the startup menu." ]
+    # called Windows by lsblk, but no boot manager on the ESP: no entry, so no instruction
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme1n1"], False)')" = "Pulsar goes in the free space. The Windows partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
+    [ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], False)')" = "Pulsar goes in the free space. The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it." ]
+    # the boot manager's there whatever the disk was called: the entry is made, so say so
+    [[ "$(py 'm.what_happens("alongside", D["/dev/nvme0n1"], True)')" == *" To start Windows, choose it in the startup menu." ]]
+    [ "$(py 'm.what_happens("erase", D["/dev/sdb"], False)')" = "Pulsar uses the whole disk." ]
+    [ "$(py 'm.what_happens("erase", D["/dev/nvme1n1"], True)')" = "None" ]
 }
 
 @test "the erase page names partitions in words" {
@@ -162,22 +196,68 @@ PY
 }
 
 @test "after a failure the page says what state the disk is in, by mode" {
-    [ "$(py 'm.failure_state("erase", True, planning=True)')" = "Nothing on the disk was changed." ]
-    [ "$(py 'm.failure_state("erase", True)')" = "The disk is as it was before you pressed Install." ]
-    [ "$(py 'm.failure_state("alongside", False)')" = "Pulsar's new partitions may still be on the disk. The disk's other partitions are as they were, except the startup files (EFI) partition, which Pulsar may have written to." ]
-    # beside another system, restored is the partitions only: the shared ESP may have changed
-    [ "$(py 'm.failure_state("alongside", True)')" = "No Pulsar partitions are left. The disk's other partitions are as they were, except the startup files (EFI) partition, which Pulsar may have written to." ]
-    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, and Pulsar isn't installed on it." ]
+    [ "$(py 'm.failure_state("erase", {"disk": "unchanged"}, planning=True)')" = "Nothing on the disk was changed." ]
+    [ "$(py 'm.failure_state("erase", {"disk": "unchanged"})')" = "Nothing on the disk was changed." ]
+    [ "$(py 'm.failure_state("alongside", {"disk": "left", "esp": "fallback"})')" = "Pulsar's new partitions may still be on the disk. The startup files (EFI) partition may still have Pulsar's boot files in it. Its fallback boot file, EFI/BOOT/BOOTX64.EFI, may also have been replaced with Pulsar's. The other partitions weren't changed." ]
+    # beside another system, the shared ESP may have changed even with every partition taken back
+    [ "$(py 'm.failure_state("alongside", {"disk": "removed", "esp": "boot_files"})')" = "Pulsar's new partitions were removed. The startup files (EFI) partition may still have Pulsar's boot files in it. The other partitions weren't changed." ]
+    [ "$(py 'm.failure_state("erase", {"disk": "removed", "esp": None})')" = "The disk was erased, and Pulsar isn't installed on it." ]
 }
 
-@test "a failed install is 'as it was' only on the backend's word, or if it never reached the disk step" {
-    # the backend's failed event decides, either way
-    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": False}])')" = "False" ]
-    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": True}])')" = "True" ]
+@test "a failure before anything was written says so, alongside too: no partitions made, no ESP touched" {
+    # the disk tool refused (a swapped disk, a plan it won't write)
+    [ "$(py 'm.failure_state("alongside", {"disk": "unchanged", "esp": "unchanged"})')" = "Nothing on the disk was changed." ]
+    # partitioned, then failed before bootc: taken back, and the ESP never written
+    [ "$(py 'm.failure_state("alongside", {"disk": "removed", "esp": "unchanged"})')" = "Pulsar's new partitions were removed. The disk's other partitions weren't changed." ]
+}
+
+@test "a failed erase says what is known: unknown when the disk tool stopped partway, and never 'nothing changed' once it may have written" {
+    [ "$(py 'm.failure_state("erase", {"disk": "unknown", "esp": None})')" = "The disk may have been erased. What is on it now is unknown." ]
+    [ "$(py 'm.failure_state("alongside", {"disk": "unknown", "esp": None})')" = "What is on the disk now is unknown." ]
+    # the partitions it made couldn't be taken back
+    [ "$(py 'm.failure_state("erase", {"disk": "left", "esp": None})')" = "The disk was erased, and Pulsar's new partitions may still be on it." ]
+    # a state this app doesn't know is unknown, not unchanged
+    [ "$(py 'm.failure_state("erase", {"disk": "something new"})')" = "The disk may have been erased. What is on it now is unknown." ]
+    # every erase that may have written says erased, and none says nothing changed
+    run py '[m.failure_state("erase", {"disk": d, "esp": None}) for d in ("unknown", "removed", "left", None)]'
+    [[ "$output" != *"Nothing on the disk"* ]]
+    [ "$(grep -o erased <<<"$output" | wc -l)" -eq 4 ]
+}
+
+@test "what a failed install left is the backend's word; killed, it is what the stages it reached say" {
+    # the backend's failed event decides
+    [ "$(py 'm.disk_state([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": False, "disk": "left", "esp": "fallback"}])')" = "{'disk': 'left', 'esp': 'fallback'}" ]
+    [ "$(py 'm.disk_state([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": True, "disk": "removed", "esp": "boot_files"}])')" = "{'disk': 'removed', 'esp': 'boot_files'}" ]
+    # a failed event that doesn't say: unknown, never as it was
+    [ "$(py 'm.disk_state([{"stage": "disk"}, {"stage": "failed", "restored": True}])["disk"]')" = "unknown" ]
     # killed with no failed event: the disk step is where writing starts
-    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"log": "Encrypting future partition 3..."}])')" = "False" ]
-    [ "$(py 'm.disk_restored([{"stage": "check"}])')" = "True" ]
-    [ "$(py 'm.disk_restored([])')" = "True" ]
+    [ "$(py 'm.disk_state([{"stage": "check"}, {"stage": "disk"}, {"log": "Encrypting future partition 3..."}])')" = "{'disk': 'unknown', 'esp': None}" ]
+    [ "$(py 'm.disk_state([{"stage": "check"}])')" = "{'disk': 'unchanged', 'esp': 'unchanged'}" ]
+    [ "$(py 'm.disk_state([])')" = "{'disk': 'unchanged', 'esp': 'unchanged'}" ]
+    # killed after the disk tool finished: partitioned; from the install step on, the ESP too
+    [ "$(py 'm.disk_state([{"stage": "disk"}, {"stage": "unlock"}])')" = "{'disk': 'left', 'esp': 'unchanged'}" ]
+    [ "$(py 'm.disk_state([{"stage": "disk"}, {"stage": "unlock"}, {"stage": "install"}, {"progress": 0.4}])')" = "{'disk': 'left', 'esp': 'fallback'}" ]
+}
+
+@test "a stop signal mid-install waits for the backend; otherwise the app quits" {
+    run py '(lambda g: (g.stop(False), g.pending, g.stop(True), g.pending))(m.QuitGuard())'
+    [ "$output" = "(True, False, False, True)" ]
+    # wired: SIGTERM, SIGHUP and SIGINT go to the guard, and a finished
+    # install quits when one is pending
+    run python3 - "$APP" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+inst = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "Installer")
+flat = lambda n: "".join(ast.unparse(n).split())
+src = flat(inst)
+print("GLib.unix_signal_add(GLib.PRIORITY_HIGH,sig,self._stop_signal,sig)" in src,
+      "forsigin(signal.SIGTERM,signal.SIGHUP,signal.SIGINT)" in src)
+installed = next(n for n in ast.walk(inst) if isinstance(n, ast.FunctionDef) and n.name == "installed")
+print("ifself.guard.pending:self.get_application().quit()" in flat(installed))
+close = next(n for n in ast.walk(inst) if isinstance(n, ast.FunctionDef) and n.name == "_close_request")
+print("ifnotself.installing:returnFalse" in flat(close))
+PY
+    [ "$output" = "$(printf 'True True\nTrue\nTrue')" ]
 }
 
 @test "elapsed time reads as minutes and seconds" {

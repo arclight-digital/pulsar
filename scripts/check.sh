@@ -95,7 +95,7 @@ echo "theme engine: compiles"
 # line continuation costs a full image build to discover, which is exactly
 # how it reached main once.
 say "shellcheck the Containerfile RUN bodies"
-./scripts/lint-containerfile.sh Containerfile Containerfile.nvidia
+./scripts/lint-containerfile.sh Containerfile Containerfile.nvidia Containerfile.installer
 
 # The greenboot health checks are shipped shell too, and a syntax error in
 # one of them is a red boot on every machine that pulls the image.

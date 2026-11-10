@@ -23,7 +23,11 @@ is only ever one somebody asked for.
   alongside  DISK keeps every partition it has. Pulsar goes into the free space
              and shares the existing EFI system partition. The plan must leave
              every existing partition unchanged, reuse an ESP rather than make
-             one, and create only /boot and the root.
+             one, and create only /boot and the root. repart gives an existing
+             partition to the first definition of its type, so another Linux's
+             /boot or root (XBOOTLDR, or the discoverable root type) would be
+             taken for Pulsar's: each one is first held by a placeholder
+             definition that leaves it as it is.
 
 `apply` re-plans first and refuses unless the plan passes the same checks, so a
 caller can't apply something it never saw. repart decides the layout; this
@@ -34,6 +38,7 @@ has changed, and what is on it now is unknown.
 """
 
 import argparse
+import collections
 import json
 import os
 import shutil
@@ -42,8 +47,12 @@ import sys
 import tempfile
 
 LAYOUTS = os.environ.get("PULSAR_INSTALLER_LAYOUTS", "/usr/share/pulsar/installer/repart")
-OURS = {"esp", "xbootldr", "root-x86-64"}
 CREATED = {"erase": ["esp", "xbootldr", "root-x86-64"], "alongside": ["xbootldr", "root-x86-64"]}
+# The name every Pulsar install gives its root partition (30-root.conf's
+# Label=): what tells Pulsar's root from another Linux's. The partition types
+# can't: a Fedora, Arch or systemd-repart install uses the same
+# discoverable root type, and XBOOTLDR for its /boot.
+ROOT_LABEL = "pulsar"
 
 
 class Refused(Exception):
@@ -70,6 +79,8 @@ def definitions(mode, encrypt, scratch):
     enc = [l for l in lines if l.strip().startswith("Encrypt=")]
     if [l.strip() for l in enc] != [ENCRYPT_LINE]:
         raise Refused(f"{mode}/{ROOT_CONF} should have exactly one {ENCRYPT_LINE} line, has {enc}")
+    if f"Label={ROOT_LABEL}" not in (l.strip() for l in lines):
+        raise Refused(f"{mode}/{ROOT_CONF} should name the root Label={ROOT_LABEL}, which check() knows it by")
     if encrypt:
         return shipped
     plain = os.path.join(scratch, mode)
@@ -124,6 +135,33 @@ def repart(mode, defs, disk, key_file, dry_run):
     return json.loads(r.stdout)
 
 
+def survey(mode, disk, scratch):
+    """Every partition already on DISK, with repart's name for its type: a
+    dry run with no definitions, which leaves each one unchanged."""
+    none = os.path.join(scratch, "survey")
+    os.makedirs(none)
+    return repart(mode, none, disk, None, dry_run=True)
+
+
+def hold_existing(defs, existing, scratch):
+    """The layout, with one placeholder ahead of Pulsar's own definitions for
+    each partition already on the disk of a type Pulsar creates. repart
+    matches existing partitions to definitions by type alone, in file-name
+    order: without these, another Linux's root was given to 30-root.conf and
+    grown to fit it, and its XBOOTLDR /boot to 20-boot.conf. A placeholder
+    has no Format= and Weight=0, so its partition is left as it is."""
+    held = collections.Counter(p["type"] for p in existing if p["type"] in CREATED["alongside"])
+    if not held:
+        return defs
+    out = os.path.join(scratch, "held")
+    shutil.copytree(defs, out)
+    for t, n in held.items():
+        for i in range(n):
+            with open(os.path.join(out, f"00-existing-{t}-{i}.conf"), "w") as f:
+                f.write(f"[Partition]\nType={t}\nWeight=0\n")
+    return out
+
+
 def short_serial(serial):
     return f"serial ending {serial[-4:]}" if serial else "no serial number"
 
@@ -157,15 +195,19 @@ def check(mode, plan):
     for p in plan:
         if p["activity"] not in ("create", "unchanged"):
             raise Refused(f"plan would {p['activity']} partition {p['type']} ({p['label']})")
+    kept = [p for p in plan if p["activity"] != "create"]
     if mode == "erase":
-        if any(p["type"] not in OURS for p in plan):
-            raise Refused("an erase plan kept a partition that isn't Pulsar's")
+        if kept:
+            raise Refused(f"an erase plan kept partition {kept[0]['type']} ({kept[0]['label']})")
         return
     esps = [p for p in plan if p["type"] == "esp"]
     if len(esps) != 1 or esps[0]["activity"] != "unchanged":
         raise Refused("installing alongside needs exactly one existing EFI system partition")
-    if not any(p["type"] not in OURS for p in plan):
-        raise Refused("nothing to install alongside: the disk has only EFI, boot and root partitions")
+    if any(p["type"] == "root-x86-64" and p["label"] == ROOT_LABEL for p in kept):
+        raise Refused(f"Pulsar is already on this disk (a root partition named {ROOT_LABEL}): "
+                      "erase the disk to install it again")
+    if not any(p["type"] != "esp" for p in kept):
+        raise Refused("nothing to install alongside: the disk has only an EFI system partition")
 
 
 def main():
@@ -185,6 +227,8 @@ def main():
         with tempfile.TemporaryDirectory(prefix="pulsar-layouts-") as scratch:
             defs = definitions(a.mode, not a.no_encrypt, scratch)
             same_disk(a.disk, a.expect_size, a.expect_serial)
+            if a.mode == "alongside":
+                defs = hold_existing(defs, survey(a.mode, a.disk, scratch), scratch)
             plan = repart(a.mode, defs, a.disk, a.key_file, dry_run=True)
             check(a.mode, plan)
             if a.action == "apply":

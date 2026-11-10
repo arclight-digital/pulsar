@@ -8,7 +8,8 @@ install. An empty disk skips the "how" page: there is
 one way. The work is pulsar-install-system's, run with pkexec; this app only
 asks, shows, and waits. Nothing is written to any disk before the last
 page's button, which says "Erase and Install" whenever it deletes anything,
-and the window can't be closed while the backend is writing.
+and the window can't be closed while the backend is writing: a SIGTERM,
+SIGHUP or SIGINT then waits for the backend to finish before the app quits.
 
 For tests and screenshots, each outside piece can be swapped:
   PULSAR_INSTALLER_LSBLK      a file holding `lsblk -J -b -o ...` output
@@ -26,6 +27,7 @@ import os
 import re
 import pathlib
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -55,6 +57,7 @@ NEEDS_ERASE = 36 * GiB
 NEEDS_ALONGSIDE = 36 * GiB
 ESP = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 WINDOWS_DATA = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+MSR = "e3c9e316-0b5c-4db8-817d-f92df00215ae"
 LINUX_FS = {"ext4", "ext3", "btrfs", "xfs", "crypto_LUKS", "swap", "f2fs"}
 LSBLK_COLS = "NAME,PATH,TYPE,SIZE,RO,RM,TRAN,MODEL,VENDOR,SERIAL,FSTYPE,PARTTYPE,PARTLABEL,LABEL,START,MOUNTPOINTS"
 
@@ -178,34 +181,93 @@ def tell_apart(found):
     return found
 
 
-def failure_state(mode, restored, planning=False):
-    """What the disk is like after a failure, said plainly. restored is the
-    backend's word that the disk is as it was: nothing written, or (beside
-    another system) everything it made taken back. An erase that wrote
-    never is."""
-    if planning:
+def failure_state(mode, known, planning=False):
+    """What the disk is like after a failure, said plainly, from what the
+    backend knows (disk_state): never more than that, and an erase never
+    less than it may have done."""
+    disk, esp = known.get("disk"), known.get("esp")
+    if planning or disk == "unchanged":
         return "Nothing on the disk was changed."
-    if restored and mode == "erase":
-        return "The disk is as it was before you pressed Install."
-    # beside another system, restored counts partitions only: what bootc
-    # wrote to the shared ESP is not taken back
-    kept = ("The disk's other partitions are as they were, except the startup files (EFI) "
-            "partition, which Pulsar may have written to.")
-    if restored:
-        return "No Pulsar partitions are left. " + kept
+    if disk not in ("removed", "left"):
+        # the disk tool stopped partway or crashed, or the backend was killed
+        # after it started: nothing is known
+        return ("The disk may have been erased. What is on it now is unknown." if mode == "erase"
+                else "What is on the disk now is unknown.")
+    if mode == "erase":
+        return ("The disk was erased, and Pulsar isn't installed on it." if disk == "removed"
+                else "The disk was erased, and Pulsar's new partitions may still be on it.")
+    said = ["Pulsar's new partitions were removed." if disk == "removed"
+            else "Pulsar's new partitions may still be on the disk."]
+    if esp == "unchanged":
+        said.append("The disk's other partitions weren't changed.")
+    else:
+        said.append("The startup files (EFI) partition may still have Pulsar's boot files in it.")
+        if esp != "boot_files":
+            said.append("Its fallback boot file, EFI/BOOT/BOOTX64.EFI, may also have been replaced "
+                        "with Pulsar's.")
+        said.append("The other partitions weren't changed.")
+    return " ".join(said)
+
+
+def what_happens(mode, d, windows_loader):
+    """The ready page's "What happens" row, or None when the red erase
+    panel says it. windows_loader is the backend's plan saying whether
+    Windows' boot manager is on the ESP Pulsar shares, which is what gets
+    Windows an entry in Pulsar's startup menu (pulsar-install-system
+    windows_entry); the disk's label is only lsblk's guess."""
     if mode == "alongside":
-        return "Pulsar's new partitions may still be on the disk. " + kept
-    return "The disk was erased, and Pulsar isn't installed on it."
+        # TODO(copy): the startup menu shows for 1 s (see done_page). Say how to reach it?
+        # TODO(copy): how does the person start the other Linux? Pulsar's GRUB has no entry
+        # for it; its own firmware entry is kept, behind Pulsar's. A Fedora-family Linux
+        # shares EFI/fedora, which bootupd writes Pulsar's boot files into.
+        kept = {"Windows": "The Windows partitions aren't changed.",
+                "Linux": "The Linux partitions aren't changed."}.get(d["holds"],
+                                                                     "The partitions with your files aren't changed.")
+        start = " To start Windows, choose it in the startup menu." if windows_loader else ""
+        return f"Pulsar goes in the free space. {kept} Once Pulsar is installed, the computer starts it.{start}"
+    return None if install_destroys(mode, d) else "Pulsar uses the whole disk."
 
 
-def disk_restored(events):
-    """Whether a failed install left the disk as it was: the backend's
-    failed event says. Without one (it was killed), only if it never
-    reached the disk step, where writing starts."""
+def disk_state(events):
+    """What is known about the disk after a failed install: the backend's
+    failed event says (its disk and esp, documented in
+    pulsar-install-system). Without one (it was killed, so its clean-up may
+    not have run), the stages it reached say what they can: nothing is
+    written before the disk step; a stage after it means the disk tool
+    finished, so the disk was partitioned (an erase, erased) and Pulsar's
+    partitions may be on it; from the install step on, bootc may have
+    written to the ESP. Killed during the disk step, nothing is known."""
     failed = next((e for e in events if e.get("stage") == "failed"), None)
     if failed is not None:
-        return bool(failed.get("restored", False))
-    return not any(e.get("stage") == "disk" for e in events)
+        return {"disk": failed.get("disk") or "unknown", "esp": failed.get("esp")}
+    reached = {e.get("stage") for e in events}
+    if "disk" not in reached:
+        return {"disk": "unchanged", "esp": "unchanged"}
+    if reached & {"install", "boot"}:
+        return {"disk": "left", "esp": "fallback"}
+    if "unlock" in reached:
+        return {"disk": "left", "esp": "unchanged"}
+    return {"disk": "unknown", "esp": None}
+
+
+class QuitGuard:
+    """Whether the app may quit when told to by a signal (SIGTERM, SIGHUP,
+    SIGINT: the session ending, a kill). While the backend installs, the app
+    waits for it and quits once it has finished: the backend runs as root,
+    so the app can't stop it, and an app gone mid-install leaves it writing
+    with nobody reading. The window's close is refused meanwhile
+    (_close_request)."""
+
+    def __init__(self):
+        self.pending = False
+
+    def stop(self, installing):
+        """A stop signal arrived: True to quit now. While installing, False,
+        and pending says to quit when the install ends."""
+        if installing:
+            self.pending = True
+            return False
+        return True
 
 
 def backend_argv(mode, d, *args):
@@ -256,8 +318,12 @@ def describe(disk):
         "size": disk["size"],
         "usb": disk.get("tran") == "usb" or bool(disk.get("rm")),
         # a Windows that starts from this disk: its startup files (an ESP)
-        # beside NTFS or BitLocker. A lone NTFS disk is data, not Windows.
-        "windows": ESP in ptypes and ("ntfs" in fs or "BitLocker" in fs),
+        # beside NTFS or BitLocker. A lone NTFS disk is data, not Windows, and
+        # so is an NTFS partition on a Linux disk: there, only the Microsoft
+        # reserved partition Windows Setup makes says Windows is on it. This
+        # is lsblk's guess; whether Windows' boot manager is on the ESP (what
+        # gets it a startup menu entry) is the backend's to say, in its plan.
+        "windows": ESP in ptypes and ("ntfs" in fs or "BitLocker" in fs) and (MSR in ptypes or not fs & LINUX_FS),
         "bitlocker": "BitLocker" in fs,
         "linux": bool(fs & LINUX_FS),
         "esp": ESP in ptypes,
@@ -273,7 +339,7 @@ def describe(disk):
     return d
 
 
-PART_NAMES = {ESP: "Startup files (EFI)", "e3c9e316-0b5c-4db8-817d-f92df00215ae": "Microsoft reserved",
+PART_NAMES = {ESP: "Startup files (EFI)", MSR: "Microsoft reserved",
               "de94bba4-06d1-4d40-a16a-bfd50179d6ac": "Windows recovery"}
 
 
@@ -322,11 +388,9 @@ def options(d):
         along = (False, f"Needs {human(NEEDS_ALONGSIDE)} of free space in one place. "
                         f"This disk has at most {human(d['free'])} in one place. " + how)
     else:
-        # Windows' partitions are untouched (pulsar-install-disk check()), but the shared ESP
-        # is written to and Pulsar's firmware entry goes first: the ready page says so.
-        # "Linux stays as it is" is left as it was: beside a Linux with its own shim the
-        # install fails (one-shim check in pulsar-install-system), a code bug.
-        keep = {"Windows": " The Windows partitions aren't changed.", "Linux": " Linux stays as it is."}
+        # The other system's partitions are untouched (pulsar-install-disk check()), but the
+        # shared ESP is written to and Pulsar's firmware entry goes first: the ready page says so.
+        keep = {"Windows": " The Windows partitions aren't changed.", "Linux": " The Linux partitions aren't changed."}
         along = (True, f"Uses free space on the disk (up to {human(d['free'])} in one place)."
                        + keep.get(d["holds"], ""))
     return {"alongside": along, "erase": erase}
@@ -601,10 +665,20 @@ def main():
             self.installing = False
             self.logf, self.log_t0 = None, time.monotonic()
             self.connect("close-request", self._close_request)
+            self.guard = QuitGuard()
+            for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+                GLib.unix_signal_add(GLib.PRIORITY_HIGH, sig, self._stop_signal, sig)
             self.nav = Adw.NavigationView()
             self.set_content(self.nav)
             self.welcome = self.welcome_page()
             self.nav.add(self.welcome)
+
+        def _stop_signal(self, sig):
+            if self.guard.stop(self.installing):
+                self.get_application().quit()
+            else:
+                self.note(f"{signal.Signals(sig).name}: quitting once the install has finished")
+            return GLib.SOURCE_CONTINUE
 
         def _close_request(self, *_):
             if not self.installing:
@@ -784,13 +858,13 @@ def main():
 
         def planned(self, events, code):
             self.nav.pop()
-            plan = next((e["plan"] for e in events if e.get("stage") == "plan"), None)
-            if code != 0 or plan is None:
-                self.nav.push(self.failed_page(self.error_of(events), restored=True, planning=True))
+            ev = next((e for e in events if e.get("stage") == "plan"), None)
+            if code != 0 or ev is None:
+                self.nav.push(self.failed_page(self.error_of(events), {"disk": "unchanged"}, planning=True))
                 return
-            self.nav.push(self.summary_page(plan))
+            self.nav.push(self.summary_page(ev["plan"], bool(ev.get("windows"))))
 
-        def summary_page(self, plan):
+        def summary_page(self, plan, windows_loader=False):
             d = self.disk
             root = next((p for p in plan if p["type"].startswith("root")), None)
             destroys = install_destroys(self.mode, d)
@@ -799,14 +873,9 @@ def main():
                     ("Encryption", encryption_summary(self.encrypt))]
             # an erase says so first, in red, above everything else; an
             # install that deletes nothing says what it does in the list
-            if self.mode == "alongside":
-                # TODO(copy): the startup menu shows for 1 s (see done_page). Say how to reach it?
-                rows.insert(1, ("What happens", "Pulsar goes in the free space. " + {
-                    "Windows": "The Windows partitions aren't changed. Once Pulsar is installed, the "
-                               "computer starts it. To start Windows, choose it in the startup menu.",
-                    "Linux": "Linux stays as it is."}.get(d["holds"], "The partitions with your files aren't changed.")))
-            elif not destroys:
-                rows.insert(1, ("What happens", "Pulsar uses the whole disk."))
+            happens = what_happens(self.mode, d, windows_loader)
+            if happens:
+                rows.insert(1, ("What happens", happens))
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
             for k, v in rows:
                 listbox.append(row(title=k, subtitle=v, subtitle_selectable=True, css_classes=["property"]))
@@ -889,11 +958,15 @@ def main():
                     os.unlink(self.key_path)
                 except OSError:
                     pass
+            if self.guard.pending:
+                # told to stop while it installed: it has finished, so go now
+                self.get_application().quit()
+                return
             done = next((e for e in events if e.get("stage") == "done"), None)
             if code == 0 and done:
                 self.nav.push(self.done_page(int(time.monotonic() - self.started), done))
             else:
-                self.nav.push(self.failed_page(self.error_of(events), restored=disk_restored(events)))
+                self.nav.push(self.failed_page(self.error_of(events), disk_state(events)))
 
         def done_page(self, secs, done):
             restart = Gtk.Button(label="Restart Now", css_classes=["suggested-action", "in-big"],
@@ -917,7 +990,7 @@ def main():
             page.connect("shown", lambda *_: restart.grab_focus())
             return page
 
-        def failed_page(self, error, restored, planning=False):
+        def failed_page(self, error, known, planning=False):
             head = "The install can't start" if planning else "The install didn't finish"
             more = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             more.append(label(error, ["in-log"], 0, selectable=True, max_width_chars=70))
@@ -929,7 +1002,7 @@ def main():
             # the disk list is read again: a failed install may have changed what is on a disk
             again.connect("clicked", lambda *_: self.nav.replace([self.welcome, self.disk_page()]))
             page = nav_page("Problem", "failed", column(
-                label(head, ["in-title"]), label(failure_state(self.mode, restored, planning), ["in-lede"]),
+                label(head, ["in-title"]), label(failure_state(self.mode, known, planning), ["in-lede"]),
                 details, Gtk.Box(height_request=8), again))
             page.set_can_pop(False)
             return page
@@ -1008,7 +1081,7 @@ def main():
             win.mode = mode
             win.encrypt = encrypt
             win.passphrase = "x" * 8 if encrypt else None
-            win.nav.push(win.summary_page(plan))
+            win.nav.push(win.summary_page(plan, windows_loader=True))
         steps = [("welcome", lambda: None),
                  ("disks", lambda: win.nav.push(win.disk_page())),
                  ("method", lambda: win.pick_disk(d)),
@@ -1022,7 +1095,8 @@ def main():
                  ("installing", lambda: win.install()),
                  ("done", lambda: win.nav.push(win.done_page(187, {"windows_entry": True}))),
                  ("failed", lambda: win.nav.push(win.failed_page(
-                     "unshare exited 1: error: Installing to filesystem: no space left on device", restored=True)))]
+                     "unshare exited 1: error: Installing to filesystem: no space left on device",
+                     {"disk": "removed", "esp": "boot_files"})))]
         # the pages whose mark rises in: shot once it has
         slow = {"welcome": 1400, "done": 1400, "done-off": 1400, "installing": 4000}
 

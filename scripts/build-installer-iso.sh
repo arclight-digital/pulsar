@@ -19,9 +19,6 @@
 # storage: both refs are read from it (Local), so the payload is pulled
 # there first if it isn't already. Needs image-builder >= v49 (Fedora's
 # package, or ghcr.io/osbuild/image-builder-cli).
-#
-# Before the GUI exists, a placeholder window stands in for
-# scripts/pulsar-installer so the live session can be tested end to end.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,6 +40,12 @@ case "$VARIANT" in
 esac
 PAYLOAD=${PAYLOAD:-$IMAGE}
 TARGET=${TARGET:-$PAYLOAD}
+# The live session opens the installer app; an ISO without it can't install.
+# (Before the app existed, a placeholder window stood in for it, and an ISO
+# built from a tree that had lost the app would have shipped that window.)
+for f in scripts/pulsar-installer scripts/pulsar-install-system scripts/pulsar-install-disk; do
+  [ -f "$REPO/$f" ] || { echo "$f is missing: an ISO without it can't install Pulsar" >&2; exit 1; }
+done
 [ "$(id -u)" -eq 0 ] || { echo "run as root (image-builder needs the rootful storage)" >&2; exit 1; }
 command -v image-builder >/dev/null || { echo "image-builder not found" >&2; exit 1; }
 
@@ -53,26 +56,8 @@ mkdir -p "$ctx/scripts" "$ctx/system_files/usr/share/pulsar/installer"
 cp "$REPO/Containerfile.installer" "$ctx/"
 cp -r "$REPO/system_files.installer" "$ctx/"
 cp -r "$REPO/system_files/usr/share/pulsar/installer/repart" "$ctx/system_files/usr/share/pulsar/installer/"
-cp "$REPO/scripts/pulsar-install-disk" "$REPO/scripts/pulsar-install-system" "$ctx/scripts/"
-if [ -f "$REPO/scripts/pulsar-installer" ]; then
-  cp "$REPO/scripts/pulsar-installer" "$ctx/scripts/"
-else
-  echo "note: no scripts/pulsar-installer yet; using a placeholder window" >&2
-  cat > "$ctx/scripts/pulsar-installer" <<'EOF'
-#!/usr/bin/python3
-# PLACEHOLDER until scripts/pulsar-installer exists: proves the live session
-# starts the installer.
-import gi
-gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk
-app = Adw.Application(application_id="digital.arclight.Pulsar.Installer")
-app.connect("activate", lambda a: Adw.ApplicationWindow(
-    application=a, title="Install Pulsar", default_width=900, default_height=640,
-    content=Adw.StatusPage(title="Install Pulsar", description="Placeholder installer window")).present())
-app.run(None)
-EOF
-fi
+cp "$REPO/scripts/pulsar-install-disk" "$REPO/scripts/pulsar-install-system" "$REPO/scripts/pulsar-installer" \
+  "$ctx/scripts/"
 
 podman image exists "$PAYLOAD" || podman pull "$PAYLOAD"
 podman image exists "$IMAGE" || podman pull "$IMAGE"
