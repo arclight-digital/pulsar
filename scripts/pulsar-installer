@@ -844,9 +844,6 @@ def main():
                 srcs = []
             self.layout, self.variant = current_layout(srcs)
             self.keymap = console_keymap(self.layout, self.variant)
-            # TODO(copy): say that the passphrase prompt at startup uses this layout? Only the
-            # karg is tested (tests/install-disk.bats); nothing boots a non-US keymap through
-            # the graphical prompt, and console_keymap falls back to the XKB code itself.
             kbd = label(f"Keyboard layout: {layout_name(self.layout, self.variant)}.", ["in-note"])
             nxt = Gtk.Button(label="Next", css_classes=["suggested-action", "in-pill"], sensitive=False)
 
@@ -1006,9 +1003,6 @@ def main():
             extra = [label(note, ["in-note"]) for note in startup_notes(done)]
             page = nav_page("Done", "done", column(
                 mark(120), label("Pulsar is installed", ["in-display"]),
-                # TODO(copy): when is it safe to take the USB stick out? The repo doesn't say.
-                # Pulsar's firmware entry is first after the install (tests/installer-vm/README.md),
-                # so a stick left in shouldn't start the installer again.
                 label("Restart the computer and remove the USB stick.", ["in-lede"]),
                 label(first_start(self.encrypt), ["in-note"]),
                 *extra, Gtk.Box(height_request=8), restart))
