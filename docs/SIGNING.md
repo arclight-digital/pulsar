@@ -5,7 +5,8 @@ Pulsar needs two unrelated signatures:
 | | signs | key | when |
 |---|---|---|---|
 | **kernel module** | `nvidia.ko` bytes | the MOK key shipped as `MOK.der` | during the image build |
-| **image** | a published image digest; an ISO's checksum manifest | the release key (cosign) | on the build host, after the boot gate |
+| **image** | a published image digest | the release key (cosign) | on the build host, after the boot gate |
+| **ISO** | an ISO's checksum manifest | the release key (cosign) | at the end of the weekly ISO build (`scripts/build-iso.sh`) |
 
 Only the module signature involves Secure Boot. With Secure Boot on, a module
 signed by a key the machine hasn't enrolled doesn't load, and replacing that
