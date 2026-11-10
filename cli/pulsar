@@ -178,8 +178,7 @@ check_ntsync() {
     elif grep -q '^ntsync ' /proc/modules 2>/dev/null; then
         record ntsync warn "ntsync module loaded but /dev/ntsync is missing" "check 70-ntsync.rules"
     else
-        # TODO(copy): what does a game lose without ntsync (Proton's fallback)?
-        record ntsync warn "ntsync not available"
+        record ntsync warn "ntsync not available" "games still run, through Proton's slower fallback (fsync)"
     fi
 }
 
@@ -437,10 +436,8 @@ check_nvidia() {
                    "the vanilla image fits it: sudo bootc switch ghcr.io/arclight-digital/pulsar:latest"
             return
         fi
-        # TODO(copy): what usually keeps the module from loading here (Secure
-        # Boot without the enrolled key?), and what fixes it?
         record nvidia fail "NVIDIA image, but no nvidia module is loaded" \
-               "check the kernel log: dmesg | grep -i nvidia"
+               "with Secure Boot on, the module loads only after Pulsar's key is enrolled: mokutil --test-key /etc/pki/pulsar/MOK.der (the README has the steps)"
         return
     fi
     local running expected
@@ -457,10 +454,8 @@ check_nvidia() {
         *[!0-9.]*|'') expected="" ;;
     esac
     if [ -n "$expected" ] && [ "$running" != "$expected" ]; then
-        # TODO(copy): what should this tell the user to do? It used to say
-        # "a reboot into the staged deployment usually reconciles this", but
-        # nothing here looks for a staged deployment.
-        record nvidia warn "driver ${running}, image expects ${expected}"
+        record nvidia warn "driver ${running}, image expects ${expected}" \
+               "restart into the current image; if it persists, run: pulsar report"
     else
         record nvidia ok "nvidia-open ${running} loaded"
     fi
@@ -4594,8 +4589,7 @@ cmd_verify() {
     # Echoed first: the point of the command is that you can check it yourself,
     # and a verifier you cannot read is not much of one.
     printf '%s%s%s\n' "$C_DIM" "$cmd" "$C_RESET"
-    # TODO(copy): where should a user get cosign (Fedora's package, in a toolbox?)
-    have cosign || die "cosign is not on this machine; run the command above where it is"
+    have cosign || die "cosign is not on this machine. Install it in a toolbox (toolbox run sudo dnf install -y cosign), then run the command above with toolbox run"
     if cosign verify --key "$key" "$image" >/dev/null 2>&1; then
         printf 'signed with the release key, and the signature is logged in Rekor\n'
         return 0
@@ -5408,9 +5402,7 @@ gpu_fault_notify_one() {
     have notify-send || return 0
     if [ "$kind" = gpu ]; then
         title=$what
-        # TODO(copy): after a GPU-level Xid (79, 62, 119, 120, 154), what should
-        # the user do, and do apps on the GPU recover without a restart?
-        body="Xid ${xid}. Details: pulsar doctor gpu-faults"
+        body="Xid ${xid}. If apps stop drawing, save what you can and restart. Details: pulsar doctor gpu-faults"
         q="The NVIDIA driver logged Xid ${xid} (${what}). Explain what it means on this machine and whether it points to the driver, the GPU or its power, and what I should do."
     elif [ -z "$name" ]; then
         # The driver did not log which program: say what happened, name none.
@@ -6395,8 +6387,7 @@ checkpoint_restore_home() {
         [ "$rc" -eq 0 ] || die "restoring ${hdir} failed part way (tar exit ${rc}); run: sudo pulsar checkpoint diff ${dir##*/}"
         printf 'restored in %s:\n' "$hdir"
         printf '%s\n' "$changes" | awk -F'\t' '$1 != "added" { sub(/^\.\//, "~/", $2); print "  " $1 "  " $2 }'
-        # TODO(copy): does a restored ~/.config/dconf/user take effect at the next
-        # login, or can the running dconf-service write over it first?
+        printf 'log out and back in so every app reads the restored settings\n'
     else
         rm -rf "$t"
         printf '%s: no settings changed or deleted since %s\n' "$hdir" "${dir##*/}"
@@ -6429,9 +6420,6 @@ checkpoint_drop() {
 }
 
 checkpoint_help() {
-    # TODO(copy): this help linked docs/AGENTS-SAFETY.md, which the image does
-    # not install, and AGENTS.md (pulsar agent guide) only names the command.
-    # Where should it point for why to take a checkpoint before an agent runs?
     cat <<'EOF'
 usage: sudo pulsar checkpoint [--no-home] [note]
                                            snapshot /etc and your settings, and pin
@@ -6449,7 +6437,8 @@ folders with "cache" in the name, Service Worker, Crashpad and blob_storage),
 ~/.local/bin and ~/.ssh, for whoever ran sudo. Settings over 512 MB are
 skipped. Documents, projects, ~/.local/share, /var and Flatpak data are not
 included. restore does not reboot and does not delete files added since (it
-lists them).
+lists them). Why to take one before an agent runs:
+https://getpulsar.dev/docs/agents#guard
 EOF
 }
 

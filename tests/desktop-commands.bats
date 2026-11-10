@@ -248,7 +248,7 @@ custom() { gsettings get "org.gnome.settings-daemon.plugins.media-keys.custom-ke
 --icon=input-keyboard-symbolic
 New keyboard shortcuts
 Super+Space: Open Pulsar Commands
-Change them in Settings > Keyboard." ] || fail "$(cat "$NOTIFY_LOG")"
+Change them in Settings > Keyboard > View and Customize Shortcuts." ] || fail "$(cat "$NOTIFY_LOG")"
     run python3 "$SHORTCUTS" --list
     [[ "$output" == *"bound to <Super>space"* ]]
     [[ "$output" == *"<Super>Print is taken (org.gnome.desktop.wm.keybindings switch-input-source)"* ]]

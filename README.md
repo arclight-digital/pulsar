@@ -7,9 +7,8 @@
 
 <p align="center">
   Your lighthouse in the sky.<br>
-  <sub>Linux that ships with 24 themes and rolls back when something breaks.</sub>
+  <sub>Linux that’s beautiful out of the box and rolls back when something breaks.</sub>
 </p>
-<!-- TODO(copy): should this subline match the site's "Stylish, atomic, modern Linux, rebuilt every night."? -->
 
 <p align="center">
   <a href="https://getpulsar.dev">getpulsar.dev</a>

@@ -265,9 +265,9 @@ class Welcome(Adw.ApplicationWindow):
         rise = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, css_classes=["wl-rise"])
         rise.append(label("Welcome to Pulsar", ["wl-display"]))
         rise.append(label("Your lighthouse in the sky.", ["wl-tagline", "dim-label"]))
-        # TODO(copy): what one sentence should a new user read here, under the
-        # tagline? (The lede that was here promised "a desktop that looks after
-        # itself", which no one mechanism backs.)
+        # the site's subline, under the same tagline (getpulsar.dev, site.ts SUBLINE)
+        rise.append(label("Linux that’s beautiful out of the box and rolls back when something breaks.",
+                          ["wl-lede"]))
         self.rise = rise
         return page(self.mark, spacer(8), rise, width=640)
 

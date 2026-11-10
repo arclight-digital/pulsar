@@ -3127,7 +3127,7 @@ GONE_32='NVRM: Xid (PCI:0000:02:00): 32, pid=6161, name=StateOfDecay2-W, channel
     klog 'NVRM: Xid (PCI:0000:02:00): 79, GPU has fallen off the bus.'
     run "$PULSAR" doctor gpu-faults --watch
     grep -q "The NVIDIA GPU stopped answering the system" "$RUN_LOG"
-    grep -q "Xid 79. Details: pulsar doctor gpu-faults" "$RUN_LOG"
+    grep -q "Xid 79. If apps stop drawing, save what you can and restart. Details: pulsar doctor gpu-faults" "$RUN_LOG"
     # nothing to ignore it by: the last argument (the name to ignore) is empty
     grep -qE " $" "$RUN_LOG" || fail "$(cat "$RUN_LOG")"
 }
@@ -3174,7 +3174,7 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     klog "NVRM: Xid (PCI:0000:02:00): 79, pid='<unknown>', name=<unknown>, GPU has fallen off the bus."
     run "$PULSAR" doctor gpu-faults --watch
     [ "$(grep -c "^--user" "$RUN_LOG")" -eq 1 ] || fail "$(cat "$RUN_LOG")"
-    grep -q "The NVIDIA GPU stopped answering the system Xid 79. Details: pulsar doctor gpu-faults" "$RUN_LOG"
+    grep -q "The NVIDIA GPU stopped answering the system Xid 79. If apps stop drawing, save what you can and restart. Details: pulsar doctor gpu-faults" "$RUN_LOG"
     run "$PULSAR" doctor gpu-faults
     [[ "$output" == warn*"1 GPU fault(s) this boot: GPU (Xid 79)"* ]] || fail "$output"
 }
