@@ -37,14 +37,14 @@ FX_SCHEMA = "org.gnome.shell.extensions.pulsar-theme"
 # The Shell extension's effects (its prefs.js shows the same): key, title,
 # subtitle, the key it needs on.
 EFFECTS = (
-    ("glass", "Glass", "Menus, the top bar, on-screen displays and notification banners are translucent over a blur of what is behind them", None),
-    ("window-glass", "Glass windows", "App windows are 80% opaque over the same blur; apps opened afterwards pick it up", "glass"),
+    ("glass", "Glass", "The top bar, the dash, menus, dialogs, notifications and on-screen displays blur what is behind them", None),
+    ("window-glass", "Glass windows", "GTK 4 app windows are 80% opaque over the same blur. GTK 3 apps and fullscreen windows stay solid, and so does the main area beside a sidebar, except Text Editor's document", "glass"),
     ("lighting", "Lighting", "A menu's edge is lit from the button that opened it, and turns warmer when the battery is low", None),
     ("power-on", "Power-on", "As a menu opens, its lit edge traces out from the button that opened it", "lighting"),
-    ("glow", "Glow", "Controls filled with the accent color, such as switches and sliders, glow in it; apps opened afterwards pick it up", None),
-    ("focus-brackets", "Focus brackets", "Four corner brackets mark the control the keyboard is on", None),
-    ("glass-off-gaming", "Disable glass when gaming", "Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun); app windows stay glass", None),
-    ("glass-off-power-saver", "Disable glass in Power Saver", "Glass and lighting turn off while the power mode is Power Saver; app windows stay glass", None),
+    ("glow", "Glow", "Switches that are on, checked boxes, slider fills, progress bars and default buttons glow in the accent color", None),
+    ("focus-brackets", "Focus brackets", "While you use the keyboard, four corner brackets mark the focused button or menu item outside app windows", None),
+    ("glass-off-gaming", "Disable glass when gaming", "Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun)", None),
+    ("glass-off-power-saver", "Disable glass in Power Saver", "Glass and lighting turn off while the power mode is Power Saver", None),
 )
 
 PAGES = (("appearance", "Appearance", "applications-graphics-symbolic"),
@@ -216,7 +216,7 @@ class Settings(Adw.ApplicationWindow):
         page = Adw.PreferencesPage()
         themes = Adw.PreferencesGroup()
         self.theme_row = Adw.ActionRow(title="Theme", activatable=True,
-                                       tooltip_text="Opens Themes, where a click recolors the whole desktop")
+                                       tooltip_text="Opens Themes")
         self.theme_row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
         self.theme_row.connect("activated", lambda *_: self._open_picker())
         self._theme_subtitle()
@@ -228,7 +228,11 @@ class Settings(Adw.ApplicationWindow):
         if not Gio.SettingsSchemaSource.get_default().lookup(FX_SCHEMA, True):
             return page
         self.fx = Gio.Settings(schema_id=FX_SCHEMA)
-        fx = Adw.PreferencesGroup(title="Effects", description="High contrast turns them all off, except in app windows already open.")
+        fx = Adw.PreferencesGroup(
+            title="Effects",
+            description="Glass windows and Glow apply to apps opened after you change them. High contrast turns every "
+                        "effect off, except in app windows already open. The two Disable glass switches leave app "
+                        "windows' glass on.")
         fx.set_header_suffix(self._reset_button())
         for key, title, subtitle, needs in EFFECTS:
             row = Adw.SwitchRow(title=title, subtitle=subtitle)
@@ -308,7 +312,7 @@ class Settings(Adw.ApplicationWindow):
         back.add(self.prev_row)
         self.pin_row = Adw.SwitchRow(
             title="Keep this image",
-            subtitle="Clean-up after updates never removes a kept image, so you can always start it again")
+            subtitle="A kept image stays on this computer through later updates")
         self._pin_handler = self.pin_row.connect("notify::active", self._pin_toggled)
         back.add(self.pin_row)
         page.add(back)
@@ -378,8 +382,7 @@ class Settings(Adw.ApplicationWindow):
             self._slot(button("Check Again", lambda *_: self.check_updates(), "flat"))
         elif s == "available":
             self.update_row.set_title("Update available")
-            self.update_row.set_subtitle(f"{r.get('latest', '?')} is out. Downloading it changes nothing until "
-                                         "the next restart.")
+            self.update_row.set_subtitle(f"{r.get('latest', '?')} is out")
             self._slot(button("Download", lambda *_: self._download(), "suggested-action"))
         elif s == "staged":
             self.update_row.set_title("Restart to update")
@@ -413,9 +416,8 @@ class Settings(Adw.ApplicationWindow):
     def _confirm_rollback(self):
         version = (self.prev or {}).get("version", "the previous image")
         d = Adw.AlertDialog(heading=f"Roll back to {version}?",
-                            body=f"This computer starts {version} at the next restart; nothing restarts now. "
-                                 "Your files, apps and their data stay as they are. System-wide settings changed "
-                                 "since that image, such as newly saved Wi-Fi networks, go back to how they were.")
+                            body=f"This computer starts {version} at the next restart. Your files and Flatpak apps stay as "
+                                 "they are. System-wide settings changed since this image was installed are undone.")
         d.add_response("cancel", "Cancel")
         d.add_response("rollback", "Roll Back")
         d.set_response_appearance("rollback", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -457,7 +459,8 @@ class Settings(Adw.ApplicationWindow):
         self.sessions = Adw.PreferencesGroup(
             title="Sessions",
             description="Each runs one coding agent in a terminal session that keeps going when its window "
-                        "closes. A notification says when one is waiting for you.")
+                        "closes. You get a notification when an agent rings the terminal bell, which Claude Code "
+                        "does when it waits for you.")
         self.sessions_empty = Adw.ActionRow(
             title="No sessions yet", subtitle="Start one in a terminal: pulsar agent run <agent> --tmux <name>",
             subtitle_selectable=True)
@@ -520,7 +523,7 @@ class Settings(Adw.ApplicationWindow):
         d.present(self)
 
     def end_session(self, s):
-        back = " Its conversation is kept: Start brings it back." if s.get("agent") == "claude" else ""
+        back = " Starting it again resumes the conversation." if s.get("agent") == "claude" else ""
         self.confirm(f"End {s['name']}?", f"The agent stops, and the session closes.{back}",
                      "end", "End Session", lambda: self._agent_cmd("Could not end the session",
                                                                     "sessions", "--kill", s["name"]))
@@ -528,7 +531,7 @@ class Settings(Adw.ApplicationWindow):
     def forget_session(self, s):
         body = "Start can no longer bring its conversation back, and its undo snapshots are deleted."
         if s.get("worktree_of"):
-            body += " Its worktree is removed if nothing in it is uncommitted; the branch stays."
+            body += " Its worktree is removed if it has no uncommitted changes. The branch is kept."
         self.confirm(f"Forget {s['name']}?", body, "forget", "Forget",
                      lambda: self._agent_cmd("Could not forget the session", "sessions", "--forget", s["name"]))
 
@@ -556,8 +559,8 @@ class Settings(Adw.ApplicationWindow):
                 self.alert("Could not undo", out.strip()[-600:])
                 return
             d = Adw.AlertDialog(heading="Files put back",
-                                body="They are as they were when the session started. Redo returns them "
-                                     "to how they were a moment ago.")
+                                body="The listed files are back to how they were when the session started. "
+                                     "Redo takes the undo back.")
             d.add_response("close", "Close")
             d.add_response("redo", "Redo")
             d.connect("response", lambda _d, r: r == "redo" and self._agent_cmd(
@@ -615,8 +618,9 @@ class SessionRow:
         snaps = s.get("snapshots") or 0
         self.undo_row.set_visible(snaps > 0)
         self.undo_button.set_sensitive(not live)
-        self.undo_row.set_subtitle("End the session first: its agent could write again mid-undo" if live else
-                                   "Puts the files back as they were when the session started")
+        self.undo_row.set_subtitle("Available once the session has ended, so the agent can't write files during the undo"
+                                   if live else "Puts the files back as they were when the session started, "
+                                   "except files git ignores")
         self.end_row.set_title("End this session" if live else "Forget this session")
         self.end_row.set_subtitle("" if live else "Stops tracking it, and drops its undo snapshots")
         self.end_button.set_label("End…" if live else "Forget…")
