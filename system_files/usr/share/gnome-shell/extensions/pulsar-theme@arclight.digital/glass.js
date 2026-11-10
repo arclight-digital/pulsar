@@ -1944,12 +1944,13 @@ function laterRemove(id) {
 // size are copied before each redraw (Surface), not with a BindConstraint:
 // Quick Settings' parent lays its children out before the BoxPointer has
 // moved, so a constraint on the one under it reads last frame's position.
+// Inside the host (Surface's opts.inside) it copies nothing: `host` null.
 const Mirror = GObject.registerClass(
 class PulsarGlassMirror extends St.Widget {
     constructor(host) {
         super({reactive: false});
-        this._bindings = ['opacity', 'scale-x', 'scale-y', 'translation-x', 'translation-y', 'pivot-point', 'visible']
-            .map(p => host.bind_property(p, this, p, GObject.BindingFlags.SYNC_CREATE));
+        const props = host ? ['opacity', 'scale-x', 'scale-y', 'translation-x', 'translation-y', 'pivot-point', 'visible'] : [];
+        this._bindings = props.map(p => host.bind_property(p, this, p, GObject.BindingFlags.SYNC_CREATE));
     }
 
     unbind() {
@@ -1968,7 +1969,11 @@ class PulsarGlassMirror extends St.Widget {
 // animates its box, not its layout), opts.frame() a still ancestor to
 // measure from when one between it and the host animates, opts.still a
 // surface that shows without the power-on trace (a tooltip, shown on every
-// hover).
+// hover), opts.inside a host whose clones must carry the glass: the
+// mirrors go inside it, beneath and above all it holds, not beside it.
+// That is a window actor (the command menu's): in the overview the window
+// group is hidden and the window shows only as its previews, clones that
+// paint what the actor holds and nothing beside it.
 class Surface {
     constructor(owner, host, opts) {
         this._owner = owner;
@@ -1976,14 +1981,18 @@ class Surface {
         this._opts = opts;
         const parent = host.get_parent();
 
-        const follow = opts.follow?.() ?? host;
+        // inside, the mirrors take the host's fade and scale as its children
+        const follow = opts.inside ? null : opts.follow?.() ?? host;
         this._under = new Mirror(follow);
         this._under.connect('destroy', () => (this._under = null));
         this._backdrop = new St.Widget({width: 1, height: 1});
         this._blur = new LiveBlur({lens: SURFACE_LENS});
         this._backdrop.add_effect_with_name('pulsar-blur', this._blur);
         this._under.add_child(this._backdrop);
-        parent.insert_child_below(this._under, host);
+        if (opts.inside)
+            host.insert_child_at_index(this._under, 0);
+        else
+            parent.insert_child_below(this._under, host);
 
         this._over = new Mirror(follow);
         this._over.connect('destroy', () => (this._over = null));
@@ -1991,7 +2000,10 @@ class Surface {
         this._light = new LightEffect();
         this._lightActor.add_effect_with_name('pulsar-light', this._light);
         this._over.add_child(this._lightActor);
-        parent.insert_child_above(this._over, host);
+        if (opts.inside)
+            host.add_child(this._over);
+        else
+            parent.insert_child_above(this._over, host);
 
         this._wasVisible = false;
         host.connectObject(
@@ -2131,7 +2143,7 @@ class Surface {
     // the OSD (its own background cleared for glass) drew as bare text.
     _restack() {
         const parent = this._host.get_parent();
-        if (!parent)
+        if (!parent || this._opts.inside)
             return;
         if (this._under.get_parent() === parent && this._under.get_next_sibling() !== this._host)
             parent.set_child_below_sibling(this._under, this._host);
@@ -2183,7 +2195,10 @@ class Surface {
         // layout that centers it (the banner bin's) is still settling
         const [hx, hy, pw, ph] = [hb.x1, hb.y1, hb.get_width(), hb.get_height()];
         for (const m of [this._under, this._over]) {
-            m.set_position(hx, hy);
+            if (this._opts.inside)
+                m.set_position(0, 0);
+            else
+                m.set_position(hx, hy);
             m.set_size(pw, ph);
         }
         // Where the host sits once it has settled. opts.frame() is a still
@@ -3885,7 +3900,7 @@ export class Glass {
 
     // Pulsar's command menu (Super+Space) is a GTK window that should read
     // as one of the Shell's menus, so it gets their glass, not a window's:
-    // a Surface on the window actor, its colors and shape off a box styled
+    // a Surface inside the window actor, its colors and shape off a box styled
     // as a menu over the window's frame, lit from a point above the top edge
     // a little in from the left. The window itself paints no ground while
     // this extension runs (scripts/pulsar-menu drops its .background), so
@@ -3916,9 +3931,11 @@ export class Glass {
             (this._menus ??= new Map()).set(actor, ground);
         }
         if (!this._surfaces.has(actor)) {
+            // inside the window actor: its previews in the overview carry it
             this._add(actor, {
                 box: () => ground,
                 source: commandMenuLight,
+                inside: true,
             });
         }
         ground.opacity = this.glass && this._surfaces.has(actor) ? 0 : 255;

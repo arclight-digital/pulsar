@@ -1522,6 +1522,75 @@ JS
     [ "${lines[-1]}" = ok ]
 }
 
+@test "glass: the command menu's glass is inside its window actor, so its overview preview has it" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, FakeActor, Signals} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+const settings = {'glass': true, 'window-glass': true, 'lighting': true, 'power-on': false, 'glow': false,
+    'focus-brackets': false, 'glass-off-power-saver': true, 'glass-off-gaming': false};
+const keys = vals => Object.assign(new Signals(), {get_boolean: k => !!vals[k], get_double: () => 0.5});
+provide('main', fake('main', {
+    sessionMode: Object.assign(new Signals(), {isLocked: false, isGreeter: false, currentMode: 'user'}),
+    layoutManager: Object.assign(new Signals(), {uiGroup: new FakeActor(), panelBox: new Signals()}),
+}));
+const {Glass} = await load(`${process.env.EXT}/glass.js`);
+const glass = Object.assign(Object.create(Glass.prototype), {
+    _settings: keys(settings), _a11y: keys({'high-contrast': false}),
+    _surfaces: new Map(), _windows: new Map(), _glassy: new WeakSet(),
+});
+Object.assign(globalThis, {get_window_actors: () => group.get_children(), display: fake('display'),
+    workspace_manager: fake('workspace_manager'), stage: fake('stage'), compositor: fake('compositor')});
+// what the Surface asks of an actor beyond what the fixture models
+Object.assign(FakeActor.prototype, {remove_transition() {}, ease_property() {}, is_mapped: () => true,
+    has_allocation: () => true, queue_repaint() {}});
+
+// the window group, and the menu's window actor in it: its frame inside a
+// buffer with room for its shadow, at (100, 56) on the stage
+const group = new FakeActor({name: 'window group'});
+group.apply_relative_transform_to_point = (_to, pt) => ({x: pt.x, y: pt.y});
+const win = Object.assign(new Signals(), {
+    get_frame_rect: () => ({x: 124, y: 80, width: 620, height: 520}),
+    get_buffer_rect: () => ({x: 100, y: 56, width: 668, height: 568}),
+    get_gtk_application_id: () => 'digital.arclight.Pulsar.Menu',
+});
+const actor = new FakeActor({meta_window: win, name: 'menu'});
+actor.get_allocation_box = () => ({x1: 100, y1: 56, get_width: () => 668, get_height: () => 568});
+actor.add_child(new FakeActor({name: 'surfaces'}));
+group.add_child(actor);
+
+glass._trackCommandMenu(actor);
+const s = glass._surfaces.get(actor);
+assert.ok(s, 'a Surface for the menu');
+const ground = glass._menus.get(actor);
+ground.apply_relative_transform_to_point = () => ({x: 24, y: 24});
+// In the overview the window group is hidden and the window shows only
+// as its previews: clones of the window actor, which paint what the actor
+// holds and nothing beside it. The blur goes beneath the ground and the
+// window's surfaces, the light over all of them, both inside the actor.
+assert.deepEqual(group.get_children().map(c => c.name), ['menu']);
+assert.deepEqual(actor.get_children(), [s._under, ground, actor.get_children()[2], s._over]);
+assert.equal(actor.get_children()[2].name, 'surfaces');
+// laid out in the actor's own coordinates, not at its place in the group
+s._layout();
+for (const m of [s._under, s._over])
+    assert.deepEqual([m.x, m.y, m.width, m.height], [0, 0, 668, 568]);
+// the frame, padded, inside the buffer
+assert.deepEqual([s._backdrop.x + s._backdrop.width / 2, s._backdrop.y + s._backdrop.height / 2], [24 + 310, 24 + 260]);
+assert.equal(ground.opacity, 0);
+// asked again (every _sync): still one of each, where they were
+glass._trackCommandMenu(actor);
+assert.equal(actor.get_children().length, 4);
+assert.equal(actor.get_first_child(), s._under);
+// gone with the window
+actor.destroy();
+assert.equal(glass._surfaces.has(actor), false);
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
+}
+
 @test "glass: locking again while the unlock slides away keeps one ground on the lock screen" {
     need_node
     run shell_js <<'JS'
