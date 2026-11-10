@@ -4418,11 +4418,35 @@ cmd_verify() {
         printf 'signed with the release key, and the signature is logged in Rekor\n'
         return 0
     fi
-    if cosign verify --key "$key" --insecure-ignore-tlog=true "$image" >/dev/null 2>&1; then
+    # The Rekor check failed. The key alone is enough only for a signature that
+    # carries no Rekor bundle at all, which is what a signature from before the
+    # build host logged them looks like. A key-signed signature whose bundle
+    # does not verify is a failure: passing it on the key alone would let a
+    # broken or forged log entry read as "from before Rekor".
+    local verified
+    verified=$(cosign verify --key "$key" --insecure-ignore-tlog=true "$image" 2>/dev/null) \
+        || die "no signature on ${image} verifies against ${key}"
+    # Two views have to agree that a key-signed signature has no bundle.
+    # verify's JSON lists only the signatures that matched the key, with
+    # .optional.Bundle on each one that carries a bundle. `cosign download
+    # signature` lists every signature on the image with an explicit
+    # "Bundle": null on those without one. The second states the absence
+    # outright, so a cosign whose verify output stopped naming bundles fails
+    # here instead of passing every signature as pre-Rekor.
+    local bare_matched bare_listed sigs
+    bare_matched=$(printf '%s' "$verified" \
+        | jq -er 'if type == "array" then [ .[] | select(.optional.Bundle == null) ] | length else error("not a list") end' 2>/dev/null) \
+        || die "could not read cosign's verify output for ${image}"
+    sigs=$(cosign download signature "$image" 2>/dev/null) \
+        || die "could not download the signatures on ${image} to check for a Rekor entry"
+    bare_listed=$(printf '%s' "$sigs" \
+        | jq -ser '[ .[] | select(type == "object" and has("Bundle") and .Bundle == null) ] | length' 2>/dev/null) \
+        || die "could not read the signatures cosign downloaded for ${image}"
+    if [ "$bare_matched" -gt 0 ] && [ "$bare_listed" -gt 0 ]; then
         printf 'signed with the release key, but not verified in Rekor (signatures from before Rekor logging have no entry)\n'
         return 0
     fi
-    die "no signature on ${image} verifies against ${key}"
+    die "${image} is signed with the release key, but its Rekor entry does not verify"
 }
 
 # ---------------------------------------------------------------------------

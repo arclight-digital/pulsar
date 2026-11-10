@@ -138,7 +138,12 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
 
 # A fake rpm-ostree (booted on a tagged ghcr ref) and a fake cosign that
 # accepts only what $COSIGN_OK names: "logged" (a plain verify passes),
-# "key" (only with --insecure-ignore-tlog), or nothing.
+# "key" (only with --insecure-ignore-tlog), or nothing. $COSIGN_BUNDLE says
+# which signatures carry a Rekor bundle, in the shapes cosign prints them:
+# "none" (the default, a signature from before Rekor logging), "all", "other"
+# (the key-signed one has a bundle, a second signature on the image has none),
+# or "unreported" (verify's output names no bundle, the download shows one).
+# COSIGN_DOWNLOAD=fail makes `cosign download signature` fail.
 fake_verify_env() {
     local bin="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "$bin"
@@ -149,7 +154,28 @@ SH
     cat > "$bin/cosign" <<'SH'
 #!/bin/sh
 echo "$*" >> "$COSIGN_LOG"
-case "$*" in *insecure-ignore-tlog*) [ "$COSIGN_OK" = logged ] || [ "$COSIGN_OK" = key ] ;; *) [ "$COSIGN_OK" = logged ] ;; esac
+bare='{"Base64Signature":"c2ln","Payload":"e30=","Cert":null,"Chain":null,"Bundle":null,"RFC3161Timestamp":null}'
+bundled='{"Base64Signature":"c2ln","Payload":"e30=","Cert":null,"Chain":null,"Bundle":{"SignedEntryTimestamp":"c2V0","Payload":{"body":"e30=","integratedTime":1759500000,"logIndex":1,"logID":"x"}},"RFC3161Timestamp":null}'
+critical='"critical":{"identity":{"docker-reference":"ghcr.io/x/pulsar-nvidia"},"image":{"docker-manifest-digest":"sha256:abc"},"type":"cosign container image signature"}'
+case "$1" in
+download)
+    [ "${COSIGN_DOWNLOAD:-ok}" = ok ] || { echo "Error: GET https://ghcr.io: connection refused" >&2; exit 1; }
+    case "${COSIGN_BUNDLE:-none}" in
+        none) echo "$bare" ;;
+        other) echo "$bundled"; echo "$bare" ;;
+        *) echo "$bundled" ;;
+    esac
+    exit 0 ;;
+esac
+case "$*" in
+*insecure-ignore-tlog*)
+    [ "$COSIGN_OK" = logged ] || [ "$COSIGN_OK" = key ] || exit 1
+    case "${COSIGN_BUNDLE:-none}" in
+        none|unreported) echo "[{${critical},\"optional\":null}]" ;;
+        *) echo "[{${critical},\"optional\":{\"Bundle\":{\"SignedEntryTimestamp\":\"c2V0\"}}}]" ;;
+    esac ;;
+*) [ "$COSIGN_OK" = logged ] ;;
+esac
 SH
     chmod +x "$bin/rpm-ostree" "$bin/cosign"
     export PATH="$bin:$PATH" COSIGN_LOG="${BATS_TEST_TMPDIR}/cosign.log"
@@ -172,6 +198,39 @@ SH
     COSIGN_OK=key run "$PULSAR" verify
     [ "$status" -eq 0 ]
     [[ "$output" == *"not verified in Rekor"* ]]
+    grep -q -- "download signature ghcr.io/x/pulsar-nvidia@sha256:abc" "$COSIGN_LOG"
+}
+
+@test "verify fails a key-signed signature whose Rekor bundle does not verify" {
+    fake_verify_env
+    COSIGN_OK=key COSIGN_BUNDLE=all run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its Rekor entry does not verify"* ]]
+    [[ "$output" != *"not verified in Rekor"* ]]
+}
+
+@test "verify fails when only another signature on the image lacks a bundle" {
+    # the signature that matched the key carries a bundle; a bundle-less one
+    # beside it (another key's, say) does not make the image pre-Rekor
+    fake_verify_env
+    COSIGN_OK=key COSIGN_BUNDLE=other run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its Rekor entry does not verify"* ]]
+}
+
+@test "verify fails when the download shows a bundle verify did not report" {
+    fake_verify_env
+    COSIGN_OK=key COSIGN_BUNDLE=unreported run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its Rekor entry does not verify"* ]]
+}
+
+@test "verify fails, not passes, when it cannot download the signatures" {
+    fake_verify_env
+    COSIGN_OK=key COSIGN_DOWNLOAD=fail run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"could not download the signatures"* ]]
+    [[ "$output" != *"not verified in Rekor"* ]]
 }
 
 @test "verify fails an image no signature verifies" {
