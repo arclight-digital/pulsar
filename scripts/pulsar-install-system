@@ -30,10 +30,26 @@ Progress goes to stdout as one JSON object per line, for the installer app:
 {"stage": "check" | "disk" | "unlock" | "install" | "boot"} as each step
 starts ("unlock" only when encrypted), {"log": "..."} for each line bootc
 and the disk tool print, then {"stage": "done", ...} or {"stage": "failed", "error": ...,
-"restored": true|false}. restored is whether the disk is as it was before:
-true only if nothing was written to it, or, installing alongside, every
-partition this install made was taken back. An erase that began writing is
-never restored: what was on the disk is gone. --plan-only prints
+"restored": true|false, "disk": ..., "esp": ...}. restored is whether the disk
+is as it was before: true only if nothing was written to it, or, installing
+alongside, every partition this install made was taken back. An erase that
+began writing is never restored: what was on the disk is gone. disk and esp
+say what is known, for the installer app to tell the person:
+  disk  "unchanged"  nothing was written to the disk
+        "unknown"    the disk tool stopped without saying it refused (failed
+                     while writing, crashed, killed): what is on the disk is
+                     unknown
+        "removed"    the disk was partitioned, and every partition this install
+                     made has been deleted again
+        "left"       the disk was partitioned, and some or all of the partitions
+                     this install made are still there
+  esp   (alongside; null for an erase, whose ESP is Pulsar's own)
+        "unchanged"  bootc never ran: nothing was written to the shared ESP
+        "boot_files" bootc ran: its boot files (EFI/fedora) may be on the ESP;
+                     EFI/BOOT was put back as it was
+        "fallback"   bootc ran, and EFI/BOOT could not be put back: the
+                     other system's fallback loader may be replaced too
+--plan-only prints
 {"stage": "plan", "plan": [...]} (pulsar-install-disk's dry run) and
 writes nothing; it needs no key (--no-encrypt plans the unencrypted layout).
 
@@ -324,12 +340,13 @@ def snapshot_fallback(efi_root):
     return {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))}
 
 
-def restore_fallback(efi_root, snap, saved_dir):
+def restore_fallback(efi_root, snap, saved_dir=None):
     """Put EFI/BOOT back as the other system had it: its files as they were,
     what bootupd added there gone. Installing beside Windows leaves Windows'
     fallback loader alone (Nick, 2026-10-02: Ubuntu's way, not Fedora's).
-    Its BOOTX64.EFI is also kept in saved_dir, for pulsar-esp-fallback to
-    put back after a bootloader update replaces it again."""
+    A finished install also keeps its BOOTX64.EFI in saved_dir, for
+    pulsar-esp-fallback to put back after a bootloader update replaces it
+    again; a failed one passes none."""
     d = os.path.join(efi_root, "EFI", "BOOT")
     if os.path.isdir(d):
         for n in os.listdir(d):
@@ -337,10 +354,12 @@ def restore_fallback(efi_root, snap, saved_dir):
                 os.unlink(os.path.join(d, n))
         if not snap:
             os.rmdir(d)
+    if snap:
+        os.makedirs(d, exist_ok=True)
     for n, data in snap.items():
         with open(os.path.join(d, n), "wb") as f:
             f.write(data)
-    if "BOOTX64.EFI" in snap:
+    if "BOOTX64.EFI" in snap and saved_dir:
         os.makedirs(saved_dir, exist_ok=True)
         with open(os.path.join(saved_dir, "BOOTX64.EFI"), "wb") as f:
             f.write(snap["BOOTX64.EFI"])
@@ -446,9 +465,13 @@ def main():
     scratch = tempfile.mkdtemp(prefix="install-", dir=SCRATCH)
     target = os.path.join(scratch, "target")
     mounted, opened, made, ok, error = [], False, set(), False, None
-    # whether anything may have been written to the disk: from the moment
-    # the disk tool starts writing, whether it finished or not
-    changed = False
+    # what is known about the disk (the failed event's disk and esp, above):
+    # unchanged until the disk tool starts, unknown while it runs and if it
+    # stops without refusing, written once it has finished
+    disk = "unchanged"
+    # the shared ESP, beside another system: what was in EFI/BOOT before
+    # bootc (snap), and whether bootc has run and may have written to it
+    snap, bootc_ran = None, False
     try:
         emit(stage="check")
         if a.mode == "alongside":
@@ -458,15 +481,17 @@ def main():
             emit(stage="plan", plan=json.loads(run(DISK_TOOL, "plan", "--mode", a.mode, *plain, *ident, a.disk)))
             return 0
         emit(stage="disk")
+        disk = "unknown"
         try:
             out = run_logged(DISK_TOOL, "apply", "--mode", a.mode, *(plain or ["--key-file", a.key_file]),
                              *ident, a.disk)
         except Failed as e:
             # refused: nothing was written. Anything else (failed partway,
-            # crashed, killed): the disk may have changed
-            changed = e.code != DISK_REFUSED
+            # crashed, killed): the disk may have changed, and how is unknown
+            if e.code == DISK_REFUSED:
+                disk = "unchanged"
             raise
-        changed = True
+        disk = "written"
         # the partitions this install made, by the partition UUIDs repart
         # reports: never guessed from labels or order, which another system
         # on the disk could share. Taken now, before anything else can fail,
@@ -498,12 +523,14 @@ def main():
             os.makedirs(path, exist_ok=True)
             run("mount", dev, path)
             mounted.append(path)
-        snap = snapshot_fallback(os.path.join(target, "boot/efi")) if a.mode == "alongside" else None
+        if a.mode == "alongside":
+            snap = snapshot_fallback(os.path.join(target, "boot/efi"))
         # The passphrase prompt at boot reads the console keymap from the
         # kernel command line: the keys typed into the installer, in the
         # live session's layout, must mean the same there.
         keymap = a.keymap or live_setting("/etc/vconsole.conf", "KEYMAP", "us")
         emit(stage="install")
+        bootc_ran = True
         # rhgb quiet: Silverblue's graphical boot (and passphrase prompt)
         # comes from Anaconda's kickstart, not the image; without them the
         # prompt sat in the boot log's text
@@ -538,11 +565,21 @@ def main():
                 keep_log(target, RECORD)
             except (OSError, Failed) as e:
                 say(f"pulsar-install-system: could not keep the log in the installed system: {e}")
+        # beside another system, a failed install puts EFI/BOOT back too, as
+        # a finished one does: bootupd may have put Pulsar's loader there
+        esp_state = None if a.mode != "alongside" else "unchanged" if not bootc_ran else "fallback"
+        if not ok and bootc_ran and snap is not None and os.path.join(target, "boot/efi") in mounted:
+            try:
+                restore_fallback(os.path.join(target, "boot/efi"), snap)
+                esp_state = "boot_files"
+                say("pulsar-install-system: put EFI/BOOT on the ESP back as it was")
+            except OSError as e:
+                say(f"pulsar-install-system: could not put EFI/BOOT on the ESP back: {e}")
         for path in reversed(mounted):
             subprocess.run(["umount", path])
         if opened:
             subprocess.run(["cryptsetup", "close", MAPPER])
-        all_gone = not made
+        all_gone = False
         if not ok and made:
             try:
                 gone = remove_made(a.disk, made)
@@ -550,12 +587,16 @@ def main():
                 say(f"pulsar-install-system: removed the {len(gone)} partitions this install made")
             except Failed as e:
                 say(f"pulsar-install-system: could not remove the partitions this install made: {e}")
+        if disk == "written":
+            # made is empty only if repart's plan couldn't be read: then
+            # which partitions it made is unknown, and they are left
+            disk = "removed" if made and all_gone else "left"
         # as it was: nothing written; or, beside another system, everything
         # this install made taken back. An erase that wrote is never undone:
         # what was on the disk is gone, whatever happened to Pulsar's part
-        restored = not changed or (a.mode == "alongside" and bool(made) and all_gone)
+        restored = disk == "unchanged" or (a.mode == "alongside" and disk == "removed")
         if not ok:
-            emit(stage="failed", error=error or "interrupted", restored=restored)
+            emit(stage="failed", error=error or "interrupted", restored=restored, disk=disk, esp=esp_state)
 
 
 if __name__ == "__main__":

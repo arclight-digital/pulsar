@@ -167,22 +167,47 @@ PY
 }
 
 @test "after a failure the page says what state the disk is in, by mode" {
-    [ "$(py 'm.failure_state("erase", True, planning=True)')" = "Nothing on the disk was changed." ]
-    [ "$(py 'm.failure_state("erase", True)')" = "The disk is as it was before you pressed Install." ]
-    [ "$(py 'm.failure_state("alongside", False)')" = "Pulsar's new partitions may still be on the disk. The disk's other partitions are as they were, except the startup files (EFI) partition, which Pulsar may have written to." ]
-    # beside another system, restored is the partitions only: the shared ESP may have changed
-    [ "$(py 'm.failure_state("alongside", True)')" = "No Pulsar partitions are left. The disk's other partitions are as they were, except the startup files (EFI) partition, which Pulsar may have written to." ]
-    [ "$(py 'm.failure_state("erase", False)')" = "The disk was erased, and Pulsar isn't installed on it." ]
+    [ "$(py 'm.failure_state("erase", {"disk": "unchanged"}, planning=True)')" = "Nothing on the disk was changed." ]
+    [ "$(py 'm.failure_state("erase", {"disk": "unchanged"})')" = "Nothing on the disk was changed." ]
+    [ "$(py 'm.failure_state("alongside", {"disk": "left", "esp": "fallback"})')" = "Pulsar's new partitions may still be on the disk. The startup files (EFI) partition may still have Pulsar's boot files in it. Its fallback boot file, EFI/BOOT/BOOTX64.EFI, may also have been replaced with Pulsar's. The other partitions weren't changed." ]
+    # beside another system, the shared ESP may have changed even with every partition taken back
+    [ "$(py 'm.failure_state("alongside", {"disk": "removed", "esp": "boot_files"})')" = "Pulsar's new partitions were removed. The startup files (EFI) partition may still have Pulsar's boot files in it. The other partitions weren't changed." ]
+    [ "$(py 'm.failure_state("erase", {"disk": "removed", "esp": None})')" = "The disk was erased, and Pulsar isn't installed on it." ]
 }
 
-@test "a failed install is 'as it was' only on the backend's word, or if it never reached the disk step" {
-    # the backend's failed event decides, either way
-    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": False}])')" = "False" ]
-    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": True}])')" = "True" ]
+@test "a failure before anything was written says so, alongside too: no partitions made, no ESP touched" {
+    # the disk tool refused (a swapped disk, a plan it won't write)
+    [ "$(py 'm.failure_state("alongside", {"disk": "unchanged", "esp": "unchanged"})')" = "Nothing on the disk was changed." ]
+    # partitioned, then failed before bootc: taken back, and the ESP never written
+    [ "$(py 'm.failure_state("alongside", {"disk": "removed", "esp": "unchanged"})')" = "Pulsar's new partitions were removed. The disk's other partitions weren't changed." ]
+}
+
+@test "a failed erase says what is known: unknown when the disk tool stopped partway, and never 'nothing changed' once it may have written" {
+    [ "$(py 'm.failure_state("erase", {"disk": "unknown", "esp": None})')" = "The disk may have been erased. What is on it now is unknown." ]
+    [ "$(py 'm.failure_state("alongside", {"disk": "unknown", "esp": None})')" = "What is on the disk now is unknown." ]
+    # the partitions it made couldn't be taken back
+    [ "$(py 'm.failure_state("erase", {"disk": "left", "esp": None})')" = "The disk was erased, and Pulsar's new partitions may still be on it." ]
+    # a state this app doesn't know is unknown, not unchanged
+    [ "$(py 'm.failure_state("erase", {"disk": "something new"})')" = "The disk may have been erased. What is on it now is unknown." ]
+    # every erase that may have written says erased, and none says nothing changed
+    run py '[m.failure_state("erase", {"disk": d, "esp": None}) for d in ("unknown", "removed", "left", None)]'
+    [[ "$output" != *"Nothing on the disk"* ]]
+    [ "$(grep -o erased <<<"$output" | wc -l)" -eq 4 ]
+}
+
+@test "what a failed install left is the backend's word; killed, it is what the stages it reached say" {
+    # the backend's failed event decides
+    [ "$(py 'm.disk_state([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": False, "disk": "left", "esp": "fallback"}])')" = "{'disk': 'left', 'esp': 'fallback'}" ]
+    [ "$(py 'm.disk_state([{"stage": "check"}, {"stage": "disk"}, {"stage": "failed", "restored": True, "disk": "removed", "esp": "boot_files"}])')" = "{'disk': 'removed', 'esp': 'boot_files'}" ]
+    # a failed event that doesn't say: unknown, never as it was
+    [ "$(py 'm.disk_state([{"stage": "disk"}, {"stage": "failed", "restored": True}])["disk"]')" = "unknown" ]
     # killed with no failed event: the disk step is where writing starts
-    [ "$(py 'm.disk_restored([{"stage": "check"}, {"stage": "disk"}, {"log": "Encrypting future partition 3..."}])')" = "False" ]
-    [ "$(py 'm.disk_restored([{"stage": "check"}])')" = "True" ]
-    [ "$(py 'm.disk_restored([])')" = "True" ]
+    [ "$(py 'm.disk_state([{"stage": "check"}, {"stage": "disk"}, {"log": "Encrypting future partition 3..."}])')" = "{'disk': 'unknown', 'esp': None}" ]
+    [ "$(py 'm.disk_state([{"stage": "check"}])')" = "{'disk': 'unchanged', 'esp': 'unchanged'}" ]
+    [ "$(py 'm.disk_state([])')" = "{'disk': 'unchanged', 'esp': 'unchanged'}" ]
+    # killed after the disk tool finished: partitioned; from the install step on, the ESP too
+    [ "$(py 'm.disk_state([{"stage": "disk"}, {"stage": "unlock"}])')" = "{'disk': 'left', 'esp': 'unchanged'}" ]
+    [ "$(py 'm.disk_state([{"stage": "disk"}, {"stage": "unlock"}, {"stage": "install"}, {"progress": 0.4}])')" = "{'disk': 'left', 'esp': 'fallback'}" ]
 }
 
 @test "elapsed time reads as minutes and seconds" {

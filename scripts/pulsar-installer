@@ -178,34 +178,54 @@ def tell_apart(found):
     return found
 
 
-def failure_state(mode, restored, planning=False):
-    """What the disk is like after a failure, said plainly. restored is the
-    backend's word that the disk is as it was: nothing written, or (beside
-    another system) everything it made taken back. An erase that wrote
-    never is."""
-    if planning:
+def failure_state(mode, known, planning=False):
+    """What the disk is like after a failure, said plainly, from what the
+    backend knows (disk_state): never more than that, and an erase never
+    less than it may have done."""
+    disk, esp = known.get("disk"), known.get("esp")
+    if planning or disk == "unchanged":
         return "Nothing on the disk was changed."
-    if restored and mode == "erase":
-        return "The disk is as it was before you pressed Install."
-    # beside another system, restored counts partitions only: what bootc
-    # wrote to the shared ESP is not taken back
-    kept = ("The disk's other partitions are as they were, except the startup files (EFI) "
-            "partition, which Pulsar may have written to.")
-    if restored:
-        return "No Pulsar partitions are left. " + kept
-    if mode == "alongside":
-        return "Pulsar's new partitions may still be on the disk. " + kept
-    return "The disk was erased, and Pulsar isn't installed on it."
+    if disk not in ("removed", "left"):
+        # the disk tool stopped partway or crashed, or the backend was killed
+        # after it started: nothing is known
+        return ("The disk may have been erased. What is on it now is unknown." if mode == "erase"
+                else "What is on the disk now is unknown.")
+    if mode == "erase":
+        return ("The disk was erased, and Pulsar isn't installed on it." if disk == "removed"
+                else "The disk was erased, and Pulsar's new partitions may still be on it.")
+    said = ["Pulsar's new partitions were removed." if disk == "removed"
+            else "Pulsar's new partitions may still be on the disk."]
+    if esp == "unchanged":
+        said.append("The disk's other partitions weren't changed.")
+    else:
+        said.append("The startup files (EFI) partition may still have Pulsar's boot files in it.")
+        if esp != "boot_files":
+            said.append("Its fallback boot file, EFI/BOOT/BOOTX64.EFI, may also have been replaced "
+                        "with Pulsar's.")
+        said.append("The other partitions weren't changed.")
+    return " ".join(said)
 
 
-def disk_restored(events):
-    """Whether a failed install left the disk as it was: the backend's
-    failed event says. Without one (it was killed), only if it never
-    reached the disk step, where writing starts."""
+def disk_state(events):
+    """What is known about the disk after a failed install: the backend's
+    failed event says (its disk and esp, documented in
+    pulsar-install-system). Without one (it was killed, so its clean-up may
+    not have run), the stages it reached say what they can: nothing is
+    written before the disk step; a stage after it means the disk tool
+    finished, so the disk was partitioned (an erase, erased) and Pulsar's
+    partitions may be on it; from the install step on, bootc may have
+    written to the ESP. Killed during the disk step, nothing is known."""
     failed = next((e for e in events if e.get("stage") == "failed"), None)
     if failed is not None:
-        return bool(failed.get("restored", False))
-    return not any(e.get("stage") == "disk" for e in events)
+        return {"disk": failed.get("disk") or "unknown", "esp": failed.get("esp")}
+    reached = {e.get("stage") for e in events}
+    if "disk" not in reached:
+        return {"disk": "unchanged", "esp": "unchanged"}
+    if reached & {"install", "boot"}:
+        return {"disk": "left", "esp": "fallback"}
+    if "unlock" in reached:
+        return {"disk": "left", "esp": "unchanged"}
+    return {"disk": "unknown", "esp": None}
 
 
 def backend_argv(mode, d, *args):
@@ -784,7 +804,7 @@ def main():
             self.nav.pop()
             plan = next((e["plan"] for e in events if e.get("stage") == "plan"), None)
             if code != 0 or plan is None:
-                self.nav.push(self.failed_page(self.error_of(events), restored=True, planning=True))
+                self.nav.push(self.failed_page(self.error_of(events), {"disk": "unchanged"}, planning=True))
                 return
             self.nav.push(self.summary_page(plan))
 
@@ -895,7 +915,7 @@ def main():
             if code == 0 and done:
                 self.nav.push(self.done_page(int(time.monotonic() - self.started), done))
             else:
-                self.nav.push(self.failed_page(self.error_of(events), restored=disk_restored(events)))
+                self.nav.push(self.failed_page(self.error_of(events), disk_state(events)))
 
         def done_page(self, secs, done):
             restart = Gtk.Button(label="Restart Now", css_classes=["suggested-action", "in-big"],
@@ -919,7 +939,7 @@ def main():
             page.connect("shown", lambda *_: restart.grab_focus())
             return page
 
-        def failed_page(self, error, restored, planning=False):
+        def failed_page(self, error, known, planning=False):
             head = "The install can't start" if planning else "The install didn't finish"
             more = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             more.append(label(error, ["in-log"], 0, selectable=True, max_width_chars=70))
@@ -931,7 +951,7 @@ def main():
             # the disk list is read again: a failed install may have changed what is on a disk
             again.connect("clicked", lambda *_: self.nav.replace([self.welcome, self.disk_page()]))
             page = nav_page("Problem", "failed", column(
-                label(head, ["in-title"]), label(failure_state(self.mode, restored, planning), ["in-lede"]),
+                label(head, ["in-title"]), label(failure_state(self.mode, known, planning), ["in-lede"]),
                 details, Gtk.Box(height_request=8), again))
             page.set_can_pop(False)
             return page
@@ -1024,7 +1044,8 @@ def main():
                  ("installing", lambda: win.install()),
                  ("done", lambda: win.nav.push(win.done_page(187, {"windows_entry": True}))),
                  ("failed", lambda: win.nav.push(win.failed_page(
-                     "unshare exited 1: error: Installing to filesystem: no space left on device", restored=True)))]
+                     "unshare exited 1: error: Installing to filesystem: no space left on device",
+                     {"disk": "removed", "esp": "boot_files"})))]
         # the pages whose mark rises in: shot once it has
         slow = {"welcome": 1400, "done": 1400, "done-off": 1400, "installing": 4000}
 

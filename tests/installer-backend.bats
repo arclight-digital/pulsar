@@ -46,10 +46,12 @@ EOF
 }
 
 # system MODE [ARGS...]: an install onto $DISK, encrypted, with the chosen
-# drive's identity. FAIL_AT=<command prefix> makes that command fail.
+# drive's identity. FAIL_AT="<command prefix>[;<prefix>...]" makes those
+# commands fail ("bootc" fails the stand-in bootc after it has written).
 # ESP_SHIMS="ubuntu ...": other systems' shims already on the ESP, there once
-# it is mounted. stdout: the backend's events; $T/calls: every command run(),
-# in order.
+# it is mounted; ESP_FALLBACK=TEXT: the ESP's EFI/BOOT/BOOTX64.EFI before the
+# install. ESP_BOOT_RO=1: bootc leaves EFI/BOOT read-only, so it can't be put
+# back. stdout: the backend's events; $T/calls: every command run(), in order.
 system() {
     local mode=$1; shift
     PULSAR_INSTALL_DISK="$T/disk-tool" python3 - "$SYS" "$T" "$DISK" "$mode" "$@" <<'PY'
@@ -63,7 +65,7 @@ m.SCRATCH = T + "/run"
 # booted via EFI, as the live system is: the firmware entry is made
 m.EFIVARS = T
 calls = open(T + "/calls", "a", buffering=1)
-fail_at = os.environ.get("FAIL_AT", "")
+fail_at = [f for f in os.environ.get("FAIL_AT", "").split(";") if f]
 parts = [("p1", 1, m.ESP_TYPE, ESPU, "vfat", "ESPFS"), ("p2", 2, "bc13c2ff-59e6-4262-a352-b275fd6f7172", BOOT, "ext4", "BOOTFS"),
          ("p3", 3, "4f68bce3-e8cd-4db1-96e7-fbcaf984b709", ROOT, "crypto_LUKS", "LUKSUUID")]
 state = {"target": None}
@@ -72,7 +74,7 @@ real_run, real_subprocess_run, real_popen = m.run, m.subprocess.run, m.subproces
 def run(*cmd, **kw):
     line = " ".join(cmd)
     calls.write(line + "\n")
-    if fail_at and line.startswith(fail_at):
+    if any(line.startswith(f) for f in fail_at):
         raise m.Failed(f"{cmd[0]} exited 1: stopped by the test", 1)
     if cmd[0] == m.DISK_TOOL:
         return real_run(*cmd, **kw)
@@ -86,22 +88,32 @@ def run(*cmd, **kw):
         for v in os.environ.get("ESP_SHIMS", "").split():
             os.makedirs(os.path.join(cmd[-1], "EFI", v), exist_ok=True)
             open(os.path.join(cmd[-1], "EFI", v, "shimx64.efi"), "w").close()
+        if os.environ.get("ESP_FALLBACK"):
+            os.makedirs(os.path.join(cmd[-1], "EFI/BOOT"), exist_ok=True)
+            open(os.path.join(cmd[-1], "EFI/BOOT/BOOTX64.EFI"), "w").write(os.environ["ESP_FALLBACK"])
     if cmd[0] in ("udevadm", "cryptsetup", "mount", "umount", "efibootmgr", "sfdisk"):
         return ""
     raise SystemExit(f"unexpected command {cmd}")
 
 def run_stream(*cmd, **kw):
     # bootc: a deployment with the image's EFI payload, its stateroot's /var,
-    # and that payload's shim copied to the ESP
+    # and that payload's shim copied to the ESP, as bootupd does: into
+    # EFI/fedora and over EFI/BOOT
     target = cmd[-1]
     calls.write("bootc install to-filesystem " + target + "\n")
     state["target"] = target
     payload = "ostree/deploy/default/deploy/abc.0/usr/lib/efi/shim/16.1-7/EFI/fedora"
     for d in ("ostree/deploy/default/deploy/abc.0/etc", "ostree/deploy/default/var/log", "boot/efi/EFI/fedora",
-              "boot/grub2", payload):
+              "boot/efi/EFI/BOOT", "boot/grub2", payload):
         os.makedirs(os.path.join(target, d), exist_ok=True)
     for f in (payload + "/shimx64.efi", "boot/efi/EFI/fedora/shimx64.efi"):
         open(os.path.join(target, f), "w").close()
+    for f in ("BOOTX64.EFI", "fbx64.efi"):
+        open(os.path.join(target, "boot/efi/EFI/BOOT", f), "w").write("PULSAR-SHIM")
+    if os.environ.get("ESP_BOOT_RO"):
+        os.chmod(os.path.join(target, "boot/efi/EFI/BOOT"), 0o555)
+    if "bootc" in fail_at:
+        raise m.Failed("bootc exited 1: stopped by the test", 1)
 
 def cleanup(cmd, *a, **k):
     # the finally block's umount and cryptsetup close, remove_made's settle;
@@ -130,8 +142,14 @@ PY
 
 ID=(--expect-size 1000204886016 --expect-serial S6B0NX0R123456A)
 
-# the failed event's restored, and the partitions sfdisk was told to delete
+teardown() {
+    chmod -R u+w "$BATS_TEST_TMPDIR"
+}
+
+# the failed event's restored, its disk and esp, and the partitions sfdisk
+# was told to delete
 restored() { echo "$output" | jq -r 'select(.stage? == "failed") | .restored'; }
+known() { echo "$output" | jq -r 'select(.stage? == "failed") | "\(.disk) \(.esp)"'; }
 deleted() { grep '^sfdisk --delete' "$T/calls" | sed "s|^sfdisk --delete $DISK ||" | tr '\n' ' '; }
 
 @test "a failed erase never says the disk is as it was, even with every partition it made taken back" {
@@ -174,6 +192,82 @@ deleted() { grep '^sfdisk --delete' "$T/calls" | sed "s|^sfdisk --delete $DISK |
     [ "$status" -eq 1 ]
     [ "$(restored)" = "true" ]
     [ "$(deleted)" = "" ]
+}
+
+@test "the failed event says what is known: nothing written, unknown, or Pulsar's partitions removed or left" {
+    # refused: nothing written, either way
+    DISK_EXIT=2 run --separate-stderr system alongside "${ID[@]}"
+    [ "$(known)" = "unchanged unchanged" ]
+    DISK_EXIT=2 run --separate-stderr system erase "${ID[@]}"
+    [ "$(known)" = "unchanged null" ]
+    # failed while writing (3), or crashed (1): what is on the disk is unknown
+    DISK_EXIT=3 run --separate-stderr system erase "${ID[@]}"
+    [ "$(known)" = "unknown null" ]
+    [ "$(restored)" = "false" ]
+    DISK_EXIT=1 run --separate-stderr system erase "${ID[@]}"
+    [ "$(known)" = "unknown null" ]
+    DISK_EXIT=3 run --separate-stderr system alongside "${ID[@]}"
+    [ "$(known)" = "unknown unchanged" ]
+    # partitioned, then failed before bootc: what it made is taken back
+    FAIL_AT="cryptsetup open" run --separate-stderr system erase "${ID[@]}"
+    [ "$(known)" = "removed null" ]
+    FAIL_AT="cryptsetup open" run --separate-stderr system alongside "${ID[@]}"
+    [ "$(known)" = "removed unchanged" ]
+}
+
+@test "partitions that can't be taken back are reported left, and the disk is never called as it was" {
+    FAIL_AT="cryptsetup open;sfdisk --delete" run --separate-stderr system alongside "${ID[@]}"
+    [ "$status" -eq 1 ]
+    [ "$(known)" = "left unchanged" ]
+    [ "$(restored)" = "false" ]
+    FAIL_AT="cryptsetup open;sfdisk --delete" run --separate-stderr system erase "${ID[@]}"
+    [ "$(known)" = "left null" ]
+    [ "$(restored)" = "false" ]
+}
+
+@test "a failed install beside Windows puts Windows' EFI/BOOT back, and says so" {
+    ESP_FALLBACK=WINDOWS-BOOTMGR FAIL_AT=bootc run --separate-stderr system alongside "${ID[@]}"
+    [ "$status" -eq 1 ]
+    [ "$(known)" = "removed boot_files" ]
+    local boot
+    boot=$(find "$T/run" -path '*/boot/efi/EFI/BOOT' -type d)
+    [ "$(ls "$boot")" = BOOTX64.EFI ]
+    [ "$(cat "$boot/BOOTX64.EFI")" = WINDOWS-BOOTMGR ]
+    # put back before the ESP is unmounted, and before the partitions go
+    [ "$(grep -n 'put EFI/BOOT on the ESP back' <<<"$stderr" | cut -d: -f1)" -lt \
+      "$(grep -n 'removed the 2 partitions' <<<"$stderr" | cut -d: -f1)" ]
+    # it can't be put back: the event says EFI/BOOT may be Pulsar's
+    rm -rf "$T/run"
+    ESP_FALLBACK=WINDOWS-BOOTMGR ESP_BOOT_RO=1 FAIL_AT=bootc run --separate-stderr system alongside "${ID[@]}"
+    [ "$(known)" = "removed fallback" ]
+}
+
+# page_says MODE: the failure page's sentence about the disk, as the installer
+# app words it from the events in $output
+page_says() {
+    python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-installer" "$1" "$output" <<'PY'
+import importlib.machinery as M, importlib.util as U, json, sys
+l = M.SourceFileLoader("a", sys.argv[1]); a = U.module_from_spec(U.spec_from_loader("a", l)); l.exec_module(a)
+events = [json.loads(line) for line in sys.argv[3].splitlines() if line.strip()]
+print(a.failure_state(sys.argv[2], a.disk_state(events)))
+PY
+}
+
+@test "the failure page says what the backend knows: nothing changed, unknown, erased, or what is left" {
+    DISK_EXIT=2 run --separate-stderr system alongside "${ID[@]}"
+    [ "$(page_says alongside)" = "Nothing on the disk was changed." ]
+    DISK_EXIT=2 run --separate-stderr system erase "${ID[@]}"
+    [ "$(page_says erase)" = "Nothing on the disk was changed." ]
+    for code in 1 3; do
+        DISK_EXIT=$code run --separate-stderr system erase "${ID[@]}"
+        [ "$(page_says erase)" = "The disk may have been erased. What is on it now is unknown." ]
+    done
+    FAIL_AT="cryptsetup open;sfdisk --delete" run --separate-stderr system erase "${ID[@]}"
+    [ "$(page_says erase)" = "The disk was erased, and Pulsar's new partitions may still be on it." ]
+    FAIL_AT="cryptsetup open;sfdisk --delete" run --separate-stderr system alongside "${ID[@]}"
+    [ "$(page_says alongside)" = "Pulsar's new partitions may still be on the disk. The disk's other partitions weren't changed." ]
+    ESP_FALLBACK=WINDOWS-BOOTMGR FAIL_AT=bootc run --separate-stderr system alongside "${ID[@]}"
+    [ "$(page_says alongside)" = "Pulsar's new partitions were removed. The startup files (EFI) partition may still have Pulsar's boot files in it. The other partitions weren't changed." ]
 }
 
 @test "the disk tool is told which drive was chosen, for the plan and the install; an install without it is refused" {
