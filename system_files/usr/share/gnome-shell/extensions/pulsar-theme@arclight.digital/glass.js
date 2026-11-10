@@ -3901,8 +3901,8 @@ export class Glass {
     // Pulsar's command menu (Super+Space) is a GTK window that should read
     // as one of the Shell's menus, so it gets their glass, not a window's:
     // a Surface inside the window actor, its colors and shape off a box styled
-    // as a menu over the window's frame, lit from a point above the top edge
-    // a little in from the left. The window itself paints no ground while
+    // as a menu over the window's frame, lit above the center of its top
+    // edge (commandMenuLight). The window itself paints no ground while
     // this extension runs (scripts/pulsar-menu drops its .background), so
     // the box is its ground whenever no glass is behind it -- Glass off,
     // Power Saver or a game, high contrast: shown, beneath the window's own
