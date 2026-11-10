@@ -607,9 +607,13 @@ class CalcItem(Item):
                 # the ECB stops publishing a currency now and then (BGN, 2026)
                 self.answer, self.argv = None, []
                 self.title = "= ?"
-                self.subtitle = f"No rate for {missing} in the ECB's rates of {self.rates['date']}"
+                # TODO(copy): frankfurter.dev now calls /v1/ deprecated and no
+                # longer says where its rates come from (v2 names the ECB as one
+                # provider of many). If /v1/latest is still the ECB's reference
+                # rates, these can name the ECB again.
+                self.subtitle = f"No rate for {missing} in Frankfurter's rates of {self.rates['date']}"
                 return True
-            return self._answer(*currency_convert(cur, self.rates), note=f"ECB rate of {self.rates['date']}")
+            return self._answer(*currency_convert(cur, self.rates), note=f"Frankfurter rate of {self.rates['date']}")
         got = date_calc(query)
         if got is None:
             got = calc(query)

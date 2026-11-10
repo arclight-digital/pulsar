@@ -652,7 +652,7 @@ print(it.matches("100 usd in eur"), it.title, "|", it.subtitle)'
         "100 usd eur = None"
         "\$100 usd in eur = None"
         "True = … | Getting the exchange rates | [] 1"
-        "True = 86.98 EUR | ECB rate of 2026-11-05 · Enter copies 86.98"
+        "True = 86.98 EUR | Frankfurter rate of 2026-11-05 · Enter copies 86.98"
         "True = ? | No exchange rates: couldn't get them, and none saved yet"
     )
     for i in "${!expected[@]}"; do
@@ -851,9 +851,9 @@ print(it.matches("100 usd in eur"), it.argv)'
     [ "$status" -eq 0 ] || fail "$output"
     expected=(
         "False None"
-        "True = ? | No rate for JPY in the ECB's rates of 2026-11-05 | []"
-        "True = ? | No rate for JPY in the ECB's rates of 2026-11-05 | []"
-        "True = 86.98 EUR | ECB rate of 2026-11-05 · Enter copies 86.98 | ['wl-copy', '--', '86.98']"
+        "True = ? | No rate for JPY in Frankfurter's rates of 2026-11-05 | []"
+        "True = ? | No rate for JPY in Frankfurter's rates of 2026-11-05 | []"
+        "True = 86.98 EUR | Frankfurter rate of 2026-11-05 · Enter copies 86.98 | ['wl-copy', '--', '86.98']"
         "False []"
     )
     [ "$output" = "$(printf '%s\n' "${expected[@]}")" ] || fail "$output"
