@@ -19,7 +19,7 @@ grub2:
     - name: "Install Pulsar"
       linux: "${kernelpath} ${root}"
       initrd: "${initrdpath}"
-    - name: "Check the installer for errors, then install Pulsar"
+    - name: "Check this ISO for errors, then install Pulsar"
       linux: "${kernelpath} ${root} rd.live.check"
       initrd: "${initrdpath}"
     - name: "Install Pulsar in basic graphics mode"
