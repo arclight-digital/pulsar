@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Recolor the whole desktop in one step.
+"""Apply a theme's colors to apps, the terminal, the editor, the top bar and the wallpaper.
 
 Installed as /usr/libexec/pulsar/pulsar-theme; `pulsar theme ...` execs it.
 
@@ -2968,15 +2968,16 @@ def main(argv=None):
     s.add_argument("theme")
     s.add_argument("--variant", choices=["both", "dark", "light"], default="both")
     s.add_argument("--only", help="comma-separated targets")
-    s.add_argument("--with", dest="extra", help="also apply these opt-in targets (e.g. flatpak); they stay on")
-    s.add_argument("--without", help="turn these opt-in targets off again")
+    s.add_argument("--with", dest="extra", help="also apply these targets, and turn back on any turned off with --without")
+    s.add_argument("--without", help="leave these targets out of this and every later set, until --with")
     s.add_argument("--dry-run", action="store_true")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--restart", dest="restart", action="store_const", const="restart",
-                   help="gracefully restart open GTK apps without asking")
+                   help="without asking, quit open GTK apps as Ctrl+Q does and reopen the ones that quit")
     g.add_argument("--no-restart", dest="restart", action="store_const", const="note", help="never ask; print the note")
     sub.add_parser("list")
-    ra = sub.add_parser("restart-apps", help="list (or with --yes, gracefully restart) GTK apps holding the old palette")
+    ra = sub.add_parser("restart-apps", help="list open GTK apps, which show new colors only once reopened (with --yes, quit them as "
+                        "Ctrl+Q does and reopen the ones that quit)")
     ra.add_argument("--yes", action="store_true")
     ra.add_argument("--json", action="store_true")
     ra.add_argument("--ids", help="only these app ids, comma-separated (the picker passes what the user confirmed)")
@@ -2993,7 +2994,7 @@ def main(argv=None):
     sub.add_parser("prev")
     sub.add_parser("bg-next")
     sub.add_parser("login-account", help="exit 0 for a person's account, 1 for the login screen's own "
-                   "(the first-login units' ExecCondition)")
+                   "(ExecCondition of pulsar-welcome and pulsar-whats-new)")
     sub.add_parser("follow-scheme", help="re-apply the GTK3 half after a Dark Style flip (the Shell extension calls this)")
     wg = sub.add_parser("window-glass", help="re-apply the GTK4 half after the Glass windows switch (the Shell extension calls this)")
     wg.add_argument("--if-stale", action="store_true", help="only when it was written for the other glass state")
