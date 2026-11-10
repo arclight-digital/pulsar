@@ -1822,7 +1822,7 @@ const {load, fake, provide, Signals} = await import(process.env.HARNESS);
 const {default: assert} = await import('node:assert/strict');
 globalThis.global = {stage: Object.assign(new Signals(), {context: fake('context')}), get_window_actors: () => []};
 provide('Meta', fake('Meta', {WindowType: {NORMAL: 0, DIALOG: 3, MODAL_DIALOG: 4, UTILITY: 5}}));
-const g = await load(`${process.env.EXT}/glass.js`, ['lightSpot', 'LIGHT_PAD', 'LIGHT_MIN_DISTANCE']);
+const g = await load(`${process.env.EXT}/glass.js`, ['lightSpot', 'commandMenuLight', 'LIGHT_PAD', 'LIGHT_MIN_DISTANCE']);
 const [P, D, w, h, r] = [g.LIGHT_PAD, g.LIGHT_MIN_DISTANCE, 400, 120, 12];
 // nothing opened it (a banner, a switcher, a dialog): the top edge's center
 assert.deepEqual(g.lightSpot(null, w, h, r), [[P + w / 2, P - D], false]);
@@ -1830,6 +1830,8 @@ assert.deepEqual(g.lightSpot(null, w, h, r), [[P + w / 2, P - D], false]);
 assert.deepEqual(g.lightSpot([P + 10, P + h + 50], w, h, r, 'bottom'), [[P + w / 2, P + h + D], false]);
 // a source still picks its third: a button over the left of a menu
 assert.deepEqual(g.lightSpot([P + 20, P - 30], w, h, r), [[P + r, P - D], false]);
+// Pulsar Commands, opened by a key: lit above the middle of its top edge
+assert.deepEqual(g.commandMenuLight(100, 50, 600), [400, 50 - D]);
 console.log('ok');
 JS
     [ "$status" -eq 0 ] || { echo "$output"; false; }

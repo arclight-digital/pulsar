@@ -1663,6 +1663,13 @@ function holdBack([lx, ly], rect, r) {
 // actor's coordinates (the surface is [LIGHT_PAD, LIGHT_PAD, w, h]), and
 // whether it is a line along that edge (never, now; the shader keeps the
 // line form).
+// Pulsar Commands: nothing on screen opens it (Super+Space), so it is lit at
+// the center of its top edge, as Alt+Tab, dialogs and search are (Nick,
+// 2026-11-10: it was lit from a point 15% in from its left).
+function commandMenuLight(x, y, w) {
+    return [x + w / 2, y - LIGHT_MIN_DISTANCE];
+}
+
 function lightSpot(src, w, h, r, full) {
     const [x0, y0] = [LIGHT_PAD, LIGHT_PAD];
     const top = y0 - LIGHT_MIN_DISTANCE, bottom = y0 + h + LIGHT_MIN_DISTANCE;
@@ -3911,7 +3918,7 @@ export class Glass {
         if (!this._surfaces.has(actor)) {
             this._add(actor, {
                 box: () => ground,
-                source: (x, y, w) => [x + w * 0.15, y - LIGHT_MIN_DISTANCE],
+                source: commandMenuLight,
             });
         }
         ground.opacity = this.glass && this._surfaces.has(actor) ? 0 : 255;
