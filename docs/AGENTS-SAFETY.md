@@ -1,12 +1,6 @@
 # Handing Pulsar to an agent
 
-What "the safest machine to hand to a coding agent" covers, what it doesn't,
-and how to undo an agent's changes.
-
-In short: the OS is hard to damage and easy to restore. **Your data is not.**
-An agent running as you can do anything to `$HOME` that you can, and rollback
-never touches it. A checkpoint restores your settings; documents and projects
-need git and backups.
+What a coding agent running on Pulsar can change, and how to undo it.
 
 ## Why the OS half holds
 
@@ -18,12 +12,13 @@ These come from Fedora Silverblue / bootc, not from Pulsar:
    a rebase: each builds a deployment beside the booted one, used only after
    a reboot. The old one stays on disk.
 3. **Going back is one reboot.** `sudo pulsar rollback` makes the previous
-   deployment the default; greenboot does it automatically when a boot fails
-   its health checks. `sudo pulsar pin on` keeps a deployment from being
+   deployment the default; greenboot does it automatically after three boots
+   in a row fail its health checks. `sudo pulsar pin on` keeps a deployment from being
    garbage-collected.
 
-The worst an agent can do to the OS is stage a bad deployment. Discard it
-before rebooting (`sudo rpm-ostree cleanup --pending`) or roll back after.
+Staging a deployment doesn't change the running system. Discard a staged
+deployment before rebooting (`sudo rpm-ostree cleanup --pending`), or roll
+back after.
 
 ## What an agent running as you can and cannot do
 
@@ -45,9 +40,8 @@ before rebooting (`sudo rpm-ostree cleanup --pending`) or roll back after.
 **The "yes" rows are stock Fedora.** Its polkit rules
 (`org.projectatomic.rpmostree1.rules`, `org.freedesktop.Flatpak.rules`) let a
 `wheel` member in an active local session do these without a password, and
-an agent started from your terminal is in that session. It can only stage the
-next system, which is reversible. Not being asked for a password is not
-permission; AGENTS.md tells agents so.
+an agent started from your terminal is in that session. Not being asked for a
+password is not permission; AGENTS.md tells agents so.
 
 **Guard makes them ask.** `sudo pulsar agent guard on` installs
 `/etc/polkit-1/rules.d/49-pulsar-guard.rules`, which requires the admin
@@ -65,22 +59,20 @@ applies immediately and outlives rollback. Anything installed into
 image on `PATH`, never appears in `rpm-ostree status`, and outlives every
 update and rollback.
 
-## What is NOT protected
+## What is not protected
 
 - **`$HOME`, unless the agent is sandboxed.** Deleted source, a rewritten
   `~/.ssh/config`, a force-pushed branch, a leaked token: none is an OS change,
   so rollback can't help. The sandbox limits this to one project and removes
   force-push and your keys; within the project, git and backups are the
-  defense. A checkpoint restores settings, not documents or projects. A
-  session started with `pulsar agent run <agent> --tmux <name>` in a git
+  defense. A session started with `pulsar agent run <agent> --tmux <name>` in a git
   repository snapshots the project's files first, and
   `pulsar agent undo <name>` puts them back; it leaves ignored files,
   commits and branches alone, and it is not a backup.
 - **`/etc` across rollback.** Each deployment has its own `/etc`; updates
   carry local edits forward with a three-way merge. Rolling back boots the
   older copy, which can restore files you meant to change, lack edits made
-  since, and then merge forward from there. Rollback is not an `/etc` undo;
-  see "Undoing an `/etc` change".
+  since, and then merge forward from there. See "Undoing an `/etc` change".
 - **`/var`**, shared by every deployment and never versioned: container
   storage, libvirt images, Flatpak installations, `/var/home`, `/usr/local`,
   `/opt`.
@@ -92,9 +84,9 @@ update and rollback.
 
 `pulsar agent add` installs agents into a toolbox named `agents`, which keeps
 Node, Python and the agent off the host (`toolbox rm -f agents` removes it
-all). It is **not** isolation: it shares your `$HOME`, session bus and UID, and
-`flatpak-spawn --host` runs anything on the host. Treat an agent there as an
-agent on the host. Isolation is the sandbox.
+all). It shares your `$HOME`, session bus and UID, and `flatpak-spawn --host`
+runs anything on the host, so an agent in it can reach what an agent on the
+host can.
 
 ## The sandbox, and a push that never holds your key
 
@@ -166,7 +158,7 @@ commenting or editing. GitHub only.
 inside. At session end Pulsar sets `branch.<name>.remote` and `.merge` on the
 host for each branch that reached the real remote, and nothing else.
 
-**Settings, most specific first**; what the agent could write can only
+**Sandbox configuration, most specific first**; what the agent could write can only
 tighten:
 
 | Layer | Where | Can loosen? |
@@ -255,11 +247,10 @@ include it (it reads the host).
 ## A local model
 
 `pulsar agent model on` runs llama.cpp's server image as a rootless podman
-user service (a quadlet): CUDA on the nvidia image via CDI, Vulkan with a
+user service (a quadlet): CUDA on the NVIDIA image via CDI, Vulkan with a
 `/dev/dri`, CPU otherwise. The model downloads from Hugging Face into
 `~/.local/share/pulsar/models`. opencode gets a "Local (Pulsar)" provider;
-aider gets a printed command line. (RTX 5080, 0.5B model: about 550
-tokens/s.)
+aider gets a printed command line.
 
 - Listens on `127.0.0.1` only, with a required random key in
   `~/.config/pulsar/model-key` (0600); CORS allows only the server itself.
