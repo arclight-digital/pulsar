@@ -27,8 +27,10 @@ assert lines == ["docker:", "  ghcr.io/arclight-digital:", "    use-sigstore-att
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-@test "no policy.json yet: nothing enforces a signature no image carries" {
-  # Remove this test in the same change that ships the policy -- and only
-  # once every image under ghcr.io/arclight-digital is signed.
+@test "no policy.json yet: hosts enforce no signature, though images are signed" {
+  # Images have been signed since 2026-09-28. What enforces no signature is
+  # the host: it has no policy.json, so a host pulls an image whether or not
+  # it is signed. Remove this test in the same change that ships the policy,
+  # and only once every image under ghcr.io/arclight-digital is signed.
   [ ! -e "${ROOT}/system_files/etc/containers/policy.json" ]
 }

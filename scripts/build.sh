@@ -138,11 +138,13 @@ if [ "${DO_PUSH}" = yes ] && [ -z "${VERSION}" ]; then
   exit 2
 fi
 
-# The belt for the split between this flag and the channel that sets it.
-# next-version.sh gives a manual build a -dev version, and nightly.sh passes
-# --no-floating-tags alongside it; two flags that must agree are two flags that
-# can disagree, and one direction of that disagreement puts a debugging image
-# on every user's next bootc upgrade. So the version string itself vetoes it.
+# A -dev version never moves the floating tags. Until 2026-10-01 next-version.sh
+# gave every manual build a -dev version, and this was the belt beside the
+# --no-floating-tags that nightly.sh passes for the manual channel. Manual
+# builds now take the next number in the series like any build, so they can be
+# promoted by moving :latest alone; what keeps one off :latest until then is
+# that flag, not this check. The check still stops a -dev version given by hand
+# (a debugging build) from reaching every user's next bootc upgrade.
 # Checked here rather than in push() so it costs nothing and fails before the
 # tool probe below -- an hour of building is a bad place to learn this.
 if [ "${DO_PUSH}" = yes ] && [ "${NO_FLOATING_TAGS}" = no ]; then

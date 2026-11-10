@@ -803,9 +803,9 @@ build_args=(
   --push
 )
 # :latest and :44 are what a machine follows on its next bootc upgrade. A
-# debugging build must not become that, so it publishes its version tag and
-# nothing else. build.sh also refuses to move the floating tags onto a -dev
-# version even if this line is ever dropped.
+# manual build publishes its version tag and nothing else, until it is
+# promoted. Its version has had no -dev since 2026-10-01, so build.sh's -dev
+# check no longer catches it: this line is what keeps it off the floating tags.
 [ "${CHANNEL}" = manual ] && build_args+=(--no-floating-tags)
 # Gated, the floating tags wait for the boot gate; the build host moves them.
 [ "${PULSAR_GATE:-0}" = 1 ] && [ "${CHANNEL}" != manual ] && build_args+=(--no-floating-tags)
