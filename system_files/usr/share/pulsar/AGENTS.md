@@ -1,8 +1,8 @@
 # This machine runs Pulsar
 
 Pulsar is an image-based OS (bootc / rpm-ostree), built on Fedora
-Silverblue 45. It is not a mutable distro. Read this before changing anything
-outside the project you were given.
+Silverblue 45. Read this before changing anything outside the project you
+were given.
 
 Ships at `/usr/share/pulsar/AGENTS.md`, updates with the image.
 `pulsar agent guide` prints it; `pulsar agent --json` lists installed agents
@@ -12,9 +12,9 @@ and guard state.
 
 - **Ask first** before anything that needs `sudo`, changes the system, or is
   hard to undo. Never get root another way.
-- **No prompt is not permission.** An admin's desktop session can run
-  `rpm-ostree install|upgrade|rollback|cleanup`, system Flatpak installs and
-  removals, and `systemctl reboot` with no password. Ask anyway.
+- **Ask even when nothing prompts for a password.** An admin's desktop
+  session can run `rpm-ostree install|upgrade|rollback|cleanup`, system
+  Flatpak installs and removals, and `systemctl reboot` with no password.
   `pulsar agent guard` shows whether rpm-ostree and system Flatpak changes
   prompt; `sudo pulsar agent guard on` makes them prompt (the user's call).
 - **Never reboot**, and never run `pulsar update --apply`.
@@ -30,7 +30,7 @@ and guard state.
 | `/var` | Writable, persistent, shared by all deployments. `/home` = `/var/home`. |
 | `/usr/local`, `/opt` | Symlinks into `/var`. Not in the image, shadow it on `PATH`, survive every update and rollback, invisible to `rpm-ostree status`. Don't install there (`sudo make install`, vendor `.sh` installers); use a toolbox, `mise` or `~/.local/bin`. |
 | `$HOME` | User data. Nothing rolls it back. |
-| `/tmp` | tmpfs: held in RAM, up to half of it. What you leave there pushes the user's apps into swap. Keep it to small files. Disk images, VM images and build trees go in `/var/tmp` or `~/.cache` (on disk; `TMPDIR=/var/tmp` for tools and tests that make them). Delete them when you're done. |
+| `/tmp` | tmpfs: held in RAM, up to half of it ([systemd's `tmp.mount`](https://github.com/systemd/systemd/blob/main/units/tmp.mount)). What you leave there pushes the user's apps into swap. Keep it to small files. Disk images, VM images and build trees go in `/var/tmp` or `~/.cache` (on disk; `TMPDIR=/var/tmp` for tools and tests that make them). Delete them when you're done. |
 
 ## Where software goes
 
@@ -86,8 +86,8 @@ You are in a container that sees only the project.
 
 - Not there: the rest of `$HOME`, SSH keys, `sudo`, `pulsar`, `toolbox`,
   `rpm-ostree`. Don't look for them or try to reach the host.
-- `.git/config` and `.git/hooks` are read-only. A write fails with "Device or
-  resource busy"; that is the sandbox, don't retry. Commit normally.
+- `.git/config` and `.git/hooks` are read-only. A write to them fails; that is
+  the sandbox, don't retry. Commit normally.
 - `git push` / `git pull` go through a gate using the user's credentials:
   branches only; no force-push, deletes or tags; maybe not the default branch;
   maybe off for this project. A refusal says why: tell the user, don't work
@@ -100,7 +100,7 @@ You are in a container that sees only the project.
   `http://127.0.0.1:8080/v1`, OpenAI-compatible. Every request needs the key
   in `~/.config/pulsar/model-key`. No other host port is reachable.
 
-## Facts: check, don't guess
+## Commands that report this machine's state
 
 None of these needs root. MCP clients: the `pulsar` server (`pulsar mcp`,
 registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
@@ -116,7 +116,7 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
 | `pulsar report` | Doctor + status + manifest, failed units, recent warning+ journal, GPU driver, Flatpak state. Redacted JSON. Use when something is broken. |
 | `pulsar report --crash latest` | One crash: program, signal, package, unit, crashing thread's stack, its log lines. `pulsar doctor crashes` lists this boot's. |
 | `pulsar doctor flatpak-gl` | Whether running Flatpak apps (Steam) have the NVIDIA driver. An app started before its GL extension arrived renders black on the iGPU; quit and reopen it. The NVIDIA GL extensions are masked on purpose: `flatpak update` skips them, and `pulsar-gl-nvidia.service` updates them when no app holds them. Don't unmask them. |
-| `pulsar doctor gpu-faults` | This boot's NVIDIA GPU faults (Xid lines in the kernel log), by program, in words. A game that froze or quit without a crash usually has one. |
+| `pulsar doctor gpu-faults` | This boot's NVIDIA GPU faults (Xid lines in the kernel log), by program, in words. |
 | `pulsar update --check --json` | Exit 0 current or staged, 10 newer available, 1 couldn't tell. |
 | `pulsar pin --json` | Whether the booted deployment is pinned. |
 | `pulsar agent guard --json` | `on`: layering, rollback, cleanup, and system Flatpak installs and removals ask for a password. `off`: they don't. |
@@ -131,7 +131,8 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
   user's call.
 - `sudo pulsar rollback` makes the previous deployment the next boot's
   default. greenboot rolls back on its own after three boots in a row fail
-  its health checks.
+  its health checks (`GREENBOOT_MAX_BOOT_ATTEMPTS` in
+  `/etc/greenboot/greenboot.conf`).
 - `sudo pulsar pin on` keeps the booted deployment from garbage collection.
 - **Rollback covers the OS image only.** Not `$HOME`, `/var` (incl.
   `/usr/local`, `/opt`), Flatpaks or their data, toolboxes, containers.
@@ -140,8 +141,8 @@ registered by `pulsar agent add`) exposes `doctor`, `status`, `manifest`,
 
 - Each deployment has its own `/etc`. A rollback boots the older copy, so
   recent edits vanish, and the next update merges forward from that.
-- Don't edit `/etc` to "fix" something the image ships: the local edit
-  outlives updates and silently shadows the real fix. If you must, name the
+- Don't edit `/etc` to "fix" something the image ships: the update merge keeps
+  the local edit, so the image's later fix to that file never applies. If you must, name the
   file to the user.
 - Before editing: `sudo cp -a <file> <file>.pre-agent`.
   `sudo ostree admin config-diff` lists every `/etc` file that differs from

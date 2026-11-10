@@ -48,18 +48,19 @@ sudo mokutil --import /etc/pki/pulsar/MOK.der
 sudo systemctl reboot
 ```
 
-On the next boot, MokManager asks you to confirm. Choose `Enroll MOK`, then
-`View key 0`, `Continue` and `Yes`, and enter the password. If you miss the
-prompt, run the import again. Once you're back in, check that the driver
-loaded:
+On the next boot, MokManager asks you to confirm. Choose `Enroll MOK`,
+`Continue` and `Yes`, then enter the password
+([RPM Fusion's Secure Boot guide](https://rpmfusion.org/Howto/Secure%20Boot)
+shows each screen). If you miss the prompt, run the import again. Once
+you're back in, check that the driver loaded:
 
 ```bash
 modinfo -F signer nvidia && nvidia-smi
 ```
 
-A BIOS update can clear the enrolled keys. On the NVIDIA image, GNOME
-Software offers to enroll the key again, and `pulsar-akmods-cert.service`
-makes sure it offers Pulsar's key.
+A BIOS update can clear the enrolled keys (one did on 2026-09-10). On the
+NVIDIA image, GNOME Software then offers to enroll the key again, and
+`pulsar-akmods-cert.service` makes sure it offers Pulsar's key.
 
 ## Updates and rollback
 
@@ -77,7 +78,9 @@ update is ready, and it takes effect when you next restart.
 they carry over to the new image.
 
 `greenboot` checks each boot for a working graphical session. After three
-failed boots in a row, it rolls back automatically.
+failed boots in a row (its default
+[`GREENBOOT_MAX_BOOT_ATTEMPTS`](https://github.com/fedora-iot/greenboot-rs/blob/main/etc/greenboot/greenboot.conf)),
+it rolls back automatically.
 
 Rolling back replaces the OS image only. Your home folder, `/var`, Flatpak
 apps and containers stay as they are.
@@ -99,16 +102,18 @@ engine writes.
 
 ## Gaming
 
-Steam, Heroic, Bottles and other launchers are installed as Flatpaks on first
-boot. The image itself includes `gamescope`, `gamemode`, `mangohud`,
-`steam-devices`, and `ntsync` for Proton. It also turns off split-lock
-mitigation, raises `vm.max_map_count`, and tunes hugepage defragmentation
+Steam, Heroic, Bottles and other launchers are installed as Flatpaks the
+first time the machine reaches Flathub. The image itself includes
+`gamescope`, `gamemode`, `mangohud`, `steam-devices`, and `ntsync` for
+Proton. It also turns off split-lock mitigation, raises `vm.max_map_count`, and tunes hugepage defragmentation
 and memory compaction so they don't stall a running game.
 
 ### gamemode on laptops with two GPUs
 
 By default, gamemode compares integrated GPU power with CPU power and drops
-the CPU governor to `powersave` when the ratio goes above 0.3. That makes
+the CPU governor to `powersave` when the ratio goes above 0.3
+([gamemode's example config](https://github.com/FeralInteractive/gamemode/blob/master/example/gamemode.ini)
+documents both settings). That makes
 sense when the integrated GPU is running the game. On a laptop where it only
 drives the screen and a discrete GPU does the rendering, the check misfires.
 `/etc/gamemode.ini` turns it off and enables the `nice -10` setting the
@@ -118,21 +123,24 @@ login, and `pulsar doctor` shows whether it has.
 
 ### Loading screens
 
-GNOME offers to force-quit a window that stops responding for 5 seconds,
+GNOME offers to force-quit a window that stops responding for 5 seconds
+(mutter's
+[`check-alive-timeout`](https://gitlab.gnome.org/GNOME/mutter/-/blob/main/data/org.gnome.mutter.gschema.xml.in)),
 which can happen during a long level load or shader compile. Pulsar raises
 the limit to 20 seconds, and switches the check off entirely while gamemode
 is active.
 
 ### gamescale
 
-When fractional scaling is on, games running through XWayland render at the
-wrong resolution and look blurry.
-[gamescale](https://github.com/arclight-digital/gamescale) sets the display
-to 100% while a game runs and puts your scaling back when it quits, even if
-it crashes. The image ships a pinned, hash-verified release with an
-indicator in the top bar. It works as installed with native launchers and
-with the Steam and Faugus Flatpaks, which the image gives read-only access to
-its copy. Other Flatpak launchers need a copy in your home folder:
+When fractional scaling is on, XWayland doesn't give games the panel's real
+resolution, so they either upscale and look blurry or render more pixels than
+the panel has. [gamescale](https://github.com/arclight-digital/gamescale),
+whose README has the numbers, sets the display to 100% while a game runs and
+puts your scaling back when it quits, even if it crashes. The image ships a pinned, hash-verified release
+with an indicator in the top bar. Native launchers use it as installed, and
+`pulsar-steam-grants.service` gives the Steam and Faugus Flatpaks read-only
+access to the image's copy. Other Flatpak launchers need a copy in your home
+folder:
 
 ```bash
 pulsar setup gamescale --platform heroic    # or bottles, lutris
@@ -207,12 +215,12 @@ and each gets a command that works from any terminal.
 
 | Command | What it does |
 |---|---|
-| `pulsar agent guide` | prints the guide the image ships for agents about how this system works |
+| `pulsar agent guide` | prints the agent guide that ships with the image, `/usr/share/pulsar/AGENTS.md` |
 | `pulsar mcp` | serves health checks, system status and crash reports to MCP clients, without root |
 | `pulsar agent sandbox on` | runs agents in a container that only sees the current project; their pushes go through a gate that blocks force-pushes and deletes |
 | `sudo pulsar agent guard on` | requires the admin password for layering packages, rollback, cleanup, and system Flatpak installs and removals |
 | `sudo pulsar checkpoint` | snapshots `/etc` and your settings and pins the booted deployment, so you can compare or restore them later |
-| `pulsar agent model on` | runs a local model on the GPU for opencode and aider (llama.cpp in rootless podman, on 127.0.0.1 with a key) |
+| `pulsar agent model on` | runs a local model for opencode and aider (llama.cpp in rootless podman, on 127.0.0.1 with a key), on the GPU when there is one and on the CPU otherwise |
 
 [docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md) explains what an agent can
 and can't change on this system.
@@ -236,16 +244,16 @@ pulsar checkpoint        snapshot /etc, your settings and pin   (root)
 pulsar theme <command>   recolor the whole desktop
 pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
 pulsar screen text|qr    the text or QR code in an area of the screen, onto the clipboard
-pulsar agent             guide | list | add | remove | default | run | sandbox | guard
-pulsar agent model on    a local model for agents, on this machine's GPU
-pulsar agent ask         start your agent on a redacted report of this machine
-pulsar mcp               this machine's facts as MCP tools, for any agent
+pulsar agent             guide | list | add | remove | default | run | attach | sessions |
+                         undo | usage | sandbox | guard
+pulsar agent model on    a local model server for agents, on the GPU when there is one
+pulsar agent ask         start your agent on a redacted pulsar report
+pulsar mcp               the CLI's --json answers as MCP tools, without root
 ```
 
-`pulsar help <command>` describes one command. If something is broken, run
-`pulsar report` and include its output when you ask for help. `pulsar doctor`
-reads the system's state, for example `/sys/kernel/sched_ext/state` to see
-whether the scheduler is attached, and it doesn't need root.
+`pulsar help <command>` describes one command. `pulsar doctor` doesn't need
+root. If something is broken, run `pulsar report` and include its output when
+you ask for help.
 
 ## Signing and provenance
 
@@ -282,7 +290,7 @@ signatures when they update: there is no signature policy (`policy.json`).
 Containerfile          -> ghcr.io/arclight-digital/pulsar
 Containerfile.nvidia   -> ghcr.io/arclight-digital/pulsar-nvidia
 scripts/nightly.sh     version, build, push, publish; runs on the build host at 7:45 p.m. Mountain
-scripts/weekly.sh      installer ISOs, Sundays at 1:45 a.m. Mountain, signed with keys/cosign.pub
+scripts/weekly.sh      installer ISOs, Sundays at 1:45 a.m. Mountain, signed with the release key and verified with keys/cosign.pub
 scripts/publish.sh     SBOMs, the changelog and the site's data after each nightly
 iso-config.toml        what the installer asks before it partitions
 assets/                source of truth for art; branding in system_files/ is generated
@@ -301,22 +309,26 @@ The website, [getpulsar.dev](https://getpulsar.dev), is in
 `scripts/publish.sh` sends it this repo's docs and brand assets along with
 each night's build data.
 
-Pulsar is developed on a laptop with a Core Ultra 9 275HX, an RTX 5080
-Max-Q alongside the integrated GPU, and a 2560×1600 display. The NVIDIA
-image needs a GPU supported by nvidia-open; the standard image has no
-hardware requirements beyond Fedora's.
+Pulsar is developed on a laptop with a Core Ultra 9 275HX and an RTX 5080
+Max-Q alongside the integrated GPU. The NVIDIA image needs a GPU supported
+by nvidia-open; the standard image has no hardware requirements beyond
+Fedora's.
 
 ## Field notes
 
-- Don't `dnf install akmods-keys`. That package contains a private key.
-- Don't add `akmod-nvidia`. Blackwell GPUs need nvidia-open, and the closed
-  akmod quietly replaces it.
+- Don't `dnf install akmods-keys` (the top of `Containerfile.nvidia` says
+  why).
+- Don't add `akmod-nvidia`. Blackwell GPUs need the open kernel modules
+  ([NVIDIA](https://developer.nvidia.com/blog/nvidia-transitions-fully-towards-open-source-gpu-kernel-modules/)),
+  and when the closed akmod is the newer version, dnf installs it and
+  downgrades nvidia-open (phase 2 of `Containerfile.nvidia`).
 - Keep `dracut` as the last real step of the build. The initramfs includes
   the Plymouth theme and the NVIDIA modprobe options.
 - The nvidia-open akmod comes from RPM Fusion's nvidia-driver repository
   (`Containerfile.nvidia` says why).
-- Pulsar patches the NVIDIA module with open-gpu-kernel-modules PR #1286,
-  which fixes a deadlock that froze the desktop after resume. Phase 2b of
+- Pulsar patches the NVIDIA module with open-gpu-kernel-modules
+  [PR #1286](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1286),
+  which fixes a system hang after repeated suspend and resume. Phase 2b of
   `Containerfile.nvidia` says when to remove it.
 
 ## License
