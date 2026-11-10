@@ -345,29 +345,34 @@ RUN dnf5 remove -y gnome-shell-extension-background-logo || true; \
 #   perf         same story, plus a version constraint (below).
 #   direnv       per-directory environments; pairs with mise.
 #
-# perf is version-coupled to the kernel, so it gets a guard -- but the guard
-# is on the SERIES, not the exact build, and that distinction was measured
-# rather than assumed. The base currently ships kernel-core 7.1.5-201.fc44
-# and NO perf-7.1.5-201 exists in any enabled repo, archive included; the
-# repos carry 7.1.6-201 and 6.19.10-300. An exact pin therefore fails every
-# build, immediately.
+# perf and kernel-devel are version-coupled to the kernel, so they are asked
+# for at the kernel's exact build first. The base can lag the updates repo by
+# a whole series: on 2026-11-10 it shipped kernel-core 7.2.15-300 while
+# updates carried perf and kernel-devel 7.3.3, and a bare `perf` (with
+# kernel-devel as bcc's weak dependency) pulled both from the wrong series.
+# The exact builds were in the updates archive. A mismatched kernel-devel is
+# also 250 MB that bcc can't use: it builds against the running kernel's
+# headers.
 #
-# What actually breaks a profile is a perf from a different kernel SERIES,
-# and that is a live possibility here: 6.19.10 sits in the same repo, and it
-# only loses the version comparison to 7.1.6 by luck of ordering. Z-stream
-# drift within a series is harmless -- the perf_event ABI is stable across
-# it -- so the check permits 7.1.5 vs 7.1.6 and rejects 7.1 vs 6.19.
+# The exact build is not always published, though. On 2026-08 the base had
+# kernel-core 7.1.5-201 and no perf-7.1.5-201 existed in any repo, archive
+# included. So when the exact pair is missing, the install falls back to the
+# newest perf and leaves kernel-devel out (only the exact one is of any use),
+# and the guard below holds perf to the kernel's SERIES. Z-stream drift
+# within a series is harmless (the perf_event ABI is stable across it); a
+# different series is what breaks a profile, so 7.1.5 vs 7.1.6 passes and
+# 7.2 vs 7.3 fails.
 # ---------------------------------------------------------------------------
-RUN dnf5 install -y \
-      bpftrace \
-      bcc-tools \
-      bpftool \
-      sysstat \
-      direnv \
-      perf && \
+RUN KVR=$(rpm -q --qf '%{VERSION}-%{RELEASE}' kernel-core) && \
+    { dnf5 install -y --enablerepo=updates-archive \
+        bpftrace bcc-tools bpftool sysstat direnv \
+        "perf-${KVR}" "kernel-devel-${KVR}" || \
+      { echo "perf or kernel-devel ${KVR} is not published; taking the newest perf, no kernel-devel" && \
+        dnf5 install -y --exclude='kernel-devel*' bpftrace bcc-tools bpftool sysstat direnv perf; }; } && \
     KV=$(rpm -q --qf '%{VERSION}' kernel-core) && \
     PV=$(rpm -q --qf '%{VERSION}' perf) && \
-    echo "kernel-core ${KV} / perf ${PV}" && \
+    echo "kernel-core ${KVR} / perf $(rpm -q --qf '%{VERSION}-%{RELEASE}' perf)" && \
+    { rpm -q kernel-devel || true; } && \
     if [ "${KV%.*}" != "${PV%.*}" ]; then \
       echo "FATAL: perf ${PV} is from a different kernel series than ${KV}; profiles would be wrong"; exit 1; \
     fi
