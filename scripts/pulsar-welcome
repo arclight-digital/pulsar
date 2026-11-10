@@ -163,8 +163,7 @@ class WhatsNew(Adw.ApplicationWindow):
             body.append(section(h, items))
         tv.set_content(page(head, spacer(8), body, width=720, top=8))
         bottom = Gtk.CenterBox(css_classes=["wl-bottom"])
-        tour = Gtk.Button(label="Take the Tour", css_classes=["flat", "wl-pill"],
-                          tooltip_text="Welcome to Pulsar: themes, updates, games and coding agents")
+        tour = Gtk.Button(label="Take the Tour", css_classes=["flat", "wl-pill"])
         tour.connect("clicked", lambda *_: (Welcome(app, False).present(), self.close()))
         done = Gtk.Button(label="Done", css_classes=["suggested-action", "wl-pill"])
         done.connect("clicked", lambda *_: self.close())
@@ -277,7 +276,8 @@ class Welcome(Adw.ApplicationWindow):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         head.append(label("Pick a look", ["wl-title"]))
         head.append(label("One click recolors the apps, terminal, editor, top bar and wallpaper, and this "
-                          "window with them. Other apps already open change when you reopen them.", ["wl-lede"]))
+                          "window with them. Apps already open, except the terminal, change when you reopen "
+                          "them.", ["wl-lede"]))
 
         row = Gtk.Box(spacing=12, css_classes=["wl-switchrow"], halign=Gtk.Align.CENTER)
         row.append(Gtk.Image(icon_name="weather-clear-night-symbolic"))
@@ -307,8 +307,8 @@ class Welcome(Adw.ApplicationWindow):
         # gtk.css follow it, so they always match the window's own text.
         Adw.StyleManager.get_default().connect("notify::dark", self._dark_changed)
 
-        hint = markup(("<b>Super+T</b> brings these back any time." if bound else
-                       "<b>Themes</b>, in the app grid, brings these back any time.")
+        hint = markup(("Change it later with <b>Super+T</b>." if bound else
+                       "Change it later in the <b>Themes</b> app.")
                       + " <tt>pulsar theme revert</tt> puts stock GNOME back.", ["wl-body"])
         return page(head, spacer(6), row, spacer(10), self.flow, spacer(6), hint, width=820, top=8)
 
@@ -335,12 +335,13 @@ class Welcome(Adw.ApplicationWindow):
     def cant_rot(self):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         head.append(label("Updates and rollback", ["wl-title"]))
-        head.append(label("The system is one image, and an update replaces it whole. Your home folder is not "
-                          "part of the image.", ["wl-lede"]))
+        head.append(label("The system is one image, and an update swaps it for a new one. Your home folder "
+                          "is not part of the image.", ["wl-lede"]))
         facts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         facts.append(fact("weather-clear-night-symbolic", "Nightly images",
-                          "Built from the latest Fedora packages on each night something changed, and booted "
-                          "in a test VM before it is published."))
+                          "A new image is built each night that Fedora's packages, Pulsar's code or the "
+                          "packages Pulsar adds have changed, and booted in a test VM before it is "
+                          "published."))
         facts.append(fact("system-reboot-symbolic", "Updates start at the next restart",
                           "A notification says when a new image is out. Updating downloads it beside the "
                           "running one."))
@@ -371,17 +372,18 @@ class Welcome(Adw.ApplicationWindow):
     def agents(self):
         head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         head.append(label("Bring a coding agent", ["wl-title"]))
-        head.append(label("None comes installed. Each one you install goes in the shared agents toolbox "
-                          "and gets a briefing on this machine.", ["wl-lede"]))
+        head.append(label("Pulsar installs no agent by default. Install puts one in the agents toolbox.",
+                          ["wl-lede"]))
         self.agent_list = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE,
                                       margin_top=6)
         self.agent_status = label("", ["wl-note"], wrap=True, visible=False)
         facts = Gtk.Box(spacing=12, homogeneous=True, margin_top=6)
         facts.append(fact("dialog-warning-symbolic", "Crashes",
-                          "A crash notification can hand the crash to your agent. Nothing is sent unless "
-                          "you click."))
+                          "A crash notification has a button that opens your agent in a terminal with the "
+                          "crash's stack trace and logs."))
         facts.append(fact("security-high-symbolic", "System changes",
-                          "The briefing tells agents to ask first. <tt>sudo pulsar agent guard on</tt> makes "
+                          "AGENTS.md, Pulsar's guide for agents, tells them to ask first. "
+                          "<tt>sudo pulsar agent guard on</tt> makes "
                           "system installs ask for your password."))
         self.fill_agents()
         return page(head, self.agent_list, self.agent_status, facts, width=760, top=8)
@@ -392,11 +394,10 @@ class Welcome(Adw.ApplicationWindow):
         start.connect("clicked", lambda *_: self.close())
         self.start = start
         settings = Gtk.Button(label="Open Pulsar Settings", css_classes=["flat", "wl-pill"],
-                              halign=Gtk.Align.CENTER,
-                              tooltip_text="Theme and effects, updates and rollback, agent sessions")
+                              halign=Gtk.Align.CENTER)
         settings.connect("clicked", lambda *_: self._settings())
         return page(check, label("You're set.", ["wl-display"]),
-                    label("Welcome to Pulsar, in the app grid, opens this tour again.",
+                    label("To see this tour again, open Welcome to Pulsar from the app grid.",
                           ["wl-lede"]), spacer(18), start, settings, width=560)
 
     def _settings(self):
