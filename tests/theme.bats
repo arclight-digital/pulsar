@@ -1196,6 +1196,9 @@ print("" if d is None else d)' "$1" "$2"; }
     grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
     grep -A1 '^\.content-pane {$' "$css" | grep -q '^  background-color: #f1f3fa;$'          # Pulsar light's window
     grep -A1 '^window\.view \.content-pane {$' "$css" | grep -q '^  background-color: #ffffff;$'  # and its view
+    # a .view window (Files) paints the view's ground, none under glass: its
+    # sidebar sat on bare glass, so the window gets the same 80% as any other
+    grep -A1 '^window\.view:not(\.fullscreen) {$' "$css" | grep -q '^  background-color: alpha(#f1f3fa, 0\.8);$'  # Pulsar light's background
     # Text Editor the other way round: its document glass, its bars solid
     grep -A1 '^window\.org-gnome-TextEditor \.content-pane {$' "$css" | grep -q '^  background-color: transparent;$'
     grep -A1 '^window\.org-gnome-TextEditor {$' "$css" | grep -q '^  --headerbar-bg-color: #e6e9f5;$'  # Pulsar light's headerbar
@@ -1656,6 +1659,10 @@ JS
     [ "$(key /org/gnome/Ptyxis/Profiles/mine/opacity)" = 0.6 ]
     grep -q -- '^  --window-bg-color: alpha(#[0-9a-f]*, 0.8);$' "$css"
     grep -q -- '^  --dialog-bg-color: alpha(#[0-9a-f]*, 0.8);$' "$css"
+    # and in the terminal's color: Pulsar dark's background, not its window
+    # (#0f1222), which left Text Editor lighter than btop beside it
+    grep -q -- '^  --window-bg-color: alpha(#0b0e1a, 0.8);$' "$css"
+    grep -A1 '^window\.view:not(\.fullscreen) {$' "$css" | grep -q '^  background-color: alpha(#0b0e1a, 0\.8);$'
     # the bars and the sidebar paint nothing over it, so nothing stacks past 80%
     grep -q -- '^  --headerbar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
     grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
