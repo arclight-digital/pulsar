@@ -4780,6 +4780,26 @@ PY
     [ "${lines[9]}" = "0 min 1 h 2 days 950 3k 3.2M" ]
 }
 
+@test "Settings' Forget says a conversation is lost only for Claude Code, the one agent Start resumes" {
+    python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Adw' 2>/dev/null \
+        || skip "no PyGObject GTK 4 / libadwaita here"
+    run python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-settings" <<'PY'
+import importlib.machinery, importlib.util, sys
+path = sys.argv[1]; sys.argv = [path]
+loader = importlib.machinery.SourceFileLoader("ps", path)
+spec = importlib.util.spec_from_loader("ps", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+print(m.forget_body({"name": "a", "agent": "claude"}))
+print(m.forget_body({"name": "b", "agent": "codex"}))
+print(m.forget_body({"name": "c", "agent": None}))
+print(m.forget_body({"name": "d", "agent": "gemini", "worktree_of": "/home/u/p"}))
+PY
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "Start can no longer bring its conversation back, and its undo snapshots are deleted." ]
+    [ "${lines[1]}" = "Its undo snapshots are deleted." ]
+    [ "${lines[2]}" = "Its undo snapshots are deleted." ]
+    [ "${lines[3]}" = "Its undo snapshots are deleted. Its worktree is removed if it has no uncommitted changes. The branch is kept." ]
+}
+
 @test "Settings' Forget says when the worktree or the undo snapshots stayed behind" {
     python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Adw' 2>/dev/null \
         || skip "no PyGObject GTK 4 / libadwaita here"

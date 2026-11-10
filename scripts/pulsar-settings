@@ -147,6 +147,18 @@ def session_rows(s):
     return rows
 
 
+def forget_body(s):
+    """The Forget dialog's text. Only a Claude Code session resumes its
+    conversation on Start (`agent run` passes --resume), so only it loses that."""
+    if s.get("agent") == "claude":
+        body = "Start can no longer bring its conversation back, and its undo snapshots are deleted."
+    else:
+        body = "Its undo snapshots are deleted."
+    if s.get("worktree_of"):
+        body += " Its worktree is removed if it has no uncommitted changes. The branch is kept."
+    return body
+
+
 def forget_left(r):
     """(heading, body) for what `agent sessions --forget --json` left behind,
     or None when it all went."""
@@ -553,10 +565,7 @@ class Settings(Adw.ApplicationWindow):
                                                                     "sessions", "--kill", s["name"]))
 
     def forget_session(self, s):
-        body = "Start can no longer bring its conversation back, and its undo snapshots are deleted."
-        if s.get("worktree_of"):
-            body += " Its worktree is removed if it has no uncommitted changes. The branch is kept."
-        self.confirm(f"Forget {s['name']}?", body, "forget", "Forget", lambda: self._forget(s["name"]))
+        self.confirm(f"Forget {s['name']}?", forget_body(s), "forget", "Forget", lambda: self._forget(s["name"]))
 
     def _forget(self, name):
         def done(ok, out):
