@@ -1190,18 +1190,22 @@ print("" if d is None else d)' "$1" "$2"; }
     # (a dialog's in the popover's color: glass.js WindowGlass)
     grep -q -- '--dialog-bg-color: alpha(#[0-9a-f]*, 0.8);' "$css"
     grep -q -- '--view-bg-color: alpha(#[0-9a-f]*, 0);' "$css"
-    # beside a sidebar only the sidebar is glass: a split view's content
-    # pane is solid, in the window's ground, or the view's in a .view
-    # window (Files) (Nick 2026-11-09)
-    grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
-    grep -A1 '^\.content-pane {$' "$css" | grep -q '^  background-color: #f1f3fa;$'          # Pulsar light's window
-    grep -A1 '^window\.view \.content-pane {$' "$css" | grep -q '^  background-color: #ffffff;$'  # and its view
+    # GNOME's structure in glass (Nick 2026-11-10): sidebar and main area
+    # both paint nothing over the window's 80%, as a one-pane app's body
+    grep -q -- '^  --sidebar-bg-color: alpha(#e9ecf6, 0);$' "$css"  # Pulsar light's sidebar
+    ! grep -q '^\.content-pane {$' "$css" || false
+    ! grep -q 'content-pane .*{$' "$css" || false
     # a .view window (Files) paints the view's ground, none under glass: its
     # sidebar sat on bare glass, so the window gets the same 80% as any other
     grep -A1 '^window\.view:not(\.fullscreen) {$' "$css" | grep -q '^  background-color: alpha(#f1f3fa, 0\.8);$'  # Pulsar light's background
-    # Text Editor the other way round: its document glass, its bars solid
-    grep -A1 '^window\.org-gnome-TextEditor \.content-pane {$' "$css" | grep -q '^  background-color: transparent;$'
-    grep -A1 '^window\.org-gnome-TextEditor {$' "$css" | grep -q '^  --headerbar-bg-color: #e6e9f5;$'  # Pulsar light's headerbar
+    # so Text Editor's page needs no rule of its own
+    ! grep -q 'org-gnome-TextEditor' "$css" || false
+    # what stock draws as a bar of its own is solid: a raised top bar, a
+    # plain header bar, tab, search and action bars, in the header color;
+    # a flat top bar is part of its pane, so nothing paints it
+    grep -q -- '^  --headerbar-bg-color: #e6e9f5;$' "$css"        # Pulsar light's headerbar
+    grep -q -- '^  --headerbar-backdrop-color: #f1f3fa;$' "$css"  # and its window
+    ! grep -q 'toolbarview > \.top-bar' "$css" || false
     # every GTK: the in-window sheet solid, in the popover's color, inside each variant's block
     grep -A1 '^dialog-host > dialog floating-sheet > sheet, dialog-host > dialog bottom-sheet > sheet {$' "$css" |
         grep -q '^  background-color: #ffffff;$'   # Pulsar light's popover
@@ -1663,12 +1667,62 @@ JS
     # (#0f1222), which left Text Editor lighter than btop beside it
     grep -q -- '^  --window-bg-color: alpha(#0b0e1a, 0.8);$' "$css"
     grep -A1 '^window\.view:not(\.fullscreen) {$' "$css" | grep -q '^  background-color: alpha(#0b0e1a, 0\.8);$'
-    # the bars and the sidebar paint nothing over it, so nothing stacks past 80%
-    grep -q -- '^  --headerbar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
+    # views and the sidebar paint nothing over it, so nothing stacks past
+    # 80%; bars of their own are solid in Pulsar dark's headerbar color
+    grep -q -- '^  --headerbar-bg-color: #141830;$' "$css"
+    ! grep -q -- '--headerbar-bg-color: alpha(' "$css" || false
     grep -q -- '^  --sidebar-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
     grep -q -- '^  --view-bg-color: alpha(#[0-9a-f]*, 0);$' "$css"
     # Text Editor's page: the scheme paints the text clear, the current line a tint
     scheme="$XDG_DATA_HOME/gtksourceview-5/styles/pulsar-pulsar-dark.xml"
     grep -q '<style name="text" foreground="#[0-9a-f]\{6\}" background="#[0-9a-f]\{6\}00"/>' "$scheme"
     grep -q '<style name="current-line" background="#[0-9a-f]\{6\}59"/>' "$scheme"
+}
+
+@test "glass: GTK 3 windows get the same 80% ground and the blur behind it; apps that draw their own window do not" {
+    glass_env
+    reply 1.0
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    css3="$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+    # the window's ground, keyed on a real window and never fullscreen
+    grep -A1 '^window\.background\.csd:not(\.fullscreen) {$' "$css3" | grep -q '^  background-color: alpha(#[0-9a-f]\{6\}, 0\.8);$'
+    # views and sidebars paint nothing over it, selected rows keep their color
+    grep -q '^window\.background\.csd:not(\.fullscreen) \.view:not(:selected), .*placessidebar.* {$' "$css3"
+    # the named colors stay solid: Firefox reads them for its own toolbars
+    grep -q '^@define-color theme_bg_color #[0-9a-f]\{6\};$' "$css3"
+    grep -q '^@define-color window_bg_color #[0-9a-f]\{6\};$' "$css3"
+    grep -q '^@define-color headerbar_bg_color #[0-9a-f]\{6\};$' "$css3"
+    # GTK 3 alone too, as a Dark Style flip redoes it, with no GTK 4 pass first
+    rm "$css3"
+    python3 "$ENGINE" set pulsar --without gtk4 --no-restart >/dev/null
+    grep -q '^window\.background\.csd:not(\.fullscreen) {$' "$css3"
+    # glass off: none of it
+    setkey /org/gnome/shell/extensions/pulsar-theme/window-glass false
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    ! grep -q 'csd:not(\.fullscreen)' "$css3" || false
+}
+
+@test "glass: the Shell blurs behind GTK 4 and GTK 3 windows, not behind GTK 3 apps that draw their own window" {
+    need_node
+    run shell_js <<'JS'
+const {load, fake, provide, Signals} = await import(process.env.HARNESS);
+const {default: assert} = await import('node:assert/strict');
+globalThis.global = {stage: Object.assign(new Signals(), {context: fake('context')}), get_window_actors: () => []};
+provide('Meta', fake('Meta', {WindowType: {NORMAL: 0, DIALOG: 3, MODAL_DIALOG: 4, UTILITY: 5}}));
+const g = await load(`${process.env.EXT}/glass.js`, ['WindowGlass']);
+const m = (...libs) => libs.map(l => `7f00-7f01 r-xp 00000000 00:00 1 ${l}`).join('\n');
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-4.so.1')), true);
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0')), true);
+// Firefox, Electron/Chromium, CEF, Sublime Text: GTK 3 loaded, window drawn by the app
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/usr/lib64/firefox/libxul.so')), false);
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/app/discord/libffmpeg.so')), false);
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/steam/ubuntu12_64/libcef.so')), false);
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/opt/sublime_text/sublime_text')), false);
+// a GTK 4 app is glass whatever else it maps
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-4.so.1', '/usr/lib64/libffmpeg.so')), true);
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libQt6Core.so.6')), false);
+console.log('ok');
+JS
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "${lines[-1]}" = ok ]
 }
