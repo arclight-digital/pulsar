@@ -42,6 +42,7 @@ runs it in the image with podman); the default is the live system's own.
 """
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -57,6 +58,7 @@ DISK_TOOL = os.environ.get("PULSAR_INSTALL_DISK", os.path.join(HERE, "pulsar-ins
 ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 ESP_MIN_FREE = 32 * 2**20      # the install writes ~13.5 MiB; room for bootupd updates
 WINDOWS_LOADER = "EFI/Microsoft/Boot/bootmgfw.efi"
+EFIVARS = "/sys/firmware/efi/efivars"
 LABEL = "Pulsar"
 MAPPER = "pulsar-install-root"
 SCRATCH = "/run/pulsar-install"      # mount points for the target
@@ -361,21 +363,32 @@ menuentry 'Windows' --class windows --class os {{
     return True
 
 
-def firmware_entry(disk, esp, target):
-    if not os.path.isdir("/sys/firmware/efi/efivars"):
-        return "not booted via EFI: no firmware entry"
-    efi = os.path.join(target, "boot/efi/EFI")
-    vendors = [d for d in os.listdir(efi) if d != "BOOT" and os.path.isfile(os.path.join(efi, d, "shimx64.efi"))]
+def own_shim(target):
+    """The ESP directory holding Pulsar's shim: the vendor directory of the
+    installed image's own EFI payload (/usr/lib/efi/<component>/<version>/
+    EFI/<vendor>), which bootupd has just copied to the ESP. Another system's
+    shim beside it (EFI/ubuntu, EFI/debian, EFI/opensuse) is never Pulsar's."""
+    payload = glob.glob(os.path.join(target, "ostree/deploy/*/deploy/*/usr/lib/efi/*/*/EFI/*/shimx64.efi"))
+    vendors = sorted({os.path.basename(os.path.dirname(p)) for p in payload} - {"BOOT"})
     if len(vendors) != 1:
-        raise Failed(f"expected one shim on the ESP, found {vendors}")
+        raise Failed(f"expected one shim in the installed image's EFI payload, found {vendors}")
+    if not os.path.isfile(os.path.join(target, "boot/efi/EFI", vendors[0], "shimx64.efi")):
+        raise Failed(f"the image's shim is not on the ESP: no EFI/{vendors[0]}/shimx64.efi")
+    return vendors[0]
+
+
+def firmware_entry(disk, esp, target):
+    if not os.path.isdir(EFIVARS):
+        return "not booted via EFI: no firmware entry"
+    vendor = own_shim(target)
     partuuid = esp["partuuid"].lower()
     for line in run("efibootmgr", "-v").splitlines():
         m = re.match(r"Boot([0-9A-Fa-f]{4})\*?\s+(.*?)\s+HD\(\d+,GPT,([0-9a-fA-F-]+)", line)
         if m and m.group(2) == LABEL and m.group(3).lower() == partuuid:
             run("efibootmgr", "-b", m.group(1), "-B")
     run("efibootmgr", "--create", "--disk", disk, "--part", str(esp["partn"]),
-        "--loader", f"\\EFI\\{vendors[0]}\\shimx64.efi", "--label", LABEL)
-    return f"firmware entry {LABEL} -> \\EFI\\{vendors[0]}\\shimx64.efi"
+        "--loader", f"\\EFI\\{vendor}\\shimx64.efi", "--label", LABEL)
+    return f"firmware entry {LABEL} -> \\EFI\\{vendor}\\shimx64.efi"
 
 
 def remove_made(disk, made):

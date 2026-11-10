@@ -47,7 +47,9 @@ EOF
 
 # system MODE [ARGS...]: an install onto $DISK, encrypted, with the chosen
 # drive's identity. FAIL_AT=<command prefix> makes that command fail.
-# stdout: the backend's events; $T/calls: every command run(), in order.
+# ESP_SHIMS="ubuntu ...": other systems' shims already on the ESP, there once
+# it is mounted. stdout: the backend's events; $T/calls: every command run(),
+# in order.
 system() {
     local mode=$1; shift
     PULSAR_INSTALL_DISK="$T/disk-tool" python3 - "$SYS" "$T" "$DISK" "$mode" "$@" <<'PY'
@@ -58,6 +60,8 @@ ROOT, BOOT, ESPU = ("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-
                     "33333333-3333-3333-3333-333333333333")
 m.os.geteuid = lambda: 0
 m.SCRATCH = T + "/run"
+# booted via EFI, as the live system is: the firmware entry is made
+m.EFIVARS = T
 calls = open(T + "/calls", "a", buffering=1)
 fail_at = os.environ.get("FAIL_AT", "")
 parts = [("p1", 1, m.ESP_TYPE, ESPU, "vfat", "ESPFS"), ("p2", 2, "bc13c2ff-59e6-4262-a352-b275fd6f7172", BOOT, "ext4", "BOOTFS"),
@@ -78,18 +82,26 @@ def run(*cmd, **kw):
             for n, k, t, u, f, fu in parts]}]})
     if cmd[0] == "sfdisk" and cmd[1] == "-J":
         return json.dumps({"partitiontable": {"partitions": [{"node": disk + n, "uuid": u} for n, _, _, u, _, _ in parts]}})
+    if cmd[0] == "mount" and cmd[-1].endswith("/boot/efi"):
+        for v in os.environ.get("ESP_SHIMS", "").split():
+            os.makedirs(os.path.join(cmd[-1], "EFI", v), exist_ok=True)
+            open(os.path.join(cmd[-1], "EFI", v, "shimx64.efi"), "w").close()
     if cmd[0] in ("udevadm", "cryptsetup", "mount", "umount", "efibootmgr", "sfdisk"):
         return ""
     raise SystemExit(f"unexpected command {cmd}")
 
 def run_stream(*cmd, **kw):
-    # bootc: a deployment, its stateroot's /var, a shim on the ESP
+    # bootc: a deployment with the image's EFI payload, its stateroot's /var,
+    # and that payload's shim copied to the ESP
     target = cmd[-1]
     calls.write("bootc install to-filesystem " + target + "\n")
     state["target"] = target
-    for d in ("ostree/deploy/default/deploy/abc.0/etc", "ostree/deploy/default/var/log", "boot/efi/EFI/fedora", "boot/grub2"):
+    payload = "ostree/deploy/default/deploy/abc.0/usr/lib/efi/shim/16.1-7/EFI/fedora"
+    for d in ("ostree/deploy/default/deploy/abc.0/etc", "ostree/deploy/default/var/log", "boot/efi/EFI/fedora",
+              "boot/grub2", payload):
         os.makedirs(os.path.join(target, d), exist_ok=True)
-    open(os.path.join(target, "boot/efi/EFI/fedora/shimx64.efi"), "w").close()
+    for f in (payload + "/shimx64.efi", "boot/efi/EFI/fedora/shimx64.efi"):
+        open(os.path.join(target, f), "w").close()
 
 def cleanup(cmd, *a, **k):
     # the finally block's umount and cryptsetup close, remove_made's settle;
@@ -195,6 +207,13 @@ deleted() { grep '^sfdisk --delete' "$T/calls" | sed "s|^sfdisk --delete $DISK |
     # every umount came after the log was written
     [ "$(grep -c '^cleanup umount' "$T/calls")" -eq 3 ]
     [ "$(grep -c '^cleanup umount .* (log kept)$' "$T/calls")" -eq 3 ]
+}
+
+@test "beside a Linux with its own shim (Ubuntu, Debian), the firmware entry starts Pulsar's shim, the image's own" {
+    ESP_SHIMS="ubuntu debian" run --separate-stderr system alongside "${ID[@]}"
+    [ "$status" -eq 0 ]
+    grep -qFx "efibootmgr --create --disk $DISK --part 1 --loader \\EFI\\fedora\\shimx64.efi --label Pulsar" "$T/calls"
+    [ "$(echo "$output" | jq -r 'select(.stage? == "done") | .firmware')" = 'firmware entry Pulsar -> \EFI\fedora\shimx64.efi' ]
 }
 
 # pulsar-install-disk's main(), with lsblk and systemd-repart answered here.

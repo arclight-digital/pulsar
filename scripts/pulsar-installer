@@ -322,11 +322,9 @@ def options(d):
         along = (False, f"Needs {human(NEEDS_ALONGSIDE)} of free space in one place. "
                         f"This disk has at most {human(d['free'])} in one place. " + how)
     else:
-        # Windows' partitions are untouched (pulsar-install-disk check()), but the shared ESP
-        # is written to and Pulsar's firmware entry goes first: the ready page says so.
-        # "Linux stays as it is" is left as it was: beside a Linux with its own shim the
-        # install fails (one-shim check in pulsar-install-system), a code bug.
-        keep = {"Windows": " The Windows partitions aren't changed.", "Linux": " Linux stays as it is."}
+        # The other system's partitions are untouched (pulsar-install-disk check()), but the
+        # shared ESP is written to and Pulsar's firmware entry goes first: the ready page says so.
+        keep = {"Windows": " The Windows partitions aren't changed.", "Linux": " The Linux partitions aren't changed."}
         along = (True, f"Uses free space on the disk (up to {human(d['free'])} in one place)."
                        + keep.get(d["holds"], ""))
     return {"alongside": along, "erase": erase}
@@ -801,10 +799,14 @@ def main():
             # install that deletes nothing says what it does in the list
             if self.mode == "alongside":
                 # TODO(copy): the startup menu shows for 1 s (see done_page). Say how to reach it?
+                # TODO(copy): how does the person start the other Linux? Pulsar's GRUB has no entry
+                # for it; its own firmware entry is kept, behind Pulsar's. A Fedora-family Linux
+                # shares EFI/fedora, which bootupd writes Pulsar's boot files into.
                 rows.insert(1, ("What happens", "Pulsar goes in the free space. " + {
                     "Windows": "The Windows partitions aren't changed. Once Pulsar is installed, the "
                                "computer starts it. To start Windows, choose it in the startup menu.",
-                    "Linux": "Linux stays as it is."}.get(d["holds"], "The partitions with your files aren't changed.")))
+                    "Linux": "The Linux partitions aren't changed. Once Pulsar is installed, the computer starts it."}
+                    .get(d["holds"], "The partitions with your files aren't changed.")))
             elif not destroys:
                 rows.insert(1, ("What happens", "Pulsar uses the whole disk."))
             listbox = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)

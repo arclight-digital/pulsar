@@ -50,6 +50,11 @@ PY
     [[ "$output" == *"'erase': (True,"* ]]
 }
 
+@test "Linux with room beside it: alongside says its partitions aren't changed, nothing more" {
+    run py 'm.options(D["/dev/nvme0n1"] | {"free": 100 * 10**9})["alongside"]'
+    [ "$output" = "(True, \"Uses free space on the disk (up to 100 GB in one place). The Linux partitions aren't changed.\")" ]
+}
+
 @test "BitLocker: alongside refused, with what to do about it" {
     run py 'm.options(D["/dev/sda"])["alongside"]'
     [[ "$output" == "(False, 'BitLocker is on."* ]]
