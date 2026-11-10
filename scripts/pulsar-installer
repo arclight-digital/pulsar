@@ -221,8 +221,9 @@ def startup_notes(boot):
     Windows, and a Fedora-family Linux whose /boot it found, get an entry in
     Pulsar's startup menu. A Linux with its own boot loader (Ubuntu, Debian,
     openSUSE) keeps its firmware entry, which the computer's own boot menu
-    starts: Pulsar's GRUB can't start it under Secure Boot. A Fedora-family
-    Linux whose /boot wasn't found has no way in, and the page says so."""
+    starts: Pulsar's GRUB can't start it under Secure Boot. (A Fedora-family
+    Linux whose /boot wasn't found is never installed beside: the backend
+    refuses it, alongside_refusal.)"""
     notes = []
     if boot.get("windows") or boot.get("windows_entry"):
         # the startup menu shows for 5 s whenever another system is beside Pulsar
@@ -231,10 +232,6 @@ def startup_notes(boot):
     fedora = boot.get("fedora_linux")
     if fedora and fedora.get("menu"):
         notes.append(f"To start {fedora['title']}, choose it in the startup menu.")
-    elif fedora:
-        notes.append("The installer couldn't find the other Linux's boot configuration, so it won't be in "
-                     "the startup menu. Its own boot entry will start Pulsar instead, because both use "
-                     "EFI/fedora.")
     names = []
     for d in boot.get("other_loaders") or []:
         name = LOADER_NAMES.get(d.lower(), "the other Linux")
@@ -244,6 +241,22 @@ def startup_notes(boot):
         notes.append(f"To start {' or '.join(names)}, choose it in the computer's own boot menu. "
                      "The key that opens it depends on the computer's maker.")
     return notes
+
+
+# Why installing alongside is refused, by the backend's failed event's reason,
+# for the method page: what lsblk can't see, the backend can (it reads the
+# shared ESP before anything is written)
+ALONGSIDE_REFUSALS = {"fedora_linux": "The other Linux's startup files couldn't be found, so installing beside it "
+                                      "would leave it unable to start."}
+
+
+def alongside_refusal(events):
+    """The method page's reason alongside is refused, from the backend's
+    alongside --plan-only run, or None. Other planning failures aren't
+    known yet at this point and are said where they always were, after the
+    passphrase page."""
+    failed = next((e for e in events if e.get("stage") == "failed"), None)
+    return ALONGSIDE_REFUSALS.get((failed or {}).get("reason"))
 
 
 def what_happens(mode, d, boot):
@@ -408,6 +421,9 @@ def options(d):
                  if not d["empty"] else "The disk is empty.")
     if d["empty"]:
         along = (False, "There is nothing on this disk to keep.")
+    elif d.get("alongside_refused"):
+        # the backend's word, from reading the shared ESP (alongside_refusal)
+        along = (False, d["alongside_refused"])
     elif d["bitlocker"]:
         along = (False, "BitLocker is on. Turn it off in Windows first, then start the installer again.")
     elif not d["esp"]:
@@ -773,8 +789,25 @@ def main():
             if skips_method(d):
                 self.mode = "erase"
                 self.nav.push(self.passphrase_page())
+            elif options(d)["alongside"][0] and "alongside_refused" not in d:
+                # whether installing beside what is there would leave it unable
+                # to start is on the shared ESP, which only the backend can read
+                self.nav.push(self.checking_page())
+                self.run(backend_argv("alongside", d, "--plan-only"), lambda events, _code: self.checked(d, events))
             else:
                 self.nav.push(self.method_page(d))
+
+        def checked(self, d, events):
+            self.nav.pop()
+            d["alongside_refused"] = alongside_refusal(events)
+            self.nav.push(self.method_page(d))
+
+        def checking_page(self):
+            spin = Adw.Spinner(width_request=48, height_request=48, halign=Gtk.Align.CENTER)
+            page = nav_page("Checking", "checking", column(spin, label("Checking the disk…", ["in-lede"])))
+            # its caller pops this page itself: a Back here would pop the one under it
+            page.set_can_pop(False)
+            return page
 
         def method_page(self, d):
             opts = options(d)
@@ -877,11 +910,7 @@ def main():
 
         def plan(self, passphrase):
             self.passphrase = passphrase
-            spin = Adw.Spinner(width_request=48, height_request=48, halign=Gtk.Align.CENTER)
-            page = nav_page("Checking", "checking", column(spin, label("Checking the disk…", ["in-lede"])))
-            # planned() pops this page itself: a Back here would pop the one under it
-            page.set_can_pop(False)
-            self.nav.push(page)
+            self.nav.push(self.checking_page())
             self.run(self.backend("--plan-only", *([] if self.encrypt else ["--no-encrypt"])), self.planned)
 
         def planned(self, events, code):

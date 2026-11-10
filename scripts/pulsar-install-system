@@ -10,7 +10,8 @@ installer's lsblk saw it; the disk tool refuses to write to DISK unless it
 is still that drive (a name like /dev/sda can pass to another).
 
   1. alongside: the disk's EFI system partition must have room for Pulsar's
-     boot files (checked before anything is written)
+     boot files, and a Fedora-family Linux on it must have a /boot Pulsar's
+     GRUB can start it from (checked before anything is written)
   2. pulsar-install-disk lays out the disk (it refuses any plan but ours)
   3. the root is unlocked with the passphrase in FILE (unless --no-encrypt:
      then it is plain btrfs, and there is nothing to unlock) and mounted,
@@ -20,9 +21,9 @@ is still that drive (a name like /dev/sda can pass to another).
      its entry) before adding one, so it runs where efivarfs is read-only,
      which bootupd takes as "leave the firmware alone"
   5. if Windows is on the ESP, GRUB gets an entry for it; so does a
-     Fedora-family Linux whose EFI/fedora Pulsar's boot files replace, when
-     its /boot and grub.cfg were found (read-only) before anything was
-     written
+     Fedora-family Linux whose EFI/fedora Pulsar's boot files replace, its
+     /boot and grub.cfg found (read-only) in step 1, which refuses the
+     install if they can't be
   6. the firmware gets a "Pulsar" entry, replacing only older "Pulsar"
      entries on this same ESP
   7. a finished install keeps this run's log in its own /var/log
@@ -33,7 +34,7 @@ Progress goes to stdout as one JSON object per line, for the installer app:
 {"stage": "check" | "disk" | "unlock" | "install" | "boot"} as each step
 starts ("unlock" only when encrypted), {"log": "..."} for each line bootc
 and the disk tool print, then {"stage": "done", ...} or {"stage": "failed", "error": ...,
-"restored": true|false, "disk": ..., "esp": ...}. restored is whether the disk
+"restored": true|false, "disk": ..., "esp": ..., "reason": ...}. restored is whether the disk
 is as it was before: true only if nothing was written to it, or, installing
 alongside, every partition this install made was taken back. An erase that
 began writing is never restored: what was on the disk is gone. disk and esp
@@ -52,12 +53,16 @@ say what is known, for the installer app to tell the person:
                      EFI/BOOT was put back as it was
         "fallback"   bootc ran, and EFI/BOOT could not be put back: the
                      other system's fallback loader may be replaced too
+  reason  why, when the app words it itself: "fedora_linux" (alongside
+          refused: a Fedora-family Linux whose /boot wasn't found would be
+          left unable to start); otherwise null
 --plan-only prints
 {"stage": "plan", "plan": [...], "windows": ..., "fedora_linux": ...,
 "other_loaders": [...]} (pulsar-install-disk's dry run; the rest, alongside
 only, preflight_alongside's survey of the shared ESP: whether Windows' boot
 manager is on it, the Fedora-family Linux whose EFI/fedora Pulsar replaces
-and whether it gets a startup menu entry, and other Linux boot loaders the
+(always with what its menu entry needs: one whose /boot can't be found is
+refused), and other Linux boot loaders the
 computer's own boot menu starts) and writes nothing; it needs no key
 (--no-encrypt plans the unencrypted layout). The done event repeats
 fedora_linux and other_loaders, with linux_entry, the title of the menu
@@ -97,6 +102,15 @@ class Failed(Exception):
     def __init__(self, msg, code=None):
         super().__init__(msg)
         self.code = code     # the failed command's exit status, when there was one
+
+
+class Unstartable(Failed):
+    """Installing alongside would leave the other system unable to start:
+    a Fedora-family Linux whose /boot and grub.cfg weren't found. Pulsar's
+    boot files replace its EFI/fedora, and there would be nothing to give it
+    a startup menu entry from. Refused before anything is written; the
+    failed event's reason is "fedora_linux"."""
+    reason = "fedora_linux"
 
 
 class Stopped(Failed):
@@ -374,7 +388,8 @@ def fedora_linux(disk, scratch, stub, bootuuid):
     Pulsar's bootupd is about to overwrite: where its /boot is, so Pulsar's
     GRUB can get an entry that starts it through its own GRUB configuration.
     {"menu": True, "title", "uuid", "fs", "grub_dir"}, or {"menu": False,
-    "why"} when its /boot or that configuration can't be found."""
+    "why"} when its /boot or that configuration can't be found, which
+    preflight_alongside refuses (Unstartable)."""
     ref = fedora_boot_ref(stub, bootuuid)
     if not ref:
         return {"menu": False, "why": "EFI/fedora names no /boot"}
@@ -437,8 +452,11 @@ def preflight_alongside(disk, scratch):
     if free < ESP_MIN_FREE:
         raise Failed(f"The startup files (EFI) partition has {free // 2**20} MiB free. Pulsar needs "
                      f"{ESP_MIN_FREE // 2**20} MiB free there for its boot files.")
-    return {"windows": windows, "fedora_linux": fedora_linux(disk, scratch, stub, bootuuid) if fedora else None,
-            "other_loaders": others}
+    fedora = fedora_linux(disk, scratch, stub, bootuuid) if fedora else None
+    if fedora and not fedora["menu"]:
+        raise Unstartable("The other Linux's startup files couldn't be found, so installing beside it would leave "
+                          f"it unable to start ({fedora['why']}).")
+    return {"windows": windows, "fedora_linux": fedora, "other_loaders": others}
 
 
 def bootc_install(target, source, target_ref, kargs, expected_bytes=None):
@@ -722,7 +740,7 @@ def main():
     os.makedirs(SCRATCH, mode=0o700, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="install-", dir=SCRATCH)
     target = os.path.join(scratch, "target")
-    mounted, opened, made, ok, error = [], False, set(), False, None
+    mounted, opened, made, ok, error, reason = [], False, set(), False, None, None
     # what is known about the disk (the failed event's disk and esp, above):
     # unchanged until the disk tool starts, unknown while it runs and if it
     # stops without refusing, written once it has finished
@@ -813,7 +831,7 @@ def main():
              other_loaders=found["other_loaders"], menu_timeout=timeout, firmware=fw)
         return 0
     except Failed as e:
-        error = str(e)
+        error, reason = str(e), getattr(e, "reason", None)
         say(f"pulsar-install-system: {e}")
         return 1
     except Exception as e:     # a bug: still unmount, take back, and say so
@@ -860,7 +878,8 @@ def main():
         # what was on the disk is gone, whatever happened to Pulsar's part
         restored = disk == "unchanged" or (a.mode == "alongside" and disk == "removed")
         if not ok:
-            emit(stage="failed", error=error or "interrupted", restored=restored, disk=disk, esp=esp_state)
+            emit(stage="failed", error=error or "interrupted", restored=restored, disk=disk, esp=esp_state,
+                 reason=reason)
 
 
 if __name__ == "__main__":

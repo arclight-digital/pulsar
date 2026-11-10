@@ -443,22 +443,31 @@ fi"
     grep -q "^mount -t xfs -o ro,norecovery ${DISK}p4 " "$T/calls"
 }
 
-@test "a Fedora-family Linux whose /boot or grub.cfg can't be found gets no entry, and the plan says so" {
+@test "a Fedora-family Linux whose /boot or grub.cfg can't be found: alongside is refused before anything is written" {
     # /boot found, but no grub2 configuration on it
     FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=none run --separate-stderr system alongside --plan-only "${ID[@]}"
-    [ "$status" -eq 0 ]
-    [ "$(plan_field fedora_linux)" = "{\"menu\":false,\"why\":\"no grub2/grub.cfg on ${DISK}p4\"}" ]
+    [ "$status" -eq 1 ]
+    [ "$(echo "$output" | jq -c 'select(.stage? == "failed") | [.reason, .disk, .error]')" = "[\"fedora_linux\",\"unchanged\",\"The other Linux's startup files couldn't be found, so installing beside it would leave it unable to start (no grub2/grub.cfg on ${DISK}p4).\"]" ]
+    [ "$(plan_field fedora_linux)" = "" ]
+    # the install too, at its check step: the disk tool never runs
+    rm -f "$T/disk-args"
     FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=none run --separate-stderr system alongside "${ID[@]}"
-    [ "$status" -eq 0 ]
-    [ "$(done_field linux_entry)" = null ]
-    [ "$(done_field fedora_linux.menu)" = false ]
-    [[ "$(custom_cfg)" != *menuentry* ]]
+    [ "$status" -eq 1 ]
+    [ "$(echo "$output" | jq -r 'select(.stage? == "failed") | .reason')" = fedora_linux ]
+    [ ! -e "$T/disk-args" ]
+    [ -z "$(custom_cfg)" ]
     # the stub names a /boot that isn't on this disk
     FEDORA_STUB=fedora FEDORA_UUID=$FED run --separate-stderr system alongside --plan-only "${ID[@]}"
-    [ "$(plan_field fedora_linux)" = "{\"menu\":false,\"why\":\"0 partitions on $DISK have the uuid $FED\"}" ]
+    [[ "$(echo "$output" | jq -r 'select(.stage? == "failed") | .error')" == *"(0 partitions on $DISK have the uuid $FED)." ]]
     # a /boot GRUB can't read
     FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=crypto_LUKS run --separate-stderr system alongside --plan-only "${ID[@]}"
-    [ "$(plan_field fedora_linux)" = '{"menu":false,"why":"its /boot is crypto_LUKS"}' ]
+    [[ "$(echo "$output" | jq -r 'select(.stage? == "failed") | .error')" == *"(its /boot is crypto_LUKS)." ]]
+    # an erase of the same disk is planned as ever
+    FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=none run --separate-stderr system erase --plan-only "${ID[@]}"
+    [ "$status" -eq 0 ]
+    # other failures carry no reason
+    DISK_EXIT=2 run --separate-stderr system erase "${ID[@]}"
+    [ "$(echo "$output" | jq -c 'select(.stage? == "failed") | .reason')" = null ]
 }
 
 @test "beside Ubuntu (its own shim and GRUB), no startup menu entry; the plan and the done event name its loader" {
@@ -540,8 +549,14 @@ PY
     [ "$(notes_say plan)" = "To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu." ]
     FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=grub2 run --separate-stderr system alongside "${ID[@]}"
     [ "$(notes_say done)" = "To start Fedora Linux 42 (Workstation Edition), choose it in the startup menu." ]
-    FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=none run --separate-stderr system alongside "${ID[@]}"
-    [[ "$(notes_say done)" == "The installer couldn't find the other Linux's boot configuration, so it won't be in the startup menu."* ]]
+    # refused: the method page's sentence, from the backend's own reason
+    FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=none run --separate-stderr system alongside --plan-only "${ID[@]}"
+    [ "$(python3 - "${BATS_TEST_DIRNAME}/../scripts/pulsar-installer" "$output" <<'PY'
+import importlib.machinery as M, importlib.util as U, json, sys
+l = M.SourceFileLoader("a", sys.argv[1]); a = U.module_from_spec(U.spec_from_loader("a", l)); l.exec_module(a)
+print(a.alongside_refusal([json.loads(x) for x in sys.argv[2].splitlines()]))
+PY
+)" = "The other Linux's startup files couldn't be found, so installing beside it would leave it unable to start." ]
     ESP_SHIMS=ubuntu ESP_WINDOWS=1 run --separate-stderr system alongside "${ID[@]}"
     [ "$(notes_say done)" = "$(printf '%s\n' "To start Windows, choose it in the startup menu." \
         "To start Ubuntu, choose it in the computer's own boot menu. The key that opens it depends on the computer's maker.")" ]
