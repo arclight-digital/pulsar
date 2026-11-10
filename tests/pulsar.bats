@@ -171,7 +171,7 @@ SH
     fake_verify_env
     COSIGN_OK=key run "$PULSAR" verify
     [ "$status" -eq 0 ]
-    [[ "$output" == *"predates Rekor"* ]]
+    [[ "$output" == *"not verified in Rekor"* ]]
 }
 
 @test "verify fails an image no signature verifies" {
@@ -3060,7 +3060,7 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     fake_agent codex
     run "$PULSAR" agent ask hello
     [ "$status" -ne 0 ]
-    [[ "$output" == *"which agent?"*"claude codex"* ]]
+    [[ "$output" == *"no agent chosen"*"claude codex"* ]]
     run "$PULSAR" agent default codex
     [ "$status" -eq 0 ]
     run "$PULSAR" agent default
