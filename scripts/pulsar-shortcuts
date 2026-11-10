@@ -35,7 +35,7 @@ LIBEXEC = "/usr/libexec/pulsar"
 # id, name (as Settings shows it), command, and the keys to try in order,
 # each with how the notification says them
 SHORTCUTS = (
-    ("pulsar-menu", "Pulsar commands", f"{LIBEXEC}/pulsar-menu",
+    ("pulsar-menu", "Open Pulsar Commands", f"{LIBEXEC}/pulsar-menu",
      (("<Super>space", "Super+Space"), ("<Super>slash", "Super+/"))),
     ("pulsar-screen-text", "Copy text from the screen", f"{LIBEXEC}/pulsar-screen text",
      (("<Super>Print", "Super+Print"),)),
@@ -181,7 +181,7 @@ def offer():
                 note, result = "", f"bound to {accel}"
                 if who and claimable(accel, who):
                     claim(accel)
-                    note = " (it was the keyboard-layout switch, which does nothing with one layout)"
+                    note = " (taken from the keyboard-layout switch, which does nothing with one layout)"
                     result = f"bound to {accel}, taken from {who}"
                 elif who:
                     taken.append(f"{accel} is taken ({who})")
@@ -206,7 +206,7 @@ def offer():
     if bound and not new_account():
         body = "\n".join(f"{keys}: {name}" for keys, name in bound)
         subprocess.run(["notify-send", "--app-name=Pulsar", "--icon=input-keyboard-symbolic",
-                        "New keyboard shortcuts", body + "\nChange them in Settings > Keyboard."],
+                        "New keyboard shortcuts", body + "\nChange them in Settings > Keyboard > Custom Shortcuts."],
                        stderr=subprocess.DEVNULL)
     return 0
 

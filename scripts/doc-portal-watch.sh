@@ -35,8 +35,8 @@
 # THE COST. A Flatpak app already running when the portal restarts keeps its
 # view of the old mount, which now fails with "Transport endpoint is not
 # connected": it cannot open or save files through the portal until it is
-# reopened. The notification names those apps and offers a "Reopen them"
-# button. Nothing is closed unless that is clicked: the apps may be holding
+# reopened. The notification names those apps and offers a "Force Quit and
+# Reopen" button. Nothing is closed unless that is clicked: the apps may be holding
 # work (a game in Steam, a half-written message), and closing them is the
 # user's call. The button closes each one still running and starts it again;
 # one the user closed meanwhile stays closed, and a background helper with no
@@ -71,9 +71,9 @@ running() { flatpak ps --columns=application 2>/dev/null | grep -x "$1" >/dev/nu
 # its own, because the click can come long after this check has finished.
 offer() {
     local answer app desktop n
-    answer=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen="Reopen them" \
-        "Opening files was stuck, and is fixed now" \
-        "$(short_names "$@") can't open or save files until they're reopened.") || return 0
+    answer=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen="Force Quit and Reopen" \
+        "Opening files was stuck and is fixed now" \
+        "$(short_names "$@") can't open or save files until they're reopened. Force quitting them loses unsaved work.") || return 0
     [ "$answer" = reopen ] || return 0
     for app in "$@"; do
         # The list is from the restart; the click can come much later. One

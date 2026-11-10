@@ -172,7 +172,7 @@ def main(argv):
         try:
             path = capture()
         except Exception as e:  # no portal, no session bus
-            notify("Can't take a screenshot", str(e))
+            notify("Can't take a screenshot", f"Nothing was copied.\n{e}")
             return 1
         if path is None:
             return 0
@@ -184,7 +184,7 @@ def main(argv):
     try:
         found = read_text(path) if kind == "text" else read_qr(path)
     except Exception as e:
-        notify("Can't read the screen", str(e))
+        notify("Can't read the screen", f"Nothing was copied.\n{e}")
         return 1
     finally:
         if ours:
