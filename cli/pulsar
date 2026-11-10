@@ -183,6 +183,51 @@ check_ntsync() {
     fi
 }
 
+# gamemode_conf <key> <int|float>: the [general] value gamemoded runs with,
+# as "value<TAB>file", or nothing when no file sets it. gamemoded reads
+# gamemode.ini from /usr/share/gamemode, /etc, $XDG_CONFIG_HOME (else
+# ~/.config) and its working directory, in that order, and a later file's
+# value replaces an earlier one's (load_config_files in gamemode-config.c,
+# 1.8.2). It runs as a systemd user service with no WorkingDirectory, so that
+# last directory is the home directory. Parsed the way its inih does: ; and #
+# start a comment line, a ; after whitespace ends a value, spaces around the
+# name and the value do not count. A value gamemode would reject (not a whole
+# number for renice, not a number for a float) leaves the earlier one.
+gamemode_conf() {
+    local key=$1 type=$2 home cfg f
+    if [ -n "${SUDO_USER:-}" ]; then
+        home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        cfg=${home:+${home}/.config}
+    else
+        home=${HOME:-}
+        cfg=${XDG_CONFIG_HOME:-${home:+${home}/.config}}
+    fi
+    local -a files=() readable=()
+    files=("${PULSAR_GAMEMODE_DEFAULT_INI:-/usr/share/gamemode/gamemode.ini}" "${PULSAR_GAMEMODE_INI:-/etc/gamemode.ini}")
+    [ -z "$cfg" ] || files+=("${cfg}/gamemode.ini")
+    [ -z "$home" ] || files+=("${home}/gamemode.ini")
+    for f in "${files[@]}"; do [ -r "$f" ] && readable+=("$f"); done
+    [ ${#readable[@]} -gt 0 ] || return 0
+    awk -v key="$key" -v type="$type" '
+        FNR == 1 { sec = "" }
+        { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, "") }
+        /^[;#]/ || $0 == "" { next }
+        /^\[/ { sec = $0; sub(/^\[/, "", sec); sub(/\].*$/, "", sec); next }
+        sec == "general" {
+            i = index($0, "="); j = index($0, ":")
+            if (!i || (j && j < i)) i = j
+            if (!i) next
+            name = substr($0, 1, i - 1); sub(/[ \t]+$/, "", name)
+            if (name != key) next
+            v = substr($0, i + 1); sub(/^[ \t]+/, "", v)
+            sub(/[ \t];.*$/, "", v); sub(/[ \t]+$/, "", v)
+            if (type == "int" && v !~ /^[+-]?[0-9]+$/) next
+            if (type == "float" && v !~ /^[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?$/) next
+            val = v; src = FILENAME
+        }
+        END { if (src != "") printf "%s\t%s\n", val, src }' "${readable[@]}" 2>/dev/null || true
+}
+
 check_gamemode() {
     # Paths are overridable for the same reason the rest of the CLI's are:
     # these branches are decisions worth testing, not plumbing worth mocking.
@@ -196,11 +241,18 @@ check_gamemode() {
     fi
 
     # If renice is not being asked for, membership is irrelevant and a warning
-    # about it would be noise. Read the merged intent from our own override.
-    local renice
-    renice=$(sed -n 's/^renice=\([0-9]\{1,\}\)$/\1/p' "$ini" 2>/dev/null | tail -1) || true
-    if [ -z "$renice" ] || [ "$renice" = 0 ]; then
-        record gamemode ok "gamemode present; renice not requested"; return
+    # about it would be noise. What counts is the value gamemoded ends up
+    # with, which a user's own gamemode.ini can change.
+    local renice src
+    IFS=$'\t' read -r renice src <<<"$(gamemode_conf renice int)"
+    renice=${renice#+}
+    if [ -z "$renice" ] || [ "$renice" -eq 0 ] 2>/dev/null; then
+        record gamemode ok "gamemode present; renice not requested${src:+ (renice=${renice} in ${src})}"; return
+    fi
+    # config_get_renice_value: anything outside 1 to 20 is dropped
+    if [ "$renice" -lt 1 ] || [ "$renice" -gt 20 ]; then
+        record gamemode warn "renice=${renice} in ${src} is outside 1 to 20, so gamemode ignores it"
+        return
     fi
 
     if ! getent group "$group" >/dev/null 2>&1; then
@@ -238,7 +290,19 @@ check_gamemode() {
         return
     fi
 
-    record gamemode ok "${user} is in ${group}; renice=${renice} available"
+    # the iGPU threshold: Pulsar's /etc/gamemode.ini sets -1 (off) for hybrid
+    # laptops; say what gamemoded will actually use
+    local igpu igpu_src
+    IFS=$'\t' read -r igpu igpu_src <<<"$(gamemode_conf igpu_power_threshold float)"
+    local igpu_detail
+    if [ -z "$igpu" ]; then
+        igpu_detail="iGPU governor switch on (igpu_power_threshold=0.3, gamemode's default)"
+    elif awk -v t="$igpu" 'BEGIN { exit !(t + 0 < 0) }'; then
+        igpu_detail="iGPU governor switch off (igpu_power_threshold=${igpu} in ${igpu_src})"
+    else
+        igpu_detail="iGPU governor switch on (igpu_power_threshold=${igpu} in ${igpu_src})"
+    fi
+    record gamemode ok "${user} is in ${group}; renice=${renice} available" "$igpu_detail"
 }
 
 check_mangohud() {
@@ -723,21 +787,28 @@ check_cli() {
     record cli ok "'pulsar' is this system's CLI"
 }
 
+# Staging an update writes a whole new image beside the booted one. Under
+# about this much free space an upgrade starts failing in ways that look like
+# network errors. Fail below it, warn below twice it. Free space in bytes, not
+# percent used: 90% of a 2 TB disk is 200 GB free, and 85% of a 64 GB one is
+# under 10 GB.
+DISK_UPDATE_BYTES=$((10 * 1000 * 1000 * 1000))
+
 check_disk() {
     local root=/sysroot df=${PULSAR_DF:-df}
     [ -d "$root" ] || root=/
-    local pct avail
-    pct=$("$df" --output=pcent "$root" 2>/dev/null | tail -1 | tr -dc '0-9') || true
-    avail=$("$df" -h --output=avail "$root" 2>/dev/null | tail -1 | tr -d ' ') || true
-    [ -n "$pct" ] || { record disk warn "could not read disk usage for ${root}"; return; }
-    # A bootc system needs room to stage a whole new image. Under ~10GB free
-    # an upgrade starts failing in ways that look like network errors.
-    if [ "$pct" -ge 90 ]; then
-        record disk fail "${root} is ${pct}% full (${avail} free)" "fails at 90% used: staging an update needs room for a whole new image"
-    elif [ "$pct" -ge 80 ]; then
-        record disk warn "${root} is ${pct}% full (${avail} free)"
+    local pct avail gb need
+    read -r pct avail < <("$df" -B1 --output=pcent,avail "$root" 2>/dev/null | tail -1) || true
+    pct=${pct//[!0-9]/}
+    case "$avail" in ''|*[!0-9]*) record disk warn "could not read free space on ${root}"; return ;; esac
+    gb=$(awk -v b="$avail" 'BEGIN { printf "%.1f", b / 1e9 }')
+    need="staging an update needs about $((DISK_UPDATE_BYTES / 1000000000)) GB free"
+    if [ "$avail" -lt "$DISK_UPDATE_BYTES" ]; then
+        record disk fail "${root} has ${gb} GB free" "${need}; with less, it fails, often with what looks like a network error"
+    elif [ "$avail" -lt $((DISK_UPDATE_BYTES * 2)) ]; then
+        record disk warn "${root} has ${gb} GB free" "$need"
     else
-        record disk ok "${root} ${pct}% used, ${avail} free"
+        record disk ok "${root} has ${gb} GB free${pct:+ (${pct}% used)}"
     fi
 }
 
@@ -3821,12 +3892,18 @@ agent_sessions() {
                     "${dir/#"$HOME"/\~}" "$2" "$2"
             fi
             if [ -n "$repo" ] && [ -d "$dir" ]; then
-                # never forced: what is in it might be the only copy
-                if git -C "$repo" worktree remove "$dir" 2>/dev/null; then
+                # never forced: what is in it might be the only copy. git's
+                # own refusal is the reason, so it is passed on as it is.
+                local why
+                if why=$(git -C "$repo" worktree remove "$dir" 2>&1); then
                     printf 'removed the worktree %s; the branch %s stays\n' "${dir/#"$HOME"/\~}" "$2"
                 else
-                    printf 'kept the worktree %s: git would not remove it (git worktree remove %s says why)\n' \
-                        "${dir/#"$HOME"/\~}" "$dir"
+                    why=$(printf '%s\n' "$why" | sed '/^[[:space:]]*$/d' | paste -sd ';' - | sed 's/;/; /g')
+                    if [ -n "$why" ]; then
+                        printf 'kept the worktree %s; git worktree remove said: %s\n' "${dir/#"$HOME"/\~}" "$why"
+                    else
+                        printf 'kept the worktree %s; git worktree remove failed and gave no reason\n' "${dir/#"$HOME"/\~}"
+                    fi
                 fi
             fi
             rm -f "${AGENT_SESSIONS}/$2.session"
@@ -4418,11 +4495,35 @@ cmd_verify() {
         printf 'signed with the release key, and the signature is logged in Rekor\n'
         return 0
     fi
-    if cosign verify --key "$key" --insecure-ignore-tlog=true "$image" >/dev/null 2>&1; then
+    # The Rekor check failed. The key alone is enough only for a signature that
+    # carries no Rekor bundle at all, which is what a signature from before the
+    # build host logged them looks like. A key-signed signature whose bundle
+    # does not verify is a failure: passing it on the key alone would let a
+    # broken or forged log entry read as "from before Rekor".
+    local verified
+    verified=$(cosign verify --key "$key" --insecure-ignore-tlog=true "$image" 2>/dev/null) \
+        || die "no signature on ${image} verifies against ${key}"
+    # Two views have to agree that a key-signed signature has no bundle.
+    # verify's JSON lists only the signatures that matched the key, with
+    # .optional.Bundle on each one that carries a bundle. `cosign download
+    # signature` lists every signature on the image with an explicit
+    # "Bundle": null on those without one. The second states the absence
+    # outright, so a cosign whose verify output stopped naming bundles fails
+    # here instead of passing every signature as pre-Rekor.
+    local bare_matched bare_listed sigs
+    bare_matched=$(printf '%s' "$verified" \
+        | jq -er 'if type == "array" then [ .[] | select(.optional.Bundle == null) ] | length else error("not a list") end' 2>/dev/null) \
+        || die "could not read cosign's verify output for ${image}"
+    sigs=$(cosign download signature "$image" 2>/dev/null) \
+        || die "could not download the signatures on ${image} to check for a Rekor entry"
+    bare_listed=$(printf '%s' "$sigs" \
+        | jq -ser '[ .[] | select(type == "object" and has("Bundle") and .Bundle == null) ] | length' 2>/dev/null) \
+        || die "could not read the signatures cosign downloaded for ${image}"
+    if [ "$bare_matched" -gt 0 ] && [ "$bare_listed" -gt 0 ]; then
         printf 'signed with the release key, but not verified in Rekor (signatures from before Rekor logging have no entry)\n'
         return 0
     fi
-    die "no signature on ${image} verifies against ${key}"
+    die "${image} is signed with the release key, but its Rekor entry does not verify"
 }
 
 # ---------------------------------------------------------------------------
@@ -5232,17 +5333,23 @@ gpu_fault_notify_one() {
     # one unit per fault: the pid, or for the GPU itself the Xid and this run
     unit=pulsar-gpu-fault-${6:-xid${xid}-$$}
     # The buttons outlive the watcher's own work, as crash_notify_one's do.
+    # Each button only when it has something to act on: Ask when an agent is
+    # installed ($1), Ignore when there is a program to ignore ($6). The GPU
+    # itself and a program the driver did not name have none, and `crashes
+    # ignore add ""` is an error.
     # shellcheck disable=SC2016  # expanded by the transient unit's sh, not here
-    local script='if [ -n "$1" ]; then
+    local script='if [ -n "$1" ] && [ -n "$6" ]; then
     a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" --action=ignore="Ignore this" "$2" "$3") || exit 0
+elif [ -n "$1" ]; then
+    a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" "$2" "$3") || exit 0
 elif [ -n "$6" ]; then
     a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ignore="Ignore this" "$2" "$3") || exit 0
 else
     exec notify-send --app-name=Pulsar --icon=dialog-warning "$2" "$3"
 fi
 case "$a" in
-    ask) exec ptyxis --new-window -d "$HOME" -- "$5" agent ask "$4" ;;
-    ignore) exec "$5" crashes ignore add "$6" ;;
+    ask) [ -z "$1" ] || exec ptyxis --new-window -d "$HOME" -- "$5" agent ask "$4" ;;
+    ignore) [ -z "$6" ] || exec "$5" crashes ignore add "$6" ;;
 esac'
     local ign=$name
     [ "$kind" != gpu ] || ign=""

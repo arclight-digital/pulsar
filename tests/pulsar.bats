@@ -31,17 +31,18 @@ JSON
     # doctor's disk check reads this, not the disk the tests happen to run on:
     # a nearly full build host would otherwise fail every test that expects a
     # clean `doctor` exit, with errors about gamemode or mangohud.
-    stub_df 50 "100G"
+    stub_df 50 100000000000
 }
 
-# stub_df <percent used> <free>: what doctor's disk check sees.
+# stub_df <percent used> <free bytes>: what doctor's disk check sees, in the
+# shape `df -B1 --output=pcent,avail` prints it.
 stub_df() {
     export PULSAR_DF="${BATS_TEST_TMPDIR}/df"
     cat > "$PULSAR_DF" <<EOF
 #!/bin/sh
 case "\$*" in
-    *pcent*) printf 'Use%%\n %s%%\n' "$1" ;;
-    *avail*) printf 'Avail\n %s\n' "$2" ;;
+    *-B1*pcent,avail*) printf 'Use%%        Avail\n %s%% %s\n' "$1" "$2" ;;
+    *) exit 1 ;;
 esac
 EOF
     chmod +x "$PULSAR_DF"
@@ -52,18 +53,32 @@ EOF
 # Prints why and fails the test.
 fail() { printf '%s\n' "$*" >&2; return 1; }
 
-@test "doctor: a disk 90% full fails, 80% warns, less is ok" {
-    stub_df 91 "88G"
+@test "doctor: the disk check goes by free space, not percent used" {
+    disk() { jq -r '.checks[] | select(.id=="disk") | .status + " " + .summary + " | " + .detail' <<<"$output"; }
+    # a 64 GB disk 85% used: 9.6 GB free is not enough to stage an update
+    stub_df 85 9600000000
     run "$PULSAR" doctor --json
     [ "$status" -eq 1 ]
-    disk=$(jq -r '.checks[] | select(.id=="disk") | .status + " " + .summary' <<<"$output")
-    [[ "$disk" == "fail "*" is 91% full (88G free)" ]]
-    stub_df 85 "140G"
+    [[ "$(disk)" == "fail "*" has 9.6 GB free | staging an update needs about 10 GB free; "* ]] || fail "$(disk)"
+    # a 2 TB disk 91% used: 180 GB free is plenty
+    stub_df 91 180000000000
+    run "$PULSAR" doctor --json
+    [[ "$(disk)" == "ok "*" has 180.0 GB free (91% used) | " ]] || fail "$(disk)"
+    # room for one update, not two
+    stub_df 60 14000000000
+    run "$PULSAR" doctor --json
+    [[ "$(disk)" == "warn "*" has 14.0 GB free | staging an update needs about 10 GB free" ]] || fail "$(disk)"
+    # the edges: exactly 10 GB is enough, 20 GB is no longer a warning
+    stub_df 50 10000000000
     run "$PULSAR" doctor --json
     [ "$(jq -r '.checks[] | select(.id=="disk") | .status' <<<"$output")" = warn ]
-    stub_df 77 "214G"
+    stub_df 50 20000000000
     run "$PULSAR" doctor --json
     [ "$(jq -r '.checks[] | select(.id=="disk") | .status' <<<"$output")" = ok ]
+    # df failing is a warning, not a pass
+    printf '#!/bin/sh\nexit 1\n' > "$PULSAR_DF"
+    run "$PULSAR" doctor --json
+    [[ "$(disk)" == "warn could not read free space on "* ]] || fail "$(disk)"
 }
 
 @test "runs and reports a version" {
@@ -138,7 +153,12 @@ fail() { printf '%s\n' "$*" >&2; return 1; }
 
 # A fake rpm-ostree (booted on a tagged ghcr ref) and a fake cosign that
 # accepts only what $COSIGN_OK names: "logged" (a plain verify passes),
-# "key" (only with --insecure-ignore-tlog), or nothing.
+# "key" (only with --insecure-ignore-tlog), or nothing. $COSIGN_BUNDLE says
+# which signatures carry a Rekor bundle, in the shapes cosign prints them:
+# "none" (the default, a signature from before Rekor logging), "all", "other"
+# (the key-signed one has a bundle, a second signature on the image has none),
+# or "unreported" (verify's output names no bundle, the download shows one).
+# COSIGN_DOWNLOAD=fail makes `cosign download signature` fail.
 fake_verify_env() {
     local bin="${BATS_TEST_TMPDIR}/bin"
     mkdir -p "$bin"
@@ -149,7 +169,28 @@ SH
     cat > "$bin/cosign" <<'SH'
 #!/bin/sh
 echo "$*" >> "$COSIGN_LOG"
-case "$*" in *insecure-ignore-tlog*) [ "$COSIGN_OK" = logged ] || [ "$COSIGN_OK" = key ] ;; *) [ "$COSIGN_OK" = logged ] ;; esac
+bare='{"Base64Signature":"c2ln","Payload":"e30=","Cert":null,"Chain":null,"Bundle":null,"RFC3161Timestamp":null}'
+bundled='{"Base64Signature":"c2ln","Payload":"e30=","Cert":null,"Chain":null,"Bundle":{"SignedEntryTimestamp":"c2V0","Payload":{"body":"e30=","integratedTime":1759500000,"logIndex":1,"logID":"x"}},"RFC3161Timestamp":null}'
+critical='"critical":{"identity":{"docker-reference":"ghcr.io/x/pulsar-nvidia"},"image":{"docker-manifest-digest":"sha256:abc"},"type":"cosign container image signature"}'
+case "$1" in
+download)
+    [ "${COSIGN_DOWNLOAD:-ok}" = ok ] || { echo "Error: GET https://ghcr.io: connection refused" >&2; exit 1; }
+    case "${COSIGN_BUNDLE:-none}" in
+        none) echo "$bare" ;;
+        other) echo "$bundled"; echo "$bare" ;;
+        *) echo "$bundled" ;;
+    esac
+    exit 0 ;;
+esac
+case "$*" in
+*insecure-ignore-tlog*)
+    [ "$COSIGN_OK" = logged ] || [ "$COSIGN_OK" = key ] || exit 1
+    case "${COSIGN_BUNDLE:-none}" in
+        none|unreported) echo "[{${critical},\"optional\":null}]" ;;
+        *) echo "[{${critical},\"optional\":{\"Bundle\":{\"SignedEntryTimestamp\":\"c2V0\"}}}]" ;;
+    esac ;;
+*) [ "$COSIGN_OK" = logged ] ;;
+esac
 SH
     chmod +x "$bin/rpm-ostree" "$bin/cosign"
     export PATH="$bin:$PATH" COSIGN_LOG="${BATS_TEST_TMPDIR}/cosign.log"
@@ -172,6 +213,39 @@ SH
     COSIGN_OK=key run "$PULSAR" verify
     [ "$status" -eq 0 ]
     [[ "$output" == *"not verified in Rekor"* ]]
+    grep -q -- "download signature ghcr.io/x/pulsar-nvidia@sha256:abc" "$COSIGN_LOG"
+}
+
+@test "verify fails a key-signed signature whose Rekor bundle does not verify" {
+    fake_verify_env
+    COSIGN_OK=key COSIGN_BUNDLE=all run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its Rekor entry does not verify"* ]]
+    [[ "$output" != *"not verified in Rekor"* ]]
+}
+
+@test "verify fails when only another signature on the image lacks a bundle" {
+    # the signature that matched the key carries a bundle; a bundle-less one
+    # beside it (another key's, say) does not make the image pre-Rekor
+    fake_verify_env
+    COSIGN_OK=key COSIGN_BUNDLE=other run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its Rekor entry does not verify"* ]]
+}
+
+@test "verify fails when the download shows a bundle verify did not report" {
+    fake_verify_env
+    COSIGN_OK=key COSIGN_BUNDLE=unreported run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"its Rekor entry does not verify"* ]]
+}
+
+@test "verify fails, not passes, when it cannot download the signatures" {
+    fake_verify_env
+    COSIGN_OK=key COSIGN_DOWNLOAD=fail run "$PULSAR" verify
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"could not download the signatures"* ]]
+    [[ "$output" != *"not verified in Rekor"* ]]
 }
 
 @test "verify fails an image no signature verifies" {
@@ -1067,6 +1141,10 @@ stub_gamemode_env() {
     export GM_GROUP_EXISTS="${GM_GROUP_EXISTS:-1}"
     cat > "${STUB}/getent" <<'EOF'
 #!/bin/sh
+if [ "$1" = passwd ]; then
+    [ "$2" = proto ] && printf 'proto:x:1000:1000::%s:/bin/bash\n' "$GM_HOME"
+    exit 0
+fi
 [ "$1" = group ] || exit 0
 [ "${GM_GROUP_EXISTS}" = 1 ] || exit 2
 printf 'gamemode:x:983:\n'
@@ -1084,8 +1162,16 @@ EOF
     PATH="${STUB}:${PATH}"
     export PATH
 
+    # gamemode's own default, Pulsar's /etc override, and a home with none
+    # of the user's own yet: never the files on the machine running the tests
+    export PULSAR_GAMEMODE_DEFAULT_INI="${BATS_TEST_TMPDIR}/usr-gamemode.ini"
+    printf '[general]\nrenice=0\nigpu_power_threshold=0.3\n' > "$PULSAR_GAMEMODE_DEFAULT_INI"
     export PULSAR_GAMEMODE_INI="${BATS_TEST_TMPDIR}/gamemode.ini"
-    printf 'renice=10\n' > "$PULSAR_GAMEMODE_INI"
+    printf '[general]\nigpu_power_threshold=-1\nrenice=10\n' > "$PULSAR_GAMEMODE_INI"
+    export GM_HOME="${BATS_TEST_TMPDIR}/gmhome"
+    mkdir -p "${GM_HOME}/.config"
+    export HOME="$GM_HOME"
+    unset XDG_CONFIG_HOME
     export PULSAR_LIMITS_DIR="${BATS_TEST_TMPDIR}/limits.d"
     export PULSAR_LIMITS_CONF="${BATS_TEST_TMPDIR}/limits.conf"
     mkdir -p "$PULSAR_LIMITS_DIR"
@@ -1143,10 +1229,67 @@ gm_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gamemode"
 
 @test "doctor: renice=0 means membership is irrelevant and is not warned about" {
     stub_gamemode_env "proto wheel" "proto wheel"
-    printf 'renice=0\n' > "$PULSAR_GAMEMODE_INI"
+    printf '[general]\nrenice=0\n' > "$PULSAR_GAMEMODE_INI"
     run gm_check
     [[ "$output" == ok* ]]
     [[ "$output" == *"not requested"* ]]
+}
+
+# gamemoded merges gamemode.ini from /usr/share/gamemode, /etc,
+# $XDG_CONFIG_HOME (else ~/.config) and its working directory (the home
+# directory, as a systemd user service), later over earlier.
+@test "doctor: gamemode reads renice the way gamemoded does, the user's files last" {
+    stub_gamemode_env "proto wheel" "proto wheel"
+    # /etc asks for 10 over the package's 0: an unenrolled account is news
+    run gm_check
+    [[ "$output" == warn*"not in the gamemode group"* ]] || fail "$output"
+    # the user's ~/.config/gamemode.ini sets it back to 0: nothing to warn about
+    printf '[general]\nrenice=0\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == "ok gamemode present; renice not requested (renice=0 in ${GM_HOME}/.config/gamemode.ini)"* ]] || fail "$output"
+    # $XDG_CONFIG_HOME replaces ~/.config, it is not read beside it
+    mkdir -p "${BATS_TEST_TMPDIR}/xdg"
+    printf '[general]\nrenice = 5 ; the user wants less\n' > "${BATS_TEST_TMPDIR}/xdg/gamemode.ini"
+    XDG_CONFIG_HOME="${BATS_TEST_TMPDIR}/xdg" run gm_check
+    [[ "$output" == warn*"renice=5 does nothing"* ]] || fail "$output"
+    # gamemoded's working directory, the home, is read last
+    printf '[general]\nrenice=0\n' > "${GM_HOME}/gamemode.ini"
+    XDG_CONFIG_HOME="${BATS_TEST_TMPDIR}/xdg" run gm_check
+    [[ "$output" == ok*"renice=0 in ${GM_HOME}/gamemode.ini"* ]] || fail "$output"
+}
+
+@test "doctor: a renice gamemoded would not use does not count" {
+    stub_gamemode_env "proto wheel" "proto wheel"
+    # outside [general], commented out, or not a number: /etc's 10 stands
+    printf '[filter]\nrenice=0\n[general]\n;renice=0\n#renice=0\nrenice=zero\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == warn*"renice=10 does nothing"* ]] || fail "$output"
+    # out of range: gamemoded drops it
+    printf '[general]\nrenice=25\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == "warn renice=25 in ${GM_HOME}/.config/gamemode.ini is outside 1 to 20, so gamemode ignores it"* ]] || fail "$output"
+}
+
+@test "doctor: gamemode's iGPU detail is the threshold gamemoded will use" {
+    stub_gamemode_env "proto wheel gamemode" "proto wheel gamemode"
+    run gm_check
+    [[ "$output" == ok*"iGPU governor switch off (igpu_power_threshold=-1 in ${PULSAR_GAMEMODE_INI})" ]] || fail "$output"
+    printf '[general]\nigpu_power_threshold=0.5\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == ok*"iGPU governor switch on (igpu_power_threshold=0.5 in ${GM_HOME}/.config/gamemode.ini)" ]] || fail "$output"
+    rm -f "${GM_HOME}/.config/gamemode.ini" "$PULSAR_GAMEMODE_DEFAULT_INI"
+    printf '[general]\nrenice=10\n' > "$PULSAR_GAMEMODE_INI"
+    run gm_check
+    [[ "$output" == ok*"iGPU governor switch on (igpu_power_threshold=0.3, gamemode's default)" ]] || fail "$output"
+}
+
+@test "doctor: under sudo, gamemode reads the human account's own gamemode.ini" {
+    stub_gamemode_env "proto wheel" "root"
+    export SUDO_USER=proto HOME="${BATS_TEST_TMPDIR}/roothome"
+    mkdir -p "${HOME}/.config"
+    printf '[general]\nrenice=0\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == ok*"renice not requested"* ]] || fail "$output"
 }
 
 @test "doctor: under sudo the human account is checked, not root" {
@@ -2948,6 +3091,54 @@ NONE_154='NVRM: Xid (PCI:0000:02:00): 154, GPU recovery action changed from 0x1 
     [[ "$output" == warn*"1 GPU fault(s) this boot: GPU (Xid 79)"* ]] || fail "$output"
 }
 
+# A systemd-run that runs the notification's script here, and a notify-send
+# that clicks "Ignore this" whenever it is offered (and otherwise dismisses).
+click_ignore_env() {
+    cat > "${STUB}/systemd-run" <<'SH'
+#!/bin/sh
+echo "$*" >> "$RUN_LOG"
+while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
+shift
+"$@"
+SH
+    cat > "${STUB}/notify-send" <<'SH'
+#!/bin/sh
+echo "$*" >> "$NOTIFY_LOG"
+case "$*" in *--action=ignore=*) echo ignore ;; esac
+SH
+    chmod +x "${STUB}/systemd-run" "${STUB}/notify-send"
+    export PULSAR_CRASH_IGNORE="${BATS_TEST_TMPDIR}/crash-ignore"
+}
+
+@test "gpu faults: Ignore is offered only when there is a program to ignore, agent or not" {
+    gpu_env
+    click_ignore_env
+    fake_agent claude
+    # the GPU itself, and a program the driver did not name: Ask, no Ignore
+    klog 'NVRM: Xid (PCI:0000:02:00): 79, GPU has fallen off the bus.' "$UNKNOWN_31"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(grep -c -- "--action=ask=" "$NOTIFY_LOG")" -eq 2 ] || fail "$(cat "$NOTIFY_LOG")"
+    run grep -c -- "--action=ignore=" "$NOTIFY_LOG"
+    [ "$output" = 0 ] || fail "$(cat "$NOTIFY_LOG")"
+    [ ! -e "$PULSAR_CRASH_IGNORE" ] || fail "$(cat "$PULSAR_CRASH_IGNORE")"
+    # without an agent, the same faults get a plain notification
+    rm -f "${STUB}/claude"
+    : > "$KLOG"; : > "$NOTIFY_LOG"
+    echo boot-b > "$PULSAR_BOOT_ID_FILE"
+    klog 'NVRM: Xid (PCI:0000:02:00): 79, GPU has fallen off the bus.' "$UNKNOWN_31"
+    run "$PULSAR" doctor gpu-faults --watch
+    [ "$(grep -c "GPU fault\|NVIDIA GPU" "$NOTIFY_LOG")" -eq 2 ] || fail "$(cat "$NOTIFY_LOG")"
+    run grep -c -- "--action=" "$NOTIFY_LOG"
+    [ "$output" = 0 ] || fail "$(cat "$NOTIFY_LOG")"
+    # a named game does get it, and the click ignores it by name
+    fake_agent claude
+    klog "$HIU_13"
+    run "$PULSAR" doctor gpu-faults --watch
+    grep "Hell Is Us hit" "$NOTIFY_LOG" | grep -q -- '--action=ignore=Ignore this'
+    grep -qx "Hell Is Us" "$PULSAR_CRASH_IGNORE"
+}
+
 @test "doctor gpu-faults counts a fault tied to no program, once per fault" {
     gpu_env
     klog "$UNKNOWN_13_WARP" "$UNKNOWN_13_ESR" "$UNKNOWN_31"
@@ -4190,6 +4381,8 @@ wt_env() {
     run "$PULSAR" agent sessions --forget dirty
     [[ "$output" == *"kept the worktree ~/code/proj/.worktrees/dirty"* ]] || fail "$output"
     [ -f "${PROJ}/.worktrees/dirty/new.txt" ]
+    # and why, in git's words
+    [[ "$output" == *"kept the worktree ~/code/proj/.worktrees/dirty; git worktree remove said: fatal: "*"contains modified or untracked files"* ]] || fail "$output"
 }
 
 @test "agent run --worktree: one removed by hand is made again" {
