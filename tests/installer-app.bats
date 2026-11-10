@@ -141,6 +141,11 @@ PY
     [ "$(py 'm.startup_notes({"windows_entry": False, "linux_entry": None, "fedora_linux": None, "other_loaders": []})')" = "[]" ]
 }
 
+@test "no open copy questions are left in the app" {
+    # the owner answered them all (2026-11-10); the last was the 1-second startup menu
+    ! grep -n 'TODO(copy)' "$APP" || false
+}
+
 @test "the erase page names partitions in words" {
     run py '[p["what"] for p in D["/dev/nvme1n1"]["partitions"]]'
     [ "$output" = "['Startup files (EFI)', 'Microsoft reserved', 'Windows', 'Windows recovery']" ]

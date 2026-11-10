@@ -61,7 +61,9 @@ and whether it gets a startup menu entry, and other Linux boot loaders the
 computer's own boot menu starts) and writes nothing; it needs no key
 (--no-encrypt plans the unencrypted layout). The done event repeats
 fedora_linux and other_loaders, with linux_entry, the title of the menu
-entry made for the Fedora-family Linux (or null).
+entry made for the Fedora-family Linux (or null), and menu_timeout, the
+seconds the startup menu now shows for when another system is beside
+Pulsar (or null: bootupd's 1 second).
 
 PULSAR_BOOTC_PREFIX, if set, runs bootc through a wrapper (the test bench
 runs it in the image with podman); the default is the live system's own.
@@ -626,6 +628,31 @@ menuentry '{fedora['title']}' --class fedora --class gnu-linux --class os {{
     return fedora["title"]
 
 
+MENU_TIMEOUT = 5
+
+
+def menu_timeout(target, found):
+    """With another system beside Pulsar, the startup menu shows for
+    MENU_TIMEOUT seconds, not bootupd's 1, so there is time to choose it.
+    bootupd's static grub.cfg is grub-static-pre.cfg (which ends `set
+    timeout=1`) followed by configs.d in name order, the last of which,
+    41_custom.cfg, sources /boot/grub2/custom.cfg: a timeout set there wins,
+    and bootupd never rewrites custom.cfg. A one-time timeout asked for with
+    menu_show_once_timeout (14_menu_show_once.cfg) is left alone. Pulsar
+    alone on the disk keeps bootupd's 1 second. Returns the timeout set, or
+    None."""
+    if not (found.get("windows") or (found.get("fedora_linux") or {}).get("menu") or found.get("other_loaders")):
+        return None
+    with open(os.path.join(target, "boot/grub2/custom.cfg"), "a") as f:
+        f.write(f"""
+# Another system is installed beside Pulsar: time to choose it
+if [ "${{timeout}}" = "1" ]; then
+\tset timeout={MENU_TIMEOUT}
+fi
+""")
+    return MENU_TIMEOUT
+
+
 def firmware_entry(disk, esp, target):
     if not os.path.isdir(EFIVARS):
         return "not booted via EFI: no firmware entry"
@@ -779,10 +806,11 @@ def main():
             restore_fallback(os.path.join(target, "boot/efi"), snap, os.path.join(target, "boot/pulsar/esp-fallback"))
         win = windows_entry(target, esp)
         lin = linux_entry(target, found["fedora_linux"])
+        timeout = menu_timeout(target, found)
         fw = firmware_entry(a.disk, esp, target)
         ok = True
         emit(stage="done", ok=True, windows_entry=win, linux_entry=lin, fedora_linux=found["fedora_linux"],
-             other_loaders=found["other_loaders"], firmware=fw)
+             other_loaders=found["other_loaders"], menu_timeout=timeout, firmware=fw)
         return 0
     except Failed as e:
         error = str(e)

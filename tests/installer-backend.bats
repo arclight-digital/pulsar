@@ -395,7 +395,7 @@ PY
 }
 
 FED=8c3e7a52-1d4f-4a6b-9e0c-2f5b7d9a1c34
-custom_cfg() { cat "$(find "$T/run" -path '*/target/boot/grub2/custom.cfg')" 2>/dev/null; }
+custom_cfg() { local f; f=$(find "$T/run" -path '*/target/boot/grub2/custom.cfg' 2>/dev/null); [ -z "$f" ] || cat "$f"; }
 plan_field() { echo "$output" | jq -c "select(.stage? == \"plan\") | .$1"; }
 done_field() { echo "$output" | jq -c "select(.stage? == \"done\") | .$1"; }
 
@@ -410,14 +410,21 @@ done_field() { echo "$output" | jq -c "select(.stage? == \"done\") | .$1"; }
     FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=grub2 run --separate-stderr system alongside "${ID[@]}"
     [ "$status" -eq 0 ]
     [ "$(done_field linux_entry)" = '"Fedora Linux 42 (Workstation Edition)"' ]
-    [ "$(custom_cfg)" = "$(printf '\n%s\n' "menuentry 'Fedora Linux 42 (Workstation Edition)' --class fedora --class gnu-linux --class os {
+    local want="
+menuentry 'Fedora Linux 42 (Workstation Edition)' --class fedora --class gnu-linux --class os {
 	insmod part_gpt
 	insmod ext2
 	search --no-floppy --fs-uuid --set=dev $FED
 	set prefix=(\$dev)/grub2
 	export prefix
 	configfile \$prefix/grub.cfg
-}")" ]
+}
+
+# Another system is installed beside Pulsar: time to choose it
+if [ \"\${timeout}\" = \"1\" ]; then
+	set timeout=5
+fi"
+    [ "$(custom_cfg)" = "$want" ]
 }
 
 @test "a Fedora Atomic or bootc Linux (bootupd's EFI/fedora) is found by its bootuuid.cfg, or by the label boot without one" {
@@ -466,6 +473,56 @@ done_field() { echo "$output" | jq -c "select(.stage? == \"done\") | .$1"; }
     # an erase shares no ESP: nothing to report
     run --separate-stderr system erase --plan-only "${ID[@]}"
     [ "$(plan_field 'fedora_linux, .other_loaders')" = "$(printf 'null\n[]')" ]
+}
+
+# grub_cfg: /boot/grub2/grub.cfg as bootupd assembles its static config
+# (grub-static-pre.cfg, then configs.d in name order), with the install's
+# custom.cfg spliced in where 41_custom.cfg sources it
+grub_cfg() {
+    local static="${BATS_TEST_DIRNAME}/fixtures/installer/bootupd-grub2-static" f
+    cat "$static/grub-static-pre.cfg"
+    for f in "$static"/configs.d/*.cfg; do
+        if grep -qF 'source $prefix/custom.cfg' "$f"; then custom_cfg; else cat "$f"; fi
+    done
+}
+# the timeout GRUB ends up with, reading the assembled config top to bottom
+# for its plain `set timeout=N` lines (the menu_show_once one is skipped:
+# its variable isn't set)
+grub_timeout() { grub_cfg | sed -n 's/^[[:space:]]*set timeout=\([0-9]\+\)$/\1/p' | tail -1; }
+
+@test "with another system beside Pulsar the startup menu shows for 5 seconds; Pulsar alone or an erase keeps bootupd's 1" {
+    local static="${BATS_TEST_DIRNAME}/fixtures/installer/bootupd-grub2-static" raw
+    # bootupd's own order: timeout=1 is set before custom.cfg is sourced
+    raw=$(cat "$static/grub-static-pre.cfg" "$static"/configs.d/*.cfg)
+    [ "$(grep -n 'set timeout=1$' <<<"$raw" | cut -d: -f1)" -lt "$(grep -n 'source \$prefix/custom.cfg' <<<"$raw" | cut -d: -f1)" ]
+    five() {
+        [ "$status" -eq 0 ]
+        [ "$(done_field menu_timeout)" = 5 ]
+        [[ "$(custom_cfg)" == *'if [ "${timeout}" = "1" ]; then
+	set timeout=5
+fi'* ]]
+        [ "$(grub_timeout)" = 5 ]
+    }
+    ESP_WINDOWS=1 run --separate-stderr system alongside "${ID[@]}"
+    five
+    rm -rf "$T/run"
+    ESP_SHIMS=ubuntu run --separate-stderr system alongside "${ID[@]}"
+    five
+    rm -rf "$T/run"
+    FEDORA_STUB=fedora FEDORA_UUID=$FED OTHER_BOOT=ext4 OTHER_GRUB=grub2 run --separate-stderr system alongside "${ID[@]}"
+    five
+    # Pulsar alone beside data: no change
+    rm -rf "$T/run"
+    run --separate-stderr system alongside "${ID[@]}"
+    [ "$status" -eq 0 ]
+    [ "$(done_field menu_timeout)" = null ]
+    [ "$(grub_timeout)" = 1 ]
+    # an erase: never
+    rm -rf "$T/run"
+    ESP_WINDOWS=1 run --separate-stderr system erase "${ID[@]}"
+    [ "$status" -eq 0 ]
+    [ "$(done_field menu_timeout)" = null ]
+    [ "$(grub_timeout)" = 1 ]
 }
 
 # notes_say STAGE: the app's startup notes from the backend's STAGE event in $output

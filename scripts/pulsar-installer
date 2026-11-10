@@ -225,8 +225,8 @@ def startup_notes(boot):
     Linux whose /boot wasn't found has no way in, and the page says so."""
     notes = []
     if boot.get("windows") or boot.get("windows_entry"):
-        # TODO(copy): the startup menu shows for 1 s (timeout=1 in bootupd's grub-static-pre.cfg;
-        # Pulsar doesn't override it). Say how to reach it, e.g. hold an arrow key?
+        # the startup menu shows for 5 s whenever another system is beside Pulsar
+        # (pulsar-install-system menu_timeout)
         notes.append("To start Windows, choose it in the startup menu.")
     fedora = boot.get("fedora_linux")
     if fedora and fedora.get("menu"):
