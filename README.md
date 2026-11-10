@@ -7,8 +7,9 @@
 
 <p align="center">
   Your lighthouse in the sky.<br>
-  <sub>Linux that’s beautiful out of the box and rolls back when something breaks.</sub>
+  <sub>Linux that ships with 24 themes and rolls back when something breaks.</sub>
 </p>
+<!-- TODO(copy): should this subline match the site's "Stylish, atomic, modern Linux, rebuilt every night."? -->
 
 <p align="center">
   <a href="https://getpulsar.dev">getpulsar.dev</a>
@@ -83,25 +84,26 @@ apps and containers stay as they are.
 
 ## Themes
 
-`pulsar theme set <name>` applies one of 20 themes to GNOME Shell, GTK 4 and
+`pulsar theme set <name>` applies one of 24 themes to GNOME Shell, GTK 4 and
 GTK 3 apps, the terminal, Text Editor, btop and the wallpaper at once. You
-can also pick one in the Themes app (Super+T). New accounts start on the
-Pulsar theme, and `pulsar theme revert` goes back to stock GNOME.
+can also pick one in Themes (Super+T, unless your account already uses that
+shortcut). New accounts start on the Pulsar theme, and `pulsar theme revert`
+goes back to stock GNOME.
 
 The Shell extension draws blurred glass behind menus, notifications, OSDs
-and the top bar, and a soft light along their edges. Both can be switched off
-in the extension's settings. See
-[docs/theming.md](docs/theming.md) for what each part of the theme engine
-writes.
+and the top bar, makes app windows translucent over a blur of what's behind
+them, and lights a menu's edge from the button that opened it. Each effect is
+a switch on the Appearance page of Pulsar Settings.
+[docs/theming.md](docs/theming.md) lists them and what each part of the theme
+engine writes.
 
 ## Gaming
 
 Steam, Heroic, Bottles and other launchers are installed as Flatpaks on first
 boot. The image itself includes `gamescope`, `gamemode`, `mangohud`,
 `steam-devices`, and `ntsync` for Proton. It also turns off split-lock
-mitigation and raises `vm.max_map_count`, since some games need both, and
-tunes hugepage defragmentation and memory compaction so they don't stall
-a running game.
+mitigation, raises `vm.max_map_count`, and tunes hugepage defragmentation
+and memory compaction so they don't stall a running game.
 
 ### gamemode on laptops with two GPUs
 
@@ -129,11 +131,11 @@ wrong resolution and look blurry.
 to 100% while a game runs and puts your scaling back when it quits, even if
 it crashes. The image ships a pinned, hash-verified release with an
 indicator in the top bar. It works as installed with native launchers and
-with the Steam Flatpak, which the image gives read-only access to its copy.
-Other Flatpak launchers need a copy in your home folder:
+with the Steam and Faugus Flatpaks, which the image gives read-only access to
+its copy. Other Flatpak launchers need a copy in your home folder:
 
 ```bash
-pulsar setup gamescale --platform faugus    # or heroic, bottles, lutris
+pulsar setup gamescale --platform heroic    # or bottles, lutris
 ```
 
 `gamescale --version` shows which copy is running.
@@ -149,21 +151,24 @@ ggm %command%
 ```
 
 Flags before `%command%` go to gamescale, so `gg -x %command%` works too.
-Both are in the image and work in the Steam Flatpak with no setup. For other
-Flatpak launchers, `pulsar setup gamescale --platform <name>` copies them into
-`~/.local/bin` beside gamescale. If you already have your own `gg` or `ggm`
-there, setup leaves it alone and says so.
+Both work in the Steam and Faugus Flatpaks with no setup (in Faugus they go
+in a game's launch arguments). For other Flatpak launchers,
+`pulsar setup gamescale --platform <name>` copies them into `~/.local/bin`
+beside gamescale. If you already have your own `gg` or `ggm` there, setup
+leaves it alone and says so.
 
 If you set up Steam with `pulsar setup gamescale` before, run it again with
-no arguments. It points Steam at the image's copies and removes the old
-copies from your home folder.
+no arguments, or with `--platform steam faugus` if you set up Faugus too. It
+points them at the image's copies and removes the old copies from your home
+folder.
 
 ### Scheduler
 
-Pulsar runs the kernel's own scheduler, EEVDF, the same as Fedora. On
-Intel CPUs with performance and efficiency cores it keeps the desktop on
-the fast cores; the `scx_bpfland` scheduler Pulsar used to run by default
-spread it onto the slow ones, and animations stuttered.
+Pulsar runs the kernel's own scheduler, EEVDF, the same as Fedora. On the
+Core Ultra 9 275HX it was measured on, EEVDF kept GNOME Shell on the
+performance cores (15-24% of its time on efficiency cores). `scx_bpfland`,
+which Pulsar used to run by default, put 66-78% of it on the efficiency
+cores, and animations jumped to their end.
 
 `scx_bpfland` is still installed. To use it, run
 `sudo systemctl enable --now scx.service`. Some Fedora kernels can't load
@@ -174,7 +179,8 @@ for this with `scripts/check-scx-btf.sh`, and on an affected kernel
 ## Development
 
 Install development tools in a toolbox or distrobox. `pulsar setup devbox`
-creates a distrobox with common tools already in it, and
+creates a Fedora distrobox, `pulsar-dev`, with git, make, cmake, gcc, gdb,
+ripgrep, fd, jq and Python's pip and headers already in it, and
 `pulsar setup quadlet` gives you a template for running a container as a
 systemd service under your account. `mise` and `direnv` handle per-project
 toolchains.
@@ -191,21 +197,21 @@ podman run --rm --device nvidia.com/gpu=all registry.fedoraproject.org/fedora nv
 
 The container image needs to bring its own CUDA runtime. Avoid writing your
 own spec to `/etc/cdi`, because it will go stale after the next driver
-update; `pulsar doctor` warns if it finds one.
+update; `pulsar doctor` warns when a spec there is stale.
 
 ## Coding agents
 
 You can install a coding agent with `pulsar agent add claude`, or `codex`,
-`gemini`, `opencode` or `aider`. Each one gets its own toolbox and can be
-started from any terminal.
+`gemini`, `opencode` or `aider`. They all install into one toolbox, `agents`,
+and each gets a command that works from any terminal.
 
 | Command | What it does |
 |---|---|
 | `pulsar agent guide` | prints the guide the image ships for agents about how this system works |
 | `pulsar mcp` | serves health checks, system status and crash reports to MCP clients, without root |
 | `pulsar agent sandbox on` | runs agents in a container that only sees the current project; their pushes go through a gate that blocks force-pushes and deletes |
-| `sudo pulsar agent guard on` | requires a password for layering packages and system-wide Flatpak installs |
-| `sudo pulsar checkpoint` | snapshots `/etc` and your settings so you can compare or restore them later |
+| `sudo pulsar agent guard on` | requires the admin password for layering packages, rollback, cleanup, and system Flatpak installs and removals |
+| `sudo pulsar checkpoint` | snapshots `/etc` and your settings and pins the booted deployment, so you can compare or restore them later |
 | `pulsar agent model on` | runs a local model on the GPU for opencode and aider (llama.cpp in rootless podman, on 127.0.0.1 with a key) |
 
 [docs/AGENTS-SAFETY.md](docs/AGENTS-SAFETY.md) explains what an agent can
@@ -214,26 +220,32 @@ and can't change on this system.
 ## The `pulsar` command
 
 ```text
-pulsar doctor [check]   health checks, exit 1 if one fails
-pulsar status           deployments: booted, staged, rollback, pins
-pulsar report           redacted diagnosis bundle, JSON or --text
-pulsar manifest         what is in this image, and what it runs on
-pulsar changelog        packages that moved in the latest published build
-pulsar sbom             this system's packages as SPDX 2.3
-pulsar verify           how to check where this image came from
-pulsar update           fetch and stage the newest image   (root; --check needs none)
-pulsar rollback         boot the previous deployment next  (root)
-pulsar pin [on|off]     keep the booted deployment         (root to change)
-pulsar checkpoint       snapshot /etc to diff or restore   (root)
-pulsar theme <command>  recolor the whole desktop
-pulsar setup <recipe>   apps | devbox | gamemode | quadlet | gamescale
-pulsar agent            guide | list | add | remove | default | ask | run | sandbox | guard
+pulsar doctor [check]    health checks; exit 1 if one fails
+pulsar status            deployments: booted, staged, rollback, pins
+pulsar report            a redacted diagnosis bundle to paste; JSON, or --text
+pulsar crashes           this boot's crashes, and programs not to announce
+pulsar manifest          what is in this image, and what it runs on
+pulsar changelog         packages that moved in the latest published build
+pulsar sbom              this system's packages as SPDX 2.3
+pulsar verify            check the running image's signature
+pulsar update            fetch and stage the newest image       (root)
+pulsar update --check    is a newer image published? exit 10 if so
+pulsar rollback          boot the previous deployment next      (root)
+pulsar pin [on|off]      keep the booted deployment through GC  (root)
+pulsar checkpoint        snapshot /etc, your settings and pin   (root)
+pulsar theme <command>   recolor the whole desktop
+pulsar setup <recipe>    apps | devbox | gamemode | quadlet | gamescale
+pulsar screen text|qr    the text or QR code in an area of the screen, onto the clipboard
+pulsar agent             guide | list | add | remove | default | run | sandbox | guard
+pulsar agent model on    a local model for agents, on this machine's GPU
+pulsar agent ask         start your agent on a redacted report of this machine
+pulsar mcp               this machine's facts as MCP tools, for any agent
 ```
 
-If something is broken, run `pulsar report` and include its output when you
-ask for help. `pulsar doctor` checks the actual system state, for example
-reading `/sys/kernel/sched_ext/state` to see whether the scheduler is
-attached, and it doesn't need root.
+`pulsar help <command>` describes one command. If something is broken, run
+`pulsar report` and include its output when you ask for help. `pulsar doctor`
+reads the system's state, for example `/sys/kernel/sched_ext/state` to see
+whether the scheduler is attached, and it doesn't need root.
 
 ## Signing and provenance
 
@@ -247,19 +259,22 @@ doesn't match the public key that ships in the image, `MOK.der`.
 If you build Pulsar yourself, use your own signing key. Enrolling Pulsar's
 key tells your firmware to trust any module signed with it.
 
-Every image includes an SPDX software bill of materials, which you can list
-with `oras discover ghcr.io/arclight-digital/pulsar:latest`. Pulsar compares
-each night's bill of materials with the previous night's and publishes the
-difference at [getpulsar.dev/docs/changelog](https://getpulsar.dev/docs/changelog)
-and as [changelog.json](https://getpulsar.dev/changelog.json). On an
+Every image includes an SPDX SBOM, which you can list with
+`oras discover ghcr.io/arclight-digital/pulsar:latest`. Pulsar compares each
+night's SBOM with the previous night's and publishes the difference at
+[getpulsar.dev/docs/changelog](https://getpulsar.dev/docs/changelog) and as [changelog.json](https://getpulsar.dev/changelog.json). On an
 installed system, `pulsar changelog` shows the same list.
 
-The installer ISOs are signed with Pulsar's cosign key,
-[`keys/cosign.pub`](keys/cosign.pub). That key replaced the old one on
-2026-11-09; ISOs from before then verify with
+The published images (`pulsar` and `pulsar-nvidia` on ghcr.io) and the
+installer ISOs are signed with Pulsar's cosign release key,
+[`keys/cosign.pub`](keys/cosign.pub). Images have been signed since
+2026-09-28, on the build host after the boot gate, and each signature is
+logged in Rekor (rekor.sigstore.dev). The key replaced the old one on
+2026-11-09; images and ISOs from before then verify with
 [`keys/cosign-before-2026-11-09.pub`](keys/cosign-before-2026-11-09.pub).
-The container images aren't signed yet. They were attested by GitHub Actions until the build moved to its own
-host in August, and signing them with the same cosign key is planned.
+`pulsar verify` checks the booted image's signature against the key the image
+ships, `/etc/pki/containers/pulsar.pub`. Installed systems don't enforce
+signatures when they update: there is no signature policy (`policy.json`).
 
 ## Working on it
 
@@ -267,19 +282,21 @@ host in August, and signing them with the same cosign key is planned.
 Containerfile          -> ghcr.io/arclight-digital/pulsar
 Containerfile.nvidia   -> ghcr.io/arclight-digital/pulsar-nvidia
 scripts/nightly.sh     version, build, push, publish; runs on the build host at 8pm Mountain
-scripts/weekly.sh      installer ISOs, Saturday night, signed with keys/cosign.pub
+scripts/weekly.sh      installer ISOs, weekly, signed with keys/cosign.pub
 scripts/publish.sh     SBOMs, the changelog and the site's data after each nightly
 iso-config.toml        what the installer asks before it partitions
 assets/                source of truth for art; branding in system_files/ is generated
 system_files.nvidia/   overlay for the NVIDIA image only
-scripts/build.sh       local test builds; the build host ships the real ones
+scripts/build.sh       the build pipeline, the same on a workstation and the build host
 docs/                  published to getpulsar.dev/docs with each nightly
 ```
 
-Changes pushed to `main` go out with the next nightly build. Builds started
-by hand are tagged `<version>-dev` and are for testing: they don't move any
-tags or publish anything, and a machine booted from one says so in its boot
-menu.
+<!-- TODO(copy): which night does weekly.sh run? This said Saturday; commit e4b70d77 says "Sunday's ISO". -->
+
+Changes pushed to `main` go out with the next nightly build. A build started
+by hand runs the same pipeline and takes the next version number, but it
+doesn't move the floating tags (`:latest`, `:<fedora>`) or update the site,
+so machines don't get it unless it's promoted.
 
 The website, [getpulsar.dev](https://getpulsar.dev), is in
 [arclight-digital/pulsar-site](https://github.com/arclight-digital/pulsar-site).
@@ -298,13 +315,11 @@ hardware requirements beyond Fedora's.
   akmod quietly replaces it.
 - Keep `dracut` as the last real step of the build. The initramfs includes
   the Plymouth theme and the NVIDIA modprobe options.
-- The nvidia-open akmod comes from RPM Fusion's nvidia-driver repository.
-  `Containerfile.nvidia` explains why.
+- The nvidia-open akmod comes from RPM Fusion's nvidia-driver repository
+  (`Containerfile.nvidia` says why).
 - Pulsar patches the NVIDIA module with open-gpu-kernel-modules PR #1286,
   which fixes a deadlock that froze the desktop after resume. Phase 2b of
   `Containerfile.nvidia` says when to remove it.
-- The CPU governor is left on `powersave`, which is the right setting for
-  `intel_pstate` with HWP.
 
 ## License
 
