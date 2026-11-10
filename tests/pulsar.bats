@@ -1141,6 +1141,10 @@ stub_gamemode_env() {
     export GM_GROUP_EXISTS="${GM_GROUP_EXISTS:-1}"
     cat > "${STUB}/getent" <<'EOF'
 #!/bin/sh
+if [ "$1" = passwd ]; then
+    [ "$2" = proto ] && printf 'proto:x:1000:1000::%s:/bin/bash\n' "$GM_HOME"
+    exit 0
+fi
 [ "$1" = group ] || exit 0
 [ "${GM_GROUP_EXISTS}" = 1 ] || exit 2
 printf 'gamemode:x:983:\n'
@@ -1158,8 +1162,16 @@ EOF
     PATH="${STUB}:${PATH}"
     export PATH
 
+    # gamemode's own default, Pulsar's /etc override, and a home with none
+    # of the user's own yet: never the files on the machine running the tests
+    export PULSAR_GAMEMODE_DEFAULT_INI="${BATS_TEST_TMPDIR}/usr-gamemode.ini"
+    printf '[general]\nrenice=0\nigpu_power_threshold=0.3\n' > "$PULSAR_GAMEMODE_DEFAULT_INI"
     export PULSAR_GAMEMODE_INI="${BATS_TEST_TMPDIR}/gamemode.ini"
-    printf 'renice=10\n' > "$PULSAR_GAMEMODE_INI"
+    printf '[general]\nigpu_power_threshold=-1\nrenice=10\n' > "$PULSAR_GAMEMODE_INI"
+    export GM_HOME="${BATS_TEST_TMPDIR}/gmhome"
+    mkdir -p "${GM_HOME}/.config"
+    export HOME="$GM_HOME"
+    unset XDG_CONFIG_HOME
     export PULSAR_LIMITS_DIR="${BATS_TEST_TMPDIR}/limits.d"
     export PULSAR_LIMITS_CONF="${BATS_TEST_TMPDIR}/limits.conf"
     mkdir -p "$PULSAR_LIMITS_DIR"
@@ -1217,10 +1229,67 @@ gm_check() { "$PULSAR" doctor --json | jq -r '.checks[] | select(.id=="gamemode"
 
 @test "doctor: renice=0 means membership is irrelevant and is not warned about" {
     stub_gamemode_env "proto wheel" "proto wheel"
-    printf 'renice=0\n' > "$PULSAR_GAMEMODE_INI"
+    printf '[general]\nrenice=0\n' > "$PULSAR_GAMEMODE_INI"
     run gm_check
     [[ "$output" == ok* ]]
     [[ "$output" == *"not requested"* ]]
+}
+
+# gamemoded merges gamemode.ini from /usr/share/gamemode, /etc,
+# $XDG_CONFIG_HOME (else ~/.config) and its working directory (the home
+# directory, as a systemd user service), later over earlier.
+@test "doctor: gamemode reads renice the way gamemoded does, the user's files last" {
+    stub_gamemode_env "proto wheel" "proto wheel"
+    # /etc asks for 10 over the package's 0: an unenrolled account is news
+    run gm_check
+    [[ "$output" == warn*"not in the gamemode group"* ]] || fail "$output"
+    # the user's ~/.config/gamemode.ini sets it back to 0: nothing to warn about
+    printf '[general]\nrenice=0\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == "ok gamemode present; renice not requested (renice=0 in ${GM_HOME}/.config/gamemode.ini)"* ]] || fail "$output"
+    # $XDG_CONFIG_HOME replaces ~/.config, it is not read beside it
+    mkdir -p "${BATS_TEST_TMPDIR}/xdg"
+    printf '[general]\nrenice = 5 ; the user wants less\n' > "${BATS_TEST_TMPDIR}/xdg/gamemode.ini"
+    XDG_CONFIG_HOME="${BATS_TEST_TMPDIR}/xdg" run gm_check
+    [[ "$output" == warn*"renice=5 does nothing"* ]] || fail "$output"
+    # gamemoded's working directory, the home, is read last
+    printf '[general]\nrenice=0\n' > "${GM_HOME}/gamemode.ini"
+    XDG_CONFIG_HOME="${BATS_TEST_TMPDIR}/xdg" run gm_check
+    [[ "$output" == ok*"renice=0 in ${GM_HOME}/gamemode.ini"* ]] || fail "$output"
+}
+
+@test "doctor: a renice gamemoded would not use does not count" {
+    stub_gamemode_env "proto wheel" "proto wheel"
+    # outside [general], commented out, or not a number: /etc's 10 stands
+    printf '[filter]\nrenice=0\n[general]\n;renice=0\n#renice=0\nrenice=zero\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == warn*"renice=10 does nothing"* ]] || fail "$output"
+    # out of range: gamemoded drops it
+    printf '[general]\nrenice=25\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == "warn renice=25 in ${GM_HOME}/.config/gamemode.ini is outside 1 to 20, so gamemode ignores it"* ]] || fail "$output"
+}
+
+@test "doctor: gamemode's iGPU detail is the threshold gamemoded will use" {
+    stub_gamemode_env "proto wheel gamemode" "proto wheel gamemode"
+    run gm_check
+    [[ "$output" == ok*"iGPU governor switch off (igpu_power_threshold=-1 in ${PULSAR_GAMEMODE_INI})" ]] || fail "$output"
+    printf '[general]\nigpu_power_threshold=0.5\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == ok*"iGPU governor switch on (igpu_power_threshold=0.5 in ${GM_HOME}/.config/gamemode.ini)" ]] || fail "$output"
+    rm -f "${GM_HOME}/.config/gamemode.ini" "$PULSAR_GAMEMODE_DEFAULT_INI"
+    printf '[general]\nrenice=10\n' > "$PULSAR_GAMEMODE_INI"
+    run gm_check
+    [[ "$output" == ok*"iGPU governor switch on (igpu_power_threshold=0.3, gamemode's default)" ]] || fail "$output"
+}
+
+@test "doctor: under sudo, gamemode reads the human account's own gamemode.ini" {
+    stub_gamemode_env "proto wheel" "root"
+    export SUDO_USER=proto HOME="${BATS_TEST_TMPDIR}/roothome"
+    mkdir -p "${HOME}/.config"
+    printf '[general]\nrenice=0\n' > "${GM_HOME}/.config/gamemode.ini"
+    run gm_check
+    [[ "$output" == ok*"renice not requested"* ]] || fail "$output"
 }
 
 @test "doctor: under sudo the human account is checked, not root" {

@@ -183,6 +183,51 @@ check_ntsync() {
     fi
 }
 
+# gamemode_conf <key> <int|float>: the [general] value gamemoded runs with,
+# as "value<TAB>file", or nothing when no file sets it. gamemoded reads
+# gamemode.ini from /usr/share/gamemode, /etc, $XDG_CONFIG_HOME (else
+# ~/.config) and its working directory, in that order, and a later file's
+# value replaces an earlier one's (load_config_files in gamemode-config.c,
+# 1.8.2). It runs as a systemd user service with no WorkingDirectory, so that
+# last directory is the home directory. Parsed the way its inih does: ; and #
+# start a comment line, a ; after whitespace ends a value, spaces around the
+# name and the value do not count. A value gamemode would reject (not a whole
+# number for renice, not a number for a float) leaves the earlier one.
+gamemode_conf() {
+    local key=$1 type=$2 home cfg f
+    if [ -n "${SUDO_USER:-}" ]; then
+        home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        cfg=${home:+${home}/.config}
+    else
+        home=${HOME:-}
+        cfg=${XDG_CONFIG_HOME:-${home:+${home}/.config}}
+    fi
+    local -a files=() readable=()
+    files=("${PULSAR_GAMEMODE_DEFAULT_INI:-/usr/share/gamemode/gamemode.ini}" "${PULSAR_GAMEMODE_INI:-/etc/gamemode.ini}")
+    [ -z "$cfg" ] || files+=("${cfg}/gamemode.ini")
+    [ -z "$home" ] || files+=("${home}/gamemode.ini")
+    for f in "${files[@]}"; do [ -r "$f" ] && readable+=("$f"); done
+    [ ${#readable[@]} -gt 0 ] || return 0
+    awk -v key="$key" -v type="$type" '
+        FNR == 1 { sec = "" }
+        { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, "") }
+        /^[;#]/ || $0 == "" { next }
+        /^\[/ { sec = $0; sub(/^\[/, "", sec); sub(/\].*$/, "", sec); next }
+        sec == "general" {
+            i = index($0, "="); j = index($0, ":")
+            if (!i || (j && j < i)) i = j
+            if (!i) next
+            name = substr($0, 1, i - 1); sub(/[ \t]+$/, "", name)
+            if (name != key) next
+            v = substr($0, i + 1); sub(/^[ \t]+/, "", v)
+            sub(/[ \t];.*$/, "", v); sub(/[ \t]+$/, "", v)
+            if (type == "int" && v !~ /^[+-]?[0-9]+$/) next
+            if (type == "float" && v !~ /^[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?$/) next
+            val = v; src = FILENAME
+        }
+        END { if (src != "") printf "%s\t%s\n", val, src }' "${readable[@]}" 2>/dev/null || true
+}
+
 check_gamemode() {
     # Paths are overridable for the same reason the rest of the CLI's are:
     # these branches are decisions worth testing, not plumbing worth mocking.
@@ -196,11 +241,18 @@ check_gamemode() {
     fi
 
     # If renice is not being asked for, membership is irrelevant and a warning
-    # about it would be noise. Read the merged intent from our own override.
-    local renice
-    renice=$(sed -n 's/^renice=\([0-9]\{1,\}\)$/\1/p' "$ini" 2>/dev/null | tail -1) || true
-    if [ -z "$renice" ] || [ "$renice" = 0 ]; then
-        record gamemode ok "gamemode present; renice not requested"; return
+    # about it would be noise. What counts is the value gamemoded ends up
+    # with, which a user's own gamemode.ini can change.
+    local renice src
+    IFS=$'\t' read -r renice src <<<"$(gamemode_conf renice int)"
+    renice=${renice#+}
+    if [ -z "$renice" ] || [ "$renice" -eq 0 ] 2>/dev/null; then
+        record gamemode ok "gamemode present; renice not requested${src:+ (renice=${renice} in ${src})}"; return
+    fi
+    # config_get_renice_value: anything outside 1 to 20 is dropped
+    if [ "$renice" -lt 1 ] || [ "$renice" -gt 20 ]; then
+        record gamemode warn "renice=${renice} in ${src} is outside 1 to 20, so gamemode ignores it"
+        return
     fi
 
     if ! getent group "$group" >/dev/null 2>&1; then
@@ -238,7 +290,19 @@ check_gamemode() {
         return
     fi
 
-    record gamemode ok "${user} is in ${group}; renice=${renice} available"
+    # the iGPU threshold: Pulsar's /etc/gamemode.ini sets -1 (off) for hybrid
+    # laptops; say what gamemoded will actually use
+    local igpu igpu_src
+    IFS=$'\t' read -r igpu igpu_src <<<"$(gamemode_conf igpu_power_threshold float)"
+    local igpu_detail
+    if [ -z "$igpu" ]; then
+        igpu_detail="iGPU governor switch on (igpu_power_threshold=0.3, gamemode's default)"
+    elif awk -v t="$igpu" 'BEGIN { exit !(t + 0 < 0) }'; then
+        igpu_detail="iGPU governor switch off (igpu_power_threshold=${igpu} in ${igpu_src})"
+    else
+        igpu_detail="iGPU governor switch on (igpu_power_threshold=${igpu} in ${igpu_src})"
+    fi
+    record gamemode ok "${user} is in ${group}; renice=${renice} available" "$igpu_detail"
 }
 
 check_mangohud() {
