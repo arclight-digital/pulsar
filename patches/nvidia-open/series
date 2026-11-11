@@ -1,0 +1,9 @@
+# The patches phase 2b of Containerfile.nvidia carries into the akmod's
+# src.rpm, applied in this order as Patch1, Patch2, ... One file name per
+# line; blank lines and lines starting with # are ignored. The comment above
+# phase 2b says what each one fixes and when to drop it.
+#
+# scripts/driver-check.sh reads this same list, so the morning check builds
+# what the night will build.
+pr1286-difr-gpfifo-timeout.diff
+linux-7.3-dmem-cgroup-init.diff

@@ -42,6 +42,8 @@ shellcheck \
   scripts/check-scx-btf.sh \
   scripts/check.sh \
   scripts/diff-chunk-metadata.sh \
+  scripts/driver-check.sh \
+  scripts/driver-check-inner.sh \
   scripts/flatpak-defaults.sh \
   scripts/gamemode-group.sh \
   scripts/gg \
@@ -180,12 +182,12 @@ fi
 # encrypted, a failed install taken back) skip where systemd-repart,
 # cryptsetup and the mkfs tools are missing -- which a bare build host may
 # be, every night, and a safety test that skips every night guards nothing.
-# So where any is missing they run again here, in a Fedora container that
-# has them; with neither the tools nor podman, this fails rather than pass
-# on skips.
-say "installer disk tests, with the disk tools"
+# The driver check's tests skip without patch and cpio the same way. So where
+# any is missing they run again here, in a Fedora container that has them;
+# with neither the tools nor podman, this fails rather than pass on skips.
+say "installer disk and driver check tests, with their tools"
 disk_tools_missing=""
-for t in systemd-repart cryptsetup sfdisk mkfs.btrfs mkfs.vfat mkfs.ext4; do
+for t in systemd-repart cryptsetup sfdisk mkfs.btrfs mkfs.vfat mkfs.ext4 patch cpio; do
   command -v "$t" >/dev/null || disk_tools_missing+=" $t"
 done
 if [ -z "$disk_tools_missing" ]; then
@@ -193,16 +195,16 @@ if [ -z "$disk_tools_missing" ]; then
 elif command -v podman >/dev/null; then
   echo "missing here:${disk_tools_missing}; running them in a container"
   disk_out=$(podman run --rm -v "${REPO}:/opt/pulsar:ro,Z" registry.fedoraproject.org/fedora:44 bash -c '
-    dnf5 install -y -q bats python3 util-linux systemd-repart cryptsetup btrfs-progs dosfstools e2fsprogs >/dev/null &&
-    cd /opt/pulsar && TMPDIR=/var/tmp bats tests/install-disk.bats tests/esp-fallback.bats' 2>&1) \
-    || { printf '%s\n' "$disk_out"; echo "FAIL: installer disk tests" >&2; exit 1; }
+    dnf5 install -y -q bats python3 util-linux systemd-repart cryptsetup btrfs-progs dosfstools e2fsprogs patch cpio >/dev/null &&
+    cd /opt/pulsar && TMPDIR=/var/tmp bats tests/install-disk.bats tests/esp-fallback.bats tests/driver-check.bats' 2>&1) \
+    || { printf '%s\n' "$disk_out"; echo "FAIL: installer disk or driver check tests" >&2; exit 1; }
   printf '%s\n' "$disk_out"
   if grep -q "# skip needs" <<<"$disk_out"; then
-    echo "FAIL: installer disk tests skipped even with the tools installed" >&2
+    echo "FAIL: installer disk or driver check tests skipped even with the tools installed" >&2
     exit 1
   fi
 else
-  echo "FAIL: the installer's disk tests need${disk_tools_missing}, or podman to run them in a container" >&2
+  echo "FAIL: the installer disk and driver check tests need${disk_tools_missing}, or podman to run them in a container" >&2
   exit 1
 fi
 

@@ -60,7 +60,9 @@
 # exits: 0 usable, 1 not. --check runs the night up to and including check.sh
 # and stops there, building nothing: the build host's way to run the suite on
 # a builder before a commit reaches main (infra's spawn-builder.sh --kind
-# check). Anything
+# check). --driver-check asks whether tonight's nvidia driver compiles
+# against the base's kernel (scripts/driver-check.sh; spawn-builder.sh --kind
+# driver, every morning) and exits as that script does. Anything
 # else is refused with 2 rather than ignored -- a swallowed --manual builds and
 # publishes as scheduled, which is the one outcome this script is written to
 # prevent.
@@ -682,7 +684,7 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 case "${1:-}" in
-  ""|--base-check|--preflight|--check) ;;
+  ""|--base-check|--preflight|--check|--driver-check) ;;
   --manual|--scheduled|--channel*)
     # The flag a person reaches for, named here because reaching for it is
     # reasonable and the answer is one line away.
@@ -692,7 +694,7 @@ case "${1:-}" in
     exit 2 ;;
   *)
     echo "unknown argument: ${1}" >&2
-    echo "nightly.sh takes --base-check, --preflight, --check, or no argument at all." >&2
+    echo "nightly.sh takes --base-check, --preflight, --check, --driver-check, or no argument at all." >&2
     exit 2 ;;
 esac
 
@@ -704,6 +706,12 @@ esac
 if [ "${1:-}" = --preflight ]; then
   preflight && exit 0
   exit 1
+fi
+
+# Builds no image and needs no credential: the base and rpmfusion are public.
+# Its exit is the answer -- 0 builds, 1 does not, 2 could not tell.
+if [ "${1:-}" = --driver-check ]; then
+  exec "${REPO}/scripts/driver-check.sh"
 fi
 
 PULSAR_ADDONS_HASH="$(addons_fingerprint)"

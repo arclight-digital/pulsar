@@ -206,7 +206,10 @@ RUN for attempt in 1 2 3; do \
     rm -rf /tmp/akmod-rpm
 
 # Phase 2b: carry fixes the driver release lacks into the akmod's source
-# package. Two today, applied in the order PATCHES lists them.
+# package. Two today, applied in the order patches/nvidia-open/series lists
+# them. scripts/driver-check.sh compiles the same list against the base's
+# kernel every morning, so a kernel the driver cannot build against is an
+# alert hours before the night instead of a failed night.
 #
 # pr1286-difr-gpfifo-timeout.diff, the DIFR deadlock fix:
 #
@@ -267,7 +270,8 @@ RUN for attempt in 1 2 3; do \
 # else needs to end up in a layer.
 RUN --mount=type=bind,source=patches/nvidia-open,target=/run/nvidia-patches \
     set -eu; \
-    PATCHES="pr1286-difr-gpfifo-timeout.diff linux-7.3-dmem-cgroup-init.diff"; \
+    PATCHES="$(grep -v '^[[:space:]]*\(#\|$\)' /run/nvidia-patches/series | tr '\n' ' ')"; \
+    [ -n "${PATCHES}" ] || { echo "FATAL: patches/nvidia-open/series lists no patches; drop phase 2b instead of emptying it"; exit 1; }; \
     SRPM=$(readlink -f /usr/src/akmods/nvidia-open-kmod.latest); \
     test -f "${SRPM}" || { echo "FATAL: nothing behind /usr/src/akmods/nvidia-open-kmod.latest"; exit 1; }; \
     V=$(rpm -qp --qf '%{VERSION}' "${SRPM}"); \
