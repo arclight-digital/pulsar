@@ -75,6 +75,31 @@ not_called() {
   [ "$(tail -1 <<<"$output")" = "gate: pending ${VERSION}" ]
 }
 
+@test "a night whose nvidia is held back ships vanilla: publishes, hands off, and says why" {
+  # build.sh's exit 4, and the reason it leaves in --work
+  echo "the nvidia image did not build (exit 1); the build log above says why" > "${PULSAR_BUILD_WORK}/nvidia-held"
+  FAIL_BUILD=4 PULSAR_GATE=1 night
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+  # the line the build host scrapes for the gate and the alert
+  grep -qx "nvidia: held back: the nvidia image did not build (exit 1); the build log above says why" <<<"$output"
+  called '^publish ' | grep -q -- '--stage'
+  [ "$(tail -1 <<<"$output")" = "gate: pending ${VERSION}" ]
+}
+
+@test "ungated, a held-back night pings the healthcheck with the reason" {
+  echo "kernel 7.3.3" > "${PULSAR_BUILD_WORK}/nvidia-held"
+  FAIL_BUILD=4 PULSAR_HEALTHCHECK_URL=https://hc.example/x night
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+  called '^curl ' | grep -q -- "nvidia held back: kernel 7.3.3"
+}
+
+@test "a build that fails any other way ends the night and publishes nothing" {
+  FAIL_BUILD=1 PULSAR_GATE=1 night
+  [ "$status" -eq 1 ]
+  not_called '^publish '
+  if grep -qE '^(gate: |nvidia: held back)' <<<"$output"; then false; fi
+}
+
 @test "a staged publish that fails is not pending, and hands nothing off" {
   FAIL_PUBLISH=1 PULSAR_GATE=1 night
   [ "$status" -ne 0 ]

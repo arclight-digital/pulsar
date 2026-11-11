@@ -53,6 +53,13 @@
 #                        by then: this is the half that needs the images.
 #   --dry-run            generate everything, publish nothing
 #
+# NVIDIA HELD BACK. When build.sh shipped vanilla alone (its exit 4), it left
+# ${WORK}/nvidia-held with the reason and no digest-nvidia. This then
+# describes vanilla alone: no nvidia SBOM, attachment or R2 keys, so
+# nvidia-latest keeps describing the last nvidia image that built; the
+# manifest card is read from vanilla; and the changelog carries
+# held.nvidia, the reason, for the site and for nvidia machines to read.
+#
 # --prev-digest CANNOT BE RECOVERED HERE. It is `oras resolve ${IMAGE}:latest`
 # while :latest still points at last night's build; by the time this runs the
 # push has moved it. Whoever calls this must read it BEFORE calling build.sh
@@ -147,7 +154,17 @@ fi
 [ -n "${DIGEST_VANILLA}" ] || DIGEST_VANILLA="$(cat "${WORK}/digest-vanilla" 2>/dev/null || true)"
 [ -n "${DIGEST_NVIDIA}" ]  || DIGEST_NVIDIA="$(cat "${WORK}/digest-nvidia" 2>/dev/null || true)"
 [ -n "${DIGEST_VANILLA}" ] || die "no vanilla digest: pass --digest-vanilla or point --work at the build"
-[ -n "${DIGEST_NVIDIA}" ]  || die "no nvidia digest: pass --digest-nvidia or point --work at the build"
+# A hold counts only with no nvidia digest: build.sh removes the digest when it
+# holds, so a digest beside a hold file is a hand-run publish of something
+# else, and the digest wins.
+NVIDIA_HELD=""
+if [ -z "${DIGEST_NVIDIA}" ] && [ -s "${WORK}/nvidia-held" ]; then
+  NVIDIA_HELD="$(head -n1 "${WORK}/nvidia-held")"
+  say "nvidia held back: ${NVIDIA_HELD}"
+  echo "describing vanilla alone; nvidia-latest stays on the last nvidia image that built"
+fi
+[ -n "${DIGEST_NVIDIA}" ] || [ -n "${NVIDIA_HELD}" ] \
+  || die "no nvidia digest: pass --digest-nvidia or point --work at the build"
 
 # oras and podman disagree about where credentials live -- podman writes
 # $XDG_RUNTIME_DIR/containers/auth.json, oras reads ~/.docker/config.json.
@@ -233,9 +250,15 @@ trap cleanup EXIT
 generate_sboms() {
   say "generating SBOMs"
   "${REPO}/scripts/rpm-sbom.sh" "${IMAGE}:${FEDORA_VERSION}"        > "${STAGE}/sbom-vanilla.spdx.json"
+  local f n
+  if [ -n "${NVIDIA_HELD}" ]; then
+    n=$(jq '[.packages[] | select(.versionInfo)] | length' "${STAGE}/sbom-vanilla.spdx.json")
+    echo "sbom-vanilla: ${n} packages (nvidia held back: no nvidia SBOM)"
+    [ "${n}" -gt 100 ] || die "sbom-vanilla has only ${n} packages; the SBOM is not usable"
+    return 0
+  fi
   "${REPO}/scripts/rpm-sbom.sh" "${IMAGE_NVIDIA}:${FEDORA_VERSION}" > "${STAGE}/sbom-nvidia.spdx.json"
 
-  local f n
   for f in sbom-vanilla sbom-nvidia; do
     n=$(jq '[.packages[] | select(.versionInfo)] | length' "${STAGE}/${f}.spdx.json")
     echo "${f}: ${n} packages"
@@ -273,6 +296,7 @@ attach_sboms() {
       --artifact-type application/spdx+json \
       "${IMAGE}@${DIGEST_VANILLA}" \
       "sbom-vanilla.spdx.json:application/spdx+json" )
+  [ -z "${NVIDIA_HELD}" ] || return 0
   ( cd "${STAGE}" && oras attach "${ORAS_AUTH[@]}" \
       --artifact-type application/spdx+json \
       "${IMAGE_NVIDIA}@${DIGEST_NVIDIA}" \
@@ -329,6 +353,12 @@ build_changelog() {
       > "${STAGE}/changelog.json"
   fi
 
+  # The one place a reader finds out why their nvidia machine did not move.
+  if [ -n "${NVIDIA_HELD}" ]; then
+    jq --arg r "${NVIDIA_HELD}" '.held = {nvidia: $r}' "${STAGE}/changelog.json" > "${STAGE}/changelog.held.json"
+    mv "${STAGE}/changelog.held.json" "${STAGE}/changelog.json"
+  fi
+
   jq '.summary' "${STAGE}/changelog.json"
   [ -n "${PREV_DIGEST}" ] || [ "${baseline}" = true ] \
     || echo "NOTE: no --prev-digest, so this changelog cannot name what it diffed against" >&2
@@ -377,7 +407,8 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
   # inside the three prefixes buildd's artifact ingest will accept when
   # builders stop holding R2 credentials of their own.
   up sbom-vanilla.spdx.json "pulsar/sbom/${VERSION}-vanilla.spdx.json"
-  up sbom-nvidia.spdx.json  "pulsar/sbom/${VERSION}-nvidia.spdx.json"
+  [ -n "${NVIDIA_HELD}" ] \
+    || up sbom-nvidia.spdx.json "pulsar/sbom/${VERSION}-nvidia.spdx.json"
   up changelog.json         "pulsar/changelog/${VERSION}.json"
 
   # ...then the moving pointers, which are what "published" means. A build that
@@ -399,7 +430,9 @@ entirely, do not call this script -- see PULSAR_PUBLISH in nightly.sh."
   # is written last: if anything above failed, the baseline still describes a
   # real published image.
   up changelog.json         "pulsar/changelog/latest.json"
-  up sbom-nvidia.spdx.json  "pulsar/sbom/nvidia-latest.spdx.json"
+  # Held back, nvidia-latest keeps describing the nvidia image machines run.
+  [ -n "${NVIDIA_HELD}" ] \
+    || up sbom-nvidia.spdx.json "pulsar/sbom/nvidia-latest.spdx.json"
   up sbom-vanilla.spdx.json "pulsar/sbom/vanilla-latest.spdx.json"
 }
 
@@ -431,8 +464,12 @@ publish_site() {
   # The manifest card is a transcript of the image's own baked manifest, never
   # hand-written HTML wearing terminal chrome. Extracted once, out here,
   # because the render below may run more than once and this is the slow part.
+  # nvidia's when it shipped: it is the superset, vanilla plus the driver.
+  # Held back, the local nvidia image is an old one or none, so vanilla's.
+  local card_image="${IMAGE_NVIDIA}"
+  [ -z "${NVIDIA_HELD}" ] || card_image="${IMAGE}"
   say "extracting the shipped manifest"
-  podman run --rm "${IMAGE_NVIDIA}:${FEDORA_VERSION}" \
+  podman run --rm "${card_image}:${FEDORA_VERSION}" \
     cat /usr/share/pulsar/manifest.json > "${STAGE}/manifest.json"
   jq -e '.version' "${STAGE}/manifest.json" >/dev/null \
     || die "the image's manifest.json has no version; refusing to render it"

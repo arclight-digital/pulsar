@@ -1,12 +1,16 @@
 #!/usr/bin/env bats
-# The release order: both variants built, checked and pushed under their
-# version before either floating tag moves.
+# The release order: every variant that ships is built, checked and pushed
+# under its version before any floating tag moves.
 #
 # build.sh used to move vanilla's :latest before nvidia had even started
 # building, so a night whose nvidia half failed left every vanilla machine a
-# build ahead of every nvidia one, for as long as nvidia kept failing. It now
-# pushes version tags only, and promotes both at the end. And vanilla's
-# checks and upload run while nvidia builds, instead of before it.
+# build ahead of every nvidia one, with nothing saying so. It now pushes
+# version tags only, and promotes at the end. And vanilla's checks and upload
+# run while nvidia builds, instead of before it.
+#
+# Since 2026-11-11 an nvidia failure holds back nvidia ALONE, out loud: exit
+# 4, the reason in nvidia-held, vanilla promoted, nvidia's tags where they
+# were. A kernel the driver cannot build on used to hold every machine back.
 #
 # The harness is build.sh from a copy of the tree, with podman and skopeo as
 # stubs that write down what they were asked to do. The rechunk stub writes a
@@ -35,7 +39,7 @@ setup() {
   export STORE="${BATS_TEST_TMPDIR}/store"; mkdir -p "${STORE}"
   export WORKDIR="${BATS_TEST_TMPDIR}/work"
   export TOKEN="${BATS_TEST_TMPDIR}/token"; echo t > "${TOKEN}"
-  export FAIL_NVIDIA_BUILD=no FAIL_VANILLA_PUSH=no
+  export FAIL_NVIDIA_BUILD=no FAIL_VANILLA_PUSH=no FAIL_NVIDIA_PUSH=no
   printf '#!/usr/bin/env bash\nexit 1\n' > "${BIN}/mokutil"; chmod +x "${BIN}/mokutil"
   stub_podman; stub_skopeo
 }
@@ -104,6 +108,8 @@ case "$1" in
       for _ in $(seq 1 40); do grep -q 'build nvidia start' "${EVENTS}" && break; sleep 0.1; done
       grep -q 'build nvidia start' "${EVENTS}" || echo "vanilla push without overlap" >> "${EVENTS}"
       [ "${FAIL_VANILLA_PUSH}" = no ] || { echo "copy ${dst} FAILED" >> "${EVENTS}"; exit 1; } ;;
+      *pulsar-nvidia:"${VERSION_UNDER_TEST}")
+      [ "${FAIL_NVIDIA_PUSH}" = no ] || { echo "copy ${dst} FAILED" >> "${EVENTS}"; exit 1; } ;;
     esac
     echo "copy ${dst}" >> "${EVENTS}"
     # what a registry reports: the digest of the manifest it was given
@@ -150,10 +156,54 @@ no_event() {
   grep -qx 'copy ghcr.io/arclight-digital/pulsar-nvidia:44' "${EVENTS}"
 }
 
-@test "REGRESSION: an nvidia build that fails moves no floating tag at all" {
-  # The split release: vanilla's :latest used to move before nvidia built.
+# What a held-back nvidia night leaves: exit 4, the reason, no nvidia digest,
+# vanilla pushed and promoted, nvidia's floating tags untouched.
+assert_nvidia_held() {
+  [ "$status" -eq 4 ] || { cat "${EVENTS}"; echo "$stderr"; false; }
+  [ -s "${WORKDIR}/nvidia-held" ]
+  [ ! -e "${WORKDIR}/digest-nvidia" ]
+  [[ "$output" == *"nvidia: held back: "* ]]
+  grep -qx "copy ghcr.io/arclight-digital/pulsar:${VERSION}" "${EVENTS}"
+  grep -qx 'copy ghcr.io/arclight-digital/pulsar:latest' "${EVENTS}"
+  grep -qx 'copy ghcr.io/arclight-digital/pulsar:44' "${EVENTS}"
+  no_event 'copy ghcr.io/arclight-digital/pulsar-nvidia:(latest|44)$'
+}
+
+@test "REGRESSION: an nvidia build that fails holds nvidia back alone; vanilla ships" {
+  # 2026-11-11: kernel 7.3.3 broke the nvidia build and held vanilla back too.
   FAIL_NVIDIA_BUILD=yes build
+  assert_nvidia_held
+  grep -q "did not build" "${WORKDIR}/nvidia-held"
+  # the failed build stopped where it failed: nothing nvidia after it ran
+  no_event 'build nvidia done|rechunk nvidia'
+  no_event "copy ghcr.io/arclight-digital/pulsar-nvidia:${VERSION}"
+}
+
+@test "an nvidia push that fails holds nvidia back too, with its half-pushed digest gone" {
+  FAIL_NVIDIA_PUSH=yes build
+  assert_nvidia_held
+  grep -q "rechunk, content checks or push" "${WORKDIR}/nvidia-held"
+}
+
+@test "an earlier run's nvidia digest and hold are gone before anything is built" {
+  mkdir -p "${WORKDIR}"
+  echo "sha256:yesterday" > "${WORKDIR}/digest-nvidia"
+  echo "an old reason" > "${WORKDIR}/nvidia-held"
+  FAIL_NVIDIA_BUILD=yes build
+  assert_nvidia_held
+  ! grep -q "an old reason" "${WORKDIR}/nvidia-held" || false
+  : > "${EVENTS}"; rm -rf "${WORKDIR}"; mkdir -p "${WORKDIR}"
+  echo "an old reason" > "${WORKDIR}/nvidia-held"
+  build
+  [ "$status" -eq 0 ]
+  [ ! -e "${WORKDIR}/nvidia-held" ]
+}
+
+@test "asked for nvidia alone, its failure is the run failing, not a hold" {
+  FAIL_NVIDIA_BUILD=yes build --variant nvidia
   [ "$status" -ne 0 ]
+  [ "$status" -ne 4 ]
+  [ ! -e "${WORKDIR}/nvidia-held" ]
   no_event 'copy .*:(latest|44)$'
 }
 
@@ -248,6 +298,17 @@ gated_build() {
   promote_only --version "${VERSION}" --no-floating-tags
   [ "$status" -eq 0 ]
   no_event 'copy '
+}
+
+@test "--promote-only after a held-back nvidia promotes vanilla alone" {
+  FAIL_NVIDIA_BUILD=yes build --no-floating-tags
+  [ "$status" -eq 4 ]
+  : > "${EVENTS}"
+  promote_only --version "${VERSION}"
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+  grep -qx 'copy ghcr.io/arclight-digital/pulsar:latest' "${EVENTS}"
+  no_event 'copy ghcr.io/arclight-digital/pulsar-nvidia:'
+  [[ "$output" == *"promoting vanilla alone"* ]]
 }
 
 @test "--promote-only requires --version" {

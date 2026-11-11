@@ -104,6 +104,10 @@ case "${image}" in
     [ "$*" = "cat /usr/share/pulsar/manifest.json" ] || exit 1
     printf '{"image":"pulsar-nvidia","variant":"nvidia-open","release":"26.10.1","version":"%s","base":"fedora-silverblue:44","built":"%s","kernel":"7.2.8-200.fc44.x86_64","nvidia_driver":"615.71.09"}\n' \
       "${MANIFEST_VERSION}" "${MANIFEST_BUILT:-2026-10-11T02:19:33Z}" ;;
+  *pulsar:44)
+    [ "$*" = "cat /usr/share/pulsar/manifest.json" ] || exit 1
+    printf '{"image":"pulsar","variant":"vanilla","release":"26.10.1","version":"%s","base":"fedora-silverblue:44","built":"%s","kernel":"7.2.8-200.fc44.x86_64"}\n' \
+      "${MANIFEST_VERSION}" "${MANIFEST_BUILT:-2026-10-11T02:19:33Z}" ;;
   registry.fedoraproject.org/fedora:44)
     [ -n "${vol}" ] || exit 1
     cd "${vol}" && env "${envs[@]}" "$@" ;;
@@ -323,6 +327,53 @@ without() {
 # ---------------------------------------------------------------------------
 # The pointers. A promoted build moves them; nothing else ever does.
 # ---------------------------------------------------------------------------
+
+# build.sh's exit 4: vanilla shipped, nvidia held back, the reason in --work.
+hold_nvidia() {
+  rm -f "${WORK}/digest-nvidia"
+  echo "the nvidia image did not build (exit 1); the build log above says why" > "${WORK}/nvidia-held"
+}
+
+@test "nvidia held back: vanilla alone is described and promoted, and nvidia-latest stays put" {
+  hold_nvidia
+  echo '{"name":"last good nvidia"}' > "${BATS_TEST_TMPDIR}/old-nv.json"
+  mkdir -p "${R2}/${BUCKET}/pulsar/sbom"
+  cp "${BATS_TEST_TMPDIR}/old-nv.json" "${R2}/${BUCKET}/pulsar/sbom/nvidia-latest.spdx.json"
+  publish
+  ok
+  [ "$(uploads)" = "pulsar/sbom/${VERSION}-vanilla.spdx.json
+pulsar/changelog/${VERSION}.json
+pulsar/changelog/latest.json
+pulsar/sbom/vanilla-latest.spdx.json" ]
+  [ "$(in_r2 pulsar/sbom/nvidia-latest.spdx.json | jq -r .name)" = "last good nvidia" ]
+  [ ! -e "${WORK}/publish/sbom-nvidia.spdx.json" ]
+  # one SBOM attached, to vanilla
+  [ "$(grep -c '^oras attach' "${CALLS}")" = 1 ]
+  grep -q '^oras attach .*ghcr.io/arclight-digital/pulsar@sha256:aaaa ' "${CALLS}"
+  # why, where a reader looks: the published changelog and the page
+  [ "$(in_r2 pulsar/changelog/latest.json | jq -r .held.nvidia)" = "the nvidia image did not build (exit 1); the build log above says why" ]
+  [ "$(on_main src/data/changelog.json | jq -r .held.nvidia)" = "the nvidia image did not build (exit 1); the build log above says why" ]
+  # the card is vanilla's own manifest, not a stale local nvidia image's
+  [ "$(on_main src/data/manifest.json | jq -r .variant)" = vanilla ]
+}
+
+@test "nvidia held back and staged: vanilla's per-build keys only" {
+  hold_nvidia
+  publish --stage
+  ok
+  [ "$(uploads)" = "pulsar/sbom/${VERSION}-vanilla.spdx.json
+pulsar/changelog/${VERSION}.json" ]
+  [ "$(in_r2 "pulsar/changelog/${VERSION}.json" | jq -r '.held.nvidia | length > 0')" = true ]
+}
+
+@test "a hold file beside a recorded nvidia digest is not a hold: the digest wins" {
+  echo "an old reason" > "${WORK}/nvidia-held"
+  publish
+  ok
+  uploads | grep -qx "pulsar/sbom/nvidia-latest.spdx.json"
+  [ "$(in_r2 pulsar/changelog/latest.json | jq -r .held)" = null ]
+  [ "$(on_main src/data/manifest.json | jq -r .variant)" = nvidia-open ]
+}
 
 @test "a promoted build writes its own keys, then the pointers, vanilla-latest last" {
   publish

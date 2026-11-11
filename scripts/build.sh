@@ -72,6 +72,12 @@
 # The nvidia variant no longer needs root or a local key: the signing key
 # lives on the signer host and this only needs a token. See
 # scripts/sign-file-oracle.
+#
+# Exit 0 every variant asked for shipped. Exit 4, with --variant all only:
+# vanilla shipped and nvidia is HELD BACK -- its build, rechunk, checks or
+# push failed, the reason is in ${WORK}/nvidia-held, and there is no
+# ${WORK}/digest-nvidia. Exit 2 is a usage or configuration error, anything
+# else a failure that shipped nothing worth having.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -610,16 +616,20 @@ version_tag_is_free() {
   return 1
 }
 
-# The VERSION TAG ONLY. :latest and :<fedora> move in promote(), for every
-# variant together, once every variant has been built, checked and pushed.
+# The VERSION TAG ONLY. :latest and :<fedora> move in promote(), once every
+# variant that will ship has been built, checked and pushed.
 #
 # They used to move here, per variant, and vanilla's moved before nvidia had
-# even started building. A night whose nvidia half then failed left the two
-# :latest tags on different versions -- a split release, every vanilla
-# machine a build ahead of every nvidia one, for as long as nvidia kept
-# failing. Now a failure anywhere leaves both floating tags where they were,
-# and the only window in which they disagree is the few seconds between the
-# two promotions.
+# even started building: a night whose nvidia half then failed left the two
+# :latest tags on different versions, with nothing saying so. From 2026-10 a
+# failure anywhere held both back. Since 2026-11-11 an nvidia failure holds
+# back nvidia ALONE, and says so: vanilla ships, nvidia machines stay on the
+# last nvidia image that built, and the reason goes in ${WORK}/nvidia-held
+# for the night to carry to the gate, the changelog and the alert. A kernel
+# the driver cannot compile against is a week of nvidia nights failing until
+# rpmfusion catches up, and holding every vanilla machine back for that week
+# fixes nothing for nvidia. A vanilla failure still ships nothing: nvidia
+# derives from it.
 push() {
   local image="$1" layout="${WORK}/$2"
   say "pushing ${image}:${VERSION}"
@@ -712,7 +722,11 @@ finish_vanilla_ship() {
 promote_only() {
   local -a slots=()
   { [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; } && slots+=(vanilla)
-  { [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; } && slots+=(nvidia)
+  if [ "${VARIANT}" = all ] && [ -s "${WORK}/nvidia-held" ]; then
+    say "nvidia was held back on this build ($(cat "${WORK}/nvidia-held")); promoting vanilla alone"
+  elif [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; then
+    slots+=(nvidia)
+  fi
   local slot image want got
   # Every check before any promotion: a refusal after vanilla had moved would
   # be the split release this exists to prevent.
@@ -746,6 +760,48 @@ if [ "${PROMOTE_ONLY}" = yes ]; then
   exit 0
 fi
 
+# NVIDIA HELD BACK. Only with --variant all: asked for nvidia alone, a failure
+# is the run failing, as ever. The digest goes first, so nothing downstream
+# (publish.sh, the builder's built.json) can mistake a stale or half-pushed
+# one for tonight's.
+NVIDIA_HELD=""
+hold_nvidia() {
+  NVIDIA_HELD="$1"
+  rm -f "${WORK}/digest-nvidia"
+  mkdir -p "${WORK}"
+  printf '%s\n' "${NVIDIA_HELD}" > "${WORK}/nvidia-held"
+  say "nvidia HELD BACK: ${NVIDIA_HELD}"
+  echo "vanilla ships alone; nvidia machines stay on the last nvidia image that built"
+}
+# Runs one half of the nvidia work in a subshell with errexit ON, and leaves
+# its status in NVIDIA_RC. Call it as a plain statement and read NVIDIA_RC:
+# called in an if or behind || -- or returning its status to one -- bash runs
+# everything inside with errexit OFF, even under an explicit set -e, and a
+# failed podman build would carry on to the next line. 2 is a usage or
+# configuration error and stops the run.
+NVIDIA_RC=0
+nvidia_step() {
+  set +e
+  ( set -e; "$@" )
+  NVIDIA_RC=$?
+  set -e
+  [ "${NVIDIA_RC}" -ne 2 ] || exit 2
+}
+# Whatever an earlier run left in a persistent --work does not describe
+# tonight. Removed before anything is built, so a failure anywhere below
+# cannot leave yesterday's nvidia digest looking like tonight's.
+if [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; then
+  rm -f "${WORK}/digest-nvidia" "${WORK}/nvidia-held"
+fi
+
+# No note_space in here: it records the low-water mark in globals, and this
+# runs in nvidia_step's subshell, which would keep them to itself. The
+# callers measure after it; the rechunked layout is still on disk then.
+nvidia_ship() {
+  process_rechunk nvidia "${IMAGE_NVIDIA}" nvidia
+  process_ship nvidia "${IMAGE_NVIDIA}" nvidia
+}
+
 check_space
 note_space "start"
 render_wallpapers
@@ -761,15 +817,28 @@ if [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; then
     process_ship vanilla "${IMAGE}" vanilla
   fi
 fi
-if [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; then
+if [ "${VARIANT}" = nvidia ]; then
   build_nvidia
   note_space "the nvidia build"
-  # Before the nvidia rechunk, not after: vanilla's metadata check runs a
-  # podman export, and the rechunk is the step nothing may overlap.
-  finish_vanilla_ship
-  process_rechunk nvidia "${IMAGE_NVIDIA}" nvidia
+  nvidia_ship
   note_space "the nvidia rechunk"
-  process_ship nvidia "${IMAGE_NVIDIA}" nvidia
+elif [ "${VARIANT}" = all ]; then
+  nvidia_step build_nvidia
+  if [ "${NVIDIA_RC}" -eq 0 ]; then
+    note_space "the nvidia build"
+  else
+    hold_nvidia "the nvidia image did not build (exit ${NVIDIA_RC}); the build log above says why"
+  fi
+  # Before the nvidia rechunk, not after: vanilla's metadata check runs a
+  # podman export, and the rechunk is the step nothing may overlap. A vanilla
+  # failure here still ends the run: nvidia derives from it.
+  finish_vanilla_ship
+  if [ -z "${NVIDIA_HELD}" ]; then
+    nvidia_step nvidia_ship
+    note_space "the nvidia rechunk"
+    [ "${NVIDIA_RC}" -eq 0 ] \
+      || hold_nvidia "the nvidia image failed its rechunk, content checks or push (exit ${NVIDIA_RC})"
+  fi
 fi
 finish_vanilla_ship
 
@@ -780,7 +849,11 @@ if [ "${DO_PUSH}" = yes ]; then
   else
     say "promoting ${VERSION} to :${FEDORA_VERSION} and :latest"
     { [ "${VARIANT}" = vanilla ] || [ "${VARIANT}" = all ]; } && promote "${IMAGE}" vanilla
-    { [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; } && promote "${IMAGE_NVIDIA}" nvidia
+    if [ -n "${NVIDIA_HELD}" ]; then
+      say "nvidia held back: ${IMAGE_NVIDIA}:latest stays on the last nvidia image that built"
+    elif [ "${VARIANT}" = nvidia ] || [ "${VARIANT}" = all ]; then
+      promote "${IMAGE_NVIDIA}" nvidia
+    fi
   fi
 fi
 report_space
@@ -793,4 +866,10 @@ if [ "${DO_PUSH}" != yes ]; then
   echo
   echo "Not pushed. To boot one of these locally:"
   echo "  bootc switch --transport containers-storage ${IMAGE_NVIDIA}:latest"
+fi
+
+if [ -n "${NVIDIA_HELD}" ]; then
+  echo
+  echo "nvidia: held back: ${NVIDIA_HELD}"
+  exit 4
 fi

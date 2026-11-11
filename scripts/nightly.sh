@@ -245,19 +245,14 @@ base_moved() {
   [ -n "${last}" ] \
     || { echo "the published build records no base digest; building" >&2; return 0; }
 
-  # A SPLIT RELEASE IS NOT AN UNCHANGED BASE. build.sh used to push vanilla
-  # to :latest before it built nvidia, so a night whose nvidia half failed
-  # left the two :latest tags on different versions -- and every label above
-  # is read off vanilla, which said the base was already built. build.sh now
-  # moves both :latest tags together after both variants are pushed, so a
-  # split takes a failure in the seconds between the two promotions; this
-  # stays as the belt for that. Fails open with the rest: an nvidia tag that
-  # cannot be read is a mismatch, and builds.
-  #
-  # THE COST of moving them together, accepted with open eyes: an nvidia half
-  # that fails EVERY night (an akmod that will not build against a new
-  # kernel) now holds vanilla back too. Each of those nights fails loudly,
-  # and nobody is left a build ahead of anybody else.
+  # A SPLIT RELEASE IS NOT AN UNCHANGED BASE. Every label above is read off
+  # vanilla, so a night that shipped vanilla and held nvidia back (build.sh
+  # exit 4) looks, from vanilla alone, like a base that is already built.
+  # While nvidia is behind, every night builds: that is the retry, and the
+  # night rpmfusion or a carried patch fixes the driver is the night nvidia
+  # catches up. The cost is a vanilla version a night with nothing new in it,
+  # for as long as nvidia stays held. Fails open with the rest: an nvidia tag
+  # that cannot be read is a mismatch, and builds.
   local version nv_version
   version="$(label_of "${published}" org.opencontainers.image.version)"
   if [ -n "${version}" ]; then
@@ -602,10 +597,18 @@ finish_night() {
     echo
     echo "manual build ${VERSION}:"
     echo "  pushed        ${IMAGE}:${VERSION}"
-    echo "                ${IMAGE_NVIDIA}:${VERSION}"
+    if [ -n "${NVIDIA_HELD}" ]; then
+      echo "  held back     ${IMAGE_NVIDIA}: ${NVIDIA_HELD}"
+    else
+      echo "                ${IMAGE_NVIDIA}:${VERSION}"
+    fi
     echo "  not moved     :latest and :${FEDORA_VERSION} still point at the last scheduled build"
     echo "  not written   the SBOM baseline, the published changelog, the site"
-    echo "  boot it       bootc switch ${IMAGE_NVIDIA}:${VERSION}"
+    if [ -n "${NVIDIA_HELD}" ]; then
+      echo "  boot it       bootc switch ${IMAGE}:${VERSION}"
+    else
+      echo "  boot it       bootc switch ${IMAGE_NVIDIA}:${VERSION}"
+    fi
   fi
 
   # NOT pinged on a manual build. This is a dead-man's switch on the TIMER: it
@@ -614,7 +617,8 @@ finish_night() {
   # less is the whole feature. ping_healthcheck holds that rule for both callers.
   # Staged, the night is not done until the build host releases it, and the
   # host pings then.
-  [ "${PULSAR_GATE:-0}" = 1 ] || ping_healthcheck "${VERSION} ok in ${elapsed}s"
+  [ "${PULSAR_GATE:-0}" = 1 ] \
+    || ping_healthcheck "${VERSION} ok in ${elapsed}s${NVIDIA_HELD:+ -- nvidia held back: ${NVIDIA_HELD}}"
 }
 
 # One ping, two callers. The dead-man's switch watches the TIMER, so any night
@@ -817,7 +821,22 @@ build_args=(
 [ "${CHANNEL}" = manual ] && build_args+=(--no-floating-tags)
 # Gated, the floating tags wait for the boot gate; the build host moves them.
 [ "${PULSAR_GATE:-0}" = 1 ] && [ "${CHANNEL}" != manual ] && build_args+=(--no-floating-tags)
-"${REPO}/scripts/build.sh" "${build_args[@]}"
+build_rc=0
+"${REPO}/scripts/build.sh" "${build_args[@]}" || build_rc=$?
+
+# 4: vanilla shipped and nvidia is held back (see build.sh). The night goes on
+# for vanilla -- publish.sh reads the hold from ${WORK} and describes vanilla
+# alone -- and says so in a line the build host scrapes for the gate and the
+# alert: `grep -oP '^nvidia: held back: \K.*'`. Keep its shape. Anything else
+# that is not 0 is a night that shipped nothing.
+NVIDIA_HELD=""
+case "${build_rc}" in
+  0) ;;
+  4)
+    NVIDIA_HELD="$(head -n1 "${WORK}/nvidia-held" 2>/dev/null || true)"
+    echo "nvidia: held back: ${NVIDIA_HELD:-build.sh gave no reason}" ;;
+  *) exit "${build_rc}" ;;
+esac
 
 # THE BOOT GATE. With PULSAR_GATE=1 (the builder's build.env sets it) the
 # floating tags do not move here. The night describes itself now, staged
