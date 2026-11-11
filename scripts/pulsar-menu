@@ -71,7 +71,7 @@ def base_items():
     items = [
         Item("screen-text", "Copy text from the screen", "Pick an area; its text goes on the clipboard",
              "edit-copy-symbolic", [f"{LIBEXEC}/pulsar-screen", "text"], "ocr read recognize screenshot", "Screen"),
-        Item("screen-qr", "Read a QR code", "Pick an area with a QR code; what it says goes on the clipboard",
+        Item("screen-qr", "Read a QR code", "Pick an area; the QR code's text goes on the clipboard",
              "camera-photo-symbolic", [f"{LIBEXEC}/pulsar-screen", "qr"], "qr code barcode scan link url", "Screen"),
         Item("themes", "Themes", "Switch the whole desktop's colors",
              "applications-graphics-symbolic", [f"{LIBEXEC}/pulsar-theme-picker"],
@@ -86,7 +86,7 @@ def base_items():
              "update upgrade version release", "System"),
         Item("doctor", "Health check", "Run pulsar doctor in a terminal",
              "emblem-ok-symbolic", terminal(PULSAR, "doctor"), "doctor health status problem broken check", "System"),
-        Item("checkpoint", "Make a checkpoint", "Snapshot /etc and your settings before a risky change (asks for your password)",
+        Item("checkpoint", "Make a checkpoint", "Snapshot /etc and your settings; asks for your password",
              "document-save-symbolic", terminal("sudo", PULSAR, "checkpoint"),
              "checkpoint snapshot backup restore undo etc", "System"),
         Item("settings", "Pulsar Settings", "Appearance, updates and agents",
@@ -761,8 +761,7 @@ def where(path, home):
 def nothing_found(query):
     """The words over an empty list."""
     return (f"Nothing matches “{query.strip()}”",
-            "Search by the name of an app, a file or a Pulsar action, "
-            "or type a sum like 15% of 80")
+            "Search apps, files and actions, or type a sum like 15% of 80")
 
 
 # Shortcut hints, from pulsar-shortcuts' custom bindings (when the person kept them)

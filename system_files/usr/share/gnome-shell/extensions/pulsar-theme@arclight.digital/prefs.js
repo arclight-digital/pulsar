@@ -7,13 +7,13 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 
 // key, title, subtitle, the key it needs on
 const EFFECTS = [
-    ['glass', 'Glass', 'The top bar, the dash, menus, dialogs, notifications and on-screen displays blur what is behind them'],
-    ['window-glass', 'Glass windows', 'GTK 4 and GTK 3 app windows are 80% opaque over the same blur, sidebars included. Bars drawn apart from the window, such as Image Viewer\'s title bar and tab bars, stay solid, and so do fullscreen windows', 'glass'],
-    ['lighting', 'Lighting', 'A menu\'s edge is lit from the button that opened it, and turns warmer when the battery is low'],
-    ['power-on', 'Power-on', 'As a menu opens, its lit edge traces out from the button that opened it', 'lighting'],
-    ['glow', 'Glow', 'Switches that are on, checked boxes, slider fills, progress bars and default buttons glow in the accent color'],
-    ['focus-brackets', 'Focus brackets', 'While you use the keyboard, four corner brackets mark the focused button or menu item outside app windows'],
-    ['glass-off-gaming', 'Disable glass when gaming', 'Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun)'],
+    ['glass', 'Glass', 'The top bar, menus and notifications blur what\'s behind them'],
+    ['window-glass', 'Glass windows', 'App windows blur what\'s behind them; reopen apps to see it', 'glass'],
+    ['lighting', 'Lighting', 'Menu edges light up from the button that opened them'],
+    ['power-on', 'Power-on', 'A menu\'s lit edge traces out as the menu opens', 'lighting'],
+    ['glow', 'Glow', 'Accent-colored switches and sliders glow; reopen apps to see it'],
+    ['focus-brackets', 'Focus brackets', 'Corner brackets mark the keyboard focus outside app windows'],
+    ['glass-off-gaming', 'Disable glass when gaming', 'Glass and lighting turn off while a game runs with GameMode'],
     ['glass-off-power-saver', 'Disable glass in Power Saver', 'Glass and lighting turn off while the power mode is Power Saver'],
 ];
 
@@ -38,9 +38,6 @@ export default class PulsarThemePrefs extends ExtensionPreferences {
         const page = new Adw.PreferencesPage();
         const group = new Adw.PreferencesGroup({
             title: 'Effects',
-            description: 'Glass windows and Glow apply to apps opened after you change them. High contrast turns every ' +
-                'effect off, except in app windows already open. The two Disable glass switches leave app ' +
-                'windows\' glass on.',
         });
         // every effect and the tint back to the defaults; live only while
         // something differs from them

@@ -1746,9 +1746,9 @@ flatpak_gl_notify() {
     done
     [ "$fresh" = 1 ] || return 0
     if have notify-send; then
-        local body="It started without the NVIDIA ${FGL_DRIVER} driver, so its games get the iGPU and can show a black window. Quit it from its menu (Steam: Steam > Exit)."
+        local body="Its games run on the iGPU and can show a black window. Quit it from its menu (Steam: Steam > Exit)."
         case "$FGL_APPS" in *", "*)
-            body="They started without the NVIDIA ${FGL_DRIVER} driver, so their games get the iGPU and can show a black window. Quit each from its menu (Steam: Steam > Exit)." ;;
+            body="Their games run on the iGPU and can show a black window. Quit each from its menu (Steam: Steam > Exit)." ;;
         esac
         notify-send --app-name="Pulsar" --icon=dialog-warning \
             "Restart ${FGL_APPS} to use the NVIDIA GPU" "$body" || true
@@ -5193,7 +5193,7 @@ crashes_notify() {
 crash_notify_one() {
     local pid=$1 name=$2 exe=${3:-$2} title body
     title="${name} crashed"
-    body="Ask ${A_DESC%% (*} opens a terminal where ${A_DESC%% (*} reads a redacted report with the stack trace and the program's log lines."
+    body="Ask ${A_DESC%% (*} opens a terminal with a redacted report of the crash."
     have notify-send || return 0
     # The click has to outlive this oneshot unit, so the waiting notification
     # runs as a transient unit of its own. Without systemd-run it still says

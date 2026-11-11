@@ -2536,7 +2536,7 @@ def cmd_init(theme="pulsar", force=False):
         rec.update(result="skipped", reasons=why)
         print(f"pulsar-theme: first login, but this account has its own look ({'; '.join(why)}); leaving it alone")
         notify("Pulsar themes are available",
-               "Your own look was kept. Browse them from Themes in the app grid, or run: pulsar theme list")
+               "Your own look was kept. Open Themes from the app grid to try one.")
     else:
         # restart_policy none: no app is open yet, and the D-Bus scans for open
         # apps are the slowest thing init could do
@@ -2559,7 +2559,7 @@ def cmd_init(theme="pulsar", force=False):
             atomic_write(STATE / WELCOME_PENDING, json.dumps({"shortcut": rec["shortcut"]}).encode())
         else:
             notify("Pulsar theme applied",
-                   ("Super+T opens Themes, which" if bound else "Themes, in the app grid,") + " switches the whole desktop's colors. "
+                   ("Super+T opens Themes." if bound else "Themes is in the app grid.") + " "
                    "pulsar theme revert puts stock GNOME back.")
     atomic_write(stamp, json.dumps(rec, indent=1).encode())
     pending.unlink(missing_ok=True)

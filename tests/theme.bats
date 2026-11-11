@@ -266,7 +266,7 @@ PY
         grep -q "'${k}'" "${ext}/glass.js"
     done
     for words in 'Disable glass when gaming' \
-                 'Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun)' \
+                 'Glass and lighting turn off while a game runs with GameMode' \
                  'Disable glass in Power Saver' \
                  'Glass and lighting turn off while the power mode is Power Saver'; do
         grep -qF "'${words}'" "${ext}/prefs.js"

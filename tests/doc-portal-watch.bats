@@ -193,26 +193,26 @@ EOF
     HANG=1 run -0 "$SCRIPT"
     # In a unit of its own, which does not take the apps it starts with it.
     grep -q '^systemd-run --user --collect --quiet -p KillMode=process --unit=pulsar-doc-portal-reopen-[0-9]* -- .*doc-portal-watch.sh --offer com.discordapp.Discord com.valvesoftware.Steam$' "$LOG"
-    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Quit and Reopen Pulsar restarted file access for Flatpak apps Apps that were running before the restart can't open or save files until they're reopened: Discord, Steam. Quit and Reopen asks each one to quit, as its own Quit command does, and opens it again once it has. Apps that stay open are listed afterward for you to close yourself." "$LOG"
+    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen=Quit and Reopen Pulsar restarted file access for Flatpak apps Discord, Steam can't open or save files until reopened." "$LOG"
 }
 
 @test "apps are named by their launchers, in the user's language, else by their ID" {
     printf '%s\n' org.gnome.Loupe org.gnome.NautilusPreviewer com.valvesoftware.Steam > "$APPS"
     HANG=1 run -0 "$SCRIPT"
-    grep -Fq "until they're reopened: Image Viewer, org.gnome.NautilusPreviewer, Steam. " "$LOG"
+    grep -Fq "Flatpak apps Image Viewer, org.gnome.NautilusPreviewer, Steam can't open or save files" "$LOG"
     # Name[de] for de_DE; the most specific match first; the language alone
     # when the country has none; LC_ALL over LANG; and never a name from an
     # action's group.
     : > "$LOG"; LANG=de_DE.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
-    grep -Fq "reopened: Bildbetrachter. " "$LOG"
+    grep -Fq "Flatpak apps Bildbetrachter can't open or save files" "$LOG"
     : > "$LOG"; LANG=pt_BR.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
-    grep -Fq "reopened: Visualizador de imagens. " "$LOG"
+    grep -Fq "Flatpak apps Visualizador de imagens can't open or save files" "$LOG"
     : > "$LOG"; LANG=pt_PT.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
-    grep -Fq "reopened: Visualizador de imagem. " "$LOG"
+    grep -Fq "Flatpak apps Visualizador de imagem can't open or save files" "$LOG"
     : > "$LOG"; LANG=de_DE.UTF-8 LC_ALL=pt_BR.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
-    grep -Fq "reopened: Visualizador de imagens. " "$LOG"
+    grep -Fq "Flatpak apps Visualizador de imagens can't open or save files" "$LOG"
     : > "$LOG"; LANG=fr_FR.UTF-8 run -0 "$SCRIPT" --offer org.gnome.Loupe
-    grep -Fq "reopened: Image Viewer. " "$LOG"
+    grep -Fq "Flatpak apps Image Viewer can't open or save files" "$LOG"
 }
 
 @test "without a click nothing is asked, closed or started" {
@@ -261,7 +261,7 @@ EOF
     [[ "$output" == *"com.valvesoftware.Steam has no quit action to call; leaving it open"* ]]
     [[ "$output" == *"org.gnome.NautilusPreviewer has no quit action to call; leaving it open"* ]]
     # The rest are named, by their launchers' names, alphabetically.
-    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning Close and reopen these apps yourself Still open: Discord, org.gnome.NautilusPreviewer, Steam, Text Editor. They didn't quit when asked, or have no Quit command Pulsar can call, and can't open or save files until you close and reopen them." "$LOG"
+    grep -Fxq "notify-send --app-name=Pulsar --icon=dialog-warning Close and reopen these apps yourself Still open: Discord, org.gnome.NautilusPreviewer, Steam, Text Editor. They can't open or save files until you reopen them." "$LOG"
     # and every one of them is still running
     [ "$(sort "$APPS" | paste -sd' ')" = "com.discordapp.Discord com.valvesoftware.Steam org.gnome.NautilusPreviewer org.gnome.TextEditor" ]
 }

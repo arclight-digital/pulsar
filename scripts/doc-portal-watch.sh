@@ -147,7 +147,7 @@ offer() {
     local -a asked=() left=()
     answer=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=reopen="Quit and Reopen" \
         "Pulsar restarted file access for Flatpak apps" \
-        "Apps that were running before the restart can't open or save files until they're reopened: $(names "$@"). Quit and Reopen asks each one to quit, as its own Quit command does, and opens it again once it has. Apps that stay open are listed afterward for you to close yourself.") || return 0
+        "$(names "$@") can't open or save files until reopened.") || return 0
     [ "$answer" = reopen ] || return 0
     for app in "$@"; do
         # The list is from the restart; the click can come much later. One
@@ -181,7 +181,7 @@ offer() {
     [ ${#left[@]} -gt 0 ] || return 0
     notify-send --app-name=Pulsar --icon=dialog-warning \
         "Close and reopen these apps yourself" \
-        "Still open: $(names "${left[@]}"). They didn't quit when asked, or have no Quit command Pulsar can call, and can't open or save files until you close and reopen them."
+        "Still open: $(names "${left[@]}"). They can't open or save files until you reopen them."
 }
 if [ "${1:-}" = --offer ]; then shift; offer "$@"; exit 0; fi
 

@@ -37,13 +37,13 @@ FX_SCHEMA = "org.gnome.shell.extensions.pulsar-theme"
 # The Shell extension's effects (its prefs.js shows the same): key, title,
 # subtitle, the key it needs on.
 EFFECTS = (
-    ("glass", "Glass", "The top bar, the dash, menus, dialogs, notifications and on-screen displays blur what is behind them", None),
-    ("window-glass", "Glass windows", "GTK 4 and GTK 3 app windows are 80% opaque over the same blur, sidebars included. Bars drawn apart from the window, such as Image Viewer's title bar and tab bars, stay solid, and so do fullscreen windows", "glass"),
-    ("lighting", "Lighting", "A menu's edge is lit from the button that opened it, and turns warmer when the battery is low", None),
-    ("power-on", "Power-on", "As a menu opens, its lit edge traces out from the button that opened it", "lighting"),
-    ("glow", "Glow", "Switches that are on, checked boxes, slider fills, progress bars and default buttons glow in the accent color", None),
-    ("focus-brackets", "Focus brackets", "While you use the keyboard, four corner brackets mark the focused button or menu item outside app windows", None),
-    ("glass-off-gaming", "Disable glass when gaming", "Glass and lighting turn off while GameMode runs a game (gg, ggm or gamemoderun)", None),
+    ("glass", "Glass", "The top bar, menus and notifications blur what's behind them", None),
+    ("window-glass", "Glass windows", "App windows blur what's behind them; reopen apps to see it", "glass"),
+    ("lighting", "Lighting", "Menu edges light up from the button that opened them", None),
+    ("power-on", "Power-on", "A menu's lit edge traces out as the menu opens", "lighting"),
+    ("glow", "Glow", "Accent-colored switches and sliders glow; reopen apps to see it", None),
+    ("focus-brackets", "Focus brackets", "Corner brackets mark the keyboard focus outside app windows", None),
+    ("glass-off-gaming", "Disable glass when gaming", "Glass and lighting turn off while a game runs with GameMode", None),
     ("glass-off-power-saver", "Disable glass in Power Saver", "Glass and lighting turn off while the power mode is Power Saver", None),
 )
 
@@ -259,11 +259,7 @@ class Settings(Adw.ApplicationWindow):
         if not Gio.SettingsSchemaSource.get_default().lookup(FX_SCHEMA, True):
             return page
         self.fx = Gio.Settings(schema_id=FX_SCHEMA)
-        fx = Adw.PreferencesGroup(
-            title="Effects",
-            description="Glass windows and Glow apply to apps opened after you change them. High contrast turns every "
-                        "effect off, except in app windows already open. The two Disable glass switches leave app "
-                        "windows' glass on.")
+        fx = Adw.PreferencesGroup(title="Effects")
         fx.set_header_suffix(self._reset_button())
         for key, title, subtitle, needs in EFFECTS:
             row = Adw.SwitchRow(title=title, subtitle=subtitle)
@@ -329,8 +325,7 @@ class Settings(Adw.ApplicationWindow):
         upd.add(self.update_row)
         self.auto_row = Adw.ActionRow(
             title="Automatic downloads",
-            subtitle="New images download in the background on AC power and unmetered networks. "
-                     "Nothing restarts by itself.")
+            subtitle="Updates download in the background on AC power and unmetered networks")
         self.auto_state = Gtk.Label(css_classes=["dim-label"], valign=Gtk.Align.CENTER)
         self.auto_row.add_suffix(self.auto_state)
         upd.add(self.auto_row)
@@ -493,10 +488,7 @@ class Settings(Adw.ApplicationWindow):
         self._agents_timer = 0
         self.session_rows = {}
         self.sessions = Adw.PreferencesGroup(
-            title="Sessions",
-            description="Each runs one coding agent in a terminal session that keeps going when its window "
-                        "closes. You get a notification when an agent rings the terminal bell, which Claude Code "
-                        "does when it waits for you.")
+            title="Sessions")
         self.sessions_empty = Adw.ActionRow(
             title="No sessions yet", subtitle="Start one in a terminal: pulsar agent run <agent> --tmux <name>",
             subtitle_selectable=True)
@@ -671,9 +663,8 @@ class SessionRow:
         snaps = s.get("snapshots") or 0
         self.undo_row.set_visible(snaps > 0)
         self.undo_button.set_sensitive(not live)
-        self.undo_row.set_subtitle("Available once the session has ended, so the agent can't write files during the undo"
-                                   if live else "Puts the files back as they were when the session started, "
-                                   "except files git ignores")
+        self.undo_row.set_subtitle("Available once the session ends"
+                                   if live else "Puts files back as they were at the start, except git-ignored ones")
         self.end_row.set_title("End this session" if live else "Forget this session")
         self.end_row.set_subtitle("" if live else "Stops tracking it, and drops its undo snapshots")
         self.end_button.set_label("End…" if live else "Forget…")
