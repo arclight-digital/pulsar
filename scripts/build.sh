@@ -764,13 +764,15 @@ fi
 # is the run failing, as ever. The digest goes first, so nothing downstream
 # (publish.sh, the builder's built.json) can mistake a stale or half-pushed
 # one for tonight's.
+# $1 is the reason, for anyone: it reaches the changelog and nvidia machines'
+# `pulsar update --check`. $2 is the detail, for the log.
 NVIDIA_HELD=""
 hold_nvidia() {
   NVIDIA_HELD="$1"
   rm -f "${WORK}/digest-nvidia"
   mkdir -p "${WORK}"
   printf '%s\n' "${NVIDIA_HELD}" > "${WORK}/nvidia-held"
-  say "nvidia HELD BACK: ${NVIDIA_HELD}"
+  say "nvidia HELD BACK: ${NVIDIA_HELD} (${2})"
   echo "vanilla ships alone; nvidia machines stay on the last nvidia image that built"
 }
 # Runs one half of the nvidia work in a subshell with errexit ON, and leaves
@@ -827,7 +829,7 @@ elif [ "${VARIANT}" = all ]; then
   if [ "${NVIDIA_RC}" -eq 0 ]; then
     note_space "the nvidia build"
   else
-    hold_nvidia "the nvidia image did not build (exit ${NVIDIA_RC}); the build log above says why"
+    hold_nvidia "the nvidia image did not build" "exit ${NVIDIA_RC}; the build log above says why"
   fi
   # Before the nvidia rechunk, not after: vanilla's metadata check runs a
   # podman export, and the rechunk is the step nothing may overlap. A vanilla
@@ -837,7 +839,7 @@ elif [ "${VARIANT}" = all ]; then
     nvidia_step nvidia_ship
     note_space "the nvidia rechunk"
     [ "${NVIDIA_RC}" -eq 0 ] \
-      || hold_nvidia "the nvidia image failed its rechunk, content checks or push (exit ${NVIDIA_RC})"
+      || hold_nvidia "the nvidia image failed its checks or its upload" "its rechunk, content checks or push exited ${NVIDIA_RC}"
   fi
 fi
 finish_vanilla_ship

@@ -173,7 +173,7 @@ assert_nvidia_held() {
   # 2026-11-11: kernel 7.3.3 broke the nvidia build and held vanilla back too.
   FAIL_NVIDIA_BUILD=yes build
   assert_nvidia_held
-  grep -q "did not build" "${WORKDIR}/nvidia-held"
+  grep -qx "the nvidia image did not build" "${WORKDIR}/nvidia-held"
   # the failed build stopped where it failed: nothing nvidia after it ran
   no_event 'build nvidia done|rechunk nvidia'
   no_event "copy ghcr.io/arclight-digital/pulsar-nvidia:${VERSION}"
@@ -182,7 +182,7 @@ assert_nvidia_held() {
 @test "an nvidia push that fails holds nvidia back too, with its half-pushed digest gone" {
   FAIL_NVIDIA_PUSH=yes build
   assert_nvidia_held
-  grep -q "rechunk, content checks or push" "${WORKDIR}/nvidia-held"
+  grep -qx "the nvidia image failed its checks or its upload" "${WORKDIR}/nvidia-held"
 }
 
 @test "an earlier run's nvidia digest and hold are gone before anything is built" {

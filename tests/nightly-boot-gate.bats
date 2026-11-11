@@ -77,11 +77,11 @@ not_called() {
 
 @test "a night whose nvidia is held back ships vanilla: publishes, hands off, and says why" {
   # build.sh's exit 4, and the reason it leaves in --work
-  echo "the nvidia image did not build (exit 1); the build log above says why" > "${PULSAR_BUILD_WORK}/nvidia-held"
+  echo "the nvidia image did not build" > "${PULSAR_BUILD_WORK}/nvidia-held"
   FAIL_BUILD=4 PULSAR_GATE=1 night
   [ "$status" -eq 0 ] || { echo "$stderr"; false; }
   # the line the build host scrapes for the gate and the alert
-  grep -qx "nvidia: held back: the nvidia image did not build (exit 1); the build log above says why" <<<"$output"
+  grep -qx "nvidia: held back: the nvidia image did not build" <<<"$output"
   called '^publish ' | grep -q -- '--stage'
   [ "$(tail -1 <<<"$output")" = "gate: pending ${VERSION}" ]
 }

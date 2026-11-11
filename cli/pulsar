@@ -1361,6 +1361,45 @@ swatches() {
 # ---------------------------------------------------------------------------
 UPDATE_STATE=${PULSAR_UPDATE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pulsar}
 
+# NVIDIA HELD BACK. Since 2026-11-11 a night whose nvidia image did not build
+# ships vanilla alone, and an nvidia machine's own tag does not move: asked
+# alone, it would say "up to date" while every other machine updated. So an
+# nvidia image also asks what the vanilla tag beside it carries, and vanilla
+# ahead means this machine was held back. The reason comes from the published
+# changelog (held.nvidia), trusted only when that changelog describes the
+# vanilla build the tag points at; otherwise the versions alone.
+#
+# $1 this image's ref, $2 its version. Prints "<vanilla version>\t<vanilla
+# digest>\t<reason>" when held back, nothing otherwise, and never fails: the
+# answer to the update question does not depend on it.
+held_nvidia() {
+    local ref=$1 mine=$2 sib inspect v d url reason=""
+    case "$ref" in *-nvidia|*-nvidia:*) ;; *) return 0 ;; esac
+    sib=$(printf '%s' "$ref" | sed 's|-nvidia\(:[^/]*\)\{0,1\}$|\1|')
+    inspect=$(skopeo inspect --no-tags "docker://${sib}" 2>/dev/null) || return 0
+    v=$(printf '%s' "$inspect" | jq -r '.Labels["org.opencontainers.image.version"] // ""')
+    d=$(printf '%s' "$inspect" | jq -r '.Digest // ""')
+    [ -n "$v" ] && [ "$v" != "$mine" ] || return 0
+    [ "$(printf '%s\n%s\n' "$mine" "$v" | sort -V | tail -n1)" = "$v" ] || return 0
+    url=$(mf changelog_url 2>/dev/null || true)
+    if [ -n "$url" ] && have curl; then
+        reason=$(curl -fsSL --max-time 10 "$url" 2>/dev/null \
+            | jq -r --arg d "$d" 'if (.to.digest // "") == $d then (.held.nvidia // "") else "" end' 2>/dev/null || true)
+    fi
+    printf '%s\t%s\t%s\n' "$v" "$d" "$reason"
+}
+
+# The sentence a person reads, from held_nvidia's line and the booted version.
+held_nvidia_sentence() {
+    local v=$1 reason=$2 mine=$3
+    if [ -n "$reason" ]; then
+        printf 'Build %s shipped for other machines, but %s. This machine stays on %s until an nvidia image builds.' \
+            "$v" "$reason" "$mine"
+    else
+        printf 'Build %s shipped without its nvidia image. This machine stays on %s until one builds.' "$v" "$mine"
+    fi
+}
+
 cmd_update_check() {
     local notify=0 f
     for f in "$@"; do
@@ -1398,14 +1437,27 @@ cmd_update_check() {
     [ -n "$remote_digest" ] || die "${ref} returned a manifest with no digest"
 
     # --json: one object whatever the answer; the exit code still carries it.
+    # $2, when given, is held_nvidia's line.
     check_json() {
+        local hv="" hr=""
+        [ -z "${2:-}" ] || IFS=$'\t' read -r hv _ hr <<<"$2"
         jq -n -c --arg s "$1" --arg b "$local_version" --arg l "$remote_version" --arg r "$ref" \
-            '{status: $s, booted: $b, latest: $l, image: $r, staged: ($s == "staged")}'
+            --arg hv "$hv" --arg hr "$hr" \
+            '{status: $s, booted: $b, latest: $l, image: $r, staged: ($s == "staged")}
+             + (if $hv == "" then {} else {held: {vanilla: $hv, reason: (if $hr == "" then null else $hr end)}} end)'
     }
 
     if [ "$remote_digest" = "$local_digest" ]; then
-        if [ "${JSON:-0}" = 1 ]; then check_json current; return 0; fi
+        local held hv hr
+        held=$(held_nvidia "$ref" "$local_version")
+        if [ -n "$held" ]; then
+            IFS=$'\t' read -r hv _ hr <<<"$held"
+            # Once per build this machine is held on, not once a night.
+            [ "$notify" = 0 ] || held_notify_once "$local_digest" "$(held_nvidia_sentence "$hv" "$hr" "$local_version")"
+        fi
+        if [ "${JSON:-0}" = 1 ]; then check_json current "$held"; return 0; fi
         printf 'up to date: %s (%s)\n' "$local_version" "$ref"
+        [ -z "$held" ] || printf 'nvidia held back: %s\n' "$(held_nvidia_sentence "$hv" "$hr" "$local_version")"
         return 0
     fi
 
@@ -1467,6 +1519,18 @@ update_auto_enabled() {
 
 # $1 kind (available|staged) $2 digest $3 new version $4 booted version
 # $5 the staged release, when it could be read
+# One notification per booted build that is held back: the hold can last a
+# week of nights, and nothing about it changes from one to the next.
+held_notify_once() {
+    local digest=$1 body=$2 state_file="${UPDATE_STATE}/notified-held-digest" seen=""
+    if [ -r "$state_file" ]; then seen=$(cat "$state_file"); fi
+    [ "$seen" != "$digest" ] || return 0
+    have notify-send || return 0
+    mkdir -p "$UPDATE_STATE"
+    notify-send --app-name="Pulsar" --icon=software-update-available "Nvidia update held back" "$body" || true
+    printf '%s\n' "$digest" > "$state_file"
+}
+
 update_notify_once() {
     local kind=$1 digest=$2 version=$3 booted=$4 release=${5:-} state_file seen=""
     # "notified-digest" is the file every earlier release wrote for the
@@ -4661,7 +4725,9 @@ cmd_changelog() {
       else
         "\(.summary.upgraded // 0) upgraded · \(.summary.added // 0) added · \(.summary.removed // 0) removed"
         + (if (.summary.downgraded // 0) > 0 then " · \(.summary.downgraded) downgraded" else "" end),
-        "generated \(.generated // "?")", "",
+        "generated \(.generated // "?")",
+        (if (.held.nvidia // "") != "" then "nvidia held back: \(.held.nvidia); nvidia machines stay on the build before" else empty end),
+        "",
         (.changed[]? | "  \(if .direction == "downgraded" then "!" else "~" end) \(.name)  \(.from) → \(.to)"),
         (.added[]?   | "  + \(.name)  \(.version)"),
         (.removed[]? | "  - \(.name)  \(.version)")

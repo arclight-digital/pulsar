@@ -568,6 +568,117 @@ CHECK_STAGED='{"deployments":[
     [ "$(echo "$output" | jq -r .staged)" = false ]
 }
 
+# An nvidia machine, up to date with its own tag. Since 2026-11-11 a night
+# whose nvidia image did not build ships vanilla alone; the nvidia machine is
+# told, from the vanilla tag beside its own and the published changelog.
+CHECK_NVIDIA='{"deployments":[{"booted":true,"version":"44.1",
+  "container-image-reference":"ostree-unverified-registry:ghcr.io/x/pulsar-nvidia:latest",
+  "container-image-reference-digest":"sha256:aaa"}]}'
+
+# skopeo answering per image: $1 $2 the nvidia tag's digest and version, $3 $4
+# the vanilla tag's. Every image asked about is logged.
+stub_skopeo_pair() {
+    STUB="${BATS_TEST_TMPDIR}/stub"
+    mkdir -p "$STUB"
+    SKOPEO_LOG="${BATS_TEST_TMPDIR}/skopeo.log"; : > "$SKOPEO_LOG"
+    printf '{"Digest":"%s","Labels":{"org.opencontainers.image.version":"%s"}}' "$1" "$2" > "${BATS_TEST_TMPDIR}/nv.json"
+    printf '{"Digest":"%s","Labels":{"org.opencontainers.image.version":"%s"}}' "$3" "$4" > "${BATS_TEST_TMPDIR}/van.json"
+    cat > "${STUB}/skopeo" <<EOF
+#!/bin/sh
+for a in "\$@"; do last="\$a"; done
+echo "\$last" >> "${SKOPEO_LOG}"
+case "\$last" in
+    *pulsar-nvidia:latest) exec cat "${BATS_TEST_TMPDIR}/nv.json" ;;
+    *pulsar:latest)        exec cat "${BATS_TEST_TMPDIR}/van.json" ;;
+esac
+exit 1
+EOF
+    chmod +x "${STUB}/skopeo"
+    PATH="${STUB}:${PATH}"
+    export PATH
+}
+
+# The published changelog: describing vanilla digest $1, with nvidia held for $2.
+held_changelog() {
+    cl="${BATS_TEST_TMPDIR}/cl.json"
+    jq -n --arg d "$1" --arg r "${2:-}" \
+        '{generated: "2026-11-12T03:00:00Z", to: {ref: "ghcr.io/x/pulsar@\($d)", digest: $d},
+          summary: {upgraded: 0, added: 0, removed: 0}}
+         + (if $r == "" then {} else {held: {nvidia: $r}} end)' > "$cl"
+    jq --arg u "file://${cl}" '.changelog_url = $u' "$PULSAR_MANIFEST" > "${PULSAR_MANIFEST}.n" \
+        && mv "${PULSAR_MANIFEST}.n" "$PULSAR_MANIFEST"
+}
+
+@test "update --check: an nvidia machine held back is up to date, and is told why" {
+    stub_ostree "$CHECK_NVIDIA"
+    stub_skopeo_pair "sha256:aaa" "44.1" "sha256:vvv" "44.2"
+    held_changelog "sha256:vvv" "the nvidia image did not build"
+    run "$PULSAR" update --check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"up to date: 44.1"* ]]
+    [[ "$output" == *"nvidia held back: Build 44.2 shipped for other machines, but the nvidia image did not build. This machine stays on 44.1 until an nvidia image builds."* ]]
+}
+
+@test "update --check: a changelog about another build gives the versions alone" {
+    stub_ostree "$CHECK_NVIDIA"
+    stub_skopeo_pair "sha256:aaa" "44.1" "sha256:vvv" "44.2"
+    held_changelog "sha256:older" "a reason from another night"
+    run "$PULSAR" update --check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"nvidia held back: Build 44.2 shipped without its nvidia image. This machine stays on 44.1 until one builds."* ]]
+    [[ "$output" != *"another night"* ]]
+}
+
+@test "update --check: vanilla on the same build, or an older one, is no hold" {
+    stub_ostree "$CHECK_NVIDIA"
+    stub_skopeo_pair "sha256:aaa" "44.1" "sha256:vvv" "44.1"
+    run "$PULSAR" update --check
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"held back"* ]]
+    stub_skopeo_pair "sha256:aaa" "44.1" "sha256:vvv" "44.0"
+    run "$PULSAR" update --check --json
+    [ "$(echo "$output" | jq -r .held)" = null ]
+}
+
+@test "update --check: a vanilla machine never asks about nvidia" {
+    stub_ostree "$CHECK_STATUS"
+    stub_skopeo_pair "sha256:zzz" "44.9" "sha256:aaa" "44.1"
+    run "$PULSAR" update --check
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SKOPEO_LOG")" = "docker://ghcr.io/x/pulsar:latest" ]
+}
+
+@test "update --check --json carries the hold, and the status stays current" {
+    stub_ostree "$CHECK_NVIDIA"
+    stub_skopeo_pair "sha256:aaa" "44.1" "sha256:vvv" "44.2"
+    held_changelog "sha256:vvv" "the nvidia image did not build"
+    run "$PULSAR" update --check --json
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r .status)" = current ]
+    [ "$(echo "$output" | jq -r .held.vanilla)" = 44.2 ]
+    [ "$(echo "$output" | jq -r .held.reason)" = "the nvidia image did not build" ]
+}
+
+@test "update --notify: a hold is one notification per build held on, not one a night" {
+    stub_ostree "$CHECK_NVIDIA"
+    stub_skopeo_pair "sha256:aaa" "44.1" "sha256:vvv" "44.2"
+    held_changelog "sha256:vvv" "the nvidia image did not build"
+    stub_notify
+    run "$PULSAR" update --check --notify
+    [ "$status" -eq 0 ]
+    stub_skopeo_pair "sha256:aaa" "44.1" "sha256:www" "44.3"
+    run "$PULSAR" update --check --notify
+    [ "$(wc -l < "$NOTIFY_LOG")" -eq 1 ]
+    grep -q "Nvidia update held back" "$NOTIFY_LOG"
+}
+
+@test "changelog says when nvidia was held back" {
+    held_changelog "sha256:vvv" "the nvidia image did not build"
+    run "$PULSAR" changelog
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"nvidia held back: the nvidia image did not build; nvidia machines stay on the build before"* ]]
+}
+
 @test "update --notify offers an Update button that stages, then says it is ready" {
     stub_ostree "$CHECK_STATUS"
     stub_skopeo "sha256:bbb" "44.2"

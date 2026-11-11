@@ -331,7 +331,7 @@ without() {
 # build.sh's exit 4: vanilla shipped, nvidia held back, the reason in --work.
 hold_nvidia() {
   rm -f "${WORK}/digest-nvidia"
-  echo "the nvidia image did not build (exit 1); the build log above says why" > "${WORK}/nvidia-held"
+  echo "the nvidia image did not build" > "${WORK}/nvidia-held"
 }
 
 @test "nvidia held back: vanilla alone is described and promoted, and nvidia-latest stays put" {
@@ -351,8 +351,8 @@ pulsar/sbom/vanilla-latest.spdx.json" ]
   [ "$(grep -c '^oras attach' "${CALLS}")" = 1 ]
   grep -q '^oras attach .*ghcr.io/arclight-digital/pulsar@sha256:aaaa ' "${CALLS}"
   # why, where a reader looks: the published changelog and the page
-  [ "$(in_r2 pulsar/changelog/latest.json | jq -r .held.nvidia)" = "the nvidia image did not build (exit 1); the build log above says why" ]
-  [ "$(on_main src/data/changelog.json | jq -r .held.nvidia)" = "the nvidia image did not build (exit 1); the build log above says why" ]
+  [ "$(in_r2 pulsar/changelog/latest.json | jq -r .held.nvidia)" = "the nvidia image did not build" ]
+  [ "$(on_main src/data/changelog.json | jq -r .held.nvidia)" = "the nvidia image did not build" ]
   # the card is vanilla's own manifest, not a stale local nvidia image's
   [ "$(on_main src/data/manifest.json | jq -r .variant)" = vanilla ]
 }
