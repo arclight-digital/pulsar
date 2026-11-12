@@ -208,6 +208,28 @@ else
   exit 1
 fi
 
+# The network speaker tests start a real PipeWire and WirePlumber, and skip
+# where those are missing, as on the build host and in the dev toolbox. They
+# always run here, in the image's own Fedora, so the WirePlumber running the
+# hooks is the one that ships. The container has no sound card and no mDNS.
+say "network speaker tests, with PipeWire and WirePlumber"
+if command -v podman >/dev/null; then
+  fedora=$(sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile | head -n 1)
+  audio_out=$(podman run --rm --security-opt label=disable -v "${REPO}:/opt/pulsar:ro" \
+    "registry.fedoraproject.org/fedora:${fedora}" bash -c '
+    dnf5 install -y -q bats python3 pipewire wireplumber pipewire-utils >/dev/null &&
+    cd /opt/pulsar && TMPDIR=/var/tmp bats tests/network-sinks.bats' 2>&1) \
+    || { printf '%s\n' "$audio_out"; echo "FAIL: network speaker tests" >&2; exit 1; }
+  printf '%s\n' "$audio_out"
+  if grep -q "# skip" <<<"$audio_out"; then
+    echo "FAIL: network speaker tests skipped even with PipeWire installed" >&2
+    exit 1
+  fi
+else
+  echo "FAIL: the network speaker tests need podman to run them in a container" >&2
+  exit 1
+fi
+
 # The CLI must behave on a machine that is not a Pulsar system: no bootc, no
 # rpm-ostree, no sched_ext. Asserted rather than assumed, because "works on
 # my laptop" is how the jq bug reached main.
