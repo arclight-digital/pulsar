@@ -6,4 +6,3 @@
 # scripts/driver-check.sh reads this same list, so the morning check builds
 # what the night will build.
 pr1286-difr-gpfifo-timeout.diff
-linux-7.3-dmem-cgroup-init.diff

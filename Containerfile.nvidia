@@ -206,8 +206,8 @@ RUN for attempt in 1 2 3; do \
     rm -rf /tmp/akmod-rpm
 
 # Phase 2b: carry fixes the driver release lacks into the akmod's source
-# package. Two today, applied in the order patches/nvidia-open/series lists
-# them. scripts/driver-check.sh compiles the same list against the base's
+# package, applied in the order patches/nvidia-open/series lists them. One
+# today. scripts/driver-check.sh compiles the same list against the base's
 # kernel every morning, so a kernel the driver cannot build against is an
 # alert hours before the night instead of a failed night.
 #
@@ -235,17 +235,6 @@ RUN for attempt in 1 2 3; do \
 # but a release that merged the same change under different text fails the
 # same way, so read the release notes before rebasing the patch.
 #
-# linux-7.3-dmem-cgroup-init.diff, the kernel 7.3 build fix: Linux 7.3
-# (commit e11640b9cea4) changed dmem_cgroup_register_region() to take a
-# 'const struct dmem_cgroup_init *' where it took a u64 size, and 615.71.09
-# still passes the size, so os-interface.c does not compile against
-# Fedora 45's 7.3.3 kernel (the 45.20261111 nightly). NVIDIA's own fix,
-# copied hunk for hunk from 615.78.08: a conftest for the new signature, its
-# line in nvidia.Kbuild, and an #if in os_dmem_cgroup_register_region. Both
-# signatures still build. DROP THIS PATCH once rpmfusion's nvidia-open is
-# 615.78.08 or newer (620.70.06 has it too); it stops applying then, because
-# the conftest it adds is already there.
-#
 # Mechanically: the spec already carries one patch (Patch0, rpmfusion's
 # driver defaults) applied in %prep against the %setup -c directory
 # open-gpu-kernel-modules-%{version}. Ours go in as Patch1, Patch2, ... in
@@ -257,7 +246,7 @@ RUN for attempt in 1 2 3; do \
 # moves the code fails the build in its first minute rather than shipping an
 # unpatched module.
 #
-# Both patches are applied to the extracted tree here first, exactly as
+# Each patch is applied to the extracted tree here first, exactly as
 # %prep will -- -F0 included, because rpm's %patch runs with fuzz 0 while
 # bare patch tolerates two mismatched context lines, and a precheck looser
 # than the real thing is worse than none -- so the failure names the patch
@@ -287,8 +276,6 @@ RUN --mount=type=bind,source=patches/nvidia-open,target=/run/nvidia-patches \
       case "${P}" in \
         pr1286-*) echo "       Either this release contains the DIFR fix (PR 1286, NVIDIA bug 6696638) -- drop" \
                        "the patch -- or the code moved and the patch needs rebasing." ;; \
-        linux-7.3-*) echo "       If this release has the dmem_cgroup_register_region_has_init_arg conftest" \
-                          "(615.78.08 and newer do), drop the patch; otherwise rebase it." ;; \
       esac; \
       echo "       Refusing to ship a module without it by accident."; exit 1; \
     done; \
