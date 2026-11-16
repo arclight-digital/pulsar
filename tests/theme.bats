@@ -1870,11 +1870,12 @@ const g = await load(`${process.env.EXT}/glass.js`, ['WindowGlass']);
 const m = (...libs) => libs.map(l => `7f00-7f01 r-xp 00000000 00:00 1 ${l}`).join('\n');
 assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-4.so.1')), true);
 assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0')), true);
-// Firefox, Electron/Chromium, CEF, Sublime Text: GTK 3 loaded, window drawn by the app
+// Firefox, Electron/Chromium, CEF: GTK 3 loaded, window drawn by the app
 assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/usr/lib64/firefox/libxul.so')), false);
 assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/app/discord/libffmpeg.so')), false);
 assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/steam/ubuntu12_64/libcef.so')), false);
-assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/opt/sublime_text/sublime_text')), false);
+// Sublime Text draws its editor, but its menu bar is GTK's and shows the ground
+assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-3.so.0', '/app/extra/sublime_text/sublime_text')), true);
 // a GTK 4 app is glass whatever else it maps
 assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libgtk-4.so.1', '/usr/lib64/libffmpeg.so')), true);
 assert.equal(g.WindowGlass.glassyMaps(m('/usr/lib64/libQt6Core.so.6')), false);

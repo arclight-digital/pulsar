@@ -2779,8 +2779,11 @@ const GLASS_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.Window
 const GTK = new Map();
 // What in a GTK 3 process's maps says it draws its whole window itself:
 // Firefox and Thunderbird, Chromium-based apps and Electron (they ship
-// libffmpeg.so), CEF (Steam's web views), Sublime Text.
-const OPAQUE_GTK3 = ['/libxul.so', '/libffmpeg.so', '/libcef.so', '/sublime_text'];
+// libffmpeg.so), CEF (Steam's web views). Not Sublime Text: it draws its
+// editor itself but its menu bar is GTK's, with no background of its own,
+// so it shows the 80% ground, and without the blur the window behind read
+// through it sharp.
+const OPAQUE_GTK3 = ['/libxul.so', '/libffmpeg.so', '/libcef.so'];
 
 // The live blur inside one window actor, under its surfaces, cut to the
 // window's frame and corners. Only GTK apps get one: they are the ones the
@@ -2903,7 +2906,7 @@ class WindowGlass {
     // no GtkApplication and carry no application id at all (the portal's
     // file chooser and "Open With", the VPN password prompt). A GTK 3
     // process that draws its whole window itself (Firefox, Chromium and
-    // Electron apps, Steam's web views, Sublime Text) loads GTK 3 too; its
+    // Electron apps, Steam's web views) loads GTK 3 too; its
     // window is opaque, so it gets none (OPAQUE_GTK3).
     // A process whose maps cannot be read is judged the old way: a window
     // with an application id is a GTK app's, and so is any window of the
