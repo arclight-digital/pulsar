@@ -277,6 +277,14 @@ RUN for attempt in 1 2 3; do \
 #                   FUSE to run". Fedora ships only FUSE 3. fuse-libs is the
 #                   library; fuse is the setuid fusermount it mounts with.
 #                   Both are asserted below.
+#   git-credential- git's keyring helper. Without it the only place git can
+#   libsecret       keep an HTTPS password (a Bitbucket app password, a
+#                   GitHub token) is ~/.git-credentials, in plain text.
+#                   /etc/gitconfig makes it the default helper; it talks
+#                   Secret Service over D-Bus, which oo7-daemon serves. 20 KB,
+#                   and libsecret is already in the base. A helper in a
+#                   toolbox cannot serve the host's git, so it ships here.
+#                   Asserted below.
 #
 # `gh` was here once, carried as an admitted exception to the rule above so
 # that `pulsar verify` (then `attest`) had its verifier on a fresh install. The exception is
@@ -307,7 +315,8 @@ RUN dnf5 install -y \
       tesseract-langpack-eng \
       zbar \
       fuse \
-      fuse-libs && \
+      fuse-libs \
+      git-credential-libsecret && \
     { [ -e /usr/lib64/libfuse.so.2 ] && [ -u /usr/bin/fusermount ] || \
       { echo "FATAL: AppImages need libfuse.so.2 and a setuid /usr/bin/fusermount" >&2; ls -l /usr/lib64/libfuse.so.2* /usr/bin/fusermount* >&2; exit 1; }; } && \
     case "$(readlink /etc/systemd/system/dbus.service)" in \
@@ -1127,6 +1136,9 @@ RUN set -eu; \
 # this image rides on counted, and a fork that objects turns off one timer.
 RUN [ -f /usr/lib/bootupd/grub2-static/configs.d/08_greenboot.cfg ] || \
       { echo "FATAL: greenboot no longer ships its bootupd grub fragment; without it GRUB never decrements boot_counter and automatic rollback silently never arms"; exit 1; }; \
+    [ "$(git config --system --get-all credential.helper)" = libsecret ] && \
+      [ -x "$(git --exec-path)/git-credential-libsecret" ] || \
+      { echo "FATAL: git's default credential helper is not libsecret, or its binary is missing; HTTPS passwords would fall back to ~/.git-credentials in plain text"; exit 1; }; \
     fcerr=$(fc-cache -f 2>&1 >/dev/null | grep -iE 'Fontconfig (error|warning).*pulsar' || true); \
     [ -z "${fcerr}" ] || \
       { echo "FATAL: fontconfig rejects part of Pulsar's font config, and drops it with only this on stderr:"; echo "${fcerr}"; exit 1; }; \

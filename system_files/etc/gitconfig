@@ -1,0 +1,5 @@
+# Pulsar: git keeps HTTPS passwords in the desktop keyring (oo7), not in
+# ~/.git-credentials. A `helper =` line with no value in your own
+# ~/.gitconfig clears this one before yours.
+[credential]
+	helper = libsecret
