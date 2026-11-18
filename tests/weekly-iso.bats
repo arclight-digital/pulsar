@@ -147,9 +147,9 @@ podman image prune --all --force" ]
   [ ! -e "${LOG}" ]
 }
 
-@test "the weekly lets the installer build put the image's policy modules on its builder" {
-  printf '#!/usr/bin/env bash\necho "build-iso policy=${PULSAR_ISO_INSTALL_POLICY:-}" >> "%s"\n' "${LOG}" \
+@test "the weekly lets the installer build go permissive on its throwaway builder" {
+  printf '#!/usr/bin/env bash\necho "build-iso permissive=${PULSAR_ISO_PERMISSIVE:-}" >> "%s"\n' "${LOG}" \
     > "${FAKE}/scripts/build-iso.sh"
   run -0 "${FAKE}/scripts/weekly.sh"
-  [ "$(grep -c '^build-iso policy=1$' "${LOG}")" -eq 2 ]
+  [ "$(grep -c '^build-iso permissive=1$' "${LOG}")" -eq 2 ]
 }

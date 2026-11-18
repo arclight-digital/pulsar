@@ -200,35 +200,40 @@ live_shell_check() {
 }
 
 # ---------------------------------------------------------------------------
-# The host must know every SELinux type the image labels with. osbuild relabels
-# the live tree on the host, and the 2026-10-18 weekly died in setfiles on
-# flatpak_helper_exec_t and swtpm_exec_t: add-on modules the image ships and a
-# stock Fedora builder lacks. These run the real build-installer-iso.sh with
-# podman, rpm, dnf, skopeo and image-builder stubbed.
+# The host must know every SELinux type the image labels with: osbuild relabels
+# the live tree on the host, and the kernel refuses a label whose type the
+# host's loaded policy lacks. The 2026-10-18 weekly died on add-on module types
+# (flatpak_helper_exec_t), the 2026-11-15 one on F45 base-policy types on an
+# F44 builder (systemd_clonesetup_generator_exec_t). These run the real
+# build-installer-iso.sh with podman, skopeo, setenforce and image-builder
+# stubbed, and a fake selinuxfs: its context file is /dev/full for a policy
+# that rejects every label, a plain file for one that takes them all.
 # ---------------------------------------------------------------------------
 
-policy_setup() {
-  # The image ships modules from these three; the host has only the first.
+policy_setup() { # enforce: 1 | 0 | none;  policy: knows | lacks
+  local fs="${BATS_TEST_TMPDIR}/selinuxfs"
+  mkdir -p "${fs}"
+  case "$1" in none) ;; *) echo "$1" > "${fs}/enforce" ;; esac
+  case "$2" in lacks) ln -sf /dev/full "${fs}/context" ;; knows) : > "${fs}/context" ;; esac
+  export PULSAR_SELINUXFS="${fs}"
+  # the installer image's file_contexts, with a context repeated
   cat > "${BIN}/podman" <<EOF
 #!/usr/bin/env bash
 printf 'podman %s\n' "\$*" >> "${LOG}"
 case "\$1" in
-  run) printf 'container-selinux\nflatpak-selinux\nswtpm-selinux\n' ;;
+  run) printf '/usr/bin/a\tsystem_u:object_r:bin_t:s0\n/usr/lib/systemd/system-generators/systemd-clonesetup-generator\t--\tsystem_u:object_r:systemd_clonesetup_generator_exec_t:s0\n/usr/bin/b\tsystem_u:object_r:bin_t:s0\n/dev/x\t<<none>>\n' ;;
   image) [ "\$2" = inspect ] && echo 1000 ;;
 esac
 exit 0
 EOF
-  cat > "${BIN}/rpm" <<EOF
+  cat > "${BIN}/setenforce" <<EOF
 #!/usr/bin/env bash
-[ "\$1" = -q ] && [ "\$2" = container-selinux ]
-EOF
-  cat > "${BIN}/dnf" <<EOF
-#!/usr/bin/env bash
-printf 'dnf %s\n' "\$*" >> "${LOG}"
+printf 'setenforce %s\n' "\$*" >> "${LOG}"
 EOF
   cat > "${BIN}/image-builder" <<EOF
 #!/usr/bin/env bash
 printf 'image-builder %s\n' "\$*" >> "${LOG}"
+[ -z "\${IB_FAIL:-}" ] || exit 1
 while [ \$# -gt 0 ]; do [ "\$1" = --output-dir ] && touch "\$2/out.iso"; shift; done
 EOF
   chmod +x "${BIN}"/*
@@ -257,33 +262,57 @@ installer_build() { # expected status
   done
 }
 
-@test "a host missing the image's policy modules is refused before image-builder, and told which" {
-  policy_setup
+@test "a host whose policy lacks the image's types is refused before image-builder, and told which" {
+  policy_setup 1 lacks
   installer_build 1
-  [[ "${output}" == *"lacks modules the image ships: flatpak-selinux swtpm-selinux"* ]]
-  [[ "${output}" != *"container-selinux"* ]]
+  [[ "${output}" == *"lacks 2 type(s) the image labels with: bin_t systemd_clonesetup_generator_exec_t"* ]]
+  [[ "${output}" == *"PULSAR_ISO_PERMISSIVE=1"* ]]
   ! grep -q '^image-builder' "${LOG}" || false
-  ! grep -q '^dnf' "${LOG}"
+  ! grep -q '^setenforce' "${LOG}"
 }
 
-@test "PULSAR_ISO_INSTALL_POLICY=1 installs exactly the missing modules, then builds" {
-  policy_setup
-  PULSAR_ISO_INSTALL_POLICY=1 installer_build 0
-  grep -Fxq "dnf install -y flatpak-selinux swtpm-selinux" "${LOG}"
-  [ "$(grep -n '^dnf' "${LOG}" | cut -d: -f1)" -lt "$(grep -n '^image-builder' "${LOG}" | cut -d: -f1)" ]
+@test "PULSAR_ISO_PERMISSIVE=1: permissive for the whole image-builder run, enforcing again after" {
+  policy_setup 1 lacks
+  PULSAR_ISO_PERMISSIVE=1 installer_build 0
+  [ "$(grep -E '^(setenforce|image-builder)' "${LOG}" | cut -d' ' -f1-2)" = "$(printf 'setenforce 0\nimage-builder build\nsetenforce 1')" ]
   [ -f "${BATS_TEST_TMPDIR}/out/pulsar-vanilla-installer-${VERSION}.iso" ]
 }
 
-@test "the module list is read from the installer image, not the base" {
-  policy_setup
-  installer_build 1
-  grep -q '^podman run --rm --pull=never .* localhost/pulsar-installer:build ' "${LOG}"
+@test "an image-builder that fails still leaves the host enforcing" {
+  policy_setup 1 lacks
+  IB_FAIL=1 PULSAR_ISO_PERMISSIVE=1 installer_build 1
+  [ "$(grep '^setenforce' "${LOG}" | tail -1)" = "setenforce 1" ]
 }
 
-@test "a host with every module builds without installing anything" {
-  policy_setup
-  printf '#!/usr/bin/env bash\nexit 0\n' > "${BIN}/rpm"
-  installer_build 0
-  ! grep -q '^dnf' "${LOG}" || false
+@test "the labels are read from the installer image, not the base" {
+  policy_setup 1 lacks
+  installer_build 1
+  grep -q '^podman run --rm --pull=never .* localhost/pulsar-installer:build .*file_contexts' "${LOG}"
+}
+
+@test "a host that knows every type builds enforcing, whatever PULSAR_ISO_PERMISSIVE says" {
+  policy_setup 1 knows
+  PULSAR_ISO_PERMISSIVE=1 installer_build 0
+  ! grep -q '^setenforce' "${LOG}" || false
   grep -q '^image-builder build ' "${LOG}"
+}
+
+@test "a host already permissive, or without SELinux, builds without checking or switching" {
+  local e
+  for e in 0 none; do
+    : > "${LOG}"; rm -rf "${BATS_TEST_TMPDIR}/out"
+    policy_setup "$e" lacks
+    installer_build 0
+    ! grep -q '^setenforce' "${LOG}" || false
+    ! grep -q 'file_contexts' "${LOG}" || false
+    grep -q '^image-builder build ' "${LOG}"
+  done
+}
+
+@test "an installer image whose file_contexts can't be read stops the build" {
+  policy_setup 1 knows
+  sed -i 's/^  run) printf .*/  run) exit 1 ;;/' "${BIN}/podman"
+  PULSAR_ISO_PERMISSIVE=1 installer_build 1
+  [[ "${output}" == *"could not read the installer image's file_contexts"* ]]
+  ! grep -q '^image-builder' "${LOG}"
 }

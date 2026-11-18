@@ -66,37 +66,51 @@ podman build --pull=never -t localhost/pulsar-installer:build -f "$ctx/Container
   --build-arg PAYLOAD_TARGET="$TARGET" --build-arg VARIANT="$VARIANT" \
   --build-arg PAYLOAD_SIZE="$(podman image inspect --format '{{.Size}}' "$PAYLOAD")" "$ctx"
 
-# osbuild relabels the live tree from the tree's own file_contexts, but the
-# kernel accepts only labels whose types the HOST's loaded policy defines. The
-# image carries add-on policy modules (flatpak-selinux, swtpm-selinux, ...)
-# that a stock Fedora host lacks, and setfiles dies on the first such label
-# with "Invalid argument" after the image is built. That was the 2026-10-18
-# weekly: a Pulsar workstation has the same modules as the image, so only the
-# bare builder hit it. So: the packages that ship a module in the image
-# must be on the host. Installed only when asked (PULSAR_ISO_INSTALL_POLICY=1,
-# which the throwaway weekly builder sets); anywhere else, named and refused.
-policy_pkgs=$(podman run --rm --pull=never --entrypoint /bin/sh localhost/pulsar-installer:build -c \
-  'find /usr/share/selinux/packages -type f -print0 | xargs -0r rpm -qf --qf "%{NAME}\n"' | sort -u)
-missing=()
-for pkg in $policy_pkgs; do
-  rpm -q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
-done
-if [ ${#missing[@]} -gt 0 ]; then
-  if [ "${PULSAR_ISO_INSTALL_POLICY:-}" = 1 ]; then
-    echo "installing the image's SELinux policy modules on this host: ${missing[*]}"
-    dnf install -y "${missing[@]}"
-  else
-    echo "this host's SELinux policy lacks modules the image ships: ${missing[*]}" >&2
-    echo "osbuild cannot label the live tree without them. install them" >&2
-    echo "(dnf install ${missing[*]}), or set PULSAR_ISO_INSTALL_POLICY=1" >&2
+# osbuild labels the live tree from the image's own file_contexts, and the
+# kernel takes a label only when the HOST's loaded policy defines its type:
+# setfiles dies with "Invalid argument" on the first one it doesn't. A host
+# on an older Fedora than the image lacks base-policy types (2026-11-15: an
+# F44 builder, an F45 image, systemd_clonesetup_generator_exec_t), and a stock
+# host lacks the add-on modules the image ships (2026-10-18:
+# flatpak_helper_exec_t). No package install gives an F44 host F45's types.
+# A root process in permissive mode can write a label the policy doesn't
+# know, and it reads back as written only while the host stays permissive
+# (enforcing again, it reads as unlabeled_t), so the whole image-builder run
+# is permissive, not just its relabel. That is for a throwaway builder
+# (PULSAR_ISO_PERMISSIVE=1, which weekly.sh sets); anywhere else the build
+# is refused, naming the labels, before image-builder starts.
+SELINUXFS=${PULSAR_SELINUXFS:-/sys/fs/selinux}
+unknown=()
+if [ "$(cat "$SELINUXFS/enforce" 2>/dev/null)" = 1 ]; then
+  contexts=$(podman run --rm --pull=never --entrypoint /bin/sh localhost/pulsar-installer:build -c \
+      'cd /etc/selinux/targeted/contexts/files && cat file_contexts file_contexts.homedirs file_contexts.local 2>/dev/null' \
+    | grep -oE '[a-z_]+:object_r:[A-Za-z0-9_]+:s0' | sort -u) || true
+  [ -n "$contexts" ] || { echo "could not read the installer image's file_contexts" >&2; exit 1; }
+  while IFS= read -r c; do
+    # the kernel's own check: writing a context here fails if it is invalid
+    ( printf '%s' "$c" > "$SELINUXFS/context" ) 2>/dev/null || unknown+=("$(cut -d: -f3 <<<"$c")")
+  done <<<"$contexts"
+fi
+permissive=""
+if [ ${#unknown[@]} -gt 0 ]; then
+  echo "this host's SELinux policy lacks ${#unknown[@]} type(s) the image labels with: ${unknown[*]}" >&2
+  if [ "${PULSAR_ISO_PERMISSIVE:-}" != 1 ]; then
+    echo "osbuild cannot label the live tree here. build on a host whose policy has them" >&2
+    echo "(the image's Fedora release, with the image's policy modules), or, on a" >&2
+    echo "throwaway host, set PULSAR_ISO_PERMISSIVE=1" >&2
     exit 1
   fi
+  echo "permissive while image-builder runs (PULSAR_ISO_PERMISSIVE=1); enforcing again after"
+  setenforce 0
+  permissive=1
+  trap '[ -z "$permissive" ] || setenforce 1; rm -rf "$ctx"' EXIT
 fi
 
 mkdir -p "$OUT"
 image-builder build --bootc-ref localhost/pulsar-installer:build \
   --bootc-installer-payload-ref "$PAYLOAD" --bootc-default-fs btrfs \
   --output-dir "$OUT" bootc-generic-iso
+if [ -n "$permissive" ]; then setenforce 1; permissive=""; fi
 # image-builder names it bootc-fedora-44-bootc-generic-iso-x86_64.iso: the
 # name people see on their download is Pulsar's, with the image's version
 ver=$(skopeo inspect "containers-storage:$PAYLOAD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Labels"].get("org.opencontainers.image.version") or "dev")')

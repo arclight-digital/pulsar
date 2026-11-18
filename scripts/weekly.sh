@@ -113,10 +113,10 @@ if [ "${KIND}" = installer ] && ! command -v image-builder >/dev/null; then
   command -v image-builder >/dev/null \
     || { echo "image-builder still missing after dnf install" >&2; exit 2; }
 fi
-# The same footing for the SELinux modules the image ships: osbuild cannot
-# label the live tree on a host that lacks them. build-installer-iso.sh reads
-# the list from the image it builds, so it installs them, given leave.
-export PULSAR_ISO_INSTALL_POLICY=1
+# The builder is thrown away after the run, so build-installer-iso.sh may
+# put SELinux in permissive for image-builder when this host's policy lacks
+# types the image labels with (an older Fedora, or modules it lacks).
+export PULSAR_ISO_PERMISSIVE=1
 
 for variant in vanilla nvidia; do
   case "${variant}" in
