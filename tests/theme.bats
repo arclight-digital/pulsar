@@ -895,7 +895,9 @@ PY
 
 agent_homes() {
     printf '{\n  "numStartups": 3,\n  "projects": {}\n}\n' > "$HOME/.claude.json"
-    mkdir -p "$HOME/.gemini" "$XDG_CONFIG_HOME/opencode"
+    mkdir -p "$HOME/.claude" "$HOME/.gemini" "$XDG_CONFIG_HOME/opencode"
+    printf '{\n  "model": "opus"\n}\n' > "$HOME/.claude/settings.json"
+    printf '{}\n' > "$HOME/.gemini/settings.json"
 }
 jkey() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
 for p in sys.argv[2].split("."): d = d.get(p) if isinstance(d, dict) else None
@@ -905,11 +907,33 @@ print("" if d is None else d)' "$1" "$2"; }
     fake_dconf
     setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
     agent_homes
+    before=$(cat "$HOME/.claude.json")
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    [ "$(jkey "$HOME/.claude.json" theme)" = dark-ansi ]
-    [ "$(jkey "$HOME/.claude.json" numStartups)" = 3 ]
+    # settings.json, where Claude Code's /config has kept it since 2.1.119
+    [ "$(jkey "$HOME/.claude/settings.json" theme)" = dark-ansi ]
+    [ "$(jkey "$HOME/.claude/settings.json" model)" = opus ]
+    [ "$(cat "$HOME/.claude.json")" = "$before" ]
     [ "$(jkey "$HOME/.gemini/settings.json" ui.theme)" = ANSI ]
     [ "$(jkey "$XDG_CONFIG_HOME/opencode/tui.json" theme)" = system ]
+}
+
+@test "agents: opencode 2's cli.json gets the theme where it exists, and tui.json is left to 1.x" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    mkdir -p "$XDG_CONFIG_HOME/opencode"
+    printf '{"theme": {"mode": "system"}, "keybinds": {}}\n' > "$XDG_CONFIG_HOME/opencode/cli.json"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ "$(jkey "$XDG_CONFIG_HOME/opencode/cli.json" theme.name)" = system ]
+    [ "$(jkey "$XDG_CONFIG_HOME/opencode/cli.json" theme.mode)" = system ]
+    [ ! -e "$XDG_CONFIG_HOME/opencode/tui.json" ]
+}
+
+@test "agents: agy's ~/.gemini alone gets no Gemini CLI settings file" {
+    fake_dconf
+    setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
+    mkdir -p "$HOME/.gemini/config" "$HOME/.gemini/antigravity-cli"
+    python3 "$ENGINE" set pulsar --no-restart >/dev/null
+    [ ! -e "$HOME/.gemini/settings.json" ]
 }
 
 @test "agents: light avoids the ANSI themes that draw text in color 7" {
@@ -917,7 +941,7 @@ print("" if d is None else d)' "$1" "$2"; }
     setkey /org/gnome/desktop/interface/color-scheme "'default'"
     agent_homes
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    [ "$(jkey "$HOME/.claude.json" theme)" = light ]
+    [ "$(jkey "$HOME/.claude/settings.json" theme)" = light ]
     [ "$(jkey "$HOME/.gemini/settings.json" ui.theme)" = "Default Light" ]
 }
 
@@ -928,7 +952,7 @@ print("" if d is None else d)' "$1" "$2"; }
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     setkey /org/gnome/desktop/interface/color-scheme "'default'"
     python3 "$ENGINE" follow-scheme >/dev/null
-    [ "$(jkey "$HOME/.claude.json" theme)" = light ]
+    [ "$(jkey "$HOME/.claude/settings.json" theme)" = light ]
 }
 
 @test "agents: none installed means no agent config is created" {
@@ -936,6 +960,7 @@ print("" if d is None else d)' "$1" "$2"; }
     run python3 "$ENGINE" set pulsar --no-restart
     [ "$status" -eq 0 ]
     [ ! -e "$HOME/.claude.json" ]
+    [ ! -e "$HOME/.claude" ]
     [ ! -e "$HOME/.gemini" ]
     [ ! -e "$XDG_CONFIG_HOME/opencode/tui.json" ]
 }
@@ -948,18 +973,22 @@ print("" if d is None else d)' "$1" "$2"; }
     # the user picks their own theme in opencode afterwards
     printf '{"theme": "tokyonight"}\n' > "$XDG_CONFIG_HOME/opencode/tui.json"
     python3 "$ENGINE" revert --to image >/dev/null
-    [ -z "$(jkey "$HOME/.claude.json" theme)" ]
-    [ "$(jkey "$HOME/.claude.json" numStartups)" = 3 ]
-    [ ! -e "$HOME/.gemini/settings.json" ]
+    [ -z "$(jkey "$HOME/.claude/settings.json" theme)" ]
+    [ "$(jkey "$HOME/.claude/settings.json" model)" = opus ]
+    [ -z "$(jkey "$HOME/.gemini/settings.json" ui.theme)" ]
     [ "$(jkey "$XDG_CONFIG_HOME/opencode/tui.json" theme)" = tokyonight ]
 }
 
-@test "agents: a config that is not JSON is left alone" {
+@test "agents: a config that is not JSON, or holds the key as a non-object, is left alone" {
     fake_dconf
-    printf 'not json {' > "$HOME/.claude.json"
+    printf '{}\n' > "$HOME/.claude.json"
+    mkdir -p "$HOME/.claude" "$XDG_CONFIG_HOME/opencode"
+    printf 'not json {' > "$HOME/.claude/settings.json"
+    printf '{"theme": "tokyonight"}\n' > "$XDG_CONFIG_HOME/opencode/cli.json"
     run python3 "$ENGINE" set pulsar --no-restart
     [ "$status" -eq 0 ]
-    [ "$(cat "$HOME/.claude.json")" = "not json {" ]
+    [ "$(cat "$HOME/.claude/settings.json")" = "not json {" ]
+    [ "$(jkey "$XDG_CONFIG_HOME/opencode/cli.json" theme)" = tokyonight ]
 }
 
 # --- the user's own choices, and runs nobody asked for -------------------
@@ -971,26 +1000,28 @@ print("" if d is None else d)' "$1" "$2"; }
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
     conf="$XDG_CONFIG_HOME/btop/btop.conf"
     sed -i 's|^color_theme = .*|color_theme = "gruvbox_dark"|' "$conf"
-    python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["theme"]="dark-daltonized"; json.dump(d, open(p, "w"))' "$HOME/.claude.json"
+    python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["theme"]="dark-daltonized"; json.dump(d, open(p, "w"))' "$HOME/.claude/settings.json"
     setkey /org/gnome/desktop/interface/color-scheme "'default'"
     python3 "$ENGINE" follow-scheme >/dev/null
     grep -qx 'color_theme = "gruvbox_dark"' "$conf"
-    [ "$(jkey "$HOME/.claude.json" theme)" = dark-daltonized ]
+    [ "$(jkey "$HOME/.claude/settings.json" theme)" = dark-daltonized ]
     # the one the user did not touch still follows the flip
     [ "$(jkey "$HOME/.gemini/settings.json" ui.theme)" = "Default Light" ]
     grep -q '(light)' "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
     # and a full set is the user asking: it does overwrite
     python3 "$ENGINE" set pulsar --no-restart >/dev/null
-    [ "$(jkey "$HOME/.claude.json" theme)" = light ]
+    [ "$(jkey "$HOME/.claude/settings.json" theme)" = light ]
 }
 
 @test "first login keeps an agent theme the user chose before, and an editor scheme counts as their own look" {
     fake_dconf
     setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
-    printf '{"theme": "dark-daltonized"}\n' > "$HOME/.claude.json"
+    printf '{}\n' > "$HOME/.claude.json"
+    mkdir -p "$HOME/.claude"
+    printf '{"theme": "dark-daltonized"}\n' > "$HOME/.claude/settings.json"
     python3 "$ENGINE" init >/dev/null
     grep -q '"applied"' "$XDG_STATE_HOME/pulsar-theme/init.json"
-    [ "$(jkey "$HOME/.claude.json" theme)" = dark-daltonized ]
+    [ "$(jkey "$HOME/.claude/settings.json" theme)" = dark-daltonized ]
     rm -rf "$XDG_STATE_HOME/pulsar-theme"
     fake_dconf
     setkey /org/gnome/TextEditor/style-scheme "'classic'"
@@ -1030,12 +1061,14 @@ print("" if d is None else d)' "$1" "$2"; }
 @test "a lone surrogate in an agent's JSON survives set, still escaped, and the rest stays UTF-8" {
     fake_dconf
     setkey /org/gnome/desktop/interface/color-scheme "'prefer-dark'"
-    printf '{"history": [{"display": "x \\ud83d"}], "e": "\xc3\xa9"}\n' > "$HOME/.claude.json"
+    printf '{}\n' > "$HOME/.claude.json"
+    mkdir -p "$HOME/.claude"
+    printf '{"history": [{"display": "x \\ud83d"}], "e": "\xc3\xa9"}\n' > "$HOME/.claude/settings.json"
     run python3 "$ENGINE" set pulsar --no-restart
     [ "$status" -eq 0 ]
-    grep -qF '"display": "x \ud83d"' "$HOME/.claude.json"
-    grep -q '"e": "é"' "$HOME/.claude.json"
-    [ "$(jkey "$HOME/.claude.json" theme)" = dark-ansi ]
+    grep -qF '"display": "x \ud83d"' "$HOME/.claude/settings.json"
+    grep -q '"e": "é"' "$HOME/.claude/settings.json"
+    [ "$(jkey "$HOME/.claude/settings.json" theme)" = dark-ansi ]
 }
 
 @test "a dotfile symlinked inside home is written through and stays a link, with its mode" {

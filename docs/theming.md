@@ -65,9 +65,11 @@ transaction:
 - **wallpaper**: the pair.
 - **Shell**: two stylesheets in `~/.local/state/pulsar-theme/shell/`, layered
   over the stock Shell theme by the extension and swapped on Dark Style.
-- **terminal coding agents**, where set up: Claude Code (`~/.claude.json`
-  `theme`), Gemini CLI (`~/.gemini/settings.json` `ui.theme`) and opencode
-  (`~/.config/opencode/tui.json` `theme`) draw with the terminal's 16 colors.
+- **terminal coding agents**, where set up: Claude Code
+  (`~/.claude/settings.json` `theme`), Gemini CLI (`~/.gemini/settings.json`
+  `ui.theme`, only where that file exists) and opencode (opencode 2's
+  `~/.config/opencode/cli.json` `theme.name`, or 1.x's `tui.json` `theme`)
+  draw with the terminal's 16 colors. Antigravity CLI does by default.
   Light themes give Claude Code and Gemini their own light theme instead
   (their ANSI light modes use color 7, nearly the background). Redone on a
   Dark Style flip; revert takes back only that key. `--without agents`

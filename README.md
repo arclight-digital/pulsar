@@ -110,8 +110,8 @@ podman run --rm --device nvidia.com/gpu=all registry.fedoraproject.org/fedora nv
 
 ## Coding agents
 
-`pulsar agent add claude` installs Claude Code (or `codex`, `gemini`,
-`opencode`, `aider`) into a toolbox named `agents`. The image ships a guide
+`pulsar agent add claude` installs Claude Code (or `codex`, `agy` for
+Google's Antigravity CLI, or `opencode`) into a toolbox named `agents`. The image ships a guide
 for agents, `/usr/share/pulsar/AGENTS.md`, and `pulsar mcp` gives them the
 machine's health checks and status without root. `pulsar agent sandbox on`
 keeps an agent inside the current project, and `sudo pulsar agent guard on`

@@ -372,22 +372,23 @@ MD
     have_adw || skip "no PyGObject GTK 4 / libadwaita here"
     [ "$(id -u)" -eq 0 ] && skip "agent list refuses root; this runs as a user"
     # What `pulsar agent list --json` reports from the agent's files, read the
-    # way the welcome reads it once `agent add` has finished. Gemini CLI has no
-    # file Pulsar can link; Claude Code's rules link is in place.
+    # way the welcome reads it once `agent add` has finished. Codex already
+    # has an instructions file of the user's; Claude Code's rules link is in place.
     local guide="${REPO}/system_files/usr/share/pulsar/AGENTS.md"
-    mkdir -p "$HOME/.claude/rules"
+    mkdir -p "$HOME/.claude/rules" "$HOME/.codex"
     ln -s "$guide" "$HOME/.claude/rules/pulsar.md"
+    printf 'my own rules\n' > "$HOME/.codex/AGENTS.md"
     PATH=/usr/bin:/bin PULSAR_AGENTS_MD="$guide" "${REPO}/cli/pulsar" agent list --json > "${BATS_TEST_TMPDIR}/list.json"
-    run python3 - "$WELCOME" "${BATS_TEST_TMPDIR}/list.json" <<'PY'
+    run python3 - "$WELCOME" "${BATS_TEST_TMPDIR}/list.json" <<'PY2'
 import importlib.machinery, importlib.util, sys
 path, listed = sys.argv[1], sys.argv[2]; sys.argv = [path]
 loader = importlib.machinery.SourceFileLoader("pw", path)
 spec = importlib.util.spec_from_loader("pw", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
 rows = {r["name"]: r for r in m.agent_rows(open(listed).read())}
-for n in ("claude", "gemini"):
+for n in ("claude", "codex"):
     print(m.added_status(rows[n]).replace("\n", "|"))
-PY
+PY2
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "Claude Code is ready. Sign in once, then run <tt>claude</tt> from any terminal." ]
-    [ "${lines[1]}" = "Gemini CLI is ready. Sign in once, then run <tt>gemini</tt> from any terminal.|It doesn't have Pulsar's guide for agents. Add this line to <tt>~/.gemini/GEMINI.md</tt> to give it the guide:|<tt>@${guide}</tt>" ]
+    [ "${lines[1]}" = "Codex CLI is ready. Sign in once, then run <tt>codex</tt> from any terminal.|It doesn't have Pulsar's guide for agents. Add this line to <tt>~/.codex/AGENTS.md</tt> to give it the guide:|<tt>Read ${guide} before changing anything outside the project.</tt>" ]
 }

@@ -1286,7 +1286,9 @@ def json_set(text, key, value):
     for part in parts[:-1]:
         if value is None and not isinstance(chain[-1].get(part), dict):
             return json_text(obj)
-        chain.append(chain[-1].setdefault(part, {}))
+        if not isinstance(chain[-1].setdefault(part, {}), dict):
+            raise ValueError(f"{part} is not a JSON object")
+        chain.append(chain[-1][part])
     if value is None:
         chain[-1].pop(parts[-1], None)
         # and the parents it leaves empty ({"ui": {}} is not a setting)
@@ -1916,14 +1918,21 @@ class Agents(Target):
     Ptyxis wears -- which is this theme. Only agents that are already set up
     here: a config file is never created for an agent nobody installed.
 
-      Claude Code  ~/.claude.json "theme": dark-ansi. Light gets Claude's own
-                   "light": its light-ansi draws code in ANSI color 7, which
-                   every light palette puts a shade off the background
+      Claude Code  ~/.claude/settings.json "theme": dark-ansi, where /config
+                   has saved it since 2.1.119 (and where it beats the older
+                   ~/.claude.json). Light gets Claude's own "light": its
+                   light-ansi draws code in ANSI color 7, which every light
+                   palette puts a shade off the background
                    (anthropics/claude-code#40905).
       Gemini CLI   ~/.gemini/settings.json ui.theme: "ANSI"; light gets
-                   "Default Light", for the same reason until checked.
-      opencode     ~/.config/opencode/tui.json theme: "system", which follows
-                   the terminal in both variants.
+                   "Default Light", for the same reason until checked. Only
+                   where that file exists: agy shares ~/.gemini but not it.
+      opencode     theme "system", which follows the terminal in both
+                   variants: opencode 2's ~/.config/opencode/cli.json
+                   theme.name where it exists, else 1.x's tui.json, which 2
+                   copies into cli.json on its first start.
+
+    agy needs nothing: its colorScheme defaults to "terminal".
 
     Like GTK3 it is written for the scheme in effect, and follow-scheme
     redoes it when Dark Style flips."""
@@ -1933,11 +1942,14 @@ class Agents(Target):
         dark = mode == "dark"
         out = []
         if (HOME / ".claude.json").is_file():
-            out.append((HOME / ".claude.json", "theme", "dark-ansi" if dark else "light"))
-        if (HOME / ".gemini").is_dir():
+            out.append((HOME / ".claude" / "settings.json", "theme", "dark-ansi" if dark else "light"))
+        if (HOME / ".gemini" / "settings.json").is_file():
             out.append((HOME / ".gemini" / "settings.json", "ui.theme", "ANSI" if dark else "Default Light"))
         if (CONFIG / "opencode").is_dir():
-            out.append((CONFIG / "opencode" / "tui.json", "theme", "system"))
+            if (CONFIG / "opencode" / "cli.json").is_file():
+                out.append((CONFIG / "opencode" / "cli.json", "theme.name", "system"))
+            else:
+                out.append((CONFIG / "opencode" / "tui.json", "theme", "system"))
         return out
 
     def available(self):
@@ -1950,8 +1962,8 @@ class Agents(Target):
             text = uread(path) if path.exists() else ""
             try:
                 new = json_set(text, key, value)
-            except ValueError:
-                print(f"pulsar-theme: {path} is not JSON; leaving it alone", file=sys.stderr)
+            except ValueError as e:
+                print(f"pulsar-theme: {path}: {e}; leaving it alone", file=sys.stderr)
                 continue
             if json_get(text, key) != value:
                 tx.edit(path, new, {"kind": "json", "keys": [key]})

@@ -52,8 +52,8 @@ PAGES = (("appearance", "Appearance", "applications-graphics-symbolic"),
          ("agents", "Agents", "utilities-terminal-symbolic"))
 
 # what `pulsar agent list` calls them
-AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex CLI", "gemini": "Gemini CLI",
-               "opencode": "opencode", "aider": "aider"}
+AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex CLI", "agy": "Antigravity CLI",
+               "opencode": "opencode", "gemini": "Gemini CLI", "aider": "aider"}
 TMUX_SOCKET = "pulsar-agents"
 
 

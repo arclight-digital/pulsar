@@ -121,7 +121,12 @@ What it sees:
     read-only** from the real ones;
   - the **login is the only thing copied back**, so you sign in once for both
     modes, and only if it's still JSON, changed inside, and your copy didn't
-    change meanwhile.
+    change meanwhile. Two exceptions sign in separately inside the sandbox.
+    agy keeps its login in the keyring, which the sandbox can't reach; with
+    no session bus it falls back to a file in its own home, but signing in
+    that way hasn't been tested yet. opencode 2 keeps its login in
+    `opencode.db`, which isn't copied; only a login from opencode 1.x
+    (`auth.json`) comes in.
 
   It isn't your real `~/.claude` because an agent that could write its own
   settings could add a hook or MCP server your unsandboxed agent would run on
@@ -134,7 +139,9 @@ projects, the session bus, `flatpak-spawn`. It refuses to start from `$HOME`
 itself.
 
 **Project agent config** (`.claude/`, `.mcp.json`, `.codex/`, `.gemini/`,
-`.opencode/`, `opencode.json`) is read-only inside if it exists. One the
+`.agents/`, `.opencode/`, `opencode.json`) is read-only inside if it exists.
+`.agents/` is where agy reads a project's hooks and MCP servers, and where
+Codex, opencode and agy read its skills. One the
 sandbox *creates* is renamed to `<name>.from-sandbox` at session end, so no
 agent loads it until you've read it.
 
@@ -241,8 +248,8 @@ Without a checkpoint:
 ## The MCP server
 
 `pulsar mcp` is an MCP server on stdio. `pulsar agent add` registers it (as
-`pulsar`, only if no entry exists) with Claude Code, Codex, Gemini CLI and
-opencode. Tools are the CLI's `--json` answers: `doctor`, `status`,
+`pulsar`, only if no entry exists) with Claude Code, Codex, Antigravity
+CLI (`~/.gemini/config/mcp_config.json`), Gemini CLI and opencode. Tools are the CLI's `--json` answers: `doctor`, `status`,
 `manifest`, `report`, `crashes`, `update_check`, `agent_status`,
 `theme_list`, `theme_current`, plus the guide as a resource.
 
@@ -306,14 +313,24 @@ rebooting, rollback and its limits, logs, and what not to touch.
      `~/.claude/CLAUDE.md` alone).
    - Codex CLI: `$CODEX_HOME/AGENTS.md` (default `~/.codex`).
    - opencode: `~/.config/opencode/AGENTS.md`.
+   - Antigravity CLI (`agy`): `~/.gemini/config/rules/pulsar.md`, a file
+     rather than a link. agy drops a rules file without a `trigger` in its
+     front matter, so this one is five lines that set `trigger: always_on`
+     and include the guide with `@[Pulsar machine guide](/usr/share/pulsar/AGENTS.md)`.
    - Gemini CLI: a printed hint to add `@/usr/share/pulsar/AGENTS.md` to
      `~/.gemini/GEMINI.md` (a symlink would break `/memory add`).
    - aider: the shim passes `--read /usr/share/pulsar/AGENTS.md`.
 
    It also links each skill in `/usr/share/pulsar/skills/` into the agent's
-   skills folder (`~/.claude/skills`, `$CODEX_HOME/skills`,
-   `~/.gemini/skills`, `~/.config/opencode/skills`), never over a folder of
-   yours with the same name.
+   skills folder (`~/.claude/skills`, `~/.agents/skills` for Codex,
+   `~/.gemini/config/skills` for agy, `~/.gemini/skills`,
+   `~/.config/opencode/skills`), never over a folder of yours with the same
+   name.
+
+   Gemini CLI and aider are no longer offered in `pulsar agent list`, but
+   `agent add`, `run` and `remove` still work for them. Google moved free
+   and AI Pro/Ultra accounts from Gemini CLI to Antigravity CLI on
+   2026-06-18, and aider has had no release since 2026-02-12.
 
    **Vendor-installed agents** (e.g. Claude Code's `install.sh` writing
    `~/.local/bin/claude`) are left as they are: `agent add` installs nothing

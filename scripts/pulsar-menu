@@ -31,8 +31,8 @@ import sys
 
 PULSAR = os.environ.get("PULSAR_CLI", "/usr/bin/pulsar")
 LIBEXEC = os.environ.get("PULSAR_LIBEXEC", "/usr/libexec/pulsar")
-AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex CLI", "gemini": "Gemini CLI",
-               "opencode": "opencode", "aider": "aider"}
+AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex CLI", "agy": "Antigravity CLI",
+               "opencode": "opencode", "gemini": "Gemini CLI", "aider": "aider"}
 
 
 def terminal(*argv, hold=True):
