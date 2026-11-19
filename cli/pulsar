@@ -4750,6 +4750,7 @@ agent_session_json() {
         --arg live "$([ -n "$row" ] && echo 1)" --arg created "$created" --arg alert "$alert" \
         --arg archived "$(session_get "$n" archived || true)" --arg title "$(session_get "$n" title || true)" \
         --arg last "$last" --arg project "$project" --arg exited "$exited" \
+        --arg sandbox "$(session_get "$n" sandbox || true)" \
         --argjson snaps "$snaps" --argjson usage "$u" \
         'def num: if . == "" then null else tonumber end;
          def str: if . == "" then null else . end;
@@ -4763,7 +4764,8 @@ agent_session_json() {
           snapshots: $snaps, usage: $usage,
           archived: ($archived | num), title: ($title | str),
           last_active: ($last | num), project: ($project | str),
-          exited: (if $live == "" then null else ($exited | num) end)}'
+          exited: (if $live == "" then null else ($exited | num) end),
+          sandbox: ($sandbox | str)}'
 }
 
 # ---------------------------------------------------------------------------

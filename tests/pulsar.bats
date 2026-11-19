@@ -4639,7 +4639,7 @@ agent_args() {
     [ "$status" -ne 0 ] || fail "--title nope"
 }
 
-@test "agent sessions --json: project, last_active and archived for the Agents app" {
+@test "agent sessions --json: project, last_active, archived and sandbox for the Agents app" {
     wt_env
     "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
     mkdir -p "${PROJ}/sub" "${HOME}/plain"
@@ -4653,6 +4653,11 @@ agent_args() {
     [ "$(jq -r '.[] | select(.name == "bare") | .project' <<<"$output")" = "$(cd "${HOME}/plain" && pwd -P)" ] || fail "$output"
     [ "$(jq -r '.[] | select(.name == "fix") | .last_active' <<<"$output")" = 1700000123 ] || fail "$output"
     [ "$(jq -r '[.[].archived] | unique | .[0]' <<<"$output")" = null ]
+    # sandboxed or not, from the record: the app's lock and where it reads the agent's files
+    [ "$(jq -r '.[] | select(.name == "bare") | .sandbox' <<<"$output")" = off ] || fail "$output"
+    sed -i 's/^sandbox=.*/sandbox=on/' "${REC}/deep.session"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "deep") | .sandbox' <<<"$output")" = on ] || fail "$output"
     # ended: when its record was last touched, which the pane does as the agent exits
     rm "${TMUX_LIVE}/fix"
     touch -d @1600000000 "${REC}/fix.session"
