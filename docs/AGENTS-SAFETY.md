@@ -282,8 +282,11 @@ reading it is reading untrusted text.
 
 A message from `session_message` reaches the other agent with a label naming
 the sender, only once that agent has ended its turn. A Claude Code session
-gets it from its own Stop hook: the hook answers "keep going" with the
-messages, and nothing is typed. Every other agent gets it typed into its
+gets it from its own hooks, and nothing is typed: at the end of a turn its
+Stop hook answers "keep going" with the messages, and while it sits idle a
+background hook (`asyncRewake`) waits up to an hour for mail and wakes it
+with the messages. That can happen while you're looking at the session; it
+doesn't touch what you're typing. Every other agent gets it typed into its
 prompt with Enter, so for them it waits until the agent sits at its own
 prompt (the turn-end hooks Pulsar gives Codex and Antigravity CLI) and nobody
 is looking at the session. It never goes in on a permission question, where

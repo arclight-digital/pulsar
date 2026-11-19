@@ -89,8 +89,9 @@ CLI, and opencode moves to version 2.
 - Each message has an id. `pulsar agent inbox` lists a session's messages
   both ways, `send --reply-to <id>` answers one, and the Messages tab
   beside Changes and History shows the open session's. A Claude Code
-  session gets its mail through its Stop hook as its turn ends, so nothing
-  is typed into it; the others still get it typed into their prompt.
+  session gets its mail through its own hooks, at the end of a turn or as
+  it arrives while the session sits idle, so nothing is typed into it. The
+  others still get it typed into their prompt.
 - `pulsar job run -- <command>` runs a long command in a tmux of its own,
   keeps its output (`pulsar job log`), and notifies you when it ends.
   `--notify <session>` also tells that agent session how it ended.

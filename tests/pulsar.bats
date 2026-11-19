@@ -6286,11 +6286,14 @@ msg_env() {
     export PULSAR_AGENT_CONF="${BATS_TEST_TMPDIR}/agent.conf" PULSAR_AGENT_PROJECTS="${BATS_TEST_TMPDIR}/agent-projects"
     # the servers' sockets in the test's own folder, gone with it
     export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+    # no Claude here to take mail: don't wait for one (the waiter test does)
+    export PULSAR_MAIL_WAIT=0
     mkdir -p "$HOME" "$STUB" "$PULSAR_AGENT_SESSIONS"
     local real; real=$(command -v tmux)
     cat > "${STUB}/tmux" <<SH
 #!/bin/sh
 case " \$* " in
+    *" paste-buffer "*) [ -z "\${MAIL_AT_PASTE:-}" ] || [ ! -e "\$MAIL_AT_PASTE" ] || echo present > "\${MAIL_AT_PASTE}.seen" ;;
     *" list-clients "*) [ -z "\${FAKE_WATCHING:-}" ] || { printf '%s\t%s\n' "\$FAKE_WATCHING" "\${FAKE_FLAGS:-attached,focused,UTF-8}"; exit 0; } ;;
 esac
 exec "$real" "\$@"
@@ -6492,8 +6495,8 @@ pane_of() { "${T[@]}" capture-pane -p -J -t "=$1:"; }
 
 # Claude's Stop hook command, as Pulsar gives it to Claude for conversation $1
 stop_hook() {
-    bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR'); agent_alert_settings '$1'" \
-        | jq -r ".hooks.${2:-Stop}[0].hooks[0].command"
+    bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^MAIL_WAIT_TICKS=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR'); agent_alert_settings '$1'" \
+        | jq -r ".hooks.${2:-Stop}[${3:-0}].hooks[0].command"
 }
 
 @test "inbox: a Claude session's mail goes in through its Stop hook at the turn's end, nothing typed, in a sandbox too" {
@@ -6563,4 +6566,48 @@ stop_hook() {
     run "$PULSAR" agent inbox a --keep
     [[ "$output" == *"from outside a session  "* ]] || fail "$output"
     run "$PULSAR" agent inbox 'a;b'; [ "$status" -ne 0 ]
+}
+
+
+@test "inbox: an idle Claude's mail waiter takes a message as it arrives and wakes it, nothing typed, even while you watch" {
+    msg_env
+    msg_session a
+    local alerts="${HOME}/.local/state/pulsar/agent-alerts"
+    # the settings: Stop's mail check, then the waiter, backgrounded and waking; one at session start too
+    local settings; settings=$(bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^MAIL_WAIT_TICKS=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR'); agent_alert_settings sid-a")
+    [ "$(jq -c '.hooks.Stop[1].hooks[0] | [.async, .asyncRewake, .timeout]' <<<"$settings")" = '[true,true,3660]' ] || { msg_teardown; fail "$settings"; }
+    [ "$(jq -r '.hooks.SessionStart[0].hooks[0].command' <<<"$settings")" = "$(jq -r '.hooks.Stop[1].hooks[0].command' <<<"$settings")" ] || { msg_teardown; fail "$settings"; }
+    # Claude idle at its prompt with its waiter running, and you looking at it
+    "${T[@]}" set-option -t =a: @pulsar-alert Stop
+    sleep 30 3>&- & local sp=$!
+    local err="${BATS_TEST_TMPDIR}/rewake"
+    local waiter; waiter=$(PULSAR_MAIL_WAIT_TICKS=20 stop_hook sid-a Stop 1)
+    ( rc=0; echo '{"hook_event_name":"Stop"}' | CLAUDE_PID=$sp sh -c "$waiter" 2>"$err" >/dev/null || rc=$?
+      echo "exit $rc" >> "${err}.status" ) 3>&- &
+    local wp=$!
+    FAKE_WATCHING=a PULSAR_MAIL_WAIT=5 run "$PULSAR" agent send a --from b "the build is green"
+    wait "$wp" || true
+    [[ "$output" == "delivered to a (m"* ]] || { kill $sp; msg_teardown; fail "$output"; }
+    [ "$(cat "${err}.status")" = "exit 2" ] || { kill $sp; msg_teardown; fail "$(cat "${err}.status")"; }
+    [[ "$(cat "$err")" == "[From the agent session b, via Pulsar, id m"*$'\n'"the build is green" ]] || { kill $sp; msg_teardown; fail "$(cat "$err")"; }
+    [[ "$(pane_of a)" != *"build is green"* ]] || { kill $sp; msg_teardown; fail "typed"; }
+    # its bell: delivered, and it's working
+    "$PULSAR" agent notify a
+    [ ! -s "${PULSAR_AGENT_SESSIONS}/a.inbox" ] && [ ! -e "${alerts}/sid-a.mail.taken" ] || { kill $sp; msg_teardown; fail "still queued"; }
+    [ -z "$("${T[@]}" show-options -v -t =a: @pulsar-alert 2>/dev/null)" ] || { kill $sp; msg_teardown; fail "waiting"; }
+    # no waiter (an old session, or it gave up): typed, once, after the wait
+    "${T[@]}" set-option -t =a: @pulsar-alert Stop
+    PULSAR_MAIL_WAIT=1 MAIL_AT_PASTE="${alerts}/sid-a.mail" run "$PULSAR" agent send a --from b "second"
+    # taken back before the paste, so a waiter starting now can't give it again
+    [ ! -e "${alerts}/sid-a.mail.seen" ] || { kill $sp; msg_teardown; fail "mail still there as it was typed"; }
+    sleep 0.4
+    local pane; pane=$(pane_of a)
+    kill $sp
+    msg_teardown
+    [[ "$output" == "delivered to a (m"* ]] || fail "$output"
+    [[ "$pane" == *"second"* ]] || fail "$pane"
+    [ ! -e "${alerts}/sid-a.mail" ] || fail "mail left after typing"
+    # a waiter with nothing to take gives up, quietly
+    run env CLAUDE_PID=999999999 sh -c "$(PULSAR_MAIL_WAIT_TICKS=1 stop_hook sid-a Stop 1)" <<<'{}'
+    [ "$status" -eq 0 ] && [ -z "$output" ] || fail "$status $output"
 }
