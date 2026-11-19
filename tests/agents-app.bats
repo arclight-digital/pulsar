@@ -396,3 +396,20 @@ print(m.context_text({"context": 142310, "window": 1_000_000, "percent": 14.231}
     [ "${lines[1]}" = "1M 1.5M 272k" ]
     [ "${lines[2]}" = "142k of 1M · 14% | 42k" ]
 }
+
+@test "a session's icon comes from its name alone: the same every time, mirrored, never too sparse to read" {
+    run gui '
+a = g.session_glyph("fix-the-flaky-login"); b = g.session_glyph("fix-the-flaky-login"); c = g.session_glyph("gui")
+print(a == b, a != c)
+for n in ("fix-the-flaky-login", "gui", "blog", "pulsar", "pulsar-2", "", "x"):
+    hue, cells = g.session_glyph(n)
+    assert 0 <= hue < 360, hue
+    assert all((r, 4 - col) in cells for r, col in cells), n
+    assert len(cells) >= 6 and all(0 <= r < 5 and 0 <= col < 5 for r, col in cells), n
+print(g.session_glyph("gui"))
+print([round(v, 2) for v in g.hsl_rgb(0, 1, .5)], [round(v, 2) for v in g.hsl_rgb(120, 1, .5)])'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "True True" ]
+    [ "${lines[1]}" = "(304, [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (2, 1), (2, 2), (2, 3), (3, 0), (3, 1), (3, 3), (3, 4)])" ]
+    [ "${lines[2]}" = "[1.0, 0.0, 0.0] [0.0, 1.0, 0.0]" ]
+}

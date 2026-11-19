@@ -39,7 +39,8 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter, home, parse,  # noqa: E402,F401
+from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
+                        session_glyph, hsl_rgb, home, parse,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -47,8 +48,6 @@ from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line,
 POLL_S = 3
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
          HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
-# the sidebar's tile per agent: two letters, since three of them start with C or A
-AGENT_TILES = {"claude": "Cl", "codex": "Cx", "agy": "Ag", "opencode": "Oc", "gemini": "Ge", "aider": "Ai"}
 TIDY_DAYS = 7
 SANDBOX_CHOICES = (("As set for this project", None), ("On", True), ("Off", False))
 STATE_FILE = pathlib.Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")) \
@@ -65,6 +64,10 @@ CSS = """
 .pulsar-agents .tile { min-width: 34px; min-height: 34px; border-radius: 10px; font-weight: 700; font-size: .9em;
                        background-color: alpha(currentColor, .06); color: alpha(currentColor, .75);
                        transition: all 140ms ease-out; }
+.pulsar-agents .tile.glyph, .pulsar-agents .sessions row.session:selected .tile.glyph,
+.pulsar-agents .resume-card:hover .tile.glyph, .pulsar-agents .statusbar .tile.mini.glyph { background: none; }
+.pulsar-agents .tile.glyph.needs { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 12px alpha(@accent_color, .45); }
+.pulsar-agents .sessions row.session:selected .tile.glyph { box-shadow: 0 0 0 1px alpha(currentColor, .25); }
 .pulsar-agents .tile.needs { background-color: alpha(@accent_color, .22); color: @accent_color;
                              box-shadow: 0 0 12px alpha(@accent_color, .35); }
 @keyframes working {
@@ -1034,6 +1037,46 @@ class Agents(Adw.ApplicationWindow):
         GLib.timeout_add_seconds(2, lambda: self.refresh() and False)
 
 
+class SessionIcon(Gtk.DrawingArea):
+    """A session's own icon (session_glyph): its pattern in its hue on a
+    tile tinted with it. The same name always draws the same icon, so two
+    sessions of one agent are told apart at a glance."""
+
+    def __init__(self, name, size):
+        super().__init__(content_width=size, content_height=size, css_classes=["tile", "glyph"])
+        self.size = size
+        self.glyph = None
+        self.set_draw_func(self._draw)
+        Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self.queue_draw())
+        self.set_glyph(name)
+
+    def set_glyph(self, name):
+        g = session_glyph(name) if name else None
+        if g != self.glyph:
+            self.glyph = g
+            self.queue_draw()
+
+    def _draw(self, _a, cr, w, h):
+        if not self.glyph:
+            return
+        hue, cells = self.glyph
+        dark = Adw.StyleManager.get_default().get_dark()
+        r, g, b = hsl_rgb(hue, .62, .66 if dark else .44)
+        rad = round(w * .29)
+        cr.new_sub_path()
+        for cx, cy, a0 in ((w - rad, rad, -90), (w - rad, h - rad, 0), (rad, h - rad, 90), (rad, rad, 180)):
+            cr.arc(cx, cy, rad, a0 * 3.14159265 / 180, (a0 + 90) * 3.14159265 / 180)
+        cr.close_path()
+        cr.set_source_rgba(r, g, b, .17 if dark else .14)
+        cr.fill()
+        pad = w * .22
+        cell = (w - 2 * pad) / 5
+        cr.set_source_rgba(r, g, b, .95)
+        for row, col in cells:
+            cr.rectangle(pad + col * cell + .3, pad + row * cell + .3, cell - .6, cell - .6)
+        cr.fill()
+
+
 def meter_bar(width=-1):
     bar = Gtk.LevelBar(min_value=0, max_value=100, css_classes=["meter"], valign=Gtk.Align.CENTER,
                        width_request=width, visible=False)
@@ -1095,7 +1138,8 @@ class StatusBar:
                 b.append(k)
             return b
 
-        self.tile = Gtk.Label(css_classes=["tile", "mini"])
+        self.tile = SessionIcon(None, 22)
+        self.tile.add_css_class("mini")
         self.model = Gtk.Label(css_classes=["strong"])
         self.who = seg(self.tile, self.model)
         self.dot = Gtk.Box(css_classes=["title-dot"], valign=Gtk.Align.CENTER)
@@ -1133,7 +1177,7 @@ class StatusBar:
             return
         m = s.get("meter") or {}
         agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand")
-        self.tile.set_label(AGENT_TILES.get(s.get("agent"), agent[:1].upper()))
+        self.tile.set_glyph(s["name"])
         self.model.set_label(model_name(m.get("model")) or agent)
         self.tile.set_tooltip_text(agent)
         st = s.get("state")
@@ -1248,7 +1292,8 @@ class SessionRow(Gtk.ListBoxRow):
         self.win = win
         self.name = name
         box = Gtk.Box(spacing=10, margin_top=5, margin_bottom=5, margin_start=2, margin_end=2)
-        self.tile = Gtk.Label(css_classes=["tile"], valign=Gtk.Align.CENTER)
+        self.tile = SessionIcon(name, 34)
+        self.tile.set_valign(Gtk.Align.CENTER)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
         self.label = Gtk.Label(label=name, xalign=0, css_classes=["session-title"], ellipsize=Pango.EllipsizeMode.END)
         self.sub = Gtk.Label(xalign=0, css_classes=["caption", "dim-label"], ellipsize=Pango.EllipsizeMode.END)
@@ -1311,7 +1356,6 @@ class SessionRow(Gtk.ListBoxRow):
 
     def update(self, s, now, unseen):
         agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand")
-        self.tile.set_label(AGENT_TILES.get(s.get("agent"), agent[:1].upper()))
         self.tile.set_tooltip_text(agent)
         self.label.set_label(session_title(s))
         self.sub.set_label(session_status(s, now))
@@ -1772,8 +1816,9 @@ class Launcher:
         for s in ss[:3]:
             agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "")
             box = Gtk.Box(spacing=10)
-            tile = Gtk.Label(label=AGENT_TILES.get(s.get("agent"), agent[:1].upper()), css_classes=["tile"],
-                             valign=Gtk.Align.CENTER)
+            tile = SessionIcon(s["name"], 34)
+            tile.set_valign(Gtk.Align.CENTER)
+            tile.set_tooltip_text(agent)
             if s.get("state") == "waiting":
                 tile.add_css_class("needs")
             elif s.get("state") == "running":

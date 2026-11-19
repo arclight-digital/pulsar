@@ -623,3 +623,29 @@ def resets_in(ts, now):
     except (TypeError, ValueError):
         return None
     return "resets now" if d <= 0 else f"resets in {ago(d)}"
+
+
+# ---------------------------------------------------------- session icons --
+def session_glyph(name):
+    """A session's own icon, the same every time for the same name: a 5x5
+    pattern mirrored left to right (15 cells chosen, at least 6 lit) and a
+    hue, both from the name's SHA-256. Returns (hue 0-359, [(row, col)])."""
+    import hashlib
+    h = hashlib.sha256((name or "").encode()).digest()
+    bits = int.from_bytes(h[:4], "big")
+    cells = []
+    for i in range(15):
+        if bits >> i & 1:
+            r, c = divmod(i, 3)
+            cells += [(r, c)] + ([(r, 4 - c)] if c < 2 else [])
+    if len({(r, c) for r, c in cells}) < 6:
+        # too sparse to read: the middle column lit, then as chosen
+        cells += [(r, 2) for r in range(5)]
+    hue = int.from_bytes(h[4:6], "big") % 360
+    return hue, sorted(set(cells))
+
+
+def hsl_rgb(h, s, l):
+    """HSL (h in degrees, s and l 0-1) to RGB 0-1."""
+    import colorsys
+    return colorsys.hls_to_rgb(h / 360, l, s)
