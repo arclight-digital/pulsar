@@ -49,35 +49,76 @@ STATE_FILE = pathlib.Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser
     / "pulsar" / "agents-app.json"
 
 CSS = """
-.pulsar-agents .sessions row.session { border-radius: 10px; margin: 1px 6px; }
+.pulsar-agents .sessions row.session { border-radius: 12px; margin: 1px 8px; transition: background-color 120ms ease-out; }
 .pulsar-agents .sessions row.session:selected { background-color: alpha(@accent_color, .13); }
-.pulsar-agents .sessions row.project { margin: 10px 6px 2px 6px; border-radius: 8px; }
-.pulsar-agents .project-label { font-weight: 700; font-size: .84em; opacity: .7; }
-.pulsar-agents .tile { min-width: 30px; min-height: 30px; border-radius: 9px; font-weight: 700;
-                       background-color: alpha(currentColor, .07); color: alpha(currentColor, .75); }
-.pulsar-agents .sessions row.session:selected .tile { background-color: alpha(@accent_color, .2); color: @accent_color;
-                                              box-shadow: 0 0 10px alpha(@accent_color, .3); }
-.pulsar-agents .dot { min-width: 8px; min-height: 8px; border-radius: 4px; }
-.pulsar-agents .dot.waiting, .pulsar-agents .dot.unseen
-    { background-color: @accent_color; box-shadow: 0 0 6px alpha(@accent_color, .6); }
-.pulsar-agents .dot.running { background-color: alpha(currentColor, .45); }
+.pulsar-agents .sessions row.session:selected:hover { background-color: alpha(@accent_color, .17); }
+.pulsar-agents .sessions row.project { margin: 14px 8px 2px 8px; border-radius: 8px; min-height: 0; padding: 2px 0; }
+.pulsar-agents .project-label { font-size: .8em; font-weight: 700; color: alpha(currentColor, .5); }
+.pulsar-agents row.project .fold { opacity: 0; transition: opacity 120ms; }
+.pulsar-agents row.project:hover .fold, .pulsar-agents row.project.collapsed .fold { opacity: .5; }
+.pulsar-agents .tile { min-width: 34px; min-height: 34px; border-radius: 10px; font-weight: 700; font-size: .9em;
+                       background-color: alpha(currentColor, .06); color: alpha(currentColor, .75);
+                       transition: all 140ms ease-out; }
+.pulsar-agents .tile.needs { background-color: alpha(@accent_color, .22); color: @accent_color;
+                             box-shadow: 0 0 12px alpha(@accent_color, .35); }
+@keyframes working {
+    0% { box-shadow: 0 0 0 0 alpha(@accent_color, 0); }
+    50% { box-shadow: 0 0 10px 1px alpha(@accent_color, .4); }
+    100% { box-shadow: 0 0 0 0 alpha(@accent_color, 0); } }
+.pulsar-agents .tile.working { color: @accent_color; animation: working 2.6s ease-in-out infinite; }
+.pulsar-agents .sessions row.session:selected .tile { background-color: alpha(@accent_color, .2); color: @accent_color; }
 .pulsar-agents .session-title { font-weight: 600; }
-.pulsar-agents row.session .archive { opacity: 0; }
-.pulsar-agents row.session:hover .archive, .pulsar-agents row.session:selected .archive { opacity: .7; }
-.pulsar-agents vte-terminal { padding: 6px 10px; }
-.pulsar-agents .rail-head { padding: 6px 10px; }
-.pulsar-agents .rail { background-color: @view_bg_color; box-shadow: inset 1px 0 alpha(currentColor, .08); }
-.pulsar-agents .files row { padding: 3px 8px; }
+.pulsar-agents row.session:selected .session-title { text-shadow: 0 0 8px alpha(@accent_color, .45); }
+.pulsar-agents label.needs { opacity: 1; color: @accent_color; font-weight: 600; }
+.pulsar-agents .dot { min-width: 7px; min-height: 7px; border-radius: 4px; }
+.pulsar-agents .dot.unseen, .pulsar-agents .dot.waiting
+    { background-color: @accent_color; box-shadow: 0 0 6px alpha(@accent_color, .6); }
+.pulsar-agents row.session .archive { opacity: 0; transition: opacity 120ms; }
+.pulsar-agents row.session:hover .archive { opacity: .6; }
+.pulsar-agents .footer-button { font-size: .85em; color: alpha(currentColor, .55); }
+.pulsar-agents vte-terminal { padding: 8px 14px; }
+.pulsar-agents .stage headerbar { background: none; box-shadow: none; }
+.pulsar-agents .launch-entry { font-size: 1.3em; min-height: 46px; background: none; box-shadow: none;
+                               outline: none; padding: 0 2px; caret-color: @accent_color; }
+.pulsar-agents .launch-icon { color: @accent_color; -gtk-icon-size: 22px; }
+.pulsar-agents .launch-label { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 8px; }
+.pulsar-agents .chip { border-radius: 999px; padding: 4px 12px; min-height: 0; font-weight: 500; }
+.pulsar-agents button.chip:checked { background-color: alpha(@accent_color, .2); color: @accent_color;
+                                           box-shadow: 0 0 10px alpha(@accent_color, .25); }
+.pulsar-agents dropdown.chip > button { border-radius: 999px; padding: 4px 12px; min-height: 0; }
+.pulsar-agents .rail-head { padding: 4px 10px; }
+.pulsar-agents .files row { padding: 4px 8px; border-radius: 8px; }
+.pulsar-agents .badge { font-family: monospace; font-weight: 700; font-size: .78em; min-width: 18px;
+                        border-radius: 5px; padding: 1px 0; }
+.pulsar-agents .badge.modified { color: @warning_color; background-color: alpha(@warning_color, .12); }
+.pulsar-agents .badge.added { color: @success_color; background-color: alpha(@success_color, .12); }
+.pulsar-agents .badge.deleted { color: @error_color; background-color: alpha(@error_color, .12); }
+.pulsar-agents .badge.renamed { color: @accent_color; background-color: alpha(@accent_color, .12); }
+.pulsar-agents .count { font-family: monospace; font-size: .82em; }
 .pulsar-agents .added { color: @success_color; }
 .pulsar-agents .removed { color: @error_color; }
-.pulsar-agents .composer { padding: 8px 10px 10px 10px; }
-.pulsar-agents .composer-box { border-radius: 12px; background-color: alpha(currentColor, .05);
-                               padding: 4px 4px 4px 10px; }
-.pulsar-agents .composer-box:focus-within { box-shadow: inset 0 0 0 1px alpha(@accent_color, .6); }
+.pulsar-agents .composer { padding: 6px 14px 14px 14px; }
 .pulsar-agents .composer textview, .pulsar-agents .composer textview text { background: transparent; }
 .pulsar-agents .placeholder { opacity: .45; }
+.pulsar-agents menubutton.comments > button { border-radius: 999px; padding: 2px 10px; min-height: 0; font-size: .85em;
+                                              background-color: alpha(@accent_color, .18); color: @accent_color; }
 .pulsar-agents .hairline { min-height: 1px; background-image: linear-gradient(to right,
-    alpha(@accent_color, 0), alpha(@accent_color, .5) 35%, alpha(@accent_color, .5) 65%, alpha(@accent_color, 0)); }
+    alpha(@accent_color, 0), alpha(@accent_color, .6) 35%, alpha(@accent_color, .6) 65%, alpha(@accent_color, 0)); }
+"""
+
+
+def stage_css(fg, bg):
+    """The session area in the terminal's colors: its background under the
+    header and around the message box, which floats a shade lighter."""
+    return f"""
+.pulsar-agents .stage {{ background-color: {bg}; color: {fg}; }}
+.pulsar-agents .stage .rail {{ background-color: mix({bg}, {fg}, .035); box-shadow: inset 1px 0 alpha({fg}, .07); }}
+.pulsar-agents .stage .composer-box {{ border-radius: 14px; padding: 4px 4px 4px 12px;
+    background-color: mix({bg}, {fg}, .07);
+    box-shadow: 0 8px 22px alpha(black, .22), inset 0 0 0 1px alpha({fg}, .08); }}
+.pulsar-agents .stage .composer-box:focus-within {{ box-shadow: 0 8px 22px alpha(black, .22),
+    inset 0 0 0 1px alpha(@accent_color, .55), 0 0 14px alpha(@accent_color, .18); }}
+.pulsar-agents .stage banner > revealer > widget {{ background-color: mix({bg}, @accent_color, .14); }}
 """
 
 
@@ -223,16 +264,13 @@ class Agents(Adw.ApplicationWindow):
         side_head.pack_start(new)
         self.list = Gtk.ListBox(css_classes=["navigation-sidebar", "sessions"])
         self.list.connect("row-activated", self._activated)
-        self.empty = Adw.StatusPage(icon_name="utilities-terminal-symbolic", title="No sessions",
-                                    description="An agent you start here keeps working when the window closes.")
-        start = Gtk.Button(label="New Session", halign=Gtk.Align.CENTER, css_classes=["pill", "suggested-action"])
-        start.connect("clicked", lambda *_: self.new_session())
-        self.empty.set_child(start)
+        self.empty = Adw.StatusPage(title="No sessions", css_classes=["compact"],
+                                    description="An agent you start keeps working when this window closes.")
         self.side_stack = Gtk.Stack()
         self.side_stack.add_named(self.empty, "empty")
         self.side_stack.add_named(Gtk.ScrolledWindow(child=self.list, hscrollbar_policy=Gtk.PolicyType.NEVER), "list")
-        self.archived_button = Gtk.Button(css_classes=["flat"], margin_start=6, margin_end=6, margin_bottom=6,
-                                          margin_top=2, visible=False)
+        self.archived_button = Gtk.Button(css_classes=["flat", "footer-button"], margin_start=6, margin_end=6,
+                                          margin_bottom=6, margin_top=4, visible=False)
         self.archived_button.connect("clicked", lambda *_: ArchivedDialog(self).present(self))
         side = Adw.ToolbarView(content=self.side_stack)
         side.add_top_bar(side_head)
@@ -250,13 +288,13 @@ class Agents(Adw.ApplicationWindow):
         self.banner = Adw.Banner()
         self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
         self.term_stack = Gtk.Stack(vexpand=True)
-        self.stopped = Adw.StatusPage(icon_name="utilities-terminal-symbolic")
+        self.stopped = Adw.StatusPage(icon_name="media-playback-pause-symbolic", css_classes=["compact"])
         again = Gtk.Button(label="Continue", halign=Gtk.Align.CENTER, css_classes=["pill", "suggested-action"])
         again.connect("clicked", lambda *_: self.resume())
         self.stopped.set_child(again)
         self.term_stack.add_named(self.stopped, "stopped")
-        self.term_stack.add_named(Adw.StatusPage(icon_name="utilities-terminal-symbolic", title="Pick a session",
-                                                 description="Or start one with + (Ctrl+Shift+N)."), "none")
+        self.launcher = Launcher(self)
+        self.term_stack.add_named(self.launcher.widget, "none")
         self.term_stack.set_visible_child_name("none")
         self.composer = Composer(self)
         center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -273,7 +311,7 @@ class Agents(Adw.ApplicationWindow):
         body.append(self.banner)
         body.append(self.overlay)
         self.overlay.set_vexpand(True)
-        content = Adw.ToolbarView(content=body)
+        content = Adw.ToolbarView(content=body, css_classes=["stage"])
         content.add_top_bar(head)
 
         self.split = Adw.NavigationSplitView(sidebar=Adw.NavigationPage(child=side, title="Agents"),
@@ -314,6 +352,10 @@ class Agents(Adw.ApplicationWindow):
         self._actions_for(None)
 
         self.palette_file = ptyxis_palette_file()
+        self.stage_css = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), self.stage_css,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        self._stage()
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._recolor())
         self.connect("notify::visible", lambda *_: self._start_poll())
         self.connect("notify::is-active", lambda *_: self.is_active() and self._seen(self.current))
@@ -367,7 +409,8 @@ class Agents(Adw.ApplicationWindow):
             self.remember()
         self._rebuild()
         archived = [s for s in found if s.get("archived")]
-        self.archived_button.set_label(f"Archived ({len(archived)})")
+        self.archived_button.set_child(Adw.ButtonContent(icon_name="document-open-recent-symbolic",
+                                                         label=f"Archived · {len(archived)}"))
         self.archived_button.set_visible(bool(archived))
         now = self._now()
         if self.current in self.sessions and not self.sessions[self.current].get("archived"):
@@ -390,6 +433,8 @@ class Agents(Adw.ApplicationWindow):
             last = self.state.get("last")
             if last in self.sessions and not self.sessions[last].get("archived"):
                 self.show_session(last, resume=False)
+            else:
+                self.launcher.show()
         self.listed_once = True
 
     def _rebuild(self):
@@ -457,6 +502,7 @@ class Agents(Adw.ApplicationWindow):
         self.banner.set_revealed(False)
         self._actions_for(None)
         self.composer.set_session(None)
+        self.overlay.set_show_sidebar(False)
 
     # ---- one session ----
     def show_session(self, name, resume=True):
@@ -597,6 +643,14 @@ class Agents(Adw.ApplicationWindow):
     def _recolor(self):
         for t in self.terms.values():
             self._color(t)
+        self._stage()
+
+    def _stage(self):
+        """The terminal's own background under the whole session area, so the
+        terminal, the header over it and the message box are one surface."""
+        pal = terminal_palette(self.palette_file, Adw.StyleManager.get_default().get_dark()) if self.palette_file else None
+        fg, bg = (pal[0], pal[1]) if pal else ("@view_fg_color", "@view_bg_color")
+        self.stage_css.load_from_string(stage_css(fg, bg))
 
     # ---- actions ----
     def _menu(self):
@@ -778,7 +832,11 @@ class Agents(Adw.ApplicationWindow):
         self.composer.update_chip()
 
     def new_session(self):
-        NewSession(self).present(self)
+        project = session_project(self.sessions.get(self.current) or {}) or None
+        self._clear_current()
+        self.list.unselect_all()
+        self.launcher.show(project)
+        self.split.set_show_content(True)
 
     def started(self, name, agent, title, argv):
         self.current = name
@@ -798,15 +856,16 @@ class ProjectRow(Gtk.ListBoxRow):
     """A project's heading in the sidebar; activating it folds it."""
 
     def __init__(self, project, label, collapsed):
-        super().__init__(selectable=False, css_classes=["project"], tooltip_text=home(project) or None)
+        super().__init__(selectable=False, css_classes=["project"] + (["collapsed"] if collapsed else []),
+                         tooltip_text=home(project) or None)
         self.project = project
-        box = Gtk.Box(spacing=6, margin_start=6, margin_end=8)
-        box.append(Gtk.Image(icon_name="pan-end-symbolic" if collapsed else "pan-down-symbolic",
-                             css_classes=["dim-label"]))
+        box = Gtk.Box(spacing=6, margin_start=10, margin_end=8)
         box.append(Gtk.Label(label=label, xalign=0, hexpand=True, css_classes=["project-label"],
                              ellipsize=Pango.EllipsizeMode.END))
         self.dot = Gtk.Box(css_classes=["dot"], valign=Gtk.Align.CENTER, visible=False)
         box.append(self.dot)
+        box.append(Gtk.Image(icon_name="pan-end-symbolic" if collapsed else "pan-down-symbolic",
+                             css_classes=["fold"], pixel_size=12))
         self.set_child(box)
         self.collapsed = collapsed
 
@@ -868,12 +927,17 @@ class SessionRow(Gtk.ListBoxRow):
         self.sub.set_label(session_status(s, now))
         for c in ("waiting", "running", "unseen"):
             self.dot.remove_css_class(c)
+        for c in ("needs", "working"):
+            self.tile.remove_css_class(c)
+            self.sub.remove_css_class(c)
         if s.get("state") == "waiting":
-            self.dot.add_css_class("waiting")
-        elif unseen:
-            self.dot.add_css_class("unseen")
+            self.tile.add_css_class("needs")
+            self.sub.add_css_class("needs")
         elif s.get("state") == "running":
-            self.dot.add_css_class("running")
+            self.tile.add_css_class("working")
+        if unseen:
+            self.dot.add_css_class("unseen")
+        self.dot.set_visible(unseen)
         self.lock.set_visible(s.get("sandbox") == "on")
         self.set_opacity(1 if s.get("state") != "ended" or unseen else .62)
 
@@ -899,7 +963,8 @@ class Composer:
                                                     max_content_height=160,
                                                     hscrollbar_policy=Gtk.PolicyType.NEVER, hexpand=True))
         over.add_overlay(self.placeholder)
-        self.chip = Gtk.MenuButton(css_classes=["pill", "small"], valign=Gtk.Align.CENTER, visible=False)
+        self.chip = Gtk.MenuButton(css_classes=["chip", "comments"], halign=Gtk.Align.START, visible=False,
+                                   margin_top=6)
         self.chip_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=8, margin_bottom=8,
                                  margin_start=8, margin_end=8)
         self.chip.set_popover(Gtk.Popover(child=self.chip_list))
@@ -907,10 +972,12 @@ class Composer:
                                       css_classes=["circular", "suggested-action"], valign=Gtk.Align.END,
                                       sensitive=False)
         self.send_button.connect("clicked", lambda *_: self._send())
-        box = Gtk.Box(spacing=6, css_classes=["composer-box"])
+        line = Gtk.Box(spacing=6)
+        line.append(over)
+        line.append(self.send_button)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["composer-box"])
         box.append(self.chip)
-        box.append(over)
-        box.append(self.send_button)
+        box.append(line)
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["composer"], visible=False)
         self.widget.append(box)
 
@@ -1052,7 +1119,8 @@ class Rail:
         self.stack.add_titled_with_icon(Gtk.ScrolledWindow(child=snap_box, vexpand=True), "history", "History",
                                         "document-open-recent-symbolic")
 
-        bar = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
+        bar = Adw.InlineViewSwitcher(stack=self.stack, css_classes=["flat"], margin_top=8, margin_bottom=2,
+                                     margin_start=10, margin_end=10, homogeneous=True)
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["rail"])
         self.widget.append(bar)
         self.widget.append(self.stack)
@@ -1122,14 +1190,13 @@ class Rail:
             row = Gtk.ListBoxRow()
             row.path = f.get("path")
             box = Gtk.Box(spacing=8)
-            box.append(Gtk.Image(icon_name=FILE_ICONS.get(f.get("status"), "document-edit-symbolic"),
-                                 tooltip_text=(f.get("status") or "").capitalize() or None,
-                                 css_classes=["dim-label"]))
+            st = f.get("status") or "modified"
+            box.append(Gtk.Label(label=st[:1].upper(), tooltip_text=st.capitalize(), css_classes=["badge", st]))
             box.append(Gtk.Label(label=f.get("path", ""), xalign=0, hexpand=True,
                                  ellipsize=Pango.EllipsizeMode.START))
             if f.get("added") is not None:
-                box.append(Gtk.Label(label=f"+{f['added']}", css_classes=["caption", "added"]))
-                box.append(Gtk.Label(label=f"−{f.get('removed') or 0}", css_classes=["caption", "removed"]))
+                box.append(Gtk.Label(label=f"+{f['added']}", css_classes=["count", "added"]))
+                box.append(Gtk.Label(label=f"−{f.get('removed') or 0}", css_classes=["count", "removed"]))
             row.set_child(box)
             self.file_list.append(row)
             if pick is None or row.path == keep:
@@ -1203,10 +1270,6 @@ class Rail:
             self.snaps.append(row)
 
 
-FILE_ICONS = {"added": "list-add-symbolic", "deleted": "list-remove-symbolic",
-              "renamed": "go-next-symbolic", "modified": "document-edit-symbolic"}
-
-
 def files_summary(files, uncommitted):
     """Over the file list: how many files and lines, against what."""
     if not files:
@@ -1262,84 +1325,89 @@ class ArchivedDialog(Adw.Dialog):
         d.present(self)
 
 
-class NewSession(Adw.Dialog):
-    """Where, and optionally what to do. The agent, a worktree and the
-    sandbox are under Options, remembered per project."""
+class Launcher:
+    """The window's home when no session is open, and where + goes: what
+    the agent should do, in which project, with which agent. The project's
+    agent, worktree and sandbox are remembered."""
+
+    SANDBOX = (("Sandbox as set", None), ("Sandboxed", True), ("Not sandboxed", False))
 
     def __init__(self, win):
-        super().__init__(title="New Session", content_width=500)
         self.win = win
         self.agents = []
         self.default_agent = None
-        recent = self._recent()
-        cur = win.sessions.get(win.current) or {}
-        self.folder = session_project(cur) or (recent[0] if recent else os.path.expanduser("~"))
-
-        page = Adw.PreferencesPage()
-        where = Adw.PreferencesGroup(title="Project")
-        self.radios = {}
-        first = None
-        for path in ([self.folder] + [p for p in recent if p != self.folder])[:6]:
-            row = Adw.ActionRow(title=os.path.basename(path.rstrip("/")) or path, subtitle=home(path),
-                                activatable=True)
-            check = Gtk.CheckButton(group=first, active=(path == self.folder), valign=Gtk.Align.CENTER)
-            first = first or check
-            check.connect("toggled", lambda c, p=path: c.get_active() and self._set_folder(p))
-            row.add_prefix(check)
-            row.set_activatable_widget(check)
-            where.add(row)
-            self.radios[path] = check
-        self.first_radio = first
-        other = Adw.ButtonRow(title="Other Folder…", start_icon_name="folder-open-symbolic")
-        other.connect("activated", lambda *_: self._pick())
-        where.add(other)
-        self.where = where
-        page.add(where)
-
-        what = Adw.PreferencesGroup(title="What should it do?",
-                                    description="Optional. It's the agent's first message, and names the session.")
-        self.prompt = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=10, bottom_margin=10, left_margin=12,
-                                   right_margin=12, accepts_tab=False, css_classes=["card"])
-        self.prompt.set_size_request(-1, 84)
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", self._key)
-        self.prompt.add_controller(keys)
-        what.add(self.prompt)
-        page.add(what)
-
-        opts = Adw.PreferencesGroup()
-        self.options = Adw.ExpanderRow(title="Options")
-        self.agent = Adw.ComboRow(title="Agent")
-        self.agent.connect("notify::selected", lambda *_: self._summary())
-        self.worktree = Adw.SwitchRow(title="Own worktree",
-                                      subtitle="Its own branch and folder, so it can't trip over other sessions")
-        self.worktree.connect("notify::active", lambda *_: self._summary())
-        self.sandbox = Adw.ComboRow(title="Sandbox", model=Gtk.StringList.new([c[0] for c in SANDBOX_CHOICES]),
-                                    subtitle="Sees only this project")
-        self.sandbox.connect("notify::selected", lambda *_: self._summary())
-        for r in (self.agent, self.worktree, self.sandbox):
-            self.options.add_row(r)
-        opts.add(self.options)
-        page.add(opts)
-
-        self.why = Gtk.Label(wrap=True, xalign=0, css_classes=["caption", "error"], visible=False,
-                             margin_start=24, margin_end=24)
-        self.start = Gtk.Button(label="Start", css_classes=["pill", "suggested-action"], halign=Gtk.Align.CENTER,
-                                margin_top=6, margin_bottom=18, sensitive=False, tooltip_text="Start (Ctrl+Enter)")
+        self.folder = None
+        self.chips = {}
+        self.entry = Gtk.Entry(placeholder_text="What should the agent do?", hexpand=True,
+                               css_classes=["launch-entry"])
+        self.entry.connect("activate", lambda *_: self._go())
+        self.start = Gtk.Button(label="Start", css_classes=["pill", "suggested-action"], valign=Gtk.Align.CENTER,
+                                sensitive=False)
         self.start.connect("clicked", lambda *_: self._go())
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.append(page)
-        box.append(self.why)
-        box.append(self.start)
-        page.set_vexpand(True)
-        tv = Adw.ToolbarView(content=box)
-        tv.add_top_bar(Adw.HeaderBar())
-        self.set_child(tv)
-        self.set_focus(self.prompt)
-        self._apply_project()
-        run([PULSAR, "agent", "list", "--json"], self._agents)
+        top = Gtk.Box(spacing=10)
+        top.append(Gtk.Image(icon_name="utilities-terminal-symbolic", css_classes=["launch-icon"]))
+        top.append(self.entry)
+        top.append(self.start)
 
-    def _recent(self):
+        self.projects = Adw.WrapBox(child_spacing=6, line_spacing=6)
+        other = Gtk.Button(label="Other…", css_classes=["chip", "flat"], tooltip_text="Pick a project folder")
+        other.connect("clicked", lambda *_: self._pick())
+        self.other = other
+
+        self.agent = Gtk.DropDown(css_classes=["chip"], tooltip_text="Agent")
+        self.agent.connect("notify::selected", lambda *_: self._remember())
+        self.worktree = Gtk.ToggleButton(label="Own worktree", css_classes=["chip"],
+                                         tooltip_text="Its own branch and folder, so it can't trip over other sessions")
+        self.worktree.connect("toggled", lambda *_: self._remember())
+        self.sandbox = Gtk.DropDown.new_from_strings([c[0] for c in self.SANDBOX])
+        self.sandbox.add_css_class("chip")
+        self.sandbox.set_tooltip_text("The sandbox sees only this project")
+        self.sandbox.connect("notify::selected", lambda *_: self._remember())
+        opts = Gtk.Box(spacing=6)
+        for w in (self.agent, self.worktree, self.sandbox):
+            opts.append(w)
+
+        self.hint = Gtk.Label(xalign=0, wrap=True, css_classes=["caption", "dim-label"],
+                              label="Enter starts it. Empty, the agent starts with no message.")
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, valign=Gtk.Align.CENTER,
+                      margin_start=24, margin_end=24, margin_bottom=48)
+        col.append(top)
+        col.append(Gtk.Box(css_classes=["hairline"]))
+        for label, w in (("Project", self.projects), ("With", opts)):
+            row = Gtk.Box(spacing=12)
+            row.append(Gtk.Label(label=label, xalign=0, width_chars=7, valign=Gtk.Align.START,
+                                 css_classes=["launch-label"]))
+            row.append(w)
+            col.append(row)
+        col.append(self.hint)
+        self.widget = Adw.Clamp(child=col, maximum_size=680, css_classes=["launcher"])
+        self._loading = False
+        self._load_agents()
+
+    def _load_agents(self):
+        if self._loading:
+            return
+        self._loading = True
+        run([PULSAR, "agent", "list", "--json"], self._listed)
+
+    def _listed(self, ok, out):
+        found = parse(out) if ok else None
+        self.agents = [a["name"] for a in (found or []) if a.get("state") in ("installed", "native")]
+        self.agent.set_model(Gtk.StringList.new([AGENT_NAMES.get(a, a) for a in self.agents]))
+        run([PULSAR, "agent", "default"], self._default)
+
+    def _default(self, ok, out):
+        self._loading = False
+        if ok and out.strip() in self.agents:
+            self.default_agent = out.strip()
+        elif self.agents:
+            self.default_agent = self.agents[0]
+        if not self.agents:
+            self.hint.set_label("No agent is installed. Pulsar Welcome or pulsar agent add <name> installs one.")
+            self.hint.add_css_class("error")
+        self._apply()
+
+    def recent(self):
         seen, out = set(), []
         ss = sorted(self.win.sessions.values(), key=lambda s: -(s.get("last_active") or s.get("started") or 0))
         for p in list(self.win.state.get("recent", [])) + [session_project(s) for s in ss]:
@@ -1348,54 +1416,68 @@ class NewSession(Adw.Dialog):
                 out.append(p)
         return out
 
-    def _set_folder(self, path):
-        self.folder = path
-        self._apply_project()
+    def show(self, project=None):
+        """Fill in the projects; the one asked for, else the latest, chosen."""
+        while (c := self.projects.get_first_child()) is not None:
+            self.projects.remove(c)
+        self.chips = {}
+        recent = self.recent()[:6]
+        if project and project not in recent:
+            recent.insert(0, project)
+        if self.folder and self.folder not in recent and os.path.isdir(self.folder):
+            recent.insert(0, self.folder)
+        first = None
+        for p in recent:
+            names = [os.path.basename(x.rstrip("/")) for x in recent]
+            chip = Gtk.ToggleButton(label=project_label(p, recent) if names.count(os.path.basename(p.rstrip("/"))) > 1
+                                    else os.path.basename(p.rstrip("/")) or p,
+                                    css_classes=["chip"], tooltip_text=home(p), group=first)
+            first = first or chip
+            chip.connect("toggled", lambda c, p=p: c.get_active() and self._set(p))
+            self.projects.append(chip)
+            self.chips[p] = chip
+        self.projects.append(self.other)
+        want = project or self.folder or (recent[0] if recent else None)
+        if want in self.chips:
+            self.chips[want].set_active(True)
+        self._set(want)
+        if not self.agents:
+            self._load_agents()
+        self.entry.grab_focus()
 
-    def _apply_project(self):
-        prefs = self.win.state["projects"].get(self.folder, {})
+    def _set(self, path):
+        self.folder = path
+        self._apply()
+
+    def _apply(self):
+        """The project's remembered choices into the chips."""
+        self._applying = True
+        prefs = self.win.state["projects"].get(self.folder or "", {})
         repo = is_repo(self.folder)
         self.worktree.set_sensitive(repo)
         self.worktree.set_active(bool(prefs.get("worktree")) and repo)
         sb = prefs.get("sandbox")
-        self.sandbox.set_selected(next((i for i, c in enumerate(SANDBOX_CHOICES) if c[1] == sb), 0))
+        self.sandbox.set_selected(next((i for i, c in enumerate(self.SANDBOX) if c[1] == sb), 0))
         if self.agents:
             a = prefs.get("agent") if prefs.get("agent") in self.agents else self.default_agent
             if a in self.agents:
                 self.agent.set_selected(self.agents.index(a))
-        self._summary()
+        self._applying = False
+        self.start.set_sensitive(bool(self.agents) and bool(self.folder))
 
-    def _summary(self):
-        parts = []
-        if self.agents:
-            a = self.agents[self.agent.get_selected()] if self.agent.get_selected() < len(self.agents) else None
-            parts.append(AGENT_NAMES.get(a, a or ""))
-        if self.worktree.get_active():
-            parts.append("own worktree")
-        sb = SANDBOX_CHOICES[self.sandbox.get_selected()][1]
-        if sb is not None:
-            parts.append("sandboxed" if sb else "not sandboxed")
-        self.options.set_subtitle(" · ".join(p for p in parts if p))
+    def _remember(self):
+        if getattr(self, "_applying", False) or not self.folder or not self.agents:
+            return
+        self.win.state["projects"][self.folder] = self._choices()
 
-    def _agents(self, ok, out):
-        found = parse(out) if ok else None
-        self.agents = [a["name"] for a in (found or []) if a.get("state") in ("installed", "native")]
-        self.agent.set_model(Gtk.StringList.new([AGENT_NAMES.get(a, a) for a in self.agents]))
-        if not self.agents:
-            self.why.set_label("No agent is installed. Pulsar Welcome or `pulsar agent add <name>` installs one.")
-            self.why.set_visible(True)
-        run([PULSAR, "agent", "default"], self._default)
-
-    def _default(self, ok, out):
-        if ok and out.strip() in self.agents:
-            self.default_agent = out.strip()
-        elif self.agents:
-            self.default_agent = self.agents[0]
-        self._apply_project()
-        self.start.set_sensitive(bool(self.agents))
+    def _choices(self):
+        agent = self.agents[self.agent.get_selected()] if self.agent.get_selected() < len(self.agents) else None
+        return {"agent": agent, "worktree": self.worktree.get_active() and self.worktree.get_sensitive(),
+                "sandbox": self.SANDBOX[self.sandbox.get_selected()][1]}
 
     def _pick(self):
-        d = Gtk.FileDialog(title="Project Folder", initial_folder=Gio.File.new_for_path(self.folder))
+        d = Gtk.FileDialog(title="Project Folder",
+                           initial_folder=Gio.File.new_for_path(self.folder or os.path.expanduser("~")))
         d.select_folder(self.win, None, self._picked)
 
     def _picked(self, d, res):
@@ -1403,46 +1485,24 @@ class NewSession(Adw.Dialog):
             f = d.select_folder_finish(res)
         except GLib.Error:
             return
-        if not (f and f.get_path()):
-            return
-        path = f.get_path()
-        if path not in self.radios:
-            row = Adw.ActionRow(title=os.path.basename(path.rstrip("/")) or path, subtitle=home(path),
-                                activatable=True)
-            check = Gtk.CheckButton(group=self.first_radio, valign=Gtk.Align.CENTER)
-            self.first_radio = self.first_radio or check
-            check.connect("toggled", lambda c, p=path: c.get_active() and self._set_folder(p))
-            row.add_prefix(check)
-            row.set_activatable_widget(check)
-            self.where.add(row)
-            self.radios[path] = check
-        self.radios[path].set_active(True)
-        self._set_folder(path)
-
-    def _key(self, _c, keyval, _code, state):
-        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and state & Gdk.ModifierType.CONTROL_MASK:
-            if self.start.get_sensitive():
-                self._go()
-            return True
-        return False
+        if f and f.get_path():
+            self.show(f.get_path())
 
     def _go(self):
-        if not self.agents:
+        if not (self.agents and self.folder):
             return
-        agent = self.agents[self.agent.get_selected()]
-        b = self.prompt.get_buffer()
-        prompt = b.get_text(b.get_start_iter(), b.get_end_iter(), False).strip()
+        c = self._choices()
+        prompt = self.entry.get_text().strip()
         taken = set(self.win.sessions)
         name = slug_name(prompt, taken) or session_name_for(self.folder, taken)
         title = title_from_prompt(prompt) or None
-        worktree = self.worktree.get_active() and self.worktree.get_sensitive()
-        sandbox = SANDBOX_CHOICES[self.sandbox.get_selected()][1]
         st = self.win.state
-        st["projects"][self.folder] = {"agent": agent, "worktree": worktree, "sandbox": sandbox}
+        st["projects"][self.folder] = c
         st["recent"] = [self.folder] + [p for p in st.get("recent", []) if p != self.folder][:9]
-        argv = run_argv(agent, name, self.folder, worktree, sandbox, title=title, prompt=prompt or None)
-        self.close()
-        self.win.started(name, agent, title, argv)
+        argv = run_argv(c["agent"], name, self.folder, c["worktree"], c["sandbox"], title=title,
+                        prompt=prompt or None)
+        self.entry.set_text("")
+        self.win.started(name, c["agent"], title, argv)
 
 
 def main(argv):
