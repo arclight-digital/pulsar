@@ -4190,6 +4190,9 @@ case "$cmd" in
                 *session_last_attached*)   # when last attached (0: never), created, name
                     printf '%s\t%s\t%s\n' "$(cat "${TMUX_LIVE}/.${n}.attached" 2>/dev/null || echo 0)" \
                         "$(stat -c %Y "$f")" "$n" ;;
+                *session_activity*)   # name, created, last activity (TMUX_ACTIVITY, else created), @pulsar-alert
+                    printf '%s\t%s\t%s\t%s\n' "$n" "$(stat -c %Y "$f")" "${TMUX_ACTIVITY:-$(stat -c %Y "$f")}" \
+                        "$(sed -n 2p "${TMUX_LIVE}/.${n}.opt" 2>/dev/null)" ;;
                 *)  # name, created, @pulsar-alert
                     printf '%s\t%s\t%s\n' "$n" "$(stat -c %Y "$f")" "$(sed -n 2p "${TMUX_LIVE}/.${n}.opt" 2>/dev/null)" ;;
             esac
@@ -4472,17 +4475,289 @@ agent_args() {
     fi
 }
 
-@test "agent run --tmux: an agent that cannot be pinned gets the session, and is told it starts fresh" {
+@test "agent run --tmux: an agent that cannot resume gets the session, and is told it starts fresh" {
     tmux_env
-    printf '#!/bin/sh\nexit 0\n' > "${STUB}/codex"; chmod +x "${STUB}/codex"
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/gemini"; chmod +x "${STUB}/gemini"
     cd "$PROJ"
-    run "$PULSAR" agent run codex --tmux cx
-    [[ "$output" != *"new codex conversation"* ]]
-    pane cx | grep -q -- --session-id && fail "codex given claude's flag"
-    pane cx | tail -n 1 | grep -qx -- --
+    run "$PULSAR" agent run gemini --tmux gm
+    [[ "$output" != *"new gemini conversation"* ]]
+    pane gm | grep -q -- --session-id && fail "gemini given claude's flag"
+    pane gm | tail -n 1 | grep -qx -- --
+    rm "${TMUX_LIVE}/gm"
+    run "$PULSAR" agent run gemini --tmux gm
+    [[ "$output" == *"gm comes back as a new gemini conversation; gemini cannot resume the one it had"* ]] || fail "$output"
+}
+
+@test "agent run --tmux: opencode, agy and codex come back on their own conversation" {
+    tmux_env
+    local a
+    for a in codex opencode agy; do printf '#!/bin/sh\nexit 0\n' > "${STUB}/${a}"; chmod +x "${STUB}/${a}"; done
+    cd "$PROJ"
+    # opencode: an ID handed to it up front, and the same one on a restart
+    "$PULSAR" agent run opencode --tmux oc >/dev/null 2>&1
+    local oid; oid=$(rec_id oc)
+    [[ "$oid" == ses_???????????????????????? ]] || fail "id: ${oid}"
+    [ "$(agent_args oc | paste -sd' ' -)" = "--session ${oid}" ] || fail "$(agent_args oc)"
+    rm "${TMUX_LIVE}/oc"
+    run "$PULSAR" agent run opencode --tmux oc
+    [[ "$output" != *"new opencode conversation"* ]] || fail "$output"
+    [ "$(agent_args oc | paste -sd' ' -)" = "--session ${oid}" ] || fail "$(agent_args oc)"
+    rm "${TMUX_LIVE}/oc"
+    "$PULSAR" agent run opencode --tmux oc --new >/dev/null 2>&1
+    [ "$(rec_id oc)" != "$oid" ] || fail "--new kept ${oid}"
+    # codex: its last conversation in the folder, on a restart only
+    "$PULSAR" agent run codex --tmux cx >/dev/null 2>&1
+    [ -z "$(agent_args cx)" ] || fail "$(agent_args cx)"
     rm "${TMUX_LIVE}/cx"
     run "$PULSAR" agent run codex --tmux cx
-    [[ "$output" == *"cx comes back as a new codex conversation"* ]] || fail "$output"
+    [ "$(agent_args cx | paste -sd' ' -)" = "resume --last" ] || fail "$(agent_args cx)"
+    [[ "$output" != *"new codex conversation"* ]] || fail "$output"
+    rm "${TMUX_LIVE}/cx"
+    "$PULSAR" agent run codex --tmux cx --new >/dev/null 2>&1
+    [ -z "$(agent_args cx)" ] || fail "$(agent_args cx)"
+    # agy: the one it named, learned from its cache while the session runs
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ -z "$(agent_args ag)" ] || fail "$(agent_args ag)"
+    local cache="${HOME}/.gemini/antigravity-cli/cache" conv=11111111-2222-3333-4444-555555555555
+    mkdir -p "$cache"
+    jq -n --arg d "$(pwd -P)" --arg c "$conv" '{($d): $c, "/elsewhere": "99999999-0000-0000-0000-000000000000"}' > "${cache}/last_conversations.json"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "ag") | .conversation' <<<"$output")" = "$conv" ] || fail "$output"
+    [ "$(rec_id ag)" = "$conv" ]
+    # another folder's never: a later one there is not this session's
+    jq -n '{"/elsewhere": "99999999-0000-0000-0000-000000000000"}' > "${cache}/last_conversations.json"
+    rm "${TMUX_LIVE}/ag"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(agent_args ag | paste -sd' ' -)" = "--conversation ${conv}" ] || fail "$(agent_args ag)"
+    # not learned yet: the last one in this folder, from agy's cache or its own -c
+    rm "${TMUX_LIVE}/ag"; sed -i '/^id=/d' "${REC}/ag.session"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(agent_args ag | paste -sd' ' -)" = "-c" ] || fail "$(agent_args ag)"
+    rm "${TMUX_LIVE}/ag"; sed -i '/^id=/d' "${REC}/ag.session"
+    jq -n --arg d "$(pwd -P)" '{($d): "22222222-2222-3333-4444-555555555555"}' > "${cache}/last_conversations.json"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(agent_args ag | paste -sd' ' -)" = "--conversation 22222222-2222-3333-4444-555555555555" ] || fail "$(agent_args ag)"
+    # sandboxed, it is the sandbox's cache that says
+    rm "${TMUX_LIVE}/ag"; sed -i '/^id=/d' "${REC}/ag.session"
+    mkdir -p "${HOME}/.local/share/pulsar/sandbox/agy/.gemini/antigravity-cli/cache"
+    jq -n --arg d "$(pwd -P)" '{($d): "33333333-2222-3333-4444-555555555555"}' > "${HOME}/.local/share/pulsar/sandbox/agy/.gemini/antigravity-cli/cache/last_conversations.json"
+    "$PULSAR" agent run agy --tmux ag --sandbox >/dev/null 2>&1
+    [ "$(agent_args ag | paste -sd' ' -)" = "--conversation 33333333-2222-3333-4444-555555555555" ] || fail "$(agent_args ag)"
+    # what is in the cache goes on agy's command line only if it is an ID
+    rm "${TMUX_LIVE}/ag"; sed -i '/^id=/d' "${REC}/ag.session"
+    jq -n --arg d "$(pwd -P)" '{($d): "--yolo x"}' > "${HOME}/.local/share/pulsar/sandbox/agy/.gemini/antigravity-cli/cache/last_conversations.json"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(agent_args ag | paste -sd' ' -)" = "-c" ] || fail "$(agent_args ag)"
+    # --new: a fresh one, whatever the cache says
+    rm "${TMUX_LIVE}/ag"
+    jq -n --arg d "$(pwd -P)" '{($d): "33333333-2222-3333-4444-555555555555"}' > "${HOME}/.local/share/pulsar/sandbox/agy/.gemini/antigravity-cli/cache/last_conversations.json"
+    "$PULSAR" agent run agy --tmux ag --new >/dev/null 2>&1
+    [ -z "$(agent_args ag)" ] || fail "$(agent_args ag)"
+    # their own ways to pick a conversation are refused: --tmux picks it
+    for a in "opencode -- --session x" "opencode -- -c" "agy -- --conversation=x" "agy -- -c" "codex -- resume" "codex -- fork"; do
+        # shellcheck disable=SC2086
+        run "$PULSAR" agent run ${a%% *} --tmux other -- ${a#* -- }
+        [ "$status" -ne 0 ] || fail "${a} accepted"
+        [[ "$output" == *"--tmux picks the conversation itself"* ]] || fail "${a}: $output"
+    done
+}
+
+@test "agent run --tmux --prompt: a new session starts on that message, in each agent's own way; a restart does not send it again" {
+    tmux_env
+    local a
+    for a in codex opencode agy aider; do printf '#!/bin/sh\nexit 0\n' > "${STUB}/${a}"; chmod +x "${STUB}/${a}"; done
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux c1 --prompt "fix the tests" >/dev/null 2>&1
+    [ "$(agent_args c1 | tail -n 1)" = "fix the tests" ] || fail "$(agent_args c1)"
+    "$PULSAR" agent run codex --tmux x1 --prompt "fix the tests" -- --model o9 >/dev/null 2>&1
+    [ "$(agent_args x1 | paste -sd'|' -)" = "--model|o9|fix the tests" ] || fail "$(agent_args x1)"
+    "$PULSAR" agent run opencode --tmux o1 --prompt "fix the tests" >/dev/null 2>&1
+    [ "$(agent_args o1 | tail -n 2 | paste -sd'|' -)" = "--prompt|fix the tests" ] || fail "$(agent_args o1)"
+    "$PULSAR" agent run agy --tmux a1 --prompt "fix the tests" >/dev/null 2>&1
+    [ "$(agent_args a1 | paste -sd'|' -)" = "-i|fix the tests" ] || fail "$(agent_args a1)"
+    run "$PULSAR" agent run aider --tmux r1 --prompt "fix the tests"
+    [[ "$output" == *"aider takes no first message from Pulsar"* ]] || fail "$output"
+    [[ "$(agent_args r1)" != *"fix the tests"* ]] || fail "$(agent_args r1)"
+    # a restart picks up where it was: the message is not sent twice
+    rm "${TMUX_LIVE}/x1"
+    run "$PULSAR" agent run codex --tmux x1 --prompt "fix the tests"
+    [[ "$output" == *"x1 picks up where it was, so --prompt was not sent"* ]] || fail "$output"
+    [[ "$(agent_args x1)" != *"fix the tests"* ]] || fail "$(agent_args x1)"
+    # --new is a new start
+    rm "${TMUX_LIVE}/x1"
+    "$PULSAR" agent run codex --tmux x1 --new --prompt "again" >/dev/null 2>&1
+    [ "$(agent_args x1 | tail -n 1)" = again ] || fail "$(agent_args x1)"
+    run "$PULSAR" agent run codex --prompt "x"
+    [ "$status" -ne 0 ]; [[ "$output" == *"--title and --prompt go with --tmux"* ]] || fail "$output"
+}
+
+@test "agent sessions --title, --archive, --unarchive: the record keeps them, a start keeps the title and unarchives" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work --title "Fix the login page" >/dev/null 2>&1
+    grep -qx 'title=Fix the login page' "${REC}/work.session" || fail "$(cat "${REC}/work.session")"
+    run "$PULSAR" agent sessions --title work $'Two\nlines'
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"work is titled: Two lines"* ]] || fail "$output"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[0].title' <<<"$output")" = "Two lines" ] || fail "$output"
+    # archiving a running one ends it, and keeps the rest
+    local snaps; snaps=$(git for-each-ref refs/pulsar/undo/work/)
+    run "$PULSAR" agent sessions --archive work
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"archived work and ended it; its files, worktree and undo snapshots stay"* ]] || fail "$output"
+    [ ! -e "${TMUX_LIVE}/work" ] || fail "still running"
+    [ "$(git for-each-ref refs/pulsar/undo/work/)" = "$snaps" ]
+    grep -q '^id=.' "${REC}/work.session"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[0].archived | type' <<<"$output")" = number ] || fail "$output"
+    [ "$(jq -r '.[0].state' <<<"$output")" = ended ]
+    run "$PULSAR" agent sessions --unarchive work --json
+    [ "$(jq -c . <<<"$output")" = '{"name":"work","archived":null}' ] || fail "$output"
+    ! grep -q '^archived=' "${REC}/work.session" || fail "still archived: $(cat "${REC}/work.session")"
+    run "$PULSAR" agent sessions --archive work --json
+    [ "$(jq -r '.name + " " + (.archived | type)' <<<"$output")" = "work number" ] || fail "$output"
+    # a start brings it back, title and all
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    ! grep -q '^archived=' "${REC}/work.session" || fail "$(cat "${REC}/work.session")"
+    grep -qx 'title=Two lines' "${REC}/work.session" || fail "$(cat "${REC}/work.session")"
+    run "$PULSAR" agent sessions --title work ""
+    [[ "$output" == *"work has no title"* ]] || fail "$output"
+    ! grep -q '^title=' "${REC}/work.session" || fail "$(cat "${REC}/work.session")"
+    for a in --archive --unarchive; do
+        run "$PULSAR" agent sessions "$a" nope
+        [ "$status" -ne 0 ] || fail "$a nope"
+        [[ "$output" == *"no session called nope"* ]] || fail "$output"
+    done
+    run "$PULSAR" agent sessions --title nope x
+    [ "$status" -ne 0 ] || fail "--title nope"
+}
+
+@test "agent sessions --json: project, last_active and archived for the Agents app" {
+    wt_env
+    "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
+    mkdir -p "${PROJ}/sub" "${HOME}/plain"
+    "$PULSAR" agent run claude --tmux deep --dir "${PROJ}/sub" >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux bare --dir "${HOME}/plain" >/dev/null 2>&1
+    TMUX_ACTIVITY=1700000123 run "$PULSAR" agent sessions --json
+    [ "$status" -eq 0 ] || fail "$output"
+    local real; real=$(cd "$PROJ" && pwd -P)
+    [ "$(jq -r '.[] | select(.name == "fix") | .project' <<<"$output")" = "$real" ] || fail "$output"
+    [ "$(jq -r '.[] | select(.name == "deep") | .project' <<<"$output")" = "$real" ] || fail "$output"
+    [ "$(jq -r '.[] | select(.name == "bare") | .project' <<<"$output")" = "$(cd "${HOME}/plain" && pwd -P)" ] || fail "$output"
+    [ "$(jq -r '.[] | select(.name == "fix") | .last_active' <<<"$output")" = 1700000123 ] || fail "$output"
+    [ "$(jq -r '[.[].archived] | unique | .[0]' <<<"$output")" = null ]
+    # ended: when its record was last touched, which the pane does as the agent exits
+    rm "${TMUX_LIVE}/fix"
+    touch -d @1600000000 "${REC}/fix.session"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "fix") | .last_active' <<<"$output")" = 1600000000 ] || fail "$output"
+    # a title or an archive is no activity
+    "$PULSAR" agent sessions --title fix "x" >/dev/null
+    "$PULSAR" agent sessions --archive fix >/dev/null
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "fix") | .last_active' <<<"$output")" = 1600000000 ] || fail "$output"
+    local -a p; mapfile -d '' -t p < "${TMUX_LIVE}/.deep.argv"
+    touch -d @1600000000 "${REC}/deep.session"
+    SHELL=/bin/true PULSAR_SESSION_RECORD="${REC}/deep.session" bash -c "${p[2]}" claude true
+    [ "$(stat -c %Y "${REC}/deep.session")" != 1600000000 ] || fail "the pane did not touch the record"
+    grep -qxF "PULSAR_SESSION_RECORD=${REC}/deep.session" "$TMUX_CALLS" || fail "the pane is not told its record"
+    # and an alert is activity
+    touch -d @1600000000 "${REC}/deep.session"
+    "$PULSAR" agent notify deep >/dev/null 2>&1 || true
+    [ "$(stat -c %Y "${REC}/deep.session")" != 1600000000 ] || fail "notify did not touch the record"
+}
+
+@test "agent sessions --tidy: archived sessions past the days are forgotten; dirty worktrees and branches stay" {
+    wt_env
+    "$PULSAR" agent run claude --tmux old --worktree >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux dirty --worktree >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux recent >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux kept >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux live >/dev/null 2>&1
+    echo work > "${PROJ}/.worktrees/dirty/new.txt"
+    rm "${TMUX_LIVE}/old" "${TMUX_LIVE}/dirty" "${TMUX_LIVE}/recent" "${TMUX_LIVE}/kept"
+    local now; now=$(date +%s)
+    printf 'archived=%s\n' $((now - 8 * 86400)) >> "${REC}/old.session"
+    printf 'archived=%s\n' $((now - 7 * 86400)) >> "${REC}/dirty.session"
+    printf 'archived=%s\n' $((now - 6 * 86400)) >> "${REC}/recent.session"
+    printf 'archived=%s\n' $((now - 30 * 86400)) >> "${REC}/live.session"   # by hand, still running
+    run "$PULSAR" agent sessions --tidy --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r 'map(.name) | sort | join(",")' <<<"$output")" = "dirty,old" ] || fail "$output"
+    [ "$(jq -r '.[] | select(.name == "dirty") | .worktree' <<<"$output")" = kept ]
+    [ ! -e "${REC}/old.session" ]; [ ! -e "${PROJ}/.worktrees/old" ]
+    git show-ref --verify --quiet refs/heads/old
+    [ -f "${PROJ}/.worktrees/dirty/new.txt" ]
+    [ -e "${REC}/recent.session" ]; [ -e "${REC}/kept.session" ]; [ -e "${REC}/live.session" ]
+    run "$PULSAR" agent sessions --tidy --json
+    [ "$output" = "[]" ] || fail "$output"
+    # --days, and words without --json
+    run "$PULSAR" agent sessions --tidy --days 5
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "forgot recent" ] || fail "$output"
+    run "$PULSAR" agent sessions --tidy --days x
+    [ "$status" -ne 0 ]; [[ "$output" == *"--days wants a number"* ]] || fail "$output"
+}
+
+@test "agent diff --uncommitted, --files --json and one path; agent undo --file puts one file back, while it runs, and --redo takes it back" {
+    undo_env
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    agent_works
+    git mv kept.txt moved.txt
+    run "$PULSAR" agent diff work --files --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '.[] | select(.path == "edited.txt") | "\(.status) \(.added) \(.removed)"' <<<"$output")" = "modified 1 0" ] || fail "$output"
+    [ "$(jq -r '.[] | select(.path == "added.txt") | .status' <<<"$output")" = added ] || fail "$output"
+    [ "$(jq -r '.[] | select(.path == "gone.txt") | .status' <<<"$output")" = deleted ] || fail "$output"
+    [ "$(jq -r '.[] | select(.path == "moved.txt") | .status' <<<"$output")" = renamed ] || fail "$output"
+    [ "$(jq -r 'map(.path) | index("build/out.o")' <<<"$output")" = null ]
+    printf '\0\1\2' > bin.dat
+    run "$PULSAR" agent diff work --files --json -- bin.dat
+    [ "$(jq -c . <<<"$output")" = '[{"path":"bin.dat","status":"added","added":null,"removed":null}]' ] || fail "$output"
+    run "$PULSAR" agent diff work -- edited.txt
+    [[ "$output" == *"+agent"* ]] || fail "$output"
+    [[ "$output" != *"added.txt"* ]] || fail "$output"
+    # against the last commit: the user's own uncommitted work shows too
+    run "$PULSAR" agent diff work --uncommitted -- untracked.txt
+    [[ "$output" == *"+z"* ]] || fail "$output"
+    [[ "$output" == *"new file mode"* ]] || fail "$output"
+    run "$PULSAR" agent diff work --uncommitted -- edited.txt
+    [[ "$output" == *"+agent"* ]] || fail "$output"
+    [[ "$output" != *"new file mode"* ]] || fail "$output"
+    run "$PULSAR" agent diff work --json
+    [ "$status" -ne 0 ]; [[ "$output" == *"--json output only with --files"* ]] || fail "$output"
+    run "$PULSAR" agent diff work --files
+    [ "$status" -ne 0 ]
+    # one file back, while the session runs
+    [ -e "${TMUX_LIVE}/work" ]
+    run "$PULSAR" agent undo work --file edited.txt --dry-run
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"Puts back edited.txt as it was when the session started"* ]] || fail "$output"
+    [ "$(cat edited.txt)" = "$(printf 'two\nagent')" ]
+    run "$PULSAR" agent undo work --file edited.txt --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat edited.txt)" = two ]
+    [ "$(cat added.txt)" = new ]
+    run "$PULSAR" agent undo work --file deep/er/new.txt --yes
+    [[ "$output" == *"Deletes deep/er/new.txt, made since"* ]] || fail "$output"
+    [ ! -e deep ]
+    run "$PULSAR" agent undo work --file edited.txt --yes
+    [[ "$output" == *"nothing to do: edited.txt is as it was"* ]] || fail "$output"
+    run "$PULSAR" agent undo work --file untracked.txt --uncommitted --yes
+    [ ! -e untracked.txt ] || fail "untracked.txt is no commit's"
+    # --redo takes back the last of them
+    rm "${TMUX_LIVE}/work"
+    run "$PULSAR" agent undo work --redo --yes
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(cat untracked.txt)" = z ]
+    for f in /etc/passwd ../x a/../../x build/out.o; do
+        run "$PULSAR" agent undo work --file "$f" --yes
+        [ "$status" -ne 0 ] || fail "$f accepted"
+    done
+    [ -e build/out.o ]
+    run "$PULSAR" agent undo work --uncommitted --yes
+    [ "$status" -ne 0 ]; [[ "$output" == *"--uncommitted goes with --file"* ]] || fail "$output"
 }
 
 @test "agent attach: by name onto a running session, and alone onto the one you were on last" {

@@ -76,10 +76,16 @@ works there.
   notification.
 - Each session start snapshots the project's files under `refs/pulsar/`.
   `pulsar agent diff <name>` shows what changed since the session started.
-  `pulsar agent undo <name>` puts them back; that is the user's to run, not
-  yours. Don't delete, rewrite or push `refs/pulsar/`.
+  `pulsar agent undo <name>` puts them back (`--file <path>` puts back one
+  file, even while the session runs); that is the user's to run, not yours.
+  Don't delete, rewrite or push `refs/pulsar/`.
 - The user may be watching the session in the Agents app, which shows the
-  agent's terminal beside that diff.
+  agent's terminal beside that diff. They can type into your session from
+  there, and send review comments as `path:line: comment` lines.
+- A session the user is done with is archived (`agent sessions --archive`):
+  it ends, and its record, worktree and snapshots stay. `--tidy` forgets
+  ones archived a week ago. Archiving, tidying and undo are the user's to
+  run, not yours.
 - In a worktree inside a sandbox, its `.git` file, `commondir` and `gitdir`
   are read-only, like `.git/config`.
 
