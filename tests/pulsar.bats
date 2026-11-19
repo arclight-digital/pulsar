@@ -4511,7 +4511,9 @@ agent_args() {
     rm "${TMUX_LIVE}/oc"
     "$PULSAR" agent run opencode --tmux oc --new >/dev/null 2>&1
     [ "$(rec_id oc)" != "$oid" ] || fail "--new kept ${oid}"
-    # codex: its last conversation in the folder, on a restart only
+    # codex: its last conversation in the folder, on a restart only (its
+    # notify is the user's here, so Pulsar adds none: see the bells test)
+    mkdir -p "${HOME}/.codex"; printf 'notify = ["mine"]\n' > "${HOME}/.codex/config.toml"
     "$PULSAR" agent run codex --tmux cx >/dev/null 2>&1
     [ -z "$(agent_args cx)" ] || fail "$(agent_args cx)"
     rm "${TMUX_LIVE}/cx"
@@ -4572,6 +4574,8 @@ agent_args() {
     tmux_env
     local a
     for a in codex opencode agy aider; do printf '#!/bin/sh\nexit 0\n' > "${STUB}/${a}"; chmod +x "${STUB}/${a}"; done
+    # the user's own codex notify, so Pulsar adds no bell to its arguments here
+    mkdir -p "${HOME}/.codex"; printf 'notify = ["mine"]\n' > "${HOME}/.codex/config.toml"
     cd "$PROJ"
     "$PULSAR" agent run claude --tmux c1 --prompt "fix the tests" >/dev/null 2>&1
     [ "$(agent_args c1 | tail -n 1)" = "fix the tests" ] || fail "$(agent_args c1)"
@@ -6189,4 +6193,81 @@ SH
     [ "$(jq -r '.[0].agents | type' <<<"$output")" = array ]
     [ "$(jq -r '.[1] | [.name, .reachable] | join(",")' <<<"$output")" = "down,false" ] || fail "$output"
     [[ "$(jq -r '.[1].error' <<<"$output")" == *"No route to host"* ]]
+}
+
+
+@test "turn-end bells: Codex's notify and agy's Stop hook ring the pane's bell, inside a Pulsar session only" {
+    tmux_env
+    cd "$PROJ"
+    # codex: on its command line, before any subcommand, when the user has no notify
+    "$PULSAR" agent run codex --tmux cx >/dev/null 2>&1
+    [ "$(agent_args cx | head -2 | paste -sd' ' -)" = "-c notify=['sh','-c','printf \"\\a\" > \"\${PULSAR_TTY:-/dev/tty}\" 2>/dev/null; exit 0']" ] \
+        || fail "$(agent_args cx)"
+    rm "${TMUX_LIVE}/cx"
+    run "$PULSAR" agent run codex --tmux cx
+    [ "$(agent_args cx | sed -n '3,4p' | paste -sd' ' -)" = "resume --last" ] || fail "$(agent_args cx)"
+    rm "${TMUX_LIVE}/cx"
+    mkdir -p "${HOME}/.codex"; printf 'model = "x"\n  notify = ["mine"]\n' > "${HOME}/.codex/config.toml"
+    "$PULSAR" agent run codex --tmux cx --new >/dev/null 2>&1
+    [ -z "$(agent_args cx)" ] || fail "replaced the user's notify: $(agent_args cx)"
+    # agy: one marked entry beside the user's, added once, removed with the agent
+    local h="${HOME}/.gemini/config/hooks.json"
+    mkdir -p "$(dirname "$h")"; echo '{"mine":{"Stop":[{"type":"command","command":"x"}]}}' > "$h"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    rm "${TMUX_LIVE}/ag"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(jq -r 'keys | join(",")' "$h")" = "mine,pulsar" ] || fail "$(cat "$h")"
+    [ "$(jq -r '.pulsar.Stop | length' "$h")" = 1 ]
+    # what it runs: rings when agy is fully idle and only in a Pulsar session
+    local cmd bell="${BATS_TEST_TMPDIR}/tty"; cmd=$(jq -r '.pulsar.Stop[0].command' "$h")
+    : > "$bell"; printf '{"fullyIdle":true}' | PULSAR_TTY="$bell" sh -c "$cmd"
+    [ "$(od -An -c "$bell" | tr -d ' ')" = '\a' ] || fail "no bell: $(od -c "$bell")"
+    : > "$bell"; printf '{"fullyIdle": false}' | PULSAR_TTY="$bell" sh -c "$cmd"
+    [ ! -s "$bell" ] || fail "rang while a subagent works"
+    # on a real terminal: no bell outside a Pulsar session (a plain agy in
+    # the user's own terminal), one in the sandbox, where it has no PULSAR_TTY
+    local pty; pty=$(printf '%s' "$cmd" | python3 -c '
+import os, pty, sys
+cmd = sys.stdin.read()
+def run(env):
+    pid, fd = pty.fork()
+    if pid == 0:
+        r, w = os.pipe(); os.write(w, b"{\"fullyIdle\":true}"); os.close(w); os.dup2(r, 0)
+        os.execve("/bin/sh", ["sh", "-c", cmd], env)
+    out = b""
+    while True:
+        try:
+            d = os.read(fd, 1024)
+        except OSError:
+            break
+        if not d:
+            break
+        out += d
+    os.waitpid(pid, 0)
+    return b"\a" in out
+base = {k: v for k, v in os.environ.items() if k not in ("PULSAR_TTY", "PULSAR_SANDBOX")}
+print(run(base), run(dict(base, PULSAR_SANDBOX="1")))')
+    [ "$pty" = "False True" ] || fail "outside a session / in the sandbox: $pty"
+    # a "pulsar" hook the user wrote before is never replaced
+    echo '{"pulsar":{"Stop":[{"type":"command","command":"mine"}]}}' > "${h}.mine"
+    cp "$h" "${h}.ours"; cp "${h}.mine" "$h"
+    rm "${TMUX_LIVE}/ag"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(jq -r '.pulsar.Stop[0].command' "$h")" = mine ] || fail "$(cat "$h")"
+    cp "${h}.ours" "$h"
+    # a pulsar entry the user wrote is theirs: agent remove leaves it
+    "$PULSAR" agent remove agy >/dev/null 2>&1 || true
+    [ "$(jq -r 'keys | join(",")' "$h")" = mine ] || fail "$(cat "$h")"
+    echo '{"pulsar":{"Stop":[{"type":"command","command":"theirs"}]}}' > "$h"
+    "$PULSAR" agent remove agy >/dev/null 2>&1 || true
+    [ "$(jq -r '.pulsar.Stop[0].command' "$h")" = theirs ]
+}
+
+@test "the pane knows its terminal (PULSAR_TTY) for the hooks; an agy or Codex bell says it's waiting" {
+    notify_env
+    local pane; pane=$(sed -n "/^AGENT_TMUX_PANE='/,/-l'\$/p" "$PULSAR"); eval "$pane"
+    [[ "$AGENT_TMUX_PANE" == "PULSAR_TTY=\$(tty 2>/dev/null) && export PULSAR_TTY"$'\n'* ]] || fail "$AGENT_TMUX_PANE"
+    printf 'agent=agy\ndir=%s\n' "$PROJ" > "${REC}/work.session"
+    "$PULSAR" agent notify work
+    [ "$(sd_arg 1)" = "work: Antigravity CLI is waiting for you" ] || fail "$(sd_arg 1)"
 }

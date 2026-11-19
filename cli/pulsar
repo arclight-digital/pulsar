@@ -2275,8 +2275,56 @@ register_mcp() {
     esac
 }
 
+# Turn-end bells for the agents that don't take Claude's hooks: each rings
+# the bell of the pane it runs in (PULSAR_TTY, which the pane sets; in the
+# sandbox, the container's own terminal, which is the pane's), and tmux's
+# alert-bell hook does the rest, as for Claude (agent_notify).
+# shellcheck disable=SC2016  # expanded by the hook's sh
+AGENT_BELL='printf "\a" > "${PULSAR_TTY:-/dev/tty}" 2>/dev/null; exit 0'
+
+# Codex runs its `notify` program after every turn. Given on its command line
+# (-c, for this session only), and only when the user has no notify of their
+# own, since this would take its place. Prints the arguments, or nothing.
+codex_turn_notify() {
+    local f="${CODEX_HOME:-$HOME/.codex}/config.toml"
+    [ -f "$f" ] && grep -qE '^[[:space:]]*notify[[:space:]]*=' "$f" && return 0
+    printf '%s\n' -c "notify=['sh','-c','${AGENT_BELL}']"
+}
+
+# agy reads hooks only from its hooks.json (its --settings can't add one), so
+# Pulsar keeps one entry there, named pulsar, beside the user's: a Stop hook
+# that rings only inside a Pulsar session (PULSAR_TTY, or the sandbox) and
+# only once agy is fully idle (not while a subagent works). Added when an agy
+# session starts, removed by agent remove agy.
+agy_turn_hook() {
+    have jq || return 0
+    local f="${HOME}/.gemini/config/hooks.json" cmd tmp
+    # shellcheck disable=SC2016
+    cmd='p=$(cat); case "$p" in *"\"fullyIdle\":false"*|*"\"fullyIdle\": false"*) exit 0 ;; esac; [ -n "${PULSAR_TTY}${PULSAR_SANDBOX}" ] || exit 0; '"$AGENT_BELL"
+    mkdir -p "$(dirname "$f")"
+    [ -s "$f" ] || printf '{}\n' > "$f"
+    jq -e 'type == "object"' "$f" >/dev/null 2>&1 || { printf '%s is not JSON; left alone\n' "$f"; return 0; }
+    jq -e '.pulsar' "$f" >/dev/null 2>&1 && return 0
+    tmp=$(mktemp "${f}.XXXXXX")
+    jq --arg c "$cmd" '.pulsar = {Stop: [{type: "command", command: $c, timeout: 5}]}' "$f" > "$tmp" \
+        && chmod --reference="$f" "$tmp" && mv "$tmp" "$f"
+    printf 'added the pulsar turn-end hook to %s\n' "$f"
+}
+
+agy_turn_hook_remove() {
+    local f="${HOME}/.gemini/config/hooks.json" tmp
+    have jq && [ -f "$f" ] || return 0
+    # ours only: a "pulsar" entry the user wrote is theirs
+    jq -e '.pulsar.Stop[0].command // "" | contains("PULSAR_TTY")' "$f" >/dev/null 2>&1 || return 0
+    tmp=$(mktemp "${f}.XXXXXX")
+    jq 'del(.pulsar)' "$f" > "$tmp" && chmod --reference="$f" "$tmp" && mv "$tmp" "$f"
+    printf 'removed the pulsar turn-end hook from %s\n' "$f"
+}
+
 unregister_mcp() {
     local f tmp
+    # and the turn-end hook kept beside it in agy's own config
+    [ "$A_NAME" != agy ] || agy_turn_hook_remove
     case "$A_NAME" in
         claude)   json_remove_entry "$HOME/.claude.json" '["mcpServers","pulsar"]' ;;
         gemini)   json_remove_entry "$HOME/.gemini/settings.json" '["mcpServers","pulsar"]' ;;
@@ -3575,7 +3623,8 @@ AGENT_SCRATCH=${PULSAR_AGENT_SCRATCH:-/var/tmp/pulsar-agents}
 # What a pane runs: the agent, then a shell in the same pane, so the
 # scrollback stays and the session ends only when the user exits that shell.
 # shellcheck disable=SC2016  # expanded by the pane's bash, not here
-AGENT_TMUX_PANE='"$@"; s=$?
+AGENT_TMUX_PANE='PULSAR_TTY=$(tty 2>/dev/null) && export PULSAR_TTY
+"$@"; s=$?
 [ -z "${PULSAR_SESSION_RECORD:-}" ] || touch -c "$PULSAR_SESSION_RECORD"
 tmux set-option -w @pulsar-exited "$s" 2>/dev/null
 printf "\n[%s exited with status %s. This shell keeps the scrollback; exit ends the session.]\n" "$0" "$s"
@@ -3862,6 +3911,7 @@ agent_tmux() {
         # agy names its conversation itself; the session learns it while it
         # runs (agent_session_json), else "the last one in this folder"
         agent_tmux_refuse "$@" -- -c --continue --conversation -r --resume
+        agy_turn_hook >/dev/null
         if [ "$fresh" = 0 ] && [ "$had" = 1 ]; then
             [ -n "$id" ] || id=$(agy_conversation "$mode" "$dir") || id=""
             if [ -n "$id" ]; then conv=(--conversation "$id"); else conv=(-c); fi
@@ -3871,6 +3921,11 @@ agent_tmux() {
         # conversation in this folder, which a worktree session has to itself
         case "${1:-}" in resume|fork) die "--tmux picks the conversation itself; drop ${1} (--new for a fresh one)" ;; esac
         [ "$fresh" = 1 ] || [ "$had" = 0 ] || conv=(resume --last)
+        # its turn-end program rings the pane's bell, as Claude's hooks do;
+        # only when the user hasn't one of their own, which this would replace
+        local -a bell=()
+        mapfile -t bell < <(codex_turn_notify)
+        conv=("${bell[@]}" "${conv[@]}")
     elif [ "$fresh" = 0 ] && [ -n "$saved_agent" ]; then
         printf 'note: %s comes back as a new %s conversation; %s cannot resume the one it had\n' \
             "$tname" "$name" "$name" >&2
@@ -4435,11 +4490,15 @@ agent_notify() {
             msg=$(jq -r '.message // empty' "$f" 2>/dev/null) || msg=""
         fi
     fi
+    # agy's and Codex's bell is Pulsar's own turn-end hook (agy_turn_hook,
+    # codex_turn_notify): the agent is waiting
+    case "${event}:${agent}" in :agy|:codex|:opencode) event=Waiting ;; esac
     local who="The agent"
     if [ -n "$agent" ] && agent_row "$agent"; then who=${A_DESC%% (*}; fi
     case "$event" in
         Stop)         title="${tname}: ${who} is done"; body="It is waiting for your next message." ;;
         Notification) title="${tname}: ${who} needs you"; body=${msg:-"It is waiting for you."} ;;
+        Waiting)      title="${tname}: ${who} is waiting for you"; body="It finished its turn, or needs an answer." ;;
         *)            title="${tname}: ${who} wants your attention"; body="It rang the terminal bell." ;;
     esac
     [ -z "$dir" ] || body+=$'\n'"In ${dir/#"$HOME"/\~}"

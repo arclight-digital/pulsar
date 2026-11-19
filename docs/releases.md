@@ -55,6 +55,12 @@ CLI, and opencode moves to version 2.
   in `/var/tmp`, `~/.cache` and the sessions' scratch folders, each with
   Delete. `pulsar agent disk` lists the same, and
   `pulsar doctor suspend-room` says whether a suspend will fit.
+- Antigravity CLI and Codex CLI sessions now say when they finish a turn,
+  as Claude Code's do: the session shows as waiting in the app, and a
+  notification comes when you aren't looking at it. Pulsar adds a `pulsar`
+  Stop hook to agy's `~/.gemini/config/hooks.json`, and gives Codex a
+  `notify` program on its command line unless you have one of your own.
+  opencode doesn't yet.
 - Each session started with `--tmux` gets a scratch folder,
   `$PULSAR_SCRATCH`, for VM disks, builds and downloads, mounted into the
   sandbox too. It's deleted with the session.
