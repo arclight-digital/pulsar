@@ -104,12 +104,14 @@ def session_items(sessions):
     """One item per session that is running or waiting, from
     `pulsar agent sessions --json`; waiting ones first."""
     out = []
-    live = [s for s in sessions if s.get("state") in ("running", "waiting") and s.get("agent")]
+    live = [s for s in sessions if s.get("state") in ("running", "waiting") and s.get("agent")
+            and not s.get("archived")]
     for s in sorted(live, key=lambda s: (s["state"] != "waiting", s["name"])):
         agent = AGENT_NAMES.get(s["agent"], s["agent"])
         where = (s.get("dir") or "").replace(os.environ.get("HOME", "\0"), "~", 1)
         state = "Waiting for you" if s["state"] == "waiting" else "Running"
-        out.append(Item(f"session:{s['name']}", f"Open session “{s['name']}”",
+        title = s.get("title") or s["name"]
+        out.append(Item(f"session:{s['name']}", f"Open session “{title}”",
                         " · ".join(x for x in (agent, state, where) if x),
                         "utilities-terminal-symbolic",
                         [f"{LIBEXEC}/pulsar-agents", s["name"]],

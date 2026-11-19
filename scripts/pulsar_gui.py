@@ -168,13 +168,212 @@ def session_name_for(folder, taken):
     return name
 
 
-def run_argv(agent, name, folder, worktree=False, sandbox=None):
+def run_argv(agent, name, folder, worktree=False, sandbox=None, title=None, prompt=None):
     """What starts a new session: `pulsar agent run` with --tmux and --new.
-    sandbox: True, False, or None for this project's setting."""
+    sandbox: True, False, or None for this project's setting. A title is what
+    the app shows; a prompt is the agent's first message, sent as it starts."""
     argv = [PULSAR, "agent", "run", agent]
     if sandbox is not None:
         argv.append("--sandbox" if sandbox else "--no-sandbox")
     argv += ["--tmux", name, "--new", "--dir", folder]
     if worktree:
         argv.append("--worktree")
+    if title:
+        argv += ["--title", title]
+    if prompt:
+        argv += ["--prompt", prompt]
     return argv
+
+
+# ------------------------------------------------- the Agents app's view --
+def slug_name(text, taken, words=4):
+    """A session name from the first words of a prompt: "Fix the flaky login
+    test!" becomes fix-the-flaky-login; never one in `taken`; "" if the text
+    has no letters or digits."""
+    parts = re.findall(r"[A-Za-z0-9]+", text or "")[:words]
+    base = "-".join(parts).lower()[:32].strip("-")
+    if not base:
+        return ""
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
+def title_from_prompt(text, limit=48):
+    """What the sidebar calls a session started with this prompt: its first
+    line, cut at a word to fit."""
+    line = " ".join((text or "").strip().splitlines()[:1]).strip() if (text or "").strip() else ""
+    line = " ".join(line.split())
+    if len(line) <= limit:
+        return line
+    cut = line[:limit].rsplit(" ", 1)[0] if " " in line[:limit] else line[:limit]
+    return cut.rstrip(" ,.;:") + "…"
+
+
+def session_title(s):
+    return s.get("title") or s.get("name", "")
+
+
+def when(ts, now):
+    """How long ago, the way the sidebar says it: "just now", "5 min ago",
+    "3 h ago", "yesterday", "Nov 3"."""
+    try:
+        ts = int(ts)
+    except (TypeError, ValueError):
+        return None
+    d = max(0, now - ts)
+    if d < 60:
+        return "just now"
+    if d < 3600:
+        return f"{d // 60} min ago"
+    t = datetime.datetime.fromtimestamp(ts)
+    n = datetime.datetime.fromtimestamp(now)
+    if t.date() == n.date():
+        return f"{d // 3600} h ago"
+    if (n.date() - t.date()).days == 1:
+        return "yesterday"
+    return f"{t:%b} {t.day}"
+
+
+def session_status(s, now):
+    """The sidebar's line under a session's title."""
+    st = s.get("state")
+    if st == "waiting":
+        word = "Needs you" if s.get("waiting_for") == "Notification" else "Your turn"
+        w = when(s.get("last_active"), now)
+        return f"{word} · {w}" if w and w != "just now" else word
+    if st == "running":
+        return f"Working · {ago(now - s['started'])}" if s.get("started") else "Working"
+    w = when(s.get("last_active"), now)
+    return f"Stopped · {w}" if w else "Stopped"
+
+
+def session_project(s):
+    """The project a session belongs to: its repository, else its folder."""
+    return s.get("project") or s.get("worktree_of") or s.get("dir") or ""
+
+
+def _rank(s):
+    return {"waiting": 0, "running": 1}.get(s.get("state"), 2)
+
+
+def project_groups(sessions):
+    """[(project, [sessions])] for the sidebar: archived ones left out; the
+    project with the latest activity first; in each, the ones that need you,
+    then the working ones, then the rest by recent activity."""
+    groups = {}
+    for s in sessions:
+        if s.get("archived"):
+            continue
+        groups.setdefault(session_project(s), []).append(s)
+
+    def latest(s):
+        return s.get("last_active") or s.get("started") or 0
+    out = []
+    for p, ss in groups.items():
+        ss.sort(key=lambda s: (_rank(s), -latest(s), s.get("name", "")))
+        out.append((p, ss))
+    out.sort(key=lambda g: (min(_rank(s) for s in g[1]), -max(latest(s) for s in g[1]), g[0]))
+    return out
+
+
+def project_label(project, projects):
+    """A project's heading: its folder's name, with the parent's when two
+    projects share a name."""
+    base = os.path.basename(project.rstrip("/")) or project or "No folder"
+    same = [p for p in projects if os.path.basename(p.rstrip("/")) == os.path.basename(project.rstrip("/"))]
+    if len(same) > 1:
+        parent = os.path.basename(os.path.dirname(project.rstrip("/")))
+        if parent:
+            return f"{base} ({parent})"
+    return base
+
+
+def newly_unseen(before, after, looking_at):
+    """Sessions that stopped or started waiting since the last look, other
+    than the one on screen: their dot lights until opened."""
+    out = set()
+    for name, s in after.items():
+        old = before.get(name)
+        if old is None or name == looking_at:
+            continue
+        if s.get("state") != old.get("state") and s.get("state") in ("waiting", "ended"):
+            out.add(name)
+    return out
+
+
+def resume_note(s):
+    """What the banner says while a stopped session comes back."""
+    agent = s.get("agent")
+    if agent in ("claude", "opencode") or (agent == "agy" and s.get("conversation")):
+        return "Resuming on the same conversation"
+    if agent in ("codex", "agy"):
+        if s.get("worktree_of"):
+            return "Resuming on the same conversation"
+        return "Resuming on the latest conversation in this folder"
+    return "Starting again"
+
+
+def diff_line_ref(diff, index):
+    """(path, line) for line `index` (0-based) of a unified diff: the file it
+    is in and its line number on the new side (the old side for a removed
+    line), or None for a header line."""
+    lines = (diff or "").split("\n")
+    if index < 0 or index >= len(lines):
+        return None
+    path, new, old = None, None, None
+    for i, ln in enumerate(lines[:index + 1]):
+        at = i == index
+        if ln.startswith("diff --git "):
+            path, new, old = None, None, None
+            m = re.match(r"diff --git a/(.*) b/(.*)$", ln)
+            if m:
+                path = m.group(2)
+            if at:
+                return None
+        elif ln.startswith("+++ "):
+            if ln[4:] != "/dev/null":
+                path = ln[6:] if ln.startswith("+++ b/") else ln[4:]
+            if at:
+                return None
+        elif ln.startswith("--- "):
+            if not path and ln[4:] != "/dev/null":
+                path = ln[6:] if ln.startswith("--- a/") else ln[4:]
+            if at:
+                return None
+        elif ln.startswith("@@"):
+            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", ln)
+            if m:
+                old, new = int(m.group(1)), int(m.group(2))
+            if at:
+                return (path, new) if path and new is not None else None
+        elif new is None:
+            if at:
+                return None
+        elif ln.startswith("+"):
+            if at:
+                return (path, new)
+            new += 1
+        elif ln.startswith("-"):
+            if at:
+                return (path, old)
+            old += 1
+        elif ln.startswith("\\"):
+            if at:
+                return None
+        else:
+            if at:
+                return (path, new)
+            new += 1
+            old += 1
+    return None
+
+
+def message_with_comments(text, comments):
+    """The composer's message: the queued diff comments as path:line lines,
+    then what was typed."""
+    lines = [f"{c['path']}:{c['line']}: {c['text']}" for c in comments if c.get("text", "").strip()]
+    if lines and (text or "").strip():
+        return "\n".join(lines) + "\n\n" + text.strip()
+    return "\n".join(lines) if lines else (text or "").strip()

@@ -45,15 +45,17 @@ print(bool(m.NAME_OK.match("ok_1-a")), bool(m.NAME_OK.match("-no")), bool(m.NAME
     [ "${lines[5]}" = "True False False False" ]
 }
 
-@test "a new session starts with agent run --tmux --new in its folder; worktree and sandbox only when asked" {
+@test "a new session starts with agent run --tmux --new in its folder; worktree, sandbox, title and prompt only when asked" {
     run env PULSAR_CLI=/usr/bin/pulsar bash -c "$(declare -f app); APP='$APP' app '
 print(\" \".join(m.run_argv(\"claude\", \"fix\", \"/home/u/p\")))
 print(\" \".join(m.run_argv(\"agy\", \"fix\", \"/home/u/p\", worktree=True, sandbox=True)))
-print(\" \".join(m.run_argv(\"codex\", \"fix\", \"/home/u/p\", sandbox=False)))'"
+print(\" \".join(m.run_argv(\"codex\", \"fix\", \"/home/u/p\", sandbox=False)))
+print(m.run_argv(\"claude\", \"fix\", \"/p\", title=\"Fix it\", prompt=\"fix the tests\")[-4:])'"
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "/usr/bin/pulsar agent run claude --tmux fix --new --dir /home/u/p" ]
     [ "${lines[1]}" = "/usr/bin/pulsar agent run agy --sandbox --tmux fix --new --dir /home/u/p --worktree" ]
     [ "${lines[2]}" = "/usr/bin/pulsar agent run codex --no-sandbox --tmux fix --new --dir /home/u/p" ]
+    [ "${lines[3]}" = "['--title', 'Fix it', '--prompt', 'fix the tests']" ]
 }
 
 @test "the terminal takes the theme's Ptyxis palette, the variant that matches the desktop's style" {
@@ -103,8 +105,8 @@ print(m.header_subtitle({\"agent\": \"agy\", \"state\": \"running\", \"started\"
 print(m.header_subtitle({\"agent\": None, \"state\": \"ended\"}, now))'"
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "Claude Code · Needs you · ~/p · 142k context" ]
-    [ "${lines[1]}" = "Antigravity CLI · Running for 10 min · /srv/x" ]
-    [ "${lines[2]}" = "Started by hand · Ended" ]
+    [ "${lines[1]}" = "Antigravity CLI · Working · /srv/x" ]
+    [ "${lines[2]}" = "Started by hand · Stopped" ]
 }
 
 @test "the desktop entry starts the app from the image, under its own icon" {
@@ -115,4 +117,125 @@ print(m.header_subtitle({\"agent\": None, \"state\": \"ended\"}, now))'"
     grep -q 'scripts/pulsar-agents ' "${REPO}/Containerfile"
     grep -q 'scripts/pulsar_gui.py ' "${REPO}/Containerfile"
     if command -v desktop-file-validate >/dev/null; then desktop-file-validate "$d"; fi
+}
+
+@test "a session started with a prompt is named and titled from it; without one, from its folder" {
+    run app '
+print(m.slug_name("Fix the flaky login test!", set()))
+print(m.slug_name("Fix the flaky login test", {"fix-the-flaky-login"}))
+print(repr(m.slug_name("!!", set())))
+print(m.title_from_prompt("Fix the flaky login test in auth so that it passes on CI every single time"))
+print(m.title_from_prompt("  short one\nsecond line"))
+print(m.session_title({"name": "n", "title": None}), m.session_title({"name": "n", "title": "T"}))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = fix-the-flaky-login ]
+    [ "${lines[1]}" = fix-the-flaky-login-2 ]
+    [ "${lines[2]}" = "''" ]
+    [ "${lines[3]}" = "Fix the flaky login test in auth so that it…" ]
+    [ "${lines[4]}" = "short one" ]
+    [ "${lines[5]}" = "n T" ]
+}
+
+@test "the sidebar groups sessions by project, needs-you first, archived ones left out" {
+    run app '
+now = 1_000_000
+ss = [{"name": "b", "project": "/p/two", "state": "running", "started": now - 100, "last_active": now - 5},
+      {"name": "a", "project": "/p/one", "state": "ended", "last_active": now - 50},
+      {"name": "c", "project": "/p/one", "state": "waiting", "last_active": now - 300},
+      {"name": "d", "worktree_of": "/p/two", "dir": "/p/two/.worktrees/d", "state": "ended", "last_active": now - 9},
+      {"name": "e", "project": "/p/three", "state": "ended", "archived": now - 10, "last_active": now}]
+for p, g in m.project_groups(ss):
+    print(p, ",".join(s["name"] for s in g))
+print(m.project_label("/a/x/app", ["/a/x/app", "/b/y/app"]), m.project_label("/a/x/web", ["/a/x/web"]))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "/p/one c,a" ]
+    [ "${lines[1]}" = "/p/two b,d" ]
+    [ "${#lines[@]}" -eq 3 ]
+    [ "${lines[2]}" = "app (x) web" ]
+}
+
+@test "a row says what a session is doing and since when; a stopped one comes back on its conversation where the agent can" {
+    run env TZ=UTC bash -c "$(declare -f app); APP='$APP' app '
+now = 1_000_000
+print(m.session_status({\"state\": \"waiting\", \"waiting_for\": \"Notification\", \"last_active\": now - 120}, now))
+print(m.session_status({\"state\": \"waiting\", \"waiting_for\": \"Stop\", \"last_active\": now - 10}, now))
+print(m.session_status({\"state\": \"running\", \"started\": now - 840}, now))
+print(m.session_status({\"state\": \"ended\", \"last_active\": now - 90000}, now))
+print(m.session_status({\"state\": \"ended\"}, now))
+for s in ({\"agent\": \"claude\"}, {\"agent\": \"opencode\"}, {\"agent\": \"agy\", \"conversation\": \"u\"}, {\"agent\": \"agy\"},
+          {\"agent\": \"codex\", \"worktree_of\": \"/r\"}, {\"agent\": \"codex\"}, {\"agent\": None}):
+    print(m.resume_note(s))'"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "Needs you · 2 min ago" ]
+    [ "${lines[1]}" = "Your turn" ]
+    [ "${lines[2]}" = "Working · 14 min" ]
+    [ "${lines[3]}" = "Stopped · yesterday" ]
+    [ "${lines[4]}" = "Stopped" ]
+    [ "${lines[5]}" = "Resuming on the same conversation" ]
+    [ "${lines[6]}" = "Resuming on the same conversation" ]
+    [ "${lines[7]}" = "Resuming on the same conversation" ]
+    [ "${lines[8]}" = "Resuming on the latest conversation in this folder" ]
+    [ "${lines[9]}" = "Resuming on the same conversation" ]
+    [ "${lines[10]}" = "Resuming on the latest conversation in this folder" ]
+    [ "${lines[11]}" = "Starting again" ]
+}
+
+@test "a session lights up when it stops or waits while another one is on screen" {
+    run app '
+before = {"a": {"state": "running"}, "b": {"state": "running"}, "c": {"state": "waiting"}, "d": {"state": "running"},
+          "g": {"state": "waiting"}}
+after = {"a": {"state": "waiting"}, "b": {"state": "running"}, "c": {"state": "waiting"}, "d": {"state": "ended"},
+         "e": {"state": "waiting"}, "g": {"state": "running"}}
+print(sorted(m.newly_unseen(before, after, None)))
+print(sorted(m.newly_unseen(before, after, "a")))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['a', 'd']" ]
+    [ "${lines[1]}" = "['d']" ]
+}
+
+@test "a comment on a diff line names the file and the line on its side; it goes before the message" {
+    local d="${BATS_TEST_TMPDIR}/d.diff"
+    printf '%s\n' 'diff --git a/x.py b/x.py' 'index 1..2 100644' '--- a/x.py' '+++ b/x.py' '@@ -3,4 +5,5 @@ def f():' \
+        ' a' '-b' '+c' '+d' ' e' 'diff --git a/n.txt b/n.txt' 'new file mode 100644' '--- /dev/null' '+++ b/n.txt' \
+        '@@ -0,0 +1,2 @@' '+one' '+two' > "$d"
+    printf '%s\n' '--- /dev/null' '+++ b/z.txt' '@@ -0,0 +1 @@' '+z' > "${d}2"
+    run app "
+d = open('$d').read()
+print([m.diff_line_ref(d, i) for i in range(17)])
+print(m.diff_line_ref(d, 99), m.diff_line_ref(open('${d}2').read(), 3))
+print(repr(m.message_with_comments('run the tests', [{'path': 'x.py', 'line': 4, 'text': 'why?'}, {'path': 'x.py', 'line': 5, 'text': ' '}])))
+print(repr(m.message_with_comments('', [{'path': 'n.txt', 'line': 1, 'text': 'drop this'}])))
+print(repr(m.message_with_comments(' hi ', [])))"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[None, None, None, None, ('x.py', 5), ('x.py', 5), ('x.py', 4), ('x.py', 6), ('x.py', 7), ('x.py', 8), None, None, None, None, ('n.txt', 1), ('n.txt', 1), ('n.txt', 2)]" ]
+    [ "${lines[1]}" = "None ('z.txt', 1)" ]
+    [ "${lines[2]}" = "'x.py:4: why?\n\nrun the tests'" ]
+    [ "${lines[3]}" = "'n.txt:1: drop this'" ]
+    [ "${lines[4]}" = "'hi'" ]
+}
+
+@test "the changes summary counts files and lines, and says what it compares with when there are none" {
+    run app '
+print(m.files_summary([{"path": "a", "added": 2, "removed": 1}, {"path": "b", "added": None, "removed": None}], False))
+print(m.files_summary([{"path": "a", "added": 1, "removed": 0}], True))
+print(m.files_summary([], False))
+print(m.files_summary([], True))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "2 files · +2 −1" ]
+    [ "${lines[1]}" = "1 file · +1 −0" ]
+    [ "${lines[2]}" = "No changes since the session started" ]
+    [ "${lines[3]}" = "Nothing uncommitted" ]
+}
+
+@test "the app remembers what it saw in its own state file, and starts clean from a bad one" {
+    run env XDG_STATE_HOME="${BATS_TEST_TMPDIR}/st" bash -c "$(declare -f app); APP='$APP' app '
+d = m.load_state(); print(sorted(d))
+d[\"unseen\"] = [\"x\"]; d[\"last\"] = \"x\"; m.save_state(d)
+print(m.load_state()[\"last\"], m.load_state()[\"unseen\"])
+open(m.STATE_FILE, \"w\").write(\"[1]\"); print(sorted(m.load_state()))'"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['projects', 'recent', 'unseen']" ]
+    [ "${lines[1]}" = "x ['x']" ]
+    [ "${lines[2]}" = "['projects', 'recent', 'unseen']" ]
+    [ -f "${BATS_TEST_TMPDIR}/st/pulsar/agents-app.json" ]
 }

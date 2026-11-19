@@ -7,14 +7,20 @@ the agent's own terminal UI, attached here as it would be in a terminal
 snapshots work as they do there. Closing the window leaves the sessions
 running in their tmux server; opening it again picks them up.
 
-Beside the terminal: what the agent changed since the session started
-(`pulsar agent diff`), and its snapshots, to undo to (`pulsar agent undo`).
+What the CLI calls ending and forgetting, this calls stopping and
+archiving: a stopped session continues when opened (on its conversation
+where the agent can), and an archived one waits in Archived for 7 days
+(`pulsar agent sessions --tidy`) before its snapshots go. Under the
+terminal, a message box that sends to the agent, with comments from the
+diff. Beside it, what changed (`pulsar agent diff`) and the snapshots
+(`pulsar agent undo`).
 
 `pulsar-agents [<session> | --new]` opens on that session, or on a new one;
 a second launch raises the open window and turns to it. A notification's
 Open lands here.
 """
 import configparser
+import json
 import os
 import pathlib
 import sys
@@ -29,25 +35,47 @@ from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, GtkSource, Pango, V
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, forget_body, forget_left, home, parse,  # noqa: E402
-                        run, run_argv, session_doing, session_name_for, session_order, tokens)
+from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, home, message_with_comments, parse,  # noqa: E402,F401
+                        project_groups, project_label, resume_note, run, run_argv, session_doing,
+                        session_name_for, session_project, session_status, session_title, slug_name,
+                        title_from_prompt, tokens, when, diff_line_ref, newly_unseen, forget_body, forget_left)
 
 POLL_S = 3
+# the sidebar's tile per agent: two letters, since three of them start with C or A
+AGENT_TILES = {"claude": "Cl", "codex": "Cx", "agy": "Ag", "opencode": "Oc", "gemini": "Ge", "aider": "Ai"}
+TIDY_DAYS = 7
 SANDBOX_CHOICES = (("As set for this project", None), ("On", True), ("Off", False))
+STATE_FILE = pathlib.Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")) \
+    / "pulsar" / "agents-app.json"
 
 CSS = """
-.pulsar-agents .sessions row { border-radius: 10px; margin: 1px 6px; }
-.pulsar-agents .sessions row:selected { background-color: alpha(@accent_color, .13); }
-.pulsar-agents .tile { min-width: 32px; min-height: 32px; border-radius: 9px;
-                       background-color: alpha(currentColor, .06); color: alpha(currentColor, .75); }
-.pulsar-agents .sessions row:selected .tile { background-color: alpha(@accent_color, .2); color: @accent_color;
+.pulsar-agents .sessions row.session { border-radius: 10px; margin: 1px 6px; }
+.pulsar-agents .sessions row.session:selected { background-color: alpha(@accent_color, .13); }
+.pulsar-agents .sessions row.project { margin: 10px 6px 2px 6px; border-radius: 8px; }
+.pulsar-agents .project-label { font-weight: 700; font-size: .84em; opacity: .7; }
+.pulsar-agents .tile { min-width: 30px; min-height: 30px; border-radius: 9px; font-weight: 700;
+                       background-color: alpha(currentColor, .07); color: alpha(currentColor, .75); }
+.pulsar-agents .sessions row.session:selected .tile { background-color: alpha(@accent_color, .2); color: @accent_color;
                                               box-shadow: 0 0 10px alpha(@accent_color, .3); }
 .pulsar-agents .dot { min-width: 8px; min-height: 8px; border-radius: 4px; }
-.pulsar-agents .dot.waiting { background-color: @accent_color; box-shadow: 0 0 6px alpha(@accent_color, .6); }
+.pulsar-agents .dot.waiting, .pulsar-agents .dot.unseen
+    { background-color: @accent_color; box-shadow: 0 0 6px alpha(@accent_color, .6); }
 .pulsar-agents .dot.running { background-color: alpha(currentColor, .45); }
 .pulsar-agents .session-title { font-weight: 600; }
+.pulsar-agents row.session .archive { opacity: 0; }
+.pulsar-agents row.session:hover .archive, .pulsar-agents row.session:selected .archive { opacity: .7; }
 .pulsar-agents vte-terminal { padding: 6px 10px; }
 .pulsar-agents .rail-head { padding: 6px 10px; }
+.pulsar-agents .rail { background-color: @view_bg_color; box-shadow: inset 1px 0 alpha(currentColor, .08); }
+.pulsar-agents .files row { padding: 3px 8px; }
+.pulsar-agents .added { color: @success_color; }
+.pulsar-agents .removed { color: @error_color; }
+.pulsar-agents .composer { padding: 8px 10px 10px 10px; }
+.pulsar-agents .composer-box { border-radius: 12px; background-color: alpha(currentColor, .05);
+                               padding: 4px 4px 4px 10px; }
+.pulsar-agents .composer-box:focus-within { box-shadow: inset 0 0 0 1px alpha(@accent_color, .6); }
+.pulsar-agents .composer textview, .pulsar-agents .composer textview text { background: transparent; }
+.pulsar-agents .placeholder { opacity: .45; }
 .pulsar-agents .hairline { min-height: 1px; background-image: linear-gradient(to right,
     alpha(@accent_color, 0), alpha(@accent_color, .5) 35%, alpha(@accent_color, .5) 65%, alpha(@accent_color, 0)); }
 """
@@ -125,7 +153,8 @@ def diff_summary(stat):
 def header_subtitle(s, now):
     """Under the session's name: the agent, what it is doing, where, and for
     Claude how full its context is."""
-    parts = [AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand"), session_doing(s, now)]
+    parts = [AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand"),
+             session_status(s, now).split(" · ")[0]]
     if s.get("dir"):
         parts.append(home(s["dir"]))
     u = s.get("usage") or {}
@@ -134,57 +163,107 @@ def header_subtitle(s, now):
     return " · ".join(parts)
 
 
+def load_state():
+    """What the app remembers between runs: sessions with an unseen change,
+    the last one open, recent folders, and each project's choices."""
+    try:
+        d = json.loads(STATE_FILE.read_text())
+    except (OSError, ValueError):
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    d.setdefault("unseen", [])
+    d.setdefault("recent", [])
+    d.setdefault("projects", {})
+    return d
+
+
+def save_state(d):
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d))
+        tmp.replace(STATE_FILE)
+    except OSError:
+        pass
+
+
+def is_repo(path):
+    p = pathlib.Path(path or "/nonexistent")
+    for d in (p, *p.parents):
+        if (d / ".git").exists():
+            return True
+    return False
+
+
 # ----------------------------------------------------------------- window ---
 class Agents(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Agents", default_width=1200, default_height=780,
                          width_request=360, height_request=294)
         self.add_css_class("pulsar-agents")
-        self.sessions = {}      # name -> session JSON
+        self.state = load_state()
+        self.unseen = set(self.state["unseen"])
+        self.sessions = {}      # name -> session JSON, archived ones too
         self.rows = {}          # name -> SessionRow
-        self.terms = {}         # name -> Vte.Terminal, live or ended
+        self.terms = {}         # name -> Vte.Terminal
+        self.comments = {}      # name -> [{path, line, text}], queued for the next message
+        self.drafts = {}        # name -> unsent composer text
+        self.collapsed = set()  # projects folded shut
         self.current = None
         self.want = None        # a session asked for before it was listed
+        self.listed_once = False
+        self._shape = None
         self._poll = 0
 
-        # sidebar: the sessions
-        new = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="New Session")
+        # sidebar: sessions by project
+        new = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="New Session (Ctrl+Shift+N)")
         new.connect("clicked", lambda *_: self.new_session())
         side_head = Adw.HeaderBar()
         side_head.pack_start(new)
         self.list = Gtk.ListBox(css_classes=["navigation-sidebar", "sessions"])
-        self.list.connect("row-activated", lambda _l, r: self.show_session(r.name))
+        self.list.connect("row-activated", self._activated)
         self.empty = Adw.StatusPage(icon_name="utilities-terminal-symbolic", title="No sessions",
-                                    description="An agent you start here keeps running when the window closes.")
+                                    description="An agent you start here keeps working when the window closes.")
         start = Gtk.Button(label="New Session", halign=Gtk.Align.CENTER, css_classes=["pill", "suggested-action"])
         start.connect("clicked", lambda *_: self.new_session())
         self.empty.set_child(start)
         self.side_stack = Gtk.Stack()
         self.side_stack.add_named(self.empty, "empty")
         self.side_stack.add_named(Gtk.ScrolledWindow(child=self.list, hscrollbar_policy=Gtk.PolicyType.NEVER), "list")
+        self.archived_button = Gtk.Button(css_classes=["flat"], margin_start=6, margin_end=6, margin_bottom=6,
+                                          margin_top=2, visible=False)
+        self.archived_button.connect("clicked", lambda *_: ArchivedDialog(self).present(self))
         side = Adw.ToolbarView(content=self.side_stack)
         side.add_top_bar(side_head)
+        side.add_bottom_bar(self.archived_button)
 
-        # content: the session's terminal, and the rail beside it
+        # content: the session's terminal, the message box under it, the rail beside it
         self.title = Adw.WindowTitle(title="Agents")
         head = Adw.HeaderBar(title_widget=self.title)
-        self.rail_toggle = Gtk.ToggleButton(icon_name="sidebar-show-right-symbolic", tooltip_text="Changes and Snapshots")
-        self.menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", tooltip_text="Session",
+        self.rail_toggle = Gtk.ToggleButton(icon_name="sidebar-show-right-symbolic",
+                                            tooltip_text="Changes and History (Ctrl+Shift+D)")
+        self.menu_button = Gtk.MenuButton(icon_name="view-more-symbolic", tooltip_text="Session",
                                           menu_model=self._menu())
         head.pack_end(self.menu_button)
         head.pack_end(self.rail_toggle)
         self.banner = Adw.Banner()
-        self.banner.connect("button-clicked", lambda *_: self.reattach())
-        self.term_stack = Gtk.Stack()
-        self.ended = Adw.StatusPage(icon_name="utilities-terminal-symbolic")
-        again = Gtk.Button(label="Start Again", halign=Gtk.Align.CENTER, css_classes=["pill", "suggested-action"])
-        again.connect("clicked", lambda *_: self.reattach())
-        self.ended.set_child(again)
-        self.term_stack.add_named(self.ended, "ended")
-        self.term_stack.add_named(Adw.StatusPage(icon_name="utilities-terminal-symbolic", title="Pick a session"), "none")
+        self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
+        self.term_stack = Gtk.Stack(vexpand=True)
+        self.stopped = Adw.StatusPage(icon_name="utilities-terminal-symbolic")
+        again = Gtk.Button(label="Continue", halign=Gtk.Align.CENTER, css_classes=["pill", "suggested-action"])
+        again.connect("clicked", lambda *_: self.resume())
+        self.stopped.set_child(again)
+        self.term_stack.add_named(self.stopped, "stopped")
+        self.term_stack.add_named(Adw.StatusPage(icon_name="utilities-terminal-symbolic", title="Pick a session",
+                                                 description="Or start one with + (Ctrl+Shift+N)."), "none")
         self.term_stack.set_visible_child_name("none")
+        self.composer = Composer(self)
+        center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        center.append(self.term_stack)
+        center.append(self.composer.widget)
         self.rail = Rail(self)
-        self.overlay = Adw.OverlaySplitView(content=self.term_stack, sidebar=self.rail.widget,
+        self.overlay = Adw.OverlaySplitView(content=center, sidebar=self.rail.widget,
                                             sidebar_position=Gtk.PackType.END, show_sidebar=False,
                                             min_sidebar_width=340, max_sidebar_width=560, sidebar_width_fraction=.4)
         self.rail_toggle.bind_property("active", self.overlay, "show-sidebar",
@@ -193,14 +272,15 @@ class Agents(Adw.ApplicationWindow):
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         body.append(self.banner)
         body.append(self.overlay)
-        body.get_last_child().set_vexpand(True)
+        self.overlay.set_vexpand(True)
         content = Adw.ToolbarView(content=body)
         content.add_top_bar(head)
 
         self.split = Adw.NavigationSplitView(sidebar=Adw.NavigationPage(child=side, title="Agents"),
                                              content=Adw.NavigationPage(child=content, title="Session"),
-                                             min_sidebar_width=240, max_sidebar_width=320)
-        self.set_content(self.split)
+                                             min_sidebar_width=250, max_sidebar_width=330)
+        self.toasts = Adw.ToastOverlay(child=self.split)
+        self.set_content(self.toasts)
         narrow = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 640sp"))
         narrow.add_setter(self.split, "collapsed", True)
         self.add_breakpoint(narrow)
@@ -208,19 +288,55 @@ class Agents(Adw.ApplicationWindow):
         mid.add_setter(self.overlay, "collapsed", True)
         self.add_breakpoint(mid)
 
-        for name, cb in (("end", lambda: self.end_session()), ("forget", lambda: self.forget_session()),
-                         ("undo", lambda: self.undo(None)), ("redo", lambda: self.redo()),
-                         ("terminal", lambda: self.open_in_terminal())):
+        for name, cb in (("stop", lambda: self.stop_session()), ("rename", lambda: self.rename()),
+                         ("terminal", lambda: self.open_in_terminal()), ("new", lambda: self.new_session()),
+                         ("archive-current", lambda: self.current and self.archive(self.current)),
+                         ("message", lambda: self.composer.focus()),
+                         ("rail", lambda: self.rail_toggle.set_active(not self.rail_toggle.get_active())),
+                         ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1))):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(a)
+        for name, cb in (("archive", self.archive), ("rename-session", lambda n: self.rename(n)),
+                         ("goto", lambda n: self.show_session(n))):
+            a = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
+            a.connect("activate", lambda _a, p, cb=cb: cb(p.get_string()))
+            self.add_action(a)
+        for action, keys in (("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
+                             ("win.message", ["<Ctrl><Shift>m"]), ("win.rail", ["<Ctrl><Shift>d"]),
+                             ("win.next", ["<Ctrl>Page_Down"]), ("win.previous", ["<Ctrl>Page_Up"])):
+            app.set_accels_for_action(action, keys)
+        for i in range(1, 10):
+            a = Gio.SimpleAction.new(f"nth-{i}", None)
+            a.connect("activate", lambda *_a, i=i: self.nth(i))
+            self.add_action(a)
+            app.set_accels_for_action(f"win.nth-{i}", [f"<Alt>{i}"])
         self._actions_for(None)
 
         self.palette_file = ptyxis_palette_file()
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._recolor())
         self.connect("notify::visible", lambda *_: self._start_poll())
-        self.refresh()
+        self.connect("notify::is-active", lambda *_: self.is_active() and self._seen(self.current))
+        # archived sessions older than a week go (never a worktree with uncommitted changes)
+        run([PULSAR, "agent", "sessions", "--tidy", "--days", str(TIDY_DAYS)], lambda *_: self.refresh())
         self._start_poll()
+
+    # ---- remembered state ----
+    def remember(self, **kw):
+        self.state.update(kw)
+        self.state["unseen"] = sorted(self.unseen)
+        save_state(self.state)
+
+    def _seen(self, name):
+        if name and name in self.unseen:
+            self.unseen.discard(name)
+            if name in self.rows:
+                self.rows[name].update(self.sessions[name], self._now(), False)
+            self.remember()
+
+    @staticmethod
+    def _now():
+        return GLib.get_real_time() // 1_000_000
 
     # ---- polling ----
     def _start_poll(self):
@@ -241,27 +357,22 @@ class Agents(Adw.ApplicationWindow):
         found = parse(out) if ok else None
         if not isinstance(found, list):
             return
-        found.sort(key=session_order)
         before = self.sessions
         self.sessions = {s["name"]: s for s in found}
-        names = [s["name"] for s in found]
-        for n in list(self.rows):
-            if n not in self.sessions:
-                self.list.remove(self.rows.pop(n))
-        if list(self.rows) != names:
-            for r in self.rows.values():
-                self.list.remove(r)
-            rows = {n: self.rows.get(n) or SessionRow(n) for n in names}
-            for n in names:
-                self.list.append(rows[n])
-            self.rows = rows
-        now = GLib.get_real_time() // 1_000_000
-        for s in found:
-            self.rows[s["name"]].update(s, now)
-        self.side_stack.set_visible_child_name("list" if found else "empty")
-        if self.current in self.rows:
-            self.list.select_row(self.rows[self.current])
+        if self.listed_once:
+            looking = self.current if self.is_active() else None
+            self.unseen |= newly_unseen(before, self.sessions, looking)
+        self.unseen &= set(self.sessions)
+        if self.unseen != set(self.state["unseen"]):
+            self.remember()
+        self._rebuild()
+        archived = [s for s in found if s.get("archived")]
+        self.archived_button.set_label(f"Archived ({len(archived)})")
+        self.archived_button.set_visible(bool(archived))
+        now = self._now()
+        if self.current in self.sessions and not self.sessions[self.current].get("archived"):
             s = self.sessions[self.current]
+            self.title.set_title(session_title(s))
             self.title.set_subtitle(header_subtitle(s, now))
             self._actions_for(s)
             old = before.get(self.current, {})
@@ -269,49 +380,146 @@ class Agents(Adw.ApplicationWindow):
             if s.get("state") == "waiting" and old.get("state") != "waiting":
                 self.rail.reload()
             self.rail.session_changed(s, old)
-        elif self.current and self.current not in self.sessions:
-            self.current = None
-            self.title.set_title("Agents")
-            self.title.set_subtitle("")
-            self.term_stack.set_visible_child_name("none")
-            self._actions_for(None)
+            self.composer.set_session(s)
+        elif self.current:
+            self._clear_current()
         if self.want and self.want in self.sessions:
             w, self.want = self.want, None
             self.show_session(w)
+        elif not self.listed_once and not self.current and not self.want:
+            last = self.state.get("last")
+            if last in self.sessions and not self.sessions[last].get("archived"):
+                self.show_session(last, resume=False)
+        self.listed_once = True
+
+    def _rebuild(self):
+        """The sidebar: a heading per project, its sessions under it. Rows are
+        kept and updated; the list is rebuilt only when what is in it moves."""
+        groups = project_groups(self.sessions.values())
+        projects = [p for p, _ss in groups]
+        shape = tuple((p, p in self.collapsed, tuple(s["name"] for s in ss)) for p, ss in groups)
+        now = self._now()
+        if shape != self._shape:
+            self._shape = shape
+            while (r := self.list.get_first_child()) is not None:
+                self.list.remove(r)
+            rows = {}
+            for p, ss in groups:
+                self.list.append(ProjectRow(p, project_label(p, projects), p in self.collapsed))
+                if p in self.collapsed:
+                    continue
+                for s in ss:
+                    rows[s["name"]] = self.rows.get(s["name"]) or SessionRow(self, s["name"])
+                    self.list.append(rows[s["name"]])
+            self.rows = rows
+        for p, ss in groups:
+            for s in ss:
+                if s["name"] in self.rows:
+                    self.rows[s["name"]].update(s, now, s["name"] in self.unseen)
+        r = self.list.get_first_child()
+        while r is not None:
+            if isinstance(r, ProjectRow):
+                ss = dict(groups).get(r.project, [])
+                r.set_attention(any(s.get("state") == "waiting" or s["name"] in self.unseen for s in ss))
+            r = r.get_next_sibling()
+        self.side_stack.set_visible_child_name("list" if groups else "empty")
+        if self.current in self.rows:
+            self.list.select_row(self.rows[self.current])
+
+    def _activated(self, _list, row):
+        if isinstance(row, ProjectRow):
+            (self.collapsed.discard if row.project in self.collapsed else self.collapsed.add)(row.project)
+            self._shape = None
+            self._rebuild()
+        else:
+            self.show_session(row.name)
+
+    def visible_names(self):
+        return [s["name"] for p, ss in project_groups(self.sessions.values()) if p not in self.collapsed for s in ss]
+
+    def cycle(self, step):
+        names = self.visible_names()
+        if not names:
+            return
+        i = names.index(self.current) + step if self.current in names else 0
+        self.show_session(names[i % len(names)])
+
+    def nth(self, i):
+        names = self.visible_names()
+        if i <= len(names):
+            self.show_session(names[i - 1])
+
+    def _clear_current(self):
+        self.current = None
+        self.title.set_title("Agents")
+        self.title.set_subtitle("")
+        self.term_stack.set_visible_child_name("none")
+        self.banner.set_revealed(False)
+        self._actions_for(None)
+        self.composer.set_session(None)
 
     # ---- one session ----
-    def show_session(self, name):
+    def show_session(self, name, resume=True):
         s = self.sessions.get(name)
         if s is None:
             self.want = name
             self.refresh()
             return
+        if s.get("archived"):
+            self.unarchive(name)
         self.current = name
-        self.title.set_title(name)
-        self.title.set_subtitle(header_subtitle(s, GLib.get_real_time() // 1_000_000))
+        self._seen(name)
+        self.remember(last=name)
+        self.title.set_title(session_title(s))
+        self.title.set_subtitle(header_subtitle(s, self._now()))
         if name in self.rows:
             self.list.select_row(self.rows[name])
         self._actions_for(s)
         self.banner.set_revealed(False)
+        self.composer.set_session(s)
         t = self.terms.get(name)
-        if t is not None:
+        if t is not None and not t.dead:
             self.term_stack.set_visible_child(t)
-            if t.dead:
-                self._show_dead(name)
             t.grab_focus()
         elif s.get("state") != "ended":
             self.attach(name)
+        elif resume:
+            self.resume()
         else:
-            self._show_ended(s)
+            self._show_stopped(s)
         self.split.set_show_content(True)
         self.rail.set_session(s)
 
-    def _show_ended(self, s):
-        self.ended.set_title(f"{s['name']} has ended")
-        self.ended.set_description("Start Again brings its agent back in "
-                                   f"{home(s.get('dir'))}" + (", on the same conversation." if s.get("agent") == "claude"
-                                                              else ", in a new conversation."))
-        self.term_stack.set_visible_child_name("ended")
+    def _show_stopped(self, s):
+        self.stopped.set_title(f"{session_title(s)} is stopped")
+        self.stopped.set_description(resume_note(s).replace("Resuming", "Continue picks it up") + ".")
+        self.term_stack.set_visible_child_name("stopped")
+
+    def resume(self):
+        """A stopped session comes back in place: `agent attach` starts it
+        again, on its conversation where the agent can."""
+        s = self.sessions.get(self.current)
+        if not s:
+            return
+        self.banner.set_title(resume_note(s) + "…")
+        self.banner.set_button_label(None)
+        self.banner.set_revealed(True)
+        t = self.attach(self.current)
+        t.resuming = True
+        GLib.timeout_add_seconds(2, lambda: self.refresh() and False)
+        GLib.timeout_add_seconds(10, lambda: self._resumed(t) and False)
+
+    def _resumed(self, t):
+        if getattr(t, "resuming", False):
+            t.resuming = False
+            if t.name == self.current and not t.dead:
+                self.banner.set_revealed(False)
+        return False
+
+    def _drew(self, t):
+        if getattr(t, "resuming", False) and not getattr(t, "hide_pending", False):
+            t.hide_pending = True
+            GLib.timeout_add(1200, lambda: (setattr(t, "hide_pending", False), self._resumed(t)) and False)
 
     def _terminal(self, name):
         old = self.terms.pop(name, None)
@@ -321,8 +529,10 @@ class Agents(Adw.ApplicationWindow):
                          audible_bell=False, enable_fallback_scrolling=True)
         t.dead = False
         t.name = name
+        t.started = self._now()
         t.connect("child-exited", self._exited)
         t.connect("bell", lambda term: None)
+        t.connect("contents-changed", self._drew)
         self._color(t)
         self.terms[name] = t
         self.term_stack.add_child(t)
@@ -335,6 +545,7 @@ class Agents(Adw.ApplicationWindow):
         t.spawn_async(Vte.PtyFlags.DEFAULT, os.path.expanduser("~"), argv, env, GLib.SpawnFlags.DEFAULT,
                       None, None, -1, None, self._spawned, name)
         t.grab_focus()
+        return t
 
     def _spawned(self, term, pid, error, name):
         if error is not None:
@@ -342,29 +553,31 @@ class Agents(Adw.ApplicationWindow):
             self.alert("Could not open the session", error.message)
 
     def attach(self, name):
-        self.spawn(name, [PULSAR, "agent", "attach", name])
-
-    def reattach(self):
-        if self.current:
-            self.banner.set_revealed(False)
-            self.attach(self.current)
-            GLib.timeout_add_seconds(2, lambda: self.refresh() and False)
+        return self.spawn(name, [PULSAR, "agent", "attach", name])
 
     def _exited(self, term, status):
         term.dead = True
-        if term.name == self.current:
-            self._show_dead(term.name)
-        self.refresh()
+        term.resuming = False
 
-    def _show_dead(self, name):
-        s = self.sessions.get(name, {})
-        if s.get("state") in ("running", "waiting"):
-            self.banner.set_title("Detached from this session; it is still running")
-            self.banner.set_button_label("Attach")
-        else:
-            self.banner.set_title("This session has ended")
-            self.banner.set_button_label("Start Again")
-        self.banner.set_revealed(True)
+        def then(ok, out):
+            self._listed(ok, out)
+            if term.name != self.current or self.terms.get(term.name) is not term:
+                return
+            s = self.sessions.get(term.name, {})
+            if s.get("state") in ("running", "waiting"):
+                self.banner.set_title("This window let go of the session; it is still working")
+                self.banner.set_button_label("Attach")
+                self.banner.set_revealed(True)
+            else:
+                self.banner.set_revealed(False)
+                self._show_stopped(s)
+                self.composer.set_session(s)
+        run([PULSAR, "agent", "sessions", "--json"], then)
+
+    def _banner_clicked(self):
+        if self.current:
+            self.banner.set_revealed(False)
+            self.attach(self.current)
 
     # ---- colors: the terminal follows the theme Ptyxis has ----
     def _color(self, t):
@@ -388,21 +601,18 @@ class Agents(Adw.ApplicationWindow):
     # ---- actions ----
     def _menu(self):
         m = Gio.Menu()
+        m.append("Rename…", "win.rename")
         m.append("Open in Terminal", "win.terminal")
-        undo = Gio.Menu()
-        undo.append("Undo to the Start…", "win.undo")
-        undo.append("Redo…", "win.redo")
-        m.append_section(None, undo)
         end = Gio.Menu()
-        end.append("End Session…", "win.end")
-        end.append("Forget Session…", "win.forget")
+        end.append("Stop", "win.stop")
+        end.append("Archive", "win.archive-current")
         m.append_section(None, end)
         return m
 
     def _actions_for(self, s):
         live = bool(s) and s.get("state") != "ended"
-        for name, on in (("end", live), ("forget", bool(s) and not live), ("undo", bool(s) and not live),
-                         ("redo", bool(s) and not live), ("terminal", bool(s) and bool(s.get("agent")))):
+        for name, on in (("stop", live), ("rename", bool(s)), ("archive-current", bool(s)),
+                         ("terminal", bool(s) and bool(s.get("agent")))):
             self.lookup_action(name).set_enabled(on)
         self.menu_button.set_sensitive(bool(s))
         self.rail_toggle.set_sensitive(bool(s))
@@ -417,11 +627,20 @@ class Agents(Adw.ApplicationWindow):
         except GLib.Error as e:
             self.alert("Could not open a terminal", e.message)
 
-    def confirm(self, heading, body, action, label, then):
+    def toast(self, title, undo=None):
+        t = Adw.Toast(title=title, timeout=5)
+        if undo:
+            t.set_button_label("Undo")
+            t.connect("button-clicked", lambda *_: undo())
+        self.toasts.add_toast(t)
+
+    def confirm(self, heading, body, action, label, then, destructive=True):
         d = Adw.AlertDialog(heading=heading, body=body)
         d.add_response("cancel", "Cancel")
         d.add_response(action, label)
-        d.set_response_appearance(action, Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_response_appearance(action, Adw.ResponseAppearance.DESTRUCTIVE if destructive
+                                  else Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response(action)
         d.set_close_response("cancel")
         d.connect("response", lambda _d, r: r == action and then())
         d.present(self)
@@ -440,96 +659,172 @@ class Agents(Adw.ApplicationWindow):
             self.refresh()
         run([PULSAR, "agent", *args], done)
 
-    def end_session(self):
+    def stop_session(self):
         s = self.sessions.get(self.current)
         if not s:
             return
-        back = " Start Again resumes the conversation." if s.get("agent") == "claude" else ""
-        self.confirm(f"End {s['name']}?", f"The agent stops, and the session closes.{back}",
-                     "end", "End Session", lambda: self._cmd("Could not end the session", "sessions", "--kill", s["name"]))
+        self._cmd("Could not stop the session", "sessions", "--kill", s["name"],
+                  then=lambda ok, _o: ok and self.toast(f"Stopped {session_title(s)}. Open it to continue."))
 
-    def forget_session(self):
-        s = self.sessions.get(self.current)
+    def archive(self, name):
+        s = self.sessions.get(name)
         if not s:
             return
-        name = s["name"]
+        title = session_title(s)
 
-        def gone(ok, out):
-            lines = out.strip().splitlines()
-            if ok and (left := forget_left(parse(lines[-1] if lines else ""))):
-                self.alert(*left)
-            if ok:
-                t = self.terms.pop(name, None)
-                if t is not None:
-                    self.term_stack.remove(t)
-        self.confirm(f"Forget {name}?", forget_body(s), "forget", "Forget",
-                     lambda: self._cmd("Could not forget the session", "sessions", "--forget", name, "--json", then=gone))
+        def done(ok, _out):
+            if not ok:
+                return
+            t = self.terms.pop(name, None)
+            if t is not None:
+                self.term_stack.remove(t)
+            if name == self.current:
+                self._clear_current()
+            self.unseen.discard(name)
+            self.remember()
+            self.toast(f"Archived {title}", undo=lambda: self.unarchive(name))
+        self._cmd("Could not archive the session", "sessions", "--archive", name, then=done)
 
-    def undo(self, to):
-        """What would change first, from the CLI itself; then do it, with a way back."""
+    def unarchive(self, name):
+        self._cmd("Could not bring the session back", "sessions", "--unarchive", name)
+
+    def delete(self, name):
+        self._cmd("Could not delete the session", "sessions", "--forget", name, "--json",
+                  then=lambda ok, out: ok and (left := forget_left(parse((out.strip().splitlines() or [""])[-1])))
+                  and self.alert(*left))
+
+    def rename(self, name=None):
+        name = name or self.current
+        s = self.sessions.get(name)
+        if not s:
+            return
+        d = Adw.AlertDialog(heading="Rename Session")
+        entry = Gtk.Entry(text=session_title(s), activates_default=True)
+        d.set_extra_child(entry)
+        d.add_response("cancel", "Cancel")
+        d.add_response("rename", "Rename")
+        d.set_response_appearance("rename", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("rename")
+        d.set_close_response("cancel")
+        d.connect("response", lambda _d, r: r == "rename" and self._cmd(
+            "Could not rename the session", "sessions", "--title", name, entry.get_text().strip()))
+        d.present(self)
+
+    def undo(self, to, stopped=False):
+        """What would change first, from the CLI itself; then do it, with a way
+        back. A working session stops first, so its agent can't write mid-undo."""
         name = self.current
-        if not name:
+        s = self.sessions.get(name)
+        if not s:
+            return
+        if s.get("state") != "ended" and not stopped:
+            self.confirm(f"Stop {session_title(s)} and go back?",
+                         "The agent stops first, so it can't write while the files go back. "
+                         "Next you see which files change.", "stop", "Stop and Go Back",
+                         lambda: self._cmd("Could not stop the session", "sessions", "--kill", name,
+                                           then=lambda ok, _o: ok and self.undo(to, stopped=True)),
+                         destructive=False)
             return
         extra = ["--to", str(to)] if to else []
 
         def shown(ok, out):
             text = out.strip()
             if not ok or text.startswith("nothing to do"):
-                self.alert("Nothing to undo" if ok else "Could not undo", text[-600:])
+                self.alert("Nothing to undo" if ok else "Could not go back", text[-600:])
                 return
-            self.confirm(f"Undo what changed in {name}?", text[-1200:], "undo", "Put Files Back",
+            self.confirm(f"Go back in {session_title(s)}?", text[-1200:], "undo", "Put Files Back",
                          lambda: run([PULSAR, "agent", "undo", name, *extra, "--yes"], undone))
 
         def undone(ok, out):
             self.refresh()
             self.rail.reload()
             if not ok:
-                self.alert("Could not undo", out.strip()[-600:])
+                self.alert("Could not go back", out.strip()[-600:])
                 return
-            d = Adw.AlertDialog(heading="Files put back",
-                                body="The listed files are back to how they were then. Redo takes the undo back.")
-            d.add_response("close", "Close")
-            d.add_response("redo", "Redo…")
-            d.connect("response", lambda _d, r: r == "redo" and self.redo())
-            d.present(self)
+            self.toast("Files put back", undo=lambda: self._cmd("Could not redo", "undo", name, "--redo", "--yes",
+                                                                then=lambda *_: self.rail.reload()))
         run([PULSAR, "agent", "undo", name, *extra, "--dry-run"], shown)
 
-    def redo(self):
+    def revert_file(self, path, uncommitted):
         name = self.current
         if not name:
             return
+        extra = ["--uncommitted"] if uncommitted else []
 
-        def shown(ok, out):
-            text = out.strip()
-            if not ok or text.startswith("nothing to do"):
-                self.alert("Nothing to redo" if ok else "Could not redo", text[-600:])
+        def done(ok, out):
+            self.rail.reload()
+            if not ok:
+                self.alert("Could not revert the file", out.strip()[-600:])
                 return
-            self.confirm(f"Take back the undo in {name}?", text[-1200:], "redo", "Redo",
-                         lambda: self._cmd("Could not redo", "undo", name, "--redo", "--yes",
-                                           then=lambda *_: self.rail.reload()))
-        run([PULSAR, "agent", "undo", name, "--redo", "--dry-run"], shown)
+            self.toast(f"Reverted {os.path.basename(path)}",
+                       undo=lambda: self._cmd("Could not redo", "undo", name, "--redo", "--yes",
+                                              then=lambda *_: self.rail.reload()))
+        run([PULSAR, "agent", "undo", name, "--file", path, *extra, "--yes"], done)
 
-    def paste_note(self, text):
+    def send(self, text):
+        """The message box's text into the agent: pasted, then Enter."""
         t = self.terms.get(self.current)
         if t is None or t.dead or not text.strip():
             return False
         t.paste_text(text)
+        GLib.timeout_add(180, lambda: t.feed_child(b"\r") and False)
         t.grab_focus()
         return True
+
+    def add_comment(self, path, line, text):
+        if not self.current or not text.strip():
+            return
+        self.comments.setdefault(self.current, []).append({"path": path, "line": line, "text": text.strip()})
+        self.composer.update_chip()
 
     def new_session(self):
         NewSession(self).present(self)
 
+    def started(self, name, agent, title, argv):
+        self.current = name
+        self.title.set_title(title or name)
+        self.title.set_subtitle(AGENT_NAMES.get(agent, agent))
+        stub = {"name": name, "agent": agent, "state": "running", "title": title}
+        self._actions_for(stub)
+        self.banner.set_revealed(False)
+        self.composer.set_session(stub)
+        self.spawn(name, argv)
+        self.remember(last=name)
+        self.split.set_show_content(True)
+        GLib.timeout_add_seconds(2, lambda: self.refresh() and False)
+
+
+class ProjectRow(Gtk.ListBoxRow):
+    """A project's heading in the sidebar; activating it folds it."""
+
+    def __init__(self, project, label, collapsed):
+        super().__init__(selectable=False, css_classes=["project"], tooltip_text=home(project) or None)
+        self.project = project
+        box = Gtk.Box(spacing=6, margin_start=6, margin_end=8)
+        box.append(Gtk.Image(icon_name="pan-end-symbolic" if collapsed else "pan-down-symbolic",
+                             css_classes=["dim-label"]))
+        box.append(Gtk.Label(label=label, xalign=0, hexpand=True, css_classes=["project-label"],
+                             ellipsize=Pango.EllipsizeMode.END))
+        self.dot = Gtk.Box(css_classes=["dot"], valign=Gtk.Align.CENTER, visible=False)
+        box.append(self.dot)
+        self.set_child(box)
+        self.collapsed = collapsed
+
+    def set_attention(self, on):
+        self.dot.set_visible(on and self.collapsed)
+        (self.dot.add_css_class if on else self.dot.remove_css_class)("waiting")
+
 
 class SessionRow(Gtk.ListBoxRow):
-    """A session in the sidebar: a tile, its name, what it is doing, and a
-    dot that lights up when it waits for you."""
+    """A session: the agent's initial, its title, what it is doing, a dot
+    when it needs you or changed while you weren't looking, Archive on hover."""
 
-    def __init__(self, name):
-        super().__init__()
+    def __init__(self, win, name):
+        super().__init__(css_classes=["session"])
+        self.win = win
         self.name = name
-        box = Gtk.Box(spacing=10, margin_top=6, margin_bottom=6, margin_start=4, margin_end=6)
-        self.tile = Gtk.Image(icon_name="utilities-terminal-symbolic", css_classes=["tile"], pixel_size=16)
+        box = Gtk.Box(spacing=10, margin_top=5, margin_bottom=5, margin_start=2, margin_end=2)
+        self.tile = Gtk.Label(css_classes=["tile"], valign=Gtk.Align.CENTER)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
         self.label = Gtk.Label(label=name, xalign=0, css_classes=["session-title"], ellipsize=Pango.EllipsizeMode.END)
         self.sub = Gtk.Label(xalign=0, css_classes=["caption", "dim-label"], ellipsize=Pango.EllipsizeMode.END)
@@ -538,75 +833,227 @@ class SessionRow(Gtk.ListBoxRow):
         self.dot = Gtk.Box(css_classes=["dot"], valign=Gtk.Align.CENTER)
         self.lock = Gtk.Image(icon_name="security-high-symbolic", tooltip_text="Sandboxed", visible=False,
                               css_classes=["dim-label"])
+        arch = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Archive", valign=Gtk.Align.CENTER,
+                          css_classes=["flat", "circular", "archive"])
+        arch.connect("clicked", lambda *_: win.archive(name))
         box.append(self.tile)
         box.append(text)
         box.append(self.lock)
         box.append(self.dot)
+        box.append(arch)
         self.set_child(box)
+        menu = Gio.Menu()
+        for label, action in (("Rename…", "win.rename-session"), ("Archive", "win.archive")):
+            item = Gio.MenuItem.new(label, None)
+            item.set_action_and_target_value(action, GLib.Variant.new_string(name))
+            menu.append_item(item)
+        self.popover = Gtk.PopoverMenu.new_from_model(menu)
+        self.popover.set_parent(self)
+        self.popover.set_has_arrow(False)
+        click = Gtk.GestureClick(button=3)
+        click.connect("pressed", self._menu)
+        self.add_controller(click)
 
-    def update(self, s, now):
+    def _menu(self, _g, _n, x, y):
+        r = Gdk.Rectangle()
+        r.x, r.y, r.width, r.height = int(x), int(y), 1, 1
+        self.popover.set_pointing_to(r)
+        self.popover.popup()
+
+    def update(self, s, now, unseen):
         agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand")
-        self.sub.set_label(f"{agent} · {session_doing(s, now)}")
-        for c in ("waiting", "running"):
+        self.tile.set_label(AGENT_TILES.get(s.get("agent"), agent[:1].upper()))
+        self.tile.set_tooltip_text(agent)
+        self.label.set_label(session_title(s))
+        self.sub.set_label(session_status(s, now))
+        for c in ("waiting", "running", "unseen"):
             self.dot.remove_css_class(c)
-        if s.get("state") in ("waiting", "running"):
-            self.dot.add_css_class(s["state"])
+        if s.get("state") == "waiting":
+            self.dot.add_css_class("waiting")
+        elif unseen:
+            self.dot.add_css_class("unseen")
+        elif s.get("state") == "running":
+            self.dot.add_css_class("running")
         self.lock.set_visible(s.get("sandbox") == "on")
-        self.set_opacity(1 if s.get("state") != "ended" else .6)
+        self.set_opacity(1 if s.get("state") != "ended" or unseen else .62)
+
+
+class Composer:
+    """Under the terminal: a message for the agent. Enter sends it (pasted
+    into the agent's prompt, then Enter), Shift+Enter is a new line. Comments
+    from the diff wait in a chip and go with the next message."""
+
+    def __init__(self, win):
+        self.win = win
+        self.s = None
+        self.view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=6, bottom_margin=6,
+                                 accepts_tab=False, hexpand=True)
+        self.buffer = self.view.get_buffer()
+        self.buffer.connect("changed", lambda *_: self._changed())
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._key)
+        self.view.add_controller(keys)
+        self.placeholder = Gtk.Label(xalign=0, css_classes=["placeholder"], can_target=False,
+                                     valign=Gtk.Align.START, margin_top=6, margin_start=2)
+        over = Gtk.Overlay(child=Gtk.ScrolledWindow(child=self.view, propagate_natural_height=True,
+                                                    max_content_height=160,
+                                                    hscrollbar_policy=Gtk.PolicyType.NEVER, hexpand=True))
+        over.add_overlay(self.placeholder)
+        self.chip = Gtk.MenuButton(css_classes=["pill", "small"], valign=Gtk.Align.CENTER, visible=False)
+        self.chip_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=8, margin_bottom=8,
+                                 margin_start=8, margin_end=8)
+        self.chip.set_popover(Gtk.Popover(child=self.chip_list))
+        self.send_button = Gtk.Button(icon_name="go-up-symbolic", tooltip_text="Send (Enter)",
+                                      css_classes=["circular", "suggested-action"], valign=Gtk.Align.END,
+                                      sensitive=False)
+        self.send_button.connect("clicked", lambda *_: self._send())
+        box = Gtk.Box(spacing=6, css_classes=["composer-box"])
+        box.append(self.chip)
+        box.append(over)
+        box.append(self.send_button)
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["composer"], visible=False)
+        self.widget.append(box)
+
+    def focus(self):
+        if self.widget.get_visible() and self.view.get_sensitive():
+            self.view.grab_focus()
+
+    def set_session(self, s):
+        name = (s or {}).get("name")
+        old = (self.s or {}).get("name")
+        if old != name:
+            if old:
+                self.win.drafts[old] = self._text()
+            self.buffer.set_text(self.win.drafts.get(name, "") if name else "")
+        self.s = s
+        self.widget.set_visible(bool(s))
+        live = bool(s) and s.get("state") != "ended"
+        self.view.set_sensitive(live)
+        self.placeholder.set_label(f"Message {AGENT_NAMES.get(s.get('agent'), 'the agent')}"
+                                   if live else "Continue the session to send it a message" if s else "")
+        self.update_chip()
+        self._changed()
+
+    def _text(self):
+        return self.buffer.get_text(self.buffer.get_start_iter(), self.buffer.get_end_iter(), False)
+
+    def _changed(self):
+        empty = not self._text()
+        self.placeholder.set_visible(empty)
+        comments = self.win.comments.get((self.s or {}).get("name"), [])
+        self.send_button.set_sensitive(self.view.get_sensitive() and (not empty or bool(comments)))
+
+    def update_chip(self):
+        name = (self.s or {}).get("name")
+        comments = self.win.comments.get(name, [])
+        self.chip.set_visible(bool(comments))
+        self.chip.set_label("1 comment" if len(comments) == 1 else f"{len(comments)} comments")
+        while (c := self.chip_list.get_first_child()) is not None:
+            self.chip_list.remove(c)
+        for c in comments:
+            self.chip_list.append(Gtk.Label(label=f"{c['path']}:{c['line']}  {c['text']}", xalign=0, wrap=True,
+                                            max_width_chars=50))
+        clear = Gtk.Button(label="Clear Comments", css_classes=["flat"])
+        clear.connect("clicked", lambda *_: (self.win.comments.pop(name, None), self.chip.popdown(),
+                                             self.update_chip(), self._changed()))
+        self.chip_list.append(clear)
+        self._changed()
+
+    def _key(self, _c, keyval, _code, state):
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not state & Gdk.ModifierType.SHIFT_MASK:
+            self._send()
+            return True
+        return False
+
+    def _send(self):
+        name = (self.s or {}).get("name")
+        if not name:
+            return
+        msg = message_with_comments(self._text(), self.win.comments.get(name, []))
+        if msg and self.win.send(msg):
+            self.buffer.set_text("")
+            self.win.drafts.pop(name, None)
+            self.win.comments.pop(name, None)
+            self.update_chip()
 
 
 class Rail:
-    """Beside the terminal: Changes (`agent diff`) and Snapshots
+    """Beside the terminal: Changes, file by file (`agent diff`), since the
+    session started or since the last commit; and History, its snapshots
     (`agent undo --list --json`). Read when shown, on Refresh, and when the
     agent stops to wait for you; never on a timer (a diff reads the tree)."""
+
+    SCOPES = (("Since the session started", []), ("Not yet committed", ["--uncommitted"]))
 
     def __init__(self, win):
         self.win = win
         self.s = None
         self.visible = False
+        self.files = []
+        self.path = None
+        self.diff_text = ""
         self.stack = Adw.ViewStack()
 
         # changes
-        self.summary = Gtk.Label(xalign=0, hexpand=True, wrap=True, css_classes=["caption", "dim-label"])
+        self.scope = Gtk.DropDown.new_from_strings([s[0] for s in self.SCOPES])
+        self.scope.connect("notify::selected", lambda *_: self.reload())
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh", css_classes=["flat"])
         refresh.connect("clicked", lambda *_: self.reload())
         head = Gtk.Box(spacing=6, css_classes=["rail-head"])
-        head.append(self.summary)
+        head.append(self.scope)
+        head.append(Gtk.Box(hexpand=True))
         head.append(refresh)
+        self.summary = Gtk.Label(xalign=0, wrap=True, css_classes=["caption", "dim-label"], margin_start=12,
+                                 margin_end=12, margin_bottom=4)
+        self.file_list = Gtk.ListBox(css_classes=["navigation-sidebar", "files"])
+        self.file_list.connect("row-selected", self._file_picked)
+        files_scroll = Gtk.ScrolledWindow(child=self.file_list, propagate_natural_height=True, max_content_height=200,
+                                          hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.buffer = GtkSource.Buffer()
         lang = GtkSource.LanguageManager.get_default().get_language("diff")
         if lang:
             self.buffer.set_language(lang)
         self._scheme()
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._scheme())
-        view = GtkSource.View(buffer=self.buffer, editable=False, monospace=True, cursor_visible=False,
-                              wrap_mode=Gtk.WrapMode.NONE, left_margin=8, top_margin=6, bottom_margin=6)
-        self.note = Gtk.Entry(placeholder_text="A note for the agent about these changes", hexpand=True)
-        self.note.connect("activate", lambda *_: self._send())
-        send = Gtk.Button(icon_name="mail-send-symbolic", tooltip_text="Paste into the session (you press Enter there)")
-        send.connect("clicked", lambda *_: self._send())
-        foot = Gtk.Box(spacing=6, margin_start=8, margin_end=8, margin_top=6, margin_bottom=8)
-        foot.append(self.note)
-        foot.append(send)
+        self.view = GtkSource.View(buffer=self.buffer, editable=False, monospace=True, cursor_visible=True,
+                                   wrap_mode=Gtk.WrapMode.NONE, left_margin=8, top_margin=6, bottom_margin=6)
+        self.comment_entry = Gtk.Entry(placeholder_text="Comment on this line", hexpand=True)
+        self.comment_entry.connect("activate", lambda *_: self._comment())
+        self.comment_pop = Gtk.Popover(child=self.comment_entry)
+        self.comment_button = Gtk.MenuButton(icon_name="chat-message-new-symbolic", popover=self.comment_pop,
+                                             tooltip_text="Comment on the line under the cursor; it goes with "
+                                                          "your next message")
+        self.comment_pop.connect("show", lambda *_: self._comment_target())
+        self.revert = Gtk.Button(label="Revert File", css_classes=["flat"], sensitive=False)
+        self.revert.connect("clicked", lambda *_: self.path and self.win.revert_file(
+            self.path, bool(self.SCOPES[self.scope.get_selected()][1])))
+        self.target = Gtk.Label(xalign=0, hexpand=True, css_classes=["caption", "dim-label"],
+                                ellipsize=Pango.EllipsizeMode.START)
+        foot = Gtk.Box(spacing=6, margin_start=10, margin_end=8, margin_top=4, margin_bottom=6)
+        foot.append(self.target)
+        foot.append(self.revert)
+        foot.append(self.comment_button)
         changes = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         changes.append(head)
+        changes.append(self.summary)
+        changes.append(files_scroll)
         changes.append(Gtk.Box(css_classes=["hairline"]))
-        changes.append(Gtk.ScrolledWindow(child=view, vexpand=True))
+        changes.append(Gtk.ScrolledWindow(child=self.view, vexpand=True))
         changes.append(foot)
         self.stack.add_titled_with_icon(changes, "changes", "Changes", "document-edit-symbolic")
 
-        # snapshots
+        # history
         self.snaps = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
         self.snap_note = Gtk.Label(xalign=0, wrap=True, css_classes=["caption", "dim-label"])
         snap_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=12, margin_bottom=12,
                            margin_start=12, margin_end=12)
         snap_box.append(self.snap_note)
         snap_box.append(self.snaps)
-        self.stack.add_titled_with_icon(Gtk.ScrolledWindow(child=snap_box, vexpand=True), "snapshots", "Snapshots",
+        self.stack.add_titled_with_icon(Gtk.ScrolledWindow(child=snap_box, vexpand=True), "history", "History",
                                         "document-open-recent-symbolic")
 
         bar = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
-        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["rail"])
         self.widget.append(bar)
         self.widget.append(self.stack)
         self.stack.set_vexpand(True)
@@ -626,8 +1073,10 @@ class Rail:
         changed = (self.s or {}).get("name") != s.get("name")
         self.s = s
         if changed:
+            self.path = None
             self.buffer.set_text("")
             self.summary.set_label("")
+            self._fill_files([])
             if self.visible:
                 self.reload()
 
@@ -641,24 +1090,89 @@ class Rail:
         if visible:
             self.reload()
 
+    def _scope_args(self):
+        return self.SCOPES[self.scope.get_selected()][1]
+
     def reload(self):
         if not self.visible or not self.s:
             return
         name = self.s["name"]
-        run([PULSAR, "agent", "diff", name], self._diff, name)
-        run([PULSAR, "agent", "diff", name, "--stat"], self._stat, name)
+        run([PULSAR, "agent", "diff", name, *self._scope_args(), "--files", "--json"], self._listed_files, name)
         self._snapshots()
 
-    def _diff(self, ok, out, name):
+    def _listed_files(self, ok, out, name):
         if not self.s or name != self.s["name"]:
             return
-        self.buffer.set_text(out if ok else "")
-        if not ok:
+        files = parse(out) if ok else None
+        if not isinstance(files, list):
             self.summary.set_label(out.strip().splitlines()[-1] if out.strip() else "Could not compare")
+            self._fill_files([])
+            self.buffer.set_text("")
+            return
+        self.summary.set_label(files_summary(files, bool(self._scope_args())))
+        self._fill_files(files)
 
-    def _stat(self, ok, out, name):
-        if ok and self.s and name == self.s["name"]:
-            self.summary.set_label(diff_summary(out))
+    def _fill_files(self, files):
+        self.files = files
+        keep = self.path
+        while (r := self.file_list.get_first_child()) is not None:
+            self.file_list.remove(r)
+        pick = None
+        for f in files:
+            row = Gtk.ListBoxRow()
+            row.path = f.get("path")
+            box = Gtk.Box(spacing=8)
+            box.append(Gtk.Image(icon_name=FILE_ICONS.get(f.get("status"), "document-edit-symbolic"),
+                                 tooltip_text=(f.get("status") or "").capitalize() or None,
+                                 css_classes=["dim-label"]))
+            box.append(Gtk.Label(label=f.get("path", ""), xalign=0, hexpand=True,
+                                 ellipsize=Pango.EllipsizeMode.START))
+            if f.get("added") is not None:
+                box.append(Gtk.Label(label=f"+{f['added']}", css_classes=["caption", "added"]))
+                box.append(Gtk.Label(label=f"−{f.get('removed') or 0}", css_classes=["caption", "removed"]))
+            row.set_child(box)
+            self.file_list.append(row)
+            if pick is None or row.path == keep:
+                pick = row
+        self.file_list.set_visible(bool(files))
+        if pick is not None:
+            self.file_list.select_row(pick)
+        else:
+            self.path = None
+            self.buffer.set_text("")
+            self.revert.set_sensitive(False)
+            self.target.set_label("")
+
+    def _file_picked(self, _l, row):
+        if row is None or not self.s:
+            return
+        self.path = row.path
+        self.revert.set_sensitive(True)
+        self.target.set_label(row.path)
+        name = self.s["name"]
+        run([PULSAR, "agent", "diff", name, *self._scope_args(), "--", row.path], self._diff, name, row.path)
+
+    def _diff(self, ok, out, name, path):
+        if not self.s or name != self.s["name"] or path != self.path:
+            return
+        self.diff_text = out if ok else ""
+        self.buffer.set_text(self.diff_text)
+        self.buffer.place_cursor(self.buffer.get_start_iter())
+
+    def _comment_target(self):
+        it = self.buffer.get_iter_at_mark(self.buffer.get_insert())
+        ref = diff_line_ref(self.diff_text, it.get_line())
+        self.ref = ref
+        self.comment_entry.set_placeholder_text(f"Comment on {ref[0]}:{ref[1]}" if ref
+                                                else "Click a changed line first")
+        self.comment_entry.set_sensitive(bool(ref))
+        self.comment_entry.grab_focus()
+
+    def _comment(self):
+        if getattr(self, "ref", None) and self.comment_entry.get_text().strip():
+            self.win.add_comment(self.ref[0], self.ref[1], self.comment_entry.get_text())
+            self.comment_entry.set_text("")
+            self.comment_pop.popdown()
 
     def _snapshots(self):
         if not self.s:
@@ -673,82 +1187,215 @@ class Rail:
         snaps = parse(out) if ok else None
         live = self.s.get("state") != "ended"
         if not isinstance(snaps, list) or not snaps:
-            self.snap_note.set_label(out.strip().splitlines()[-1] if out.strip() else "No snapshots")
+            self.snap_note.set_label("No snapshots yet. One is taken each time the session starts.")
             self.snaps.set_visible(False)
             return
         self.snaps.set_visible(True)
-        self.snap_note.set_label("Each start of the session takes one. Going back needs the session ended, "
-                                 "so its agent can't write mid-undo." if live else
-                                 "Each start of the session takes one. Going back puts the files as they were "
-                                 "then; files git ignores stay, and so do commits.")
+        self.snap_note.set_label("One is taken each time the session starts. Going back puts the files as they "
+                                 "were then (files git ignores stay, and so do commits)"
+                                 + (", and stops the agent first." if live else "."))
         for snap in snaps:
-            when = GLib.DateTime.new_from_unix_local(int(snap.get("time", 0))).format("%b %-d, %H:%M")
-            row = Adw.ActionRow(title=snapshot_title(snap), subtitle=when + (" · where Undo goes" if snap.get("start") else ""))
-            b = Gtk.Button(label="Go Back…", valign=Gtk.Align.CENTER, sensitive=not live)
+            when_ = GLib.DateTime.new_from_unix_local(int(snap.get("time", 0))).format("%b %-d, %H:%M")
+            row = Adw.ActionRow(title=snapshot_title(snap), subtitle=when_)
+            b = Gtk.Button(label="Go Back…", valign=Gtk.Align.CENTER)
             b.connect("clicked", lambda _b, n=snap.get("n"): self.win.undo(n))
             row.add_suffix(b)
             self.snaps.append(row)
 
-    def _send(self):
-        if self.win.paste_note(self.note.get_text()):
-            self.note.set_text("")
+
+FILE_ICONS = {"added": "list-add-symbolic", "deleted": "list-remove-symbolic",
+              "renamed": "go-next-symbolic", "modified": "document-edit-symbolic"}
+
+
+def files_summary(files, uncommitted):
+    """Over the file list: how many files and lines, against what."""
+    if not files:
+        return "Nothing uncommitted" if uncommitted else "No changes since the session started"
+    added = sum(f.get("added") or 0 for f in files)
+    removed = sum(f.get("removed") or 0 for f in files)
+    n = len(files)
+    return f"{n} file{'s' if n != 1 else ''} · +{added} −{removed}"
+
+
+class ArchivedDialog(Adw.Dialog):
+    """Archived sessions: back to the list, or deleted now. Pulsar deletes
+    them after a week anyway."""
+
+    def __init__(self, win):
+        super().__init__(title="Archived", content_width=480, content_height=460)
+        self.win = win
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(
+            description=f"Archived sessions are deleted after {TIDY_DAYS} days, with their undo snapshots. "
+                        "A worktree with uncommitted changes is kept, and so is every branch.")
+        now = win._now()
+        arch = sorted((s for s in win.sessions.values() if s.get("archived")), key=lambda s: -(s["archived"] or 0))
+        for s in arch:
+            row = Adw.ActionRow(title=session_title(s),
+                                subtitle=" · ".join(x for x in (home(session_project(s)),
+                                                                f"archived {when(s['archived'], now)}") if x))
+            back = Gtk.Button(label="Restore", valign=Gtk.Align.CENTER)
+            back.connect("clicked", lambda _b, n=s["name"], r=row: self._restore(n, r))
+            gone = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Delete Now", valign=Gtk.Align.CENTER,
+                              css_classes=["flat"])
+            gone.connect("clicked", lambda _b, s=s, r=row: self._delete(s, r))
+            row.add_suffix(back)
+            row.add_suffix(gone)
+            group.add(row)
+        self.group = group
+        page.add(group)
+        tv = Adw.ToolbarView(content=page)
+        tv.add_top_bar(Adw.HeaderBar())
+        self.set_child(tv)
+
+    def _restore(self, name, row):
+        self.win.unarchive(name)
+        self.group.remove(row)
+
+    def _delete(self, s, row):
+        d = Adw.AlertDialog(heading=f"Delete {session_title(s)}?", body=forget_body(s))
+        d.add_response("cancel", "Cancel")
+        d.add_response("delete", "Delete")
+        d.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("cancel")
+        d.connect("response", lambda _d, r: r == "delete" and (self.win.delete(s["name"]), self.group.remove(row)))
+        d.present(self)
 
 
 class NewSession(Adw.Dialog):
-    """An agent, a folder, a name; a worktree and the sandbox if wanted."""
+    """Where, and optionally what to do. The agent, a worktree and the
+    sandbox are under Options, remembered per project."""
 
     def __init__(self, win):
-        super().__init__(title="New Session", content_width=460)
+        super().__init__(title="New Session", content_width=500)
         self.win = win
-        self.folder = os.path.expanduser("~")
         self.agents = []
+        self.default_agent = None
+        recent = self._recent()
+        cur = win.sessions.get(win.current) or {}
+        self.folder = session_project(cur) or (recent[0] if recent else os.path.expanduser("~"))
+
         page = Adw.PreferencesPage()
-        group = Adw.PreferencesGroup()
+        where = Adw.PreferencesGroup(title="Project")
+        self.radios = {}
+        first = None
+        for path in ([self.folder] + [p for p in recent if p != self.folder])[:6]:
+            row = Adw.ActionRow(title=os.path.basename(path.rstrip("/")) or path, subtitle=home(path),
+                                activatable=True)
+            check = Gtk.CheckButton(group=first, active=(path == self.folder), valign=Gtk.Align.CENTER)
+            first = first or check
+            check.connect("toggled", lambda c, p=path: c.get_active() and self._set_folder(p))
+            row.add_prefix(check)
+            row.set_activatable_widget(check)
+            where.add(row)
+            self.radios[path] = check
+        self.first_radio = first
+        other = Adw.ButtonRow(title="Other Folder…", start_icon_name="folder-open-symbolic")
+        other.connect("activated", lambda *_: self._pick())
+        where.add(other)
+        self.where = where
+        page.add(where)
+
+        what = Adw.PreferencesGroup(title="What should it do?",
+                                    description="Optional. It's the agent's first message, and names the session.")
+        self.prompt = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=10, bottom_margin=10, left_margin=12,
+                                   right_margin=12, accepts_tab=False, css_classes=["card"])
+        self.prompt.set_size_request(-1, 84)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._key)
+        self.prompt.add_controller(keys)
+        what.add(self.prompt)
+        page.add(what)
+
+        opts = Adw.PreferencesGroup()
+        self.options = Adw.ExpanderRow(title="Options")
         self.agent = Adw.ComboRow(title="Agent")
-        self.folder_row = Adw.ActionRow(title="Folder", subtitle=home(self.folder))
-        pick = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
-        pick.connect("clicked", lambda *_: self._pick())
-        self.folder_row.add_suffix(pick)
-        self.name = Adw.EntryRow(title="Name")
-        self.name.connect("changed", lambda *_: self._check())
+        self.agent.connect("notify::selected", lambda *_: self._summary())
         self.worktree = Adw.SwitchRow(title="Own worktree",
-                                      subtitle="A branch and folder of its own, in .worktrees/ (git repositories)")
+                                      subtitle="Its own branch and folder, so it can't trip over other sessions")
+        self.worktree.connect("notify::active", lambda *_: self._summary())
         self.sandbox = Adw.ComboRow(title="Sandbox", model=Gtk.StringList.new([c[0] for c in SANDBOX_CHOICES]),
                                     subtitle="Sees only this project")
-        for r in (self.agent, self.folder_row, self.name, self.worktree, self.sandbox):
-            group.add(r)
-        page.add(group)
+        self.sandbox.connect("notify::selected", lambda *_: self._summary())
+        for r in (self.agent, self.worktree, self.sandbox):
+            self.options.add_row(r)
+        opts.add(self.options)
+        page.add(opts)
+
         self.why = Gtk.Label(wrap=True, xalign=0, css_classes=["caption", "error"], visible=False,
-                             margin_start=12, margin_end=12)
+                             margin_start=24, margin_end=24)
         self.start = Gtk.Button(label="Start", css_classes=["pill", "suggested-action"], halign=Gtk.Align.CENTER,
-                                margin_top=6, margin_bottom=18, sensitive=False)
+                                margin_top=6, margin_bottom=18, sensitive=False, tooltip_text="Start (Ctrl+Enter)")
         self.start.connect("clicked", lambda *_: self._go())
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(page)
         box.append(self.why)
         box.append(self.start)
+        page.set_vexpand(True)
         tv = Adw.ToolbarView(content=box)
         tv.add_top_bar(Adw.HeaderBar())
         self.set_child(tv)
-        self.name.set_text(session_name_for(self.folder, set(win.sessions)))
+        self.set_focus(self.prompt)
+        self._apply_project()
         run([PULSAR, "agent", "list", "--json"], self._agents)
+
+    def _recent(self):
+        seen, out = set(), []
+        ss = sorted(self.win.sessions.values(), key=lambda s: -(s.get("last_active") or s.get("started") or 0))
+        for p in list(self.win.state.get("recent", [])) + [session_project(s) for s in ss]:
+            if p and p not in seen and os.path.isdir(p):
+                seen.add(p)
+                out.append(p)
+        return out
+
+    def _set_folder(self, path):
+        self.folder = path
+        self._apply_project()
+
+    def _apply_project(self):
+        prefs = self.win.state["projects"].get(self.folder, {})
+        repo = is_repo(self.folder)
+        self.worktree.set_sensitive(repo)
+        self.worktree.set_active(bool(prefs.get("worktree")) and repo)
+        sb = prefs.get("sandbox")
+        self.sandbox.set_selected(next((i for i, c in enumerate(SANDBOX_CHOICES) if c[1] == sb), 0))
+        if self.agents:
+            a = prefs.get("agent") if prefs.get("agent") in self.agents else self.default_agent
+            if a in self.agents:
+                self.agent.set_selected(self.agents.index(a))
+        self._summary()
+
+    def _summary(self):
+        parts = []
+        if self.agents:
+            a = self.agents[self.agent.get_selected()] if self.agent.get_selected() < len(self.agents) else None
+            parts.append(AGENT_NAMES.get(a, a or ""))
+        if self.worktree.get_active():
+            parts.append("own worktree")
+        sb = SANDBOX_CHOICES[self.sandbox.get_selected()][1]
+        if sb is not None:
+            parts.append("sandboxed" if sb else "not sandboxed")
+        self.options.set_subtitle(" · ".join(p for p in parts if p))
 
     def _agents(self, ok, out):
         found = parse(out) if ok else None
         self.agents = [a["name"] for a in (found or []) if a.get("state") in ("installed", "native")]
+        self.agent.set_model(Gtk.StringList.new([AGENT_NAMES.get(a, a) for a in self.agents]))
         if not self.agents:
             self.why.set_label("No agent is installed. Pulsar Welcome or `pulsar agent add <name>` installs one.")
             self.why.set_visible(True)
-        self.agent.set_model(Gtk.StringList.new([AGENT_NAMES.get(a, a) for a in self.agents]))
         run([PULSAR, "agent", "default"], self._default)
-        self._check()
 
     def _default(self, ok, out):
         if ok and out.strip() in self.agents:
-            self.agent.set_selected(self.agents.index(out.strip()))
+            self.default_agent = out.strip()
+        elif self.agents:
+            self.default_agent = self.agents[0]
+        self._apply_project()
+        self.start.set_sensitive(bool(self.agents))
 
     def _pick(self):
-        d = Gtk.FileDialog(title="Folder for the Session", initial_folder=Gio.File.new_for_path(self.folder))
+        d = Gtk.FileDialog(title="Project Folder", initial_folder=Gio.File.new_for_path(self.folder))
         d.select_folder(self.win, None, self._picked)
 
     def _picked(self, d, res):
@@ -756,42 +1403,46 @@ class NewSession(Adw.Dialog):
             f = d.select_folder_finish(res)
         except GLib.Error:
             return
-        if f and f.get_path():
-            self.folder = f.get_path()
-            self.folder_row.set_subtitle(home(self.folder))
-            self.name.set_text(session_name_for(self.folder, set(self.win.sessions)))
+        if not (f and f.get_path()):
+            return
+        path = f.get_path()
+        if path not in self.radios:
+            row = Adw.ActionRow(title=os.path.basename(path.rstrip("/")) or path, subtitle=home(path),
+                                activatable=True)
+            check = Gtk.CheckButton(group=self.first_radio, valign=Gtk.Align.CENTER)
+            self.first_radio = self.first_radio or check
+            check.connect("toggled", lambda c, p=path: c.get_active() and self._set_folder(p))
+            row.add_prefix(check)
+            row.set_activatable_widget(check)
+            self.where.add(row)
+            self.radios[path] = check
+        self.radios[path].set_active(True)
+        self._set_folder(path)
 
-    def _check(self):
-        n = self.name.get_text()
-        why = None
-        if not self.agents:
-            why = self.why.get_label()
-        elif not NAME_OK.match(n):
-            why = "A name is letters, digits, - and _."
-        elif self.win.sessions.get(n, {}).get("state") in ("running", "waiting"):
-            why = f"{n} is running. Pick another name, or open it from the list."
-        elif n in self.win.sessions:
-            why = f"An ended session is called {n}; starting this one replaces it."
-        self.why.set_label(why or "")
-        self.why.set_visible(bool(why))
-        self.start.set_sensitive(bool(self.agents) and bool(NAME_OK.match(n))
-                                 and self.win.sessions.get(n, {}).get("state") not in ("running", "waiting"))
+    def _key(self, _c, keyval, _code, state):
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and state & Gdk.ModifierType.CONTROL_MASK:
+            if self.start.get_sensitive():
+                self._go()
+            return True
+        return False
 
     def _go(self):
+        if not self.agents:
+            return
         agent = self.agents[self.agent.get_selected()]
-        name = self.name.get_text()
-        argv = run_argv(agent, name, self.folder, self.worktree.get_active(),
-                        SANDBOX_CHOICES[self.sandbox.get_selected()][1])
+        b = self.prompt.get_buffer()
+        prompt = b.get_text(b.get_start_iter(), b.get_end_iter(), False).strip()
+        taken = set(self.win.sessions)
+        name = slug_name(prompt, taken) or session_name_for(self.folder, taken)
+        title = title_from_prompt(prompt) or None
+        worktree = self.worktree.get_active() and self.worktree.get_sensitive()
+        sandbox = SANDBOX_CHOICES[self.sandbox.get_selected()][1]
+        st = self.win.state
+        st["projects"][self.folder] = {"agent": agent, "worktree": worktree, "sandbox": sandbox}
+        st["recent"] = [self.folder] + [p for p in st.get("recent", []) if p != self.folder][:9]
+        argv = run_argv(agent, name, self.folder, worktree, sandbox, title=title, prompt=prompt or None)
         self.close()
-        w = self.win
-        w.current = name
-        w.title.set_title(name)
-        w.title.set_subtitle(AGENT_NAMES.get(agent, agent))
-        w._actions_for({"name": name, "agent": agent, "state": "running"})
-        w.banner.set_revealed(False)
-        w.spawn(name, argv)
-        w.split.set_show_content(True)
-        GLib.timeout_add_seconds(2, lambda: w.refresh() and False)
+        self.win.started(name, agent, title, argv)
 
 
 def main(argv):
