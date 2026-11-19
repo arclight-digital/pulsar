@@ -479,3 +479,32 @@ print([p for p, _ in g.project_groups([a, b])])'
     [ "${lines[1]}" = "['rl · mag', 'rl', 'app (a) · box', 'app (b) · box']" ]
     [ "${lines[2]}" = "['/home/n/rl', 'mag:/home/n/rl']" ] || [ "${lines[2]}" = "['mag:/home/n/rl', '/home/n/rl']" ]
 }
+
+@test "another machine's sessions are remembered as it last listed them, and shown, dimmed, while it doesn't answer" {
+    run gui '
+import json
+remote = {"machines": [{"name": "talos", "ok": True}, {"name": "mag", "ok": False, "error": "No route to host"}],
+          "sessions": [{"name": "train", "machine": "talos", "agent": "claude", "state": "running", "dir": "/h/rl",
+                        "usage": {"context": 5}}, {"name": "old", "machine": "talos", "archived": 7}]}
+seen = g.remember_machines({"mag": {"at": 50, "sessions": [{"name": "fix", "agent": "codex", "dir": "/h/p"}]}}, remote, 100)
+print(json.dumps(seen, sort_keys=True))
+# talos answers again without its session: what it says now is what is kept
+print(json.dumps(g.remember_machines(seen, {"machines": [{"name": "talos", "ok": True}], "sessions": []}, 200)["talos"]))
+# a failed answer changes nothing
+print(g.remember_machines(seen, None, 300) == seen)
+out = g.merge_machine_sessions([{"name": "here"}], remote, seen, ["talos", "mag"])
+print(json.dumps([[s["name"], s.get("state"), s.get("offline"), s.get("seen_at")] for s in out]))
+# before the first answer: checking; a machine no longer set up: gone
+out = g.merge_machine_sessions([], None, seen, ["mag"])
+print(json.dumps([[s["name"], s.get("offline")] for s in out]))
+print(g.session_status(out[0], 50 + 7200 + 10))
+print(g.session_status(dict(out[0], offline="unreachable"), 50 + 7200 + 10))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = '{"mag": {"at": 50, "sessions": [{"agent": "codex", "dir": "/h/p", "name": "fix"}]}, "talos": {"at": 100, "sessions": [{"agent": "claude", "dir": "/h/rl", "last_active": null, "name": "train", "project": null, "sandbox": null, "started": null, "title": null, "worktree_of": null}]}}' ] || fail "${lines[0]}"
+    [ "${lines[1]}" = '{"at": 200, "sessions": []}' ] || fail "${lines[1]}"
+    [ "${lines[2]}" = True ]
+    [ "${lines[3]}" = '[["here", null, null, null], ["train@talos", "running", null, null], ["old@talos", null, null, null], ["fix@mag", "offline", "unreachable", 50]]' ] || fail "${lines[3]}"
+    [ "${lines[4]}" = '[["fix@mag", "checking"]]' ] || fail "${lines[4]}"
+    [ "${lines[5]}" = "Checking mag…" ] || fail "${lines[5]}"
+    [ "${lines[6]}" = "mag isn't answering · seen 2 h ago" ] || fail "${lines[6]}"
+}

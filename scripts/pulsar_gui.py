@@ -250,6 +250,11 @@ def deleted_in(archived, now, days):
 def session_status(s, now):
     """The sidebar's line under a session's title."""
     st = s.get("state")
+    if st == "offline":
+        if s.get("offline") == "checking":
+            return f"Checking {s.get('machine')}…"
+        w = when(s.get("seen_at"), now)
+        return f"{s.get('machine')} isn't answering" + (f" · seen {w}" if w else "")
     if st == "waiting":
         word = "Needs you" if s.get("waiting_for") == "Notification" else "Your turn"
         w = when(s.get("last_active"), now)
@@ -277,7 +282,7 @@ def split_project(project):
 
 
 def _rank(s):
-    return {"waiting": 0, "running": 1}.get(s.get("state"), 2)
+    return {"waiting": 0, "running": 1, "offline": 3}.get(s.get("state"), 2)
 
 
 def project_groups(sessions):
@@ -708,11 +713,35 @@ def disk_level(free, need):
 
 
 # ---------------------------------------------------------------- machines --
-def merge_machine_sessions(local, remote):
+# what the app keeps of another machine's session while it can't be asked
+SEEN_FIELDS = ("name", "title", "agent", "dir", "project", "worktree_of", "started", "last_active", "sandbox")
+
+
+def remember_machines(seen, remote, now):
+    """{machine: {"at": when it last answered, "sessions": [...]}}, updated
+    from an answer of `pulsar machine sessions --json`: a machine that
+    answered replaces what was kept of it; one that didn't keeps it."""
+    seen = {m: v for m, v in (seen or {}).items() if isinstance(v, dict)}
+    if not isinstance(remote, dict):
+        return seen
+    for m in remote.get("machines") or []:
+        if m.get("ok") and m.get("name"):
+            seen[m["name"]] = {"at": now, "sessions": [
+                {k: s.get(k) for k in SEEN_FIELDS} for s in remote.get("sessions") or []
+                if s.get("machine") == m["name"] and s.get("name") and not s.get("archived")]}
+    return seen
+
+
+def merge_machine_sessions(local, remote, seen=None, machines=None):
     """The app's one list: this machine's sessions as they are, then the
     other machines' (pulsar machine sessions --json), each renamed to
     "<name>@<machine>" so names never collide, with its own name kept as
-    real_name. A session's machine is in "machine"."""
+    real_name. A session's machine is in "machine".
+
+    A machine that didn't answer (or hasn't yet: remote is None) keeps the
+    sessions it had when it last did (seen, from remember_machines), as
+    state "offline", with offline = "checking" or "unreachable" and seen_at.
+    Only machines still in `machines` (all, when None)."""
     out = [dict(s) for s in (local or [])]
     for s in (remote or {}).get("sessions") or []:
         m = s.get("machine")
@@ -721,6 +750,17 @@ def merge_machine_sessions(local, remote):
         r = dict(s)
         r["real_name"], r["name"] = s["name"], f"{s['name']}@{m}"
         out.append(r)
+    answered = {m.get("name") for m in (remote or {}).get("machines") or [] if m.get("ok")}
+    for m, kept in sorted((seen or {}).items()):
+        if m in answered or (machines is not None and m not in machines):
+            continue
+        for s in kept.get("sessions") or []:
+            if not s.get("name"):
+                continue
+            r = dict(s)
+            r.update(machine=m, real_name=s["name"], name=f"{s['name']}@{m}", state="offline",
+                     offline="checking" if remote is None else "unreachable", seen_at=kept.get("at"))
+            out.append(r)
     return out
 
 

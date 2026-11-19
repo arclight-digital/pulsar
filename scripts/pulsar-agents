@@ -41,7 +41,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
                         session_icon, hsl_rgb, human_bytes, disk_level, home, parse, split_project,
-                        merge_machine_sessions, agent_argv as _agent_argv,  # noqa: E402,F401
+                        merge_machine_sessions, remember_machines, agent_argv as _agent_argv,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -62,6 +62,7 @@ CSS = """
 .pulsar-agents .sessions row.project { margin: 14px 8px 2px 8px; border-radius: 8px; min-height: 0; padding: 6px 0; }
 .pulsar-agents .project-label { font-size: .8em; font-weight: 700; color: alpha(currentColor, .5); }
 .pulsar-agents .project-machine { color: alpha(currentColor, .5); }
+.pulsar-agents .sessions row.session.offline { opacity: .55; }
 .pulsar-agents row.project .fold { opacity: 0; transition: opacity 120ms; }
 .pulsar-agents row.project:hover .fold, .pulsar-agents row.project.collapsed .fold { opacity: .5; }
 .pulsar-agents .tile { min-width: 34px; min-height: 34px; border-radius: 10px; font-weight: 700; font-size: .9em;
@@ -164,6 +165,7 @@ CSS = """
 .pulsar-agents .title-dot { min-width: 8px; min-height: 8px; border-radius: 4px; }
 .pulsar-agents .title-dot.working { background-color: @accent_color; animation: working 2.6s ease-in-out infinite; }
 .pulsar-agents .title-dot.needs { background-color: @accent_color; box-shadow: 0 0 8px alpha(@accent_color, .8); }
+.pulsar-agents .title-dot.idle { background-color: alpha(currentColor, .3); }
 .pulsar-agents .stage .head-line { min-height: 1px; background-image: linear-gradient(to right,
     alpha(@accent_color, 0), alpha(@accent_color, .35) 30%, alpha(@accent_color, .35) 70%, alpha(@accent_color, 0)); }
 .pulsar-agents .stage .head-line.needs { background-image: linear-gradient(to right,
@@ -390,6 +392,10 @@ class Agents(Adw.ApplicationWindow):
         again.connect("clicked", lambda *_: self.resume())
         self.stopped = again
         self.term_stack.add_named(self.stopped, "stopped")
+        retry = Gtk.Button(label="Try Again", halign=Gtk.Align.CENTER, css_classes=["pill"])
+        retry.connect("clicked", lambda *_: self.retry_machines())
+        self.offline_page = Adw.StatusPage(icon_name="network-server-symbolic", child=retry)
+        self.term_stack.add_named(self.offline_page, "offline")
         self.launcher = Launcher(self)
         self.term_stack.add_named(self.launcher.widget, "none")
         self.term_stack.set_visible_child_name("none")
@@ -558,6 +564,10 @@ class Agents(Adw.ApplicationWindow):
         d = parse(out) if ok else None
         if isinstance(d, dict):
             self.remote = d
+            # what each machine had when it last answered, for when it doesn't
+            seen = remember_machines(self.state.get("machines_seen"), d, self._now())
+            if seen != self.state.get("machines_seen"):
+                self.remember(machines_seen=seen)
             self._apply(self._local)
 
     def _machines(self, ok, out):
@@ -585,7 +595,7 @@ class Agents(Adw.ApplicationWindow):
         self._apply(found)
 
     def _apply(self, local):
-        found = merge_machine_sessions(local, self.remote)
+        found = merge_machine_sessions(local, self.remote, self.state.get("machines_seen"), self.machines)
         before = self.sessions
         for s in found:
             # another machine's agent files aren't here: Claude's usage comes in its JSON
@@ -654,9 +664,9 @@ class Agents(Adw.ApplicationWindow):
                 self.list.remove(r)
             rows = {}
             for p, ss in groups:
-                self.list.append(ProjectRow(p, project_label(p, projects), p in self.collapsed and not self.compact,
-                                            self.compact))
-                if p in self.collapsed and not self.compact:
+                # folded stays folded, narrowed or not
+                self.list.append(ProjectRow(p, project_label(p, projects), p in self.collapsed, self.compact))
+                if p in self.collapsed:
                     continue
                 for s in ss:
                     rows[s["name"]] = self.rows.get(s["name"]) or SessionRow(self, s["name"])
@@ -719,6 +729,9 @@ class Agents(Adw.ApplicationWindow):
             return
         if s.get("archived"):
             self.unarchive(name)
+        if s.get("offline"):
+            self._show_offline(name, s)
+            return
         self.current = name
         self._seen(name)
         self.remember(last=name)
@@ -744,6 +757,33 @@ class Agents(Adw.ApplicationWindow):
 
     def _show_stopped(self, s):
         self.term_stack.set_visible_child_name("stopped")
+
+    def _show_offline(self, name, s):
+        """A session on a machine that isn't answering: what's known, and Retry."""
+        self.current = name
+        if name in self.rows:
+            self.list.select_row(self.rows[name])
+        self.title.set_title(session_title(s))
+        self.title.set_subtitle(header_subtitle(s, self._now()))
+        self._actions_for(None)
+        self.status.update(s, self._now())
+        m = s.get("machine")
+        if s.get("offline") == "checking":
+            self.offline_page.set_title(f"Checking {m}")
+            self.offline_page.set_description(None)
+        else:
+            w = when(s.get("seen_at"), self._now())
+            self.offline_page.set_title(f"{m} isn't answering")
+            self.offline_page.set_description((f"Last seen {w}. " if w else "")
+                                              + "It may be asleep, off, or on another network.")
+        self.term_stack.set_visible_child_name("offline")
+        self.split.set_show_content(True)
+
+    def retry_machines(self):
+        self._ticks = 0
+        self.offline_page.set_title("Checking…")
+        self.offline_page.set_description(None)
+        self.refresh()
 
     def resume(self):
         """A stopped session comes back in place: `agent attach` starts it
@@ -1329,10 +1369,11 @@ class StatusBar:
         self.model.set_label(model_name(m.get("model")) or agent)
         self.model.set_tooltip_text(agent)
         st = s.get("state")
-        for c in ("working", "needs"):
+        for c in ("working", "needs", "idle"):
             self.dot.remove_css_class(c)
             self.state.remove_css_class(c)
-        self.dot.add_css_class("needs" if st == "waiting" else "working")
+        # lit while it works or waits for you; grey when stopped or out of reach
+        self.dot.add_css_class({"waiting": "needs", "running": "working"}.get(st, "idle"))
         if st == "waiting":
             self.state.add_css_class("needs")
         self.state.set_label(session_status(s, now))
@@ -1380,6 +1421,11 @@ class StatusBar:
             self.branch.set_visible(False)
             self.changes.set_visible(False)
         self.changes_for, self.changes_at = name, now
+        if s.get("offline"):
+            # its machine isn't answering: nothing to ask, nothing to show
+            self.branch.set_visible(False)
+            self.changes.set_visible(False)
+            return
         d = s.get("dir")
         # a folder on another machine isn't here to ask git about
         if d and not s.get("machine"):
@@ -1417,7 +1463,7 @@ class ProjectRow(Gtk.ListBoxRow):
 
     def __init__(self, project, label, collapsed, compact=False):
         super().__init__(selectable=False, css_classes=["project"] + (["collapsed"] if collapsed else []),
-                         tooltip_text=home(project) or None, activatable=not compact)
+                         tooltip_text=home(project) or None, activatable=True)
         self.project = project
         # a project on another machine: the machine icon the status bar uses, before its name
         machine = split_project(project)[0]
@@ -1430,12 +1476,20 @@ class ProjectRow(Gtk.ListBoxRow):
         box.append(self.dot)
         box.append(Gtk.Image(icon_name="pan-end-symbolic" if collapsed else "pan-down-symbolic",
                              css_classes=["fold"], pixel_size=12))
-        if compact and machine:
-            # narrowed: the icon alone marks where that machine's sessions start
-            self.set_child(Gtk.Image(icon_name="network-server-symbolic", pixel_size=12, halign=Gtk.Align.CENTER,
-                                     css_classes=["project-machine"], tooltip_text=label))
+        if compact:
+            # narrowed: a divider (another machine's icon) where a group starts;
+            # folded, a ⋯ to unfold it, with the dot when a session in it needs you
+            self.set_tooltip_text(label)
+            mark = Gtk.Box(spacing=4, halign=Gtk.Align.CENTER)
+            if machine:
+                mark.append(Gtk.Image(icon_name="network-server-symbolic", pixel_size=12, css_classes=["project-machine"]))
+            if collapsed:
+                mark.append(Gtk.Image(icon_name="view-more-horizontal-symbolic", pixel_size=12, css_classes=["project-machine"]))
+                box.remove(self.dot)
+                mark.append(self.dot)
+            self.set_child(mark if (machine or collapsed) else Gtk.Box(css_classes=["fold-rule"]))
         else:
-            self.set_child(box if not compact else Gtk.Box(css_classes=["fold-rule"]))
+            self.set_child(box)
         self.collapsed = collapsed
 
     def set_attention(self, on):
@@ -1529,6 +1583,7 @@ class SessionRow(Gtk.ListBoxRow):
             self.sub.add_css_class("needs")
         elif s.get("state") == "running":
             self.tile.add_css_class("working")
+        (self.add_css_class if s.get("offline") else self.remove_css_class)("offline")
         if unseen:
             self.dot.add_css_class("unseen")
         compact = getattr(self, "compact", False)
