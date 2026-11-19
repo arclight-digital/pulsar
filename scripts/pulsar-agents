@@ -110,7 +110,7 @@ CSS = """
 .pulsar-agents levelbar.meter.high block.filled { background-color: @warning_color; }
 .pulsar-agents levelbar.meter.full block.filled { background-color: @error_color; }
 .pulsar-agents levelbar.meter block.empty { background: none; }
-.pulsar-agents .statusbar { padding: 5px 14px 7px 14px; font-size: .84em; }
+.pulsar-agents .statusbar { padding: 7px 14px 8px 14px; font-size: .84em; }
 .pulsar-agents .statusbar .key { color: alpha(currentColor, .5); }
 .pulsar-agents .statusbar .val { font-feature-settings: "tnum"; }
 .pulsar-agents .home-text { font-size: 1.2em; }
@@ -139,6 +139,7 @@ def stage_css(fg, bg):
     return f"""
 .pulsar-agents .stage {{ background-color: {bg}; color: {fg}; }}
 .pulsar-agents .stage .rail {{ background-color: mix({bg}, {fg}, .035); box-shadow: inset 1px 0 alpha({fg}, .07); }}
+.pulsar-agents .stage .statusbar {{ background-color: mix({bg}, {fg}, .065); box-shadow: inset 0 1px alpha({fg}, .14); }}
 .pulsar-agents .stage .composer-box {{ border-radius: 14px; padding: 4px 4px 4px 12px;
     background-color: mix({bg}, {fg}, .07);
     box-shadow: 0 8px 22px alpha(black, .22), inset 0 0 0 1px alpha({fg}, .08); }}
