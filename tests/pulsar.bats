@@ -4613,6 +4613,8 @@ notify_env() {
     "$PULSAR" agent run claude --tmux work >/dev/null
     ID=$(rec_id work)
     ALERTS="${HOME}/.local/state/pulsar/agent-alerts"
+    # no agents app unless a test puts one there
+    export PULSAR_AGENTS_APP="${BATS_TEST_TMPDIR}/pulsar-agents"
 }
 # what systemd-run was asked to run: title, body, cli, agent, session
 sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[@]}"; do [ "${a[$i]}" = sh ] && [ "${a[$((i - 1))]}" != -- ] && { printf '%s' "${a[$((i + $1))]}"; return; }; done; }
@@ -4657,9 +4659,10 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     [ "$(sd_arg 4)" = claude ]
     [ "$(sd_arg 5)" = work ]
     [ "$(sed -n 2p "${TMUX_LIVE}/.work.opt")" = Stop ]
-    # the button: a terminal on that session
+    # the button: a terminal on that session, there being no agents app
+    [ -z "$(sd_arg 7)" ]
     notify_stub 7 attach tok-1
-    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)"
+    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)"
     [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
 }
 
@@ -4699,6 +4702,22 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
     [ "$(cat "${BATS_TEST_TMPDIR}/ptyxis.token")" = "gnome-shell//1-2-host_TIME3" ]
     [ ! -e "$idf" ]
+}
+
+@test "agent notify: with the agents app installed, Open goes to the session there, with the click's token" {
+    notify_env
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/app.args"\nprintf "%%s" "$XDG_ACTIVATION_TOKEN" > "%s/app.token"\n' \
+        "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" > "$PULSAR_AGENTS_APP"
+    chmod +x "$PULSAR_AGENTS_APP"
+    mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
+    run "$PULSAR" agent notify work
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(sd_arg 7)" = "$PULSAR_AGENTS_APP" ]
+    notify_stub 7 attach tok-9
+    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)"
+    [ "$(cat "${BATS_TEST_TMPDIR}/app.args")" = work ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/app.token")" = tok-9 ]
+    [ ! -e "${BATS_TEST_TMPDIR}/ptyxis.args" ]
 }
 
 @test "agent notify: a permission prompt says what Claude asked; its 60-second 'still waiting' does not repeat Stop" {
@@ -5056,6 +5075,56 @@ agent_works() {
     printf 'agent\n' > counter.txt
     "$PULSAR" agent undo work --yes >/dev/null
     [ "$(cat counter.txt)" = n ]
+}
+
+@test "agent undo --list --json: newest first, numbered as --to takes them, the start marked; JSON only with --list" {
+    undo_env
+    export PULSAR_UNDO_KEEP=5
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    rm "${TMUX_LIVE}/work"
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    rm "${TMUX_LIVE}/work"
+    run "$PULSAR" agent undo work --list --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r 'map(.n) | join(",")' <<<"$output")" = "1,2" ]
+    [ "$(jq -r 'map(.start) | join(",")' <<<"$output")" = "false,true" ]
+    [[ "$(jq -r '.[0].subject' <<<"$output")" == "pulsar: work restarted "* ]] || fail "$output"
+    [[ "$(jq -r '.[1].subject' <<<"$output")" == "pulsar: work started "* ]] || fail "$output"
+    [ "$(jq -r '.[1].time | type' <<<"$output")" = number ]
+    [ "$(jq -r '.[0].time >= .[1].time' <<<"$output")" = true ]
+    run "$PULSAR" agent undo work --json --dry-run
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--json output only with --list"* ]] || fail "$output"
+}
+
+@test "agent diff: what changed since the session started, untracked files too, while it runs, without touching the index" {
+    undo_env
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    local before; before=$(git diff --cached)
+    run "$PULSAR" agent diff work
+    [ "$status" -eq 0 ] || fail "$output"
+    [ -z "$output" ]
+    agent_works
+    run "$PULSAR" agent diff work
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == *"diff --git a/edited.txt b/edited.txt"* ]] || fail "$output"
+    [[ "$output" == *"+agent"* ]]
+    [[ "$output" == *"diff --git a/added.txt b/added.txt"* ]]
+    [[ "$output" == *"deleted file mode"* ]]
+    [[ "$output" == *"-mine"*"+z"* ]]
+    [[ "$output" != *"build/out.o"* ]] || fail "$output"
+    run "$PULSAR" agent diff work --stat
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "${lines[-1]}" == *"files changed"* ]] || fail "$output"
+    [ "$(git diff --cached)" = "$before" ]
+    [ -z "$(ls .git/pulsar-undo-index.* 2>/dev/null)" ]
+    # against the start, not a later restart
+    rm "${TMUX_LIVE}/work"
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    run "$PULSAR" agent diff work
+    [[ "$output" == *"+agent"* ]] || fail "$output"
+    run "$PULSAR" agent diff nope
+    [ "$status" -ne 0 ]; [[ "$output" == *"no session called nope"* ]]
 }
 
 @test "agent undo: a session from before its start was named keeps its oldest snapshot as the start" {

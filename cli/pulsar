@@ -3944,6 +3944,7 @@ agent_undo() {
     done
     case "$s" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent undo <session> [--list | --to <n> | --redo] [--yes | --dry-run]" ;; esac
     [ -z "$to" ] || case "$to" in *[!0-9]*|0) die "--to wants a number from --list" ;; esac
+    [ "${JSON:-0}" = 0 ] || [ "$list" = 1 ] || die "'agent undo' has --json output only with --list"
     local dir top
     dir=$(session_get "$s" dir) || die "no session called ${s} (pulsar agent sessions)"
     [ -d "$dir" ] || die "${s} ran in ${dir}, which is gone"
@@ -3963,6 +3964,17 @@ agent_undo() {
         i=$((i + 1))
         [ "$r" != "$base" ] || at=$i
     done
+    if [ "$list" = 1 ] && [ "${JSON:-0}" = 1 ]; then
+        need jq
+        # newest first, numbered as --to takes them
+        i=0
+        for r in "${refs[@]}"; do
+            i=$((i + 1))
+            git -C "$top" log -1 --format='%ct%x09%s' "$r" | jq -cR --argjson n "$i" --argjson start "$([ "$i" = "$at" ] && echo true || echo false)" \
+                'split("\t") | {n: $n, time: (.[0] | tonumber), subject: (.[1:] | join("\t")), start: $start}'
+        done | jq -cs .
+        return 0
+    fi
     if [ "$list" = 1 ]; then
         i=0
         for r in "${refs[@]}"; do
@@ -4042,6 +4054,38 @@ agent_undo() {
     fi
 }
 
+# agent diff -- what changed in a session's checkout since the session
+# started: the snapshot undo goes back to, against the files as they are now
+# (untracked ones too, as the snapshot holds them). Works while it runs.
+agent_diff() {
+    local usage="usage: pulsar agent diff <session> [--stat]" s="" stat=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --stat) stat=1 ;;
+            -h|--help) printf '%s\n' "$usage"; return 0 ;;
+            -*) die "unknown option: $1 ($usage)" ;;
+            *) [ -z "$s" ] || die "one session at a time"; s=$1 ;;
+        esac
+        shift
+    done
+    case "$s" in ''|*[!A-Za-z0-9_-]*) die "$usage" ;; esac
+    local dir top base now
+    dir=$(session_get "$s" dir) || die "no session called ${s} (pulsar agent sessions)"
+    [ -d "$dir" ] || die "${s} ran in ${dir}, which is gone"
+    top=$(undo_top "$dir") || die "${dir} is not in a git repository; there is nothing to compare with"
+    base=$(session_get "$s" base) || base=""
+    if [ -z "$base" ] || ! git -C "$top" show-ref --verify --quiet "$base"; then
+        base=$(git -C "$top" for-each-ref --sort=refname --count=1 --format='%(refname)' "refs/pulsar/undo/${s}/")
+    fi
+    [ -n "$base" ] || die "no snapshot of ${s} yet: one is taken each time the session starts"
+    now=$(undo_tree "$top" "pulsar: ${s} for a diff $(date '+%Y-%m-%d %H:%M')") || die "git could not read the files as they are now"
+    if [ "$stat" = 1 ]; then
+        git -C "$top" diff --no-color --stat "$base" "$now"
+    else
+        git -C "$top" diff --no-color "$base" "$now"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # "Your agent is waiting": a desktop notification when an agent in a session
 # you are not looking at needs you, with a button that opens a terminal on it.
@@ -4060,6 +4104,8 @@ agent_undo() {
 # waiting after 60 s" (idle_prompt) is skipped: Stop already said so.
 # ---------------------------------------------------------------------------
 AGENT_ALERTS_REL=.local/state/pulsar/agent-alerts
+# the agents app: Open in a notification goes to the session there
+AGENTS_APP=${PULSAR_AGENTS_APP:-/usr/libexec/pulsar/pulsar-agents}
 
 agent_alert_settings() {
     local id=$1 cmd
@@ -4120,9 +4166,10 @@ agent_notify() {
     # usually such a dead one. The click's activation token goes to the
     # terminal, so its window comes to the front as it does from Pulsar
     # Settings, instead of opening behind or as "is ready".
-    local unit="pulsar-agent-${tname}" self script
+    local unit="pulsar-agent-${tname}" self script app=""
     local idf="${XDG_RUNTIME_DIR}/pulsar-agent-${tname}.notification"
     self=$(realpath "$SELF")
+    [ ! -x "$AGENTS_APP" ] || app=$AGENTS_APP
     systemctl --user stop "${unit}.service" 2>/dev/null || true
     # shellcheck disable=SC2016  # expanded by the transient unit's sh
     script='rid=$(cat "$6" 2>/dev/null)
@@ -4134,10 +4181,11 @@ notify-send --app-name=Pulsar --icon=utilities-terminal --print-id ${rid:+--repl
     t=$(cat "$tok"); rm -f "$tok"
     [ "$a" = attach ] || exit 0
     rm -f "$6"
+    [ -z "$7" ] || XDG_ACTIVATION_TOKEN=$t exec "$7" "$5"
     XDG_ACTIVATION_TOKEN=$t exec ptyxis --new-window -- "$3" agent run "$4" --tmux "$5"
 }'
     systemd-run --user --collect --quiet --unit="$unit" \
-        -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" "$idf" 2>/dev/null || true
+        -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" "$idf" "$app" 2>/dev/null || true
 }
 
 # Onto the session: switch to it from inside the agents' server, attach from
@@ -4625,6 +4673,12 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      restarts do not move it). Git repositories; files
                                      git ignores stay as they are, commits stay; not
                                      while a session runs in that checkout
+       pulsar agent undo <session> --list --json
+                                     its snapshots, newest first: n (for --to),
+                                     time, subject, start (where undo goes)
+       pulsar agent diff <session> [--stat]
+                                     what changed in its checkout since it started
+                                     (untracked files too); works while it runs
        pulsar agent usage <session> [--json]
                                      its model, how full the context is, and tokens
                                      read and written (Claude Code; no prices)
@@ -4693,9 +4747,12 @@ cmd_agent() {
             need_user "agent run"
             agent_run "$@" ;;
         undo)
-            no_json "agent undo"
             need_user "agent undo"
             agent_undo "$@" ;;
+        diff)
+            no_json "agent diff"
+            need_user "agent diff"
+            agent_diff "$@" ;;
         notify)
             need_user "agent notify"
             agent_notify "$@" ;;

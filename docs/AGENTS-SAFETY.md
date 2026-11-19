@@ -72,6 +72,8 @@ update and rollback.
   `pulsar agent run <agent> --tmux <name>` in a git repository snapshots the
   project's files first, and `pulsar agent undo <name>` puts them back; it
   leaves ignored files, commits and branches alone, and it is not a backup.
+  `pulsar agent diff <name>` shows what changed since that snapshot, and the
+  Agents app shows the same diff beside the session's terminal.
 - **`/etc` across rollback.** Each deployment has its own `/etc`; updates
   carry local edits forward with a three-way merge. Rolling back boots the
   older copy, which can restore files you meant to change, lack edits made

@@ -359,11 +359,11 @@ for q in ("ocr", "qr", "theme", "check upd", "snapshot", "agent ses", "nothing l
     [ "${lines[2]}" = "theme = themes,theme-next" ]
     [ "${lines[3]}" = "check upd = updates" ]
     [ "${lines[4]}" = "snapshot = checkpoint" ]
-    [ "${lines[5]}" = "agent ses = sessions" ]
+    [ "${lines[5]}" = "agent ses = sessions,new-session" ]
     [ "${lines[6]}" = "nothing like this = " ]
 }
 
-@test "menu: live sessions, waiting first, open in a terminal; ended ones are not listed" {
+@test "menu: live sessions, waiting first, open in the Agents app; ended ones are not listed" {
     run env HOME=/home/u PULSAR_CLI=/usr/bin/pulsar bash -c "$(declare -f menu); MENU='$MENU' menu '
 s = [{\"name\": \"b\", \"agent\": \"codex\", \"state\": \"running\", \"dir\": \"/home/u/b\"},
      {\"name\": \"z\", \"agent\": \"claude\", \"state\": \"waiting\", \"dir\": \"/home/u/p/.worktrees/z\"},
@@ -374,8 +374,8 @@ for it in m.session_items(s):
     [ "$status" -eq 0 ] || fail "$output"
     [ "${#lines[@]}" -eq 2 ]
     # z is waiting, so before b
-    [ "${lines[0]}" = "Open session “z” | Claude Code · Waiting for you · ~/p/.worktrees/z | ptyxis --new-window -- /usr/bin/pulsar agent run claude --tmux z" ]
-    [ "${lines[1]}" = "Open session “b” | Codex CLI · Running · ~/b | ptyxis --new-window -- /usr/bin/pulsar agent run codex --tmux b" ]
+    [ "${lines[0]}" = "Open session “z” | Claude Code · Waiting for you · ~/p/.worktrees/z | /usr/libexec/pulsar/pulsar-agents z" ]
+    [ "${lines[1]}" = "Open session “b” | Codex CLI · Running · ~/b | /usr/libexec/pulsar/pulsar-agents b" ]
 }
 
 @test "menu: what prints runs in a terminal that waits; a checkpoint asks for the password there" {

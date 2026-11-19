@@ -75,8 +75,11 @@ works there.
 - A terminal bell in a session the user isn't looking at becomes a desktop
   notification.
 - Each session start snapshots the project's files under `refs/pulsar/`.
+  `pulsar agent diff <name>` shows what changed since the session started.
   `pulsar agent undo <name>` puts them back; that is the user's to run, not
   yours. Don't delete, rewrite or push `refs/pulsar/`.
+- The user may be watching the session in the Agents app, which shows the
+  agent's terminal beside that diff.
 - In a worktree inside a sandbox, its `.git` file, `commondir` and `gitdir`
   are read-only, like `.git/config`.
 

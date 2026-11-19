@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Agents
+Comment=Coding agents' sessions: their terminals, what they changed, and undo
+Keywords=pulsar;agent;session;claude;codex;antigravity;agy;opencode;tmux;undo;diff;
+Exec=/usr/libexec/pulsar/pulsar-agents
+Icon=digital.arclight.Pulsar.Agents
+Categories=Development;GTK;
+StartupNotify=true
+X-GNOME-UsesNotifications=false

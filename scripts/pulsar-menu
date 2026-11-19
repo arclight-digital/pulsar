@@ -78,9 +78,12 @@ def base_items():
              "theme color colour palette dark light wallpaper look appearance", "Appearance"),
         Item("theme-next", "Next theme", "Apply the next theme in the list",
              "media-skip-forward-symbolic", [PULSAR, "theme", "next"], "theme color colour cycle", "Appearance"),
-        Item("sessions", "Agent sessions", "The Agents page of Pulsar Settings",
-             "utilities-terminal-symbolic", [f"{LIBEXEC}/pulsar-settings", "agents"],
-             "agent claude codex tmux session usage undo", "Agents"),
+        Item("sessions", "Agent sessions", "Every session in the Agents app",
+             "utilities-terminal-symbolic", [f"{LIBEXEC}/pulsar-agents"],
+             "agent claude codex agy opencode tmux session usage undo diff", "Agents"),
+        Item("new-session", "New agent session", "Pick an agent and a folder, in the Agents app",
+             "list-add-symbolic", [f"{LIBEXEC}/pulsar-agents", "--new"],
+             "agent start new session claude codex agy opencode", "Agents"),
         Item("updates", "Updates", "Check for a new Pulsar image, in Pulsar Settings",
              "software-update-available-symbolic", [f"{LIBEXEC}/pulsar-settings", "updates"],
              "update upgrade version release", "System"),
@@ -109,7 +112,7 @@ def session_items(sessions):
         out.append(Item(f"session:{s['name']}", f"Open session “{s['name']}”",
                         " · ".join(x for x in (agent, state, where) if x),
                         "utilities-terminal-symbolic",
-                        terminal(PULSAR, "agent", "run", s["agent"], "--tmux", s["name"], hold=False),
+                        [f"{LIBEXEC}/pulsar-agents", s["name"]],
                         f"agent session tmux attach {s['agent']}", "Agents"))
     return out
 
