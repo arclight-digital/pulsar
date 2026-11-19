@@ -236,6 +236,15 @@ def when(ts, now):
     return f"{t:%b} {t.day}"
 
 
+def deleted_in(archived, now, days):
+    """When `agent sessions --tidy` deletes an archived session: "deleted in
+    6 days", "deleted tomorrow", "deleted today"."""
+    left = days - (max(0, now - int(archived)) // 86400)
+    if left <= 0:
+        return "deleted today"
+    return "deleted tomorrow" if left == 1 else f"deleted in {left} days"
+
+
 def session_status(s, now):
     """The sidebar's line under a session's title."""
     st = s.get("state")

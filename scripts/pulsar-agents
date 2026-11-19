@@ -39,7 +39,7 @@ sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, comment_line, home, parse,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
-                        title_from_prompt, tokens, when, diff_line_ref, newly_unseen, forget_body, forget_left)
+                        title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
 
 POLL_S = 3
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
@@ -303,8 +303,9 @@ class Agents(Adw.ApplicationWindow):
         head.pack_end(self.rail_toggle)
         self.banner = Adw.Banner()
         self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
+        # sized by the page showing: the home's minimum must not widen a session
         self.term_stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE,
-                                    transition_duration=150)
+                                    transition_duration=150, hhomogeneous=False, vhomogeneous=False)
         again = Gtk.Button(label="Continue", halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
                            css_classes=["pill", "suggested-action"])
         again.connect("clicked", lambda *_: self.resume())
@@ -1238,18 +1239,16 @@ class ArchivedDialog(Adw.Dialog):
     them after a week anyway."""
 
     def __init__(self, win):
-        super().__init__(title="Archived", content_width=480, content_height=460)
+        super().__init__(title="Archived", content_width=480)
         self.win = win
         page = Adw.PreferencesPage()
-        group = Adw.PreferencesGroup(
-            description=f"Deleted after {TIDY_DAYS} days."
-                        "A worktree with uncommitted changes is kept, and so is every branch.")
+        group = Adw.PreferencesGroup()
         now = win._now()
         arch = sorted((s for s in win.sessions.values() if s.get("archived")), key=lambda s: -(s["archived"] or 0))
         for s in arch:
             row = Adw.ActionRow(title=session_title(s),
                                 subtitle=" · ".join(x for x in (home(session_project(s)),
-                                                                f"archived {when(s['archived'], now)}") if x))
+                                                                deleted_in(s["archived"], now, TIDY_DAYS)) if x))
             back = Gtk.Button(label="Restore", valign=Gtk.Align.CENTER)
             back.connect("clicked", lambda _b, n=s["name"], r=row: self._restore(n, r))
             gone = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Delete Now", valign=Gtk.Align.CENTER,
@@ -1307,7 +1306,7 @@ class Launcher:
                                                     hscrollbar_policy=Gtk.PolicyType.NEVER))
         over.add_overlay(self.placeholder)
 
-        self.project_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.END, max_width_chars=22)
+        self.project_label = Gtk.Label()
         pbox = Gtk.Box(spacing=6)
         pbox.append(Gtk.Image(icon_name="folder-symbolic"))
         pbox.append(self.project_label)

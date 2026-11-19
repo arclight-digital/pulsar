@@ -271,3 +271,18 @@ open(m.STATE_FILE, \"w\").write(\"[1]\"); print(sorted(m.load_state()))'"
         [ "$output" = off ]
     fi
 }
+
+@test "an archived session says when it will be deleted" {
+    need_gtk
+    run app '
+now = 10 * 86400
+for a in (now, now - 86400, now - 5 * 86400 - 10, now - 6 * 86400, now - 7 * 86400, now - 30 * 86400):
+    print(m.deleted_in(a, now, 7))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "deleted in 7 days" ]
+    [ "${lines[1]}" = "deleted in 6 days" ]
+    [ "${lines[2]}" = "deleted in 2 days" ]
+    [ "${lines[3]}" = "deleted tomorrow" ]
+    [ "${lines[4]}" = "deleted today" ]
+    [ "${lines[5]}" = "deleted today" ]
+}
