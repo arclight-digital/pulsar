@@ -121,7 +121,7 @@ def command(cmd, what):
 
 
 # What's new: each section of the notes under an icon of its own
-SECTION_ICONS = {"agents": "utilities-terminal-symbolic", "pulsar commands": "system-search-symbolic",
+SECTION_ICONS = {"agents": "digital.arclight.Pulsar.Agents-symbolic", "pulsar commands": "system-search-symbolic",
                  "screen": "edit-copy-symbolic", "gaming": "input-gaming-symbolic",
                  "desktop": "preferences-desktop-appearance-symbolic", "installer": "drive-harddisk-symbolic",
                  "themes": "applications-graphics-symbolic", "glass and light": "weather-clear-symbolic",

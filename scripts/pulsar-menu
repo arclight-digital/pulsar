@@ -79,7 +79,7 @@ def base_items():
         Item("theme-next", "Next theme", "Apply the next theme in the list",
              "media-skip-forward-symbolic", [PULSAR, "theme", "next"], "theme color colour cycle", "Appearance"),
         Item("sessions", "Agent sessions", "Every session in the Agents app",
-             "utilities-terminal-symbolic", [f"{LIBEXEC}/pulsar-agents"],
+             "digital.arclight.Pulsar.Agents-symbolic", [f"{LIBEXEC}/pulsar-agents"],
              "agent claude codex agy opencode tmux session usage undo diff", "Agents"),
         Item("new-session", "New agent session", "Pick an agent and a folder, in the Agents app",
              "list-add-symbolic", [f"{LIBEXEC}/pulsar-agents", "--new"],
@@ -113,7 +113,7 @@ def session_items(sessions):
         title = s.get("title") or s["name"]
         out.append(Item(f"session:{s['name']}", f"Open session “{title}”",
                         " · ".join(x for x in (agent, state, where) if x),
-                        "utilities-terminal-symbolic",
+                        "digital.arclight.Pulsar.Agents-symbolic",
                         [f"{LIBEXEC}/pulsar-agents", s["name"]],
                         f"agent session tmux attach {s['agent']}", "Agents"))
     return out

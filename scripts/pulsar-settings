@@ -48,7 +48,7 @@ EFFECTS = (
 
 PAGES = (("appearance", "Appearance", "applications-graphics-symbolic"),
          ("updates", "Updates", "software-update-available-symbolic"),
-         ("agents", "Agents", "utilities-terminal-symbolic"))
+         ("agents", "Agents", "digital.arclight.Pulsar.Agents-symbolic"))
 
 
 def button(text, handler, *classes):

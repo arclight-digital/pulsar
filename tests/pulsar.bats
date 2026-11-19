@@ -6106,17 +6106,24 @@ machine_env() {
     export HOME="${BATS_TEST_TMPDIR}/home" REMOTES="${BATS_TEST_TMPDIR}/remotes"
     export SSH_LOG="${BATS_TEST_TMPDIR}/ssh.log" PULSAR_REMOTE_CLI="$PULSAR"
     export XDG_RUNTIME_DIR="${BATS_TEST_TMPDIR}/run" PULSAR_SSH="${BATS_TEST_TMPDIR}/ssh"
-    mkdir -p "$HOME" "$REMOTES" "$XDG_RUNTIME_DIR"
+    # tmux servers, here and there, in the test's own folder; a job's end
+    # notifies a stand-in, not your desktop
+    export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+    mkdir -p "$HOME" "$REMOTES" "$XDG_RUNTIME_DIR" "${BATS_TEST_TMPDIR}/stubbin"
+    printf '#!/bin/sh\nexit 0\n' > "${BATS_TEST_TMPDIR}/stubbin/notify-send"
+    chmod +x "${BATS_TEST_TMPDIR}/stubbin/notify-send"
+    export PATH="${BATS_TEST_TMPDIR}/stubbin:${PATH}"
     unset XDG_CONFIG_HOME
     cat > "$PULSAR_SSH" <<'SH'
 #!/bin/bash
 t=""; tty=0
 while [ $# -gt 0 ]; do
-    case "$1" in -o) shift 2 ;; -t) tty=1; shift ;; --) shift; break ;; -*) shift ;; *) t=$1; shift ;; esac
+    case "$1" in -o) shift 2 ;; -t) tty=1; shift ;; --) shift; break ;; -*) shift ;; *) [ -z "$t" ] || break; t=$1; shift ;; esac
 done
 printf '%s|tty=%s|%s\n' "$t" "$tty" "$*" >> "$SSH_LOG"
 [ "$t" != down ] || { echo "ssh: connect to host down port 22: No route to host" >&2; exit 255; }
 export HOME="${REMOTES}/${t}" PULSAR_AGENT_SESSIONS="${REMOTES}/${t}/sessions" PULSAR_AGENT_TMUX_SOCKET="none-$$"
+export PULSAR_JOBS="${REMOTES}/${t}/jobs" PULSAR_JOB_TMUX_SOCKET="jobs-${t}"
 mkdir -p "$PULSAR_AGENT_SESSIONS"
 exec bash -c "$*"
 SH
@@ -6625,6 +6632,13 @@ stop_hook() {
     run env CLAUDE_PID=999999999 sh -c "$(PULSAR_MAIL_WAIT_TICKS=1 stop_hook sid-a Stop 1)" <<<'{}'
     [ "$status" -eq 0 ] && [ -z "$output" ] || fail "$status $output"
     [ ! -e "${alerts}/sid-a.mail.waiter" ] || fail "a waiter that gave up left its file"
+    # its Claude gone (the session killed): it goes too, within a tick or two
+    sleep 30 3>&- & local cp=$!
+    ( CLAUDE_PID=$cp sh -c "$(PULSAR_MAIL_WAIT_TICKS=60 stop_hook sid-a Stop 1)" </dev/null >/dev/null 2>&1 || true ) 3>&- &
+    local lw=$!
+    sleep 0.5; kill $cp
+    local k; for k in $(seq 30); do kill -0 $lw 2>/dev/null || break; sleep 0.1; done
+    ! kill -0 $lw 2>/dev/null || { pkill -P $lw; kill $lw; fail "the waiter outlived its Claude"; }
 }
 
 
@@ -6670,4 +6684,139 @@ agy_hook() {
     pane=$(pane_of s)
     msg_teardown
     [[ "$pane" == *"sandboxed"* ]] || fail "$pane"
+}
+
+
+# a project at $HOME/proj: one commit, a change and a new file not committed
+handoff_repo() {
+    mkdir -p "${HOME}/proj" && cd "${HOME}/proj" && git init -q && echo first > README && git add README \
+        && git -c user.name=t -c user.email=t@t commit -qm first && echo changed >> README && echo new > new.txt
+}
+
+@test "machine job: your work as it stands to the same project there, run in a worktree; wait gives its end and status" {
+    machine_env
+    export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+    command -v tmux >/dev/null || skip "needs tmux"
+    "$PULSAR" machine add box box >/dev/null
+    handoff_repo
+    run "$PULSAR" machine job box --name j1 -- sh -c 'cat README new.txt; exit 3'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "j1 is running on box in ${REMOTES}/box/proj/.worktrees/job-j1" ] || fail "$output"
+    run "$PULSAR" machine exec box -- job wait j1
+    tmux -L jobs-box kill-server 2>/dev/null || true
+    [ "$status" -eq 3 ] || fail "$status $output"
+    # no terminal asked for when there is none here
+    ! grep -q 'tty=1' "$SSH_LOG" || fail "$(cat "$SSH_LOG")"
+    [ "$output" = $'first\nchanged\nnew' ] || fail "$output"
+    # there: its own branch, the uncommitted work as one commit on top of yours
+    [ "$(git -C "${REMOTES}/box/proj" log --format=%s job-j1 | paste -sd'|')" = "Work in progress, handed to box by Pulsar|first" ]
+    # here: as it was
+    [ "$(git status --short | paste -sd' ')" = " M README ?? new.txt" ] || fail "$(git status --short)"
+    [ "$(git log --oneline | wc -l)" = 1 ]
+    # the same name again is a branch that's there already
+    run "$PULSAR" machine job box --name j1 -- true
+    [ "$status" -ne 0 ] && [[ "$output" == *"box has a branch job-j1 already"* ]] || fail "$output"
+    run "$PULSAR" machine job box --name 'a b' -- true; [ "$status" -ne 0 ]
+    run "$PULSAR" machine job box --notify 'x;y' -- true; [ "$status" -ne 0 ]
+    run "$PULSAR" machine exec box -- job run -- true
+    tmux -L jobs-box kill-server 2>/dev/null || true
+    [ "$status" -ne 0 ] || fail "exec ran a job"
+    # a project outside your home has no place there
+    mkdir -p "${BATS_TEST_TMPDIR}/outside" && cd "${BATS_TEST_TMPDIR}/outside" && git init -q \
+        && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
+    run "$PULSAR" machine job box -- true
+    [ "$status" -ne 0 ] && [[ "$output" == *"is not under your home"* ]] || fail "$output"
+}
+
+@test "machine job --notify: a job here waits on that one, and how it ends reaches the session here" {
+    machine_env
+    command -v tmux >/dev/null || skip "needs tmux"
+    export TMUX_TMPDIR="$BATS_TEST_TMPDIR" PULSAR_JOB_POLL=0.2 PULSAR_MAIL_WAIT=0
+    local here="${BATS_TEST_TMPDIR}/here"; mkdir -p "$here"
+    printf '#!/bin/sh\nexit 0\n' > "${BATS_TEST_TMPDIR}/notify-send"; chmod +x "${BATS_TEST_TMPDIR}/notify-send"
+    export PATH="${BATS_TEST_TMPDIR}:${PATH}"
+    "$PULSAR" machine add box box >/dev/null
+    handoff_repo
+    # a session here, on a server of its own (the far side's are its own too)
+    printf 'agent=codex\ndir=%s\n' "$HOME" > "${here}/me.session"
+    tmux -L "here-$$" new-session -d -s me -x 100 -y 20 'cat > /dev/null'
+    PULSAR_AGENT_SESSIONS="$here" PULSAR_AGENT_TMUX_SOCKET="here-$$" PULSAR_JOB_TMUX_SOCKET="herejobs-$$" PULSAR_JOBS="${here}/jobs" \
+        run "$PULSAR" machine job box --name t1 --notify me -- sh -c 'echo "loss 0.412"'
+    [ "$status" -eq 0 ] && [[ "$output" == *"me hears how it ends" ]] || { tmux -L "here-$$" kill-server; fail "$output"; }
+    local i; for i in $(seq 50); do [ -s "${here}/me.inbox" ] && break; sleep 0.2; done
+    local cmd; cmd=$(PULSAR_JOBS="${here}/jobs" PULSAR_JOB_TMUX_SOCKET="herejobs-$$" "$PULSAR" job list --json | jq -r '.[0] | "\(.name) \(.command)"')
+    tmux -L "here-$$" kill-server; tmux -L "herejobs-$$" kill-server 2>/dev/null; tmux -L jobs-box kill-server 2>/dev/null || true
+    [[ "$cmd" == "box-t1 "*" machine exec box -- job wait t1" ]] || fail "$cmd"
+    [[ "$(jq -r .text "${here}/me.inbox")" == "The job box-t1 finished. Its last lines:"$'\n'"loss 0.412"* ]] || fail "$(cat "${here}/me.inbox")"
+}
+
+@test "machine run: the work to a branch named for the session there, and the agent started on it in a worktree, detached" {
+    machine_env
+    "$PULSAR" machine add box box >/dev/null
+    handoff_repo
+    # the far side's CLI, with agent run stood in for
+    cat > "${BATS_TEST_TMPDIR}/far" <<SH
+#!/bin/bash
+[ "\$1 \$2" != "agent run" ] || { printf '%s\n' "\$*" >> "${BATS_TEST_TMPDIR}/far.log"; exit 0; }
+exec "$PULSAR" "\$@"
+SH
+    chmod +x "${BATS_TEST_TMPDIR}/far"
+    PULSAR_REMOTE_CLI="${BATS_TEST_TMPDIR}/far" run "$PULSAR" machine run box claude --name s1 --prompt "train it" --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "${lines[0]}" == "s1 is running on box, on its branch s1 (your work as of "* ]] || fail "$output"
+    [ "$(cat "${BATS_TEST_TMPDIR}/far.log")" = "agent run claude --tmux s1 --new --dir ${REMOTES}/box/proj --worktree --sandbox --prompt train it" ] \
+        || fail "$(cat "${BATS_TEST_TMPDIR}/far.log")"
+    [ "$(git -C "${REMOTES}/box/proj" show s1:new.txt)" = new ]
+    # never with a terminal: it starts there and stays
+    ! grep -q 'tty=1' "$SSH_LOG"
+    # a name from the prompt when none is given
+    : > "${BATS_TEST_TMPDIR}/far.log"
+    PULSAR_REMOTE_CLI="${BATS_TEST_TMPDIR}/far" run "$PULSAR" machine run box claude --prompt "Train the model now please"
+    [[ "$(cat "${BATS_TEST_TMPDIR}/far.log")" =~ ^"agent run claude --tmux train-the-model-"[0-9]{4}" --new" ]] || fail "$(cat "${BATS_TEST_TMPDIR}/far.log")"
+    run "$PULSAR" machine run box '-x' ; [ "$status" -ne 0 ]
+    # outside a repository, or one outside your home: said, nothing sent
+    mkdir -p "${HOME}/plain"; cd "${HOME}/plain"
+    run "$PULSAR" machine run box claude; [ "$status" -ne 0 ] && [[ "$output" == *"not in a git repository"* ]] || fail "$output"
+}
+
+@test "machine fetch: a session's branch there, its uncommitted work on top, as machine/session here; your checkout left alone" {
+    machine_env
+    "$PULSAR" machine add box box >/dev/null
+    handoff_repo
+    PULSAR_REMOTE_CLI="$PULSAR" "$PULSAR" machine job box --name seed -- true >/dev/null 2>&1 || true
+    tmux -L jobs-box kill-server 2>/dev/null || true
+    # a session there, in a worktree on its branch, that committed once and left a file
+    local far="${REMOTES}/box/proj" wt="${REMOTES}/box/proj/.worktrees/s1"
+    git -C "$far" worktree add -q -b s1 "$wt" job-seed
+    echo trained > "${wt}/result.txt"; git -C "$wt" add result.txt; git -C "$wt" -c user.name=t -c user.email=t@t commit -qm "done there"
+    echo later > "${wt}/later.txt"
+    printf 'agent=claude\ndir=%s\n' "$wt" > "${REMOTES}/box/sessions/s1.session"
+    run "$PULSAR" machine fetch box s1
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "fetched box/s1: 3 commit(s) your HEAD does not have" ] || fail "$output"
+    [ "$(git log --format=%s HEAD..box/s1 | paste -sd'|')" = "Work in progress in s1, fetched by Pulsar|done there|Work in progress, handed to box by Pulsar" ]
+    [ "$(git show box/s1:later.txt)" = later ]
+    [ "$(git status --short | paste -sd' ')" = " M README ?? new.txt" ] || fail "$(git status --short)"
+    # its worktree there is as the agent left it
+    [ "$(git -C "$wt" status --short)" = "?? later.txt" ] || fail "$(git -C "$wt" status --short)"
+    # nothing uncommitted there: its branch as it is, no empty commit on top
+    git -C "$wt" add later.txt; git -C "$wt" -c user.name=t -c user.email=t@t commit -qm "and later"
+    "$PULSAR" machine fetch box s1 >/dev/null
+    [ "$(git log -1 --format=%s box/s1)" = "and later" ] || fail "$(git log -2 --format=%s box/s1)"
+    run "$PULSAR" machine fetch box nope; [ "$status" -ne 0 ] && [[ "$output" == *"no session called nope"* ]] || fail "$output"
+    run "$PULSAR" machine fetch box '-x'; [ "$status" -ne 0 ]
+}
+
+@test "machine receive: only a path under home, never over a folder that isn't a repository" {
+    machine_env
+    for bad in /etc ../x a/../../b -x ""; do
+        run "$PULSAR" machine receive "$bad"; [ "$status" -ne 0 ] || fail "took '$bad'"
+    done
+    mkdir -p "${HOME}/full"; echo x > "${HOME}/full/f"
+    run "$PULSAR" machine receive full; [ "$status" -ne 0 ] && [[ "$output" == *"isn't a git repository"* ]] || fail "$output"
+    run "$PULSAR" machine receive fresh/one
+    [ "$output" = "${HOME}/fresh/one" ] && [ -d "${HOME}/fresh/one/.git" ] || fail "$output"
+    run "$PULSAR" machine receive fresh/one --checkout nope
+    [ "$status" -ne 0 ] && [[ "$output" == *"no branch nope"* ]] || fail "$output"
+    run "$PULSAR" machine receive fresh/one --checkout '-b'; [ "$status" -ne 0 ]
 }

@@ -101,6 +101,19 @@ CLI, and opencode moves to version 2.
   `job_log` and `job_stop`. The
   ones that change something are marked as writes, so the agent asks you
   first. A sandboxed agent doesn't have `pulsar mcp`.
+- Your other Pulsar machines, over SSH: `pulsar machine add <name> <ssh
+  target>`, then their sessions show in the app as `name@machine`, and open
+  there as here. Each machine keeps one SSH connection open for two
+  minutes, and nothing prompts (a key that needs a passphrase prompt fails).
+- Work can move to another machine. `pulsar machine run <machine> <agent>
+  --prompt <text>` sends your branch there, with what isn't committed as one
+  commit on top, to the same project under your home there, and starts the
+  agent on it in a worktree. `pulsar machine job <machine> --notify <session>
+  -- <command>` runs a command there the same way, and the session here hears
+  how it ended. `pulsar machine fetch <machine> <session>` brings that
+  session's branch back as `<machine>/<session>`, its uncommitted work on
+  top. Your checkout is never touched, on either side. Code goes by git;
+  data files don't move.
 - `pulsar agent diff <name>` shows what a session changed since it started.
   `pulsar agent run --prompt <text>` starts the agent with a first message.
 

@@ -4488,8 +4488,9 @@ agent_alert_settings() {
     # up after an hour, and the next turn's end starts another.
     # shellcheck disable=SC2016  # expanded by the hook's sh
     # One waiter per conversation: each writes its PID to <id>.mail.waiter,
-    # and an older one that finds another's there gives up.
-    wait_cmd='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; w="$m.waiter"; cat > /dev/null; mkdir -p "${m%/*}"; echo $$ > "$w"; i=0; while [ $i -lt '"${MAIL_WAIT_TICKS}"' ]; do [ "$(cat "$w" 2>/dev/null)" = "$$" ] || exit 0; if [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null; then rm -f "$w"; tail -n +3 "$m.taken" >&2; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 2; fi; sleep 1; i=$((i + 1)); done; rm -f "$w"; exit 0'
+    # and an older one that finds another's there gives up. It also goes
+    # when its Claude does (the session ended or was killed).
+    wait_cmd='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; w="$m.waiter"; cat > /dev/null; mkdir -p "${m%/*}"; echo $$ > "$w"; i=0; while [ $i -lt '"${MAIL_WAIT_TICKS}"' ]; do [ "$(cat "$w" 2>/dev/null)" = "$$" ] || exit 0; [ -d "/proc/${CLAUDE_PID:-$PPID}" ] || { rm -f "$w"; exit 0; }; if [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null; then rm -f "$w"; tail -n +3 "$m.taken" >&2; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 2; fi; sleep 1; i=$((i + 1)); done; rm -f "$w"; exit 0'
     jq -cn --arg c "$cmd" --arg s "$stop" --arg w "$wait_cmd" --argjson t "$((MAIL_WAIT_TICKS + 60))" '
         {type: "command", command: $w, async: true, asyncRewake: true, timeout: $t} as $waiter
         | {hooks: {Stop: [{hooks: [{type: "command", command: $s}]}, {hooks: [$waiter]}],
@@ -4556,7 +4557,7 @@ agent_notify() {
     have notify-send || return 0
     export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
     if ! have systemd-run || [ -z "$agent" ]; then
-        notify-send --app-name=Pulsar --icon=utilities-terminal "$title" "$body" || true
+        notify-send --app-name=Pulsar --icon=digital.arclight.Pulsar.Agents "$title" "$body" || true
         return 0
     fi
     # One notification per session at a time. The newer alert's unit takes
@@ -4575,7 +4576,7 @@ agent_notify() {
     # shellcheck disable=SC2016  # expanded by the transient unit's sh
     script='rid=$(cat "$6" 2>/dev/null)
 tok=$(mktemp) || exit 0
-notify-send --app-name=Pulsar --icon=utilities-terminal --print-id ${rid:+--replace-id="$rid"} \
+notify-send --app-name=Pulsar --icon=digital.arclight.Pulsar.Agents --print-id ${rid:+--replace-id="$rid"} \
     --action=attach=Open --activation-token-fd=3 "$1" "$2" 3>"$tok" | {
     read -r id && printf "%s\n" "$id" > "$6"
     read -r a
@@ -7801,7 +7802,7 @@ job_state() {
 
 cmd_job() {
     local usage="usage: pulsar job run [--name <name>] [--dir <folder>] [--notify <session>] -- <command>...
-       pulsar job list | log <name> [--lines N] | stop <name> | rm <name> | attach <name>"
+       pulsar job list | log <name> [--lines N] | wait <name> | stop <name> | rm <name> | attach <name>"
     local sub=${1:-list}; shift || true
     case "$sub" in
         -h|--help) printf '%s\n' "$usage"; return 0 ;;
@@ -7851,7 +7852,7 @@ cmd_job() {
             local last; last=$(job_clean < "${JOBS}/${n}.log" 2>/dev/null | sed '/^[[:space:]]*$/d' | tail -n 5)
             local head="${n} finished" ; [ "$st" = 0 ] || head="${n} failed (exit ${st})"
             if have notify-send; then
-                notify-send --app-name=Pulsar --icon=utilities-terminal "Job ${head}" "${last##*$'\n'}" 2>/dev/null || true
+                notify-send --app-name=Pulsar --icon=digital.arclight.Pulsar.Agents "Job ${head}" "${last##*$'\n'}" 2>/dev/null || true
             fi
             local to; to=$(job_get "$n" notify) || to=""
             if [ -n "$to" ]; then
@@ -7891,6 +7892,15 @@ ${last}
             if [ "${JSON:-0}" = 1 ]; then
                 jq -n -c --arg n "$n" --arg s "$(job_state "$n")" --arg t "$text" '{name: $n, state: $s, text: $t}'
             else printf '%s\n' "$text"; fi ;;
+        wait)
+            # until it ends: its last lines, and its exit status as ours
+            local n=${1:-} lines=20
+            [ -f "${JOBS}/${n}.job" ] || die "no job called ${n} (pulsar job list)"
+            while [ "$(job_state "$n")" = running ]; do sleep "${PULSAR_JOB_POLL:-2}"; done
+            sleep 0.5
+            job_clean < "${JOBS}/${n}.log" | sed '/^[[:space:]]*$/d' | tail -n "$lines"
+            local st; st=$(job_get "$n" status) || st=1
+            case "$st" in stopped) return 143 ;; ''|*[!0-9]*) return 1 ;; *) return "$st" ;; esac ;;
         stop)
             local n=${1:-}
             [ -f "${JOBS}/${n}.job" ] || die "no job called ${n} (pulsar job list)"
@@ -7950,9 +7960,82 @@ mssh() {
 
 machine_names() { [ ! -r "$MACHINES" ] || cut -f1 "$MACHINES"; }
 
+# git over the same shared connection as mssh
+machine_git() {
+    mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/pulsar"
+    GIT_SSH_COMMAND="${PULSAR_SSH:-ssh} -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto -o ControlPath=${XDG_RUNTIME_DIR:-/tmp}/pulsar/ssh-%C -o ControlPersist=120" \
+        git "$@"
+}
+
+# The commit that is a folder's work as it stands: HEAD, plus one commit on
+# top with what isn't committed (new files too, not ignored ones), made in a
+# scratch index so the user's own index and checkout are left as they were.
+wip_commit() {
+    local dir=$1 msg=$2 idx tree head
+    head=$(git -C "$dir" rev-parse --verify -q HEAD) || return 1
+    idx=$(mktemp) || return 1
+    cp "$(git -C "$dir" rev-parse --path-format=absolute --git-path index)" "$idx" 2>/dev/null || : > "$idx"
+    if ! GIT_INDEX_FILE=$idx git -C "$dir" add -A . 2>/dev/null || ! tree=$(GIT_INDEX_FILE=$idx git -C "$dir" write-tree); then
+        rm -f "$idx"; return 1
+    fi
+    rm -f "$idx"
+    if [ "$tree" = "$(git -C "$dir" rev-parse "${head}^{tree}")" ]; then
+        printf '%s\n' "$head"
+    else
+        git -C "$dir" -c user.name="${GIT_AUTHOR_NAME:-Pulsar}" -c user.email="${GIT_AUTHOR_EMAIL:-pulsar@localhost}" \
+            commit-tree "$tree" -p "$head" -m "$msg"
+    fi
+}
+
+# The project a folder is in: its main checkout (a worktree's too), under $HOME.
+handoff_project() {
+    local common
+    common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+        || die "$1 is not in a git repository: work goes to another machine by git"
+    [ "$(basename "$common")" = .git ] || die "${common} is a bare repository"
+    local main; main=$(dirname "$common")
+    case "$main/" in "$HOME"/*) ;; *) die "${main} is not under your home, where the other machine would put it too" ;; esac
+    printf '%s\n' "$main"
+}
+
+# machine_send <machine> <folder> <branch>: the folder's work, as it stands,
+# onto <branch> in the same project (by its path under your home) on that
+# machine, which makes the project there if it has none. Sets MS_PATH (the
+# project there), MS_REL (its path under home, the same on both), MS_COMMIT,
+# MS_TARGET.
+machine_send() {
+    local m=$1 dir=$2 branch=$3 t main rel commit there
+    t=$(machine_target "$m") || die "no machine called $m (pulsar machine list)"
+    main=$(handoff_project "$dir")
+    rel=${main#"$HOME"/}
+    commit=$(wip_commit "$dir" "Work in progress, handed to ${m} by Pulsar") \
+        || die "${dir} has no commit yet: commit something first"
+    there=$(mssh "$t" "$REMOTE_PULSAR" machine receive "$rel" 2>&1) \
+        || die "${m} could not take ${rel}: ${there##*$'\n'}"
+    there=${there##*$'\n'}
+    local out
+    if ! out=$(machine_git -C "$dir" push --quiet "${t}:${there}" "${commit}:refs/heads/${branch}" 2>&1); then
+        case "$out" in
+            *"[rejected]"*|*"already exists"*|*"non-fast-forward"*|*"fetch first"*)
+                die "${m} has a branch ${branch} already: pick another --name" ;;
+        esac
+        die "could not send the work to ${m}: ${out##*$'\n'}"
+    fi
+    MS_PATH=$there MS_COMMIT=$commit MS_TARGET=$t MS_REL=$rel
+}
+
+# a name for a new session or job from words: the first few, as a slug, and the time
+handoff_name() {
+    local w; w=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' ' ' | awk '{ for (i = 1; i <= NF && i <= 3; i++) printf "%s%s", (i > 1 ? "-" : ""), $i }')
+    printf '%s-%s\n' "${w:-work}" "$(date +%H%M)"
+}
+
 cmd_machine() {
-    local usage="usage: pulsar machine add <name> <ssh target> | remove <name> | list | check [<name>] |
-       sessions | exec <name> -- agent <args>"
+    local usage="usage: pulsar machine add <name> <ssh target> | remove <name> | list | check [<name>] | sessions
+       pulsar machine run <name> <agent> [--name <session>] [--dir <folder>] [--prompt <text>] [--sandbox]
+       pulsar machine job <name> [--name <job>] [--dir <folder>] [--notify <session>] -- <command>...
+       pulsar machine fetch <name> <session> [--dir <folder>]
+       pulsar machine exec <name> -- agent <args> | job wait|log|list|stop <args>"
     local sub=${1:-list}; shift || true
     case "$sub" in
         -h|--help) printf '%s\n' "$usage"; return 0 ;;
@@ -8033,8 +8116,134 @@ cmd_machine() {
             if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$res"; return 0; fi
             jq -r '(.machines[] | select(.ok | not) | "\(.name): unreachable (\(.error))"),
                    (.sessions[] | "\(.machine)\t\(.name)\t\(.agent // "-")\t\(.state)\t\(.dir // "-")")' <<<"$res" ;;
+        run)
+            # your work to that machine, and an agent on it there in a worktree
+            local n=${1:-} agent=${2:-}; shift 2 || die "$usage"
+            local name="" dir=$PWD prompt="" sb=()
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --name) [ $# -ge 2 ] || die "$usage"; name=$2; shift ;;
+                    --dir) [ $# -ge 2 ] || die "$usage"; dir=$2; shift ;;
+                    --prompt) [ $# -ge 2 ] || die "$usage"; prompt=$2; shift ;;
+                    --sandbox|--no-sandbox) sb=("$1") ;;
+                    *) die "$usage" ;;
+                esac
+                shift
+            done
+            case "$agent" in ''|-*|*[!a-z0-9-]*) die "$usage" ;; esac
+            [ -n "$name" ] || name=$(handoff_name "${prompt:-$(basename "$(handoff_project "$dir")")}")
+            case "$name" in -*|*[!A-Za-z0-9_-]*) die "a session's name is letters, digits, - and _: '$name'" ;; esac
+            machine_send "$n" "$dir" "$name"
+            local -a pa=()
+            [ -z "$prompt" ] || pa=(--prompt "$prompt")
+            mssh "$MS_TARGET" "$REMOTE_PULSAR" agent run "$agent" --tmux "$name" --new --dir "$MS_PATH" --worktree "${sb[@]}" "${pa[@]}" >/dev/null \
+                || die "${n} could not start ${agent} (pulsar machine exec ${n} -- agent sessions)"
+            printf '%s is running on %s, on its branch %s (your work as of %s)\n' "$name" "$n" "$name" "$(git -C "$dir" rev-parse --short "$MS_COMMIT")"
+            printf 'Agents shows it as %s@%s; pulsar machine fetch %s %s brings its branch back\n' "$name" "$n" "$n" "$name" ;;
+        job)
+            # your work to that machine, and a command run there as a job
+            local n=${1:-}; shift || die "$usage"
+            local name="" dir=$PWD notify=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --name) [ $# -ge 2 ] || die "$usage"; name=$2; shift ;;
+                    --dir) [ $# -ge 2 ] || die "$usage"; dir=$2; shift ;;
+                    --notify) [ $# -ge 2 ] || die "$usage"; notify=$2; shift ;;
+                    --) shift; break ;;
+                    *) die "$usage" ;;
+                esac
+                shift
+            done
+            [ $# -gt 0 ] || die "$usage"
+            case "$notify" in *[!A-Za-z0-9_-]*) die "--notify is a session's name here" ;; esac
+            [ -n "$name" ] || name=$(handoff_name "$(basename -- "$1")")
+            case "$name" in -*|*[!A-Za-z0-9_-]*) die "a job's name is letters, digits, - and _: '$name'" ;; esac
+            machine_send "$n" "$dir" "job-${name}"
+            local wt
+            wt=$(mssh "$MS_TARGET" "$REMOTE_PULSAR" machine receive "$MS_REL" --checkout "job-${name}" 2>&1) \
+                || die "${n} could not check out the work: ${wt##*$'\n'}"
+            wt=${wt##*$'\n'}
+            mssh "$MS_TARGET" "$REMOTE_PULSAR" job run --name "$name" --dir "$wt" -- "$@" >/dev/null \
+                || die "${n} could not start the job"
+            printf '%s is running on %s in %s\n' "$name" "$n" "$wt"
+            if [ -n "$notify" ]; then
+                # here, a job that waits on that one, so how it ends reaches
+                # the session here as any job's does; that machine never has
+                # to reach this one
+                "$SELF" job run --name "${n}-${name}" --notify "$notify" -- "$SELF" machine exec "$n" -- job wait "$name" >/dev/null \
+                    || die "started, but could not watch it for ${notify}"
+                printf '%s hears how it ends\n' "$notify"
+            fi ;;
+        fetch)
+            # a session's branch from that machine, its uncommitted work on
+            # top, as <machine>/<session>; your checkout is left alone
+            local n=${1:-} sname=${2:-}; shift 2 || die "$usage"
+            local dir=$PWD
+            while [ $# -gt 0 ]; do
+                case "$1" in --dir) [ $# -ge 2 ] || die "$usage"; dir=$2; shift ;; *) die "$usage" ;; esac
+                shift
+            done
+            case "$sname" in ''|-*|*[!A-Za-z0-9_-]*) die "$usage" ;; esac
+            local t; t=$(machine_target "$n") || die "no machine called $n (pulsar machine list)"
+            local main; main=$(handoff_project "$dir")
+            local got
+            got=$(mssh "$t" "$REMOTE_PULSAR" machine receive --snapshot "$sname" 2>&1) \
+                || die "${n}: ${got##*$'\n'}"
+            got=${got##*$'\n'}
+            local there=${got%%$'\t'*} ref=${got#*$'\t'}
+            machine_git -C "$main" fetch --quiet "${t}:${there}" "+${ref}:refs/remotes/${n}/${sname}" \
+                || die "could not fetch ${sname} from ${n}"
+            local ahead; ahead=$(git -C "$main" rev-list --count "HEAD..refs/remotes/${n}/${sname}" 2>/dev/null) || ahead="?"
+            printf 'fetched %s/%s: %s commit(s) your HEAD does not have\n' "$n" "$sname" "$ahead"
+            printf 'see them: git log HEAD..%s/%s   the change: git diff HEAD...%s/%s\n' "$n" "$sname" "$n" "$sname" ;;
+        receive)
+            # the other side of run, job and fetch: this machine's end
+            case "${1:-}" in
+                --snapshot)
+                    # a session's worktree as it stands, as refs/handoff/<session>
+                    local sname=${2:-}
+                    case "$sname" in ''|-*|*[!A-Za-z0-9_-]*) die "usage: pulsar machine receive --snapshot <session>" ;; esac
+                    local wd; wd=$(session_get "$sname" dir) || die "no session called ${sname} here"
+                    [ -d "$wd" ] || die "${sname}'s folder ${wd} is gone"
+                    local c; c=$(wip_commit "$wd" "Work in progress in ${sname}, fetched by Pulsar") || die "${wd} has no commit"
+                    local mn; mn=$(handoff_project "$wd")
+                    git -C "$mn" update-ref "refs/handoff/${sname}" "$c"
+                    printf '%s\trefs/handoff/%s\n' "$mn" "$sname"
+                    return 0 ;;
+            esac
+            local rel=${1:-}; shift || true
+            case "$rel" in ''|/*|*..*|-*) die "usage: pulsar machine receive <path under home> [--checkout <branch>]" ;; esac
+            local p="${HOME}/${rel}"
+            if [ "${1:-}" = --checkout ]; then
+                local br=${2:-}
+                case "$br" in ''|-*|*[!A-Za-z0-9_-]*) die "--checkout takes a branch" ;; esac
+                git -C "$p" show-ref --verify --quiet "refs/heads/${br}" || die "no branch ${br} in ${p}"
+                local wt="${p}/.worktrees/${br}"
+                if [ ! -e "$wt" ]; then
+                    local excl; excl=$(git -C "$p" rev-parse --path-format=absolute --git-path info/exclude)
+                    mkdir -p "$(dirname "$excl")"
+                    grep -qxF '/.worktrees/' "$excl" 2>/dev/null || printf '/.worktrees/\n' >> "$excl"
+                    git -C "$p" worktree add --quiet "$wt" "$br" >&2 || die "git could not check out ${br}"
+                fi
+                printf '%s\n' "$wt"
+                return 0
+            fi
+            if [ ! -e "${p}/.git" ]; then
+                [ ! -e "$p" ] || [ -z "$(ls -A "$p" 2>/dev/null)" ] || die "${p} is there and isn't a git repository"
+                { mkdir -p "$p" && git -C "$p" init --quiet; } || die "could not make ${p}"
+            fi
+            printf '%s\n' "$p" ;;
         exec)
             local n=${1:-}; shift || true
+            if [ "${1:-}" = -- ] && [ "${2:-}" = job ]; then
+                # a job's state from there: wait (the --notify watcher), log, list, stop
+                case "${3:-}" in wait|log|list|stop) ;; *) die "$usage" ;; esac
+                shift 2
+                local t; t=$(machine_target "$n") || die "no machine called $n (pulsar machine list)"
+                [ "${JSON:-0}" != 1 ] || set -- --json "$@"
+                mssh "$t" "$REMOTE_PULSAR" job "$@"
+                return
+            fi
             [ "${1:-}" = -- ] && [ "${2:-}" = agent ] || die "$usage"
             shift 2
             local t; t=$(machine_target "$n") || die "no machine called $n (pulsar machine list)"

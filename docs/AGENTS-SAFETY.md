@@ -305,6 +305,27 @@ no sender is labelled "A message via Pulsar", never as from you.
 A job started with `job_start` runs as you, outside any sandbox, so a
 sandboxed agent can't start one: it has no `pulsar mcp`.
 
+## Other machines
+
+`pulsar machine` reaches your other Pulsar machines with your own SSH setup:
+no relay, no account. Every call is `ssh` in BatchMode, so a key that needs a
+prompt fails instead of asking. On the other side, `machine exec` runs only
+`pulsar agent ...` and `pulsar job wait|log|list|stop`.
+
+`machine run` and `machine job` send code by git: your branch, plus what
+isn't committed as one commit made in a scratch index, pushed to a new
+branch in the same project under your home there (made if missing, never
+over a folder that isn't a repository). A branch that's there already is
+refused, not overwritten. The agent or job there runs as you on that
+machine, with that machine's own settings: its sandbox default, its agents'
+logins. `machine fetch` brings a session's branch back under
+`refs/remotes/<machine>/`, so nothing changes in your checkout until you
+merge it yourself.
+
+A Claude Code session started this way in a project new to that machine
+stops at Claude's question about trusting the folder; open it in the app to
+answer.
+
 ## A local model
 
 `pulsar agent model on` runs llama.cpp's server image as a rootless podman
