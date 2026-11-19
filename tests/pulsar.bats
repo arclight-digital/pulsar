@@ -4543,8 +4543,14 @@ agent_args() {
     jq -n --arg d "$(pwd -P)" '{($d): "33333333-2222-3333-4444-555555555555"}' > "${HOME}/.local/share/pulsar/sandbox/agy/.gemini/antigravity-cli/cache/last_conversations.json"
     "$PULSAR" agent run agy --tmux ag --sandbox >/dev/null 2>&1
     [ "$(agent_args ag | paste -sd' ' -)" = "--conversation 33333333-2222-3333-4444-555555555555" ] || fail "$(agent_args ag)"
+    # what is in the cache goes on agy's command line only if it is an ID
+    rm "${TMUX_LIVE}/ag"; sed -i '/^id=/d' "${REC}/ag.session"
+    jq -n --arg d "$(pwd -P)" '{($d): "--yolo x"}' > "${HOME}/.local/share/pulsar/sandbox/agy/.gemini/antigravity-cli/cache/last_conversations.json"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(agent_args ag | paste -sd' ' -)" = "-c" ] || fail "$(agent_args ag)"
     # --new: a fresh one, whatever the cache says
     rm "${TMUX_LIVE}/ag"
+    jq -n --arg d "$(pwd -P)" '{($d): "33333333-2222-3333-4444-555555555555"}' > "${HOME}/.local/share/pulsar/sandbox/agy/.gemini/antigravity-cli/cache/last_conversations.json"
     "$PULSAR" agent run agy --tmux ag --new >/dev/null 2>&1
     [ -z "$(agent_args ag)" ] || fail "$(agent_args ag)"
     # their own ways to pick a conversation are refused: --tmux picks it
@@ -4608,6 +4614,7 @@ agent_args() {
     [ "$(jq -r '.[0].state' <<<"$output")" = ended ]
     run "$PULSAR" agent sessions --unarchive work --json
     [ "$(jq -c . <<<"$output")" = '{"name":"work","archived":null}' ] || fail "$output"
+    ! grep -q '^archived=' "${REC}/work.session" || fail "still archived: $(cat "${REC}/work.session")"
     run "$PULSAR" agent sessions --archive work --json
     [ "$(jq -r '.name + " " + (.archived | type)' <<<"$output")" = "work number" ] || fail "$output"
     # a start brings it back, title and all
@@ -4654,6 +4661,11 @@ agent_args() {
     touch -d @1600000000 "${REC}/deep.session"
     SHELL=/bin/true PULSAR_SESSION_RECORD="${REC}/deep.session" bash -c "${p[2]}" claude true
     [ "$(stat -c %Y "${REC}/deep.session")" != 1600000000 ] || fail "the pane did not touch the record"
+    grep -qxF "PULSAR_SESSION_RECORD=${REC}/deep.session" "$TMUX_CALLS" || fail "the pane is not told its record"
+    # and an alert is activity
+    touch -d @1600000000 "${REC}/deep.session"
+    "$PULSAR" agent notify deep >/dev/null 2>&1 || true
+    [ "$(stat -c %Y "${REC}/deep.session")" != 1600000000 ] || fail "notify did not touch the record"
 }
 
 @test "agent sessions --tidy: archived sessions past the days are forgotten; dirty worktrees and branches stay" {
@@ -4710,6 +4722,9 @@ agent_args() {
     run "$PULSAR" agent diff work --uncommitted -- untracked.txt
     [[ "$output" == *"+z"* ]] || fail "$output"
     [[ "$output" == *"new file mode"* ]] || fail "$output"
+    run "$PULSAR" agent diff work --uncommitted -- edited.txt
+    [[ "$output" == *"+agent"* ]] || fail "$output"
+    [[ "$output" != *"new file mode"* ]] || fail "$output"
     run "$PULSAR" agent diff work --json
     [ "$status" -ne 0 ]; [[ "$output" == *"--json output only with --files"* ]] || fail "$output"
     run "$PULSAR" agent diff work --files

@@ -3748,7 +3748,6 @@ agent_tmux() {
         # opencode takes an ID up front too: it makes the session with it, or
         # resumes the one that has it
         agent_tmux_refuse "$@" -- -c --continue -s --session --fork
-        case "$id" in ses_*) ;; *) id="" ;; esac
         [ -n "$id" ] || id="ses_$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
         conv=(--session "$id")
     elif [ "$name" = agy ]; then
@@ -3758,14 +3757,11 @@ agent_tmux() {
         if [ "$fresh" = 0 ] && [ "$had" = 1 ]; then
             [ -n "$id" ] || id=$(agy_conversation "$mode" "$dir") || id=""
             if [ -n "$id" ]; then conv=(--conversation "$id"); else conv=(-c); fi
-        else
-            id=""
         fi
     elif [ "$name" = codex ]; then
         # codex resumes by ID only from its own picker; --last is the newest
         # conversation in this folder, which a worktree session has to itself
         case "${1:-}" in resume|fork) die "--tmux picks the conversation itself; drop ${1} (--new for a fresh one)" ;; esac
-        id=""
         [ "$fresh" = 1 ] || [ "$had" = 0 ] || conv=(resume --last)
     elif [ "$fresh" = 0 ] && [ -n "$saved_agent" ]; then
         printf 'note: %s comes back as a new %s conversation; %s cannot resume the one it had\n' \
@@ -4439,7 +4435,7 @@ agent_sessions_tidy() {
     done
     if [ "${JSON:-0}" = 1 ]; then
         need jq
-        if [ ${#gone[@]} -eq 0 ]; then printf '[]\n'; else printf '%s\n' "${gone[@]}" | jq -cs .; fi
+        printf '%s\n' "${gone[@]}" | jq -cs .
         return 0
     fi
     local g
