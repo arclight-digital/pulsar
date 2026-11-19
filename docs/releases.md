@@ -86,11 +86,17 @@ CLI, and opencode moves to version 2.
   many, and how long archived sessions are kept (a day, a week, 30 days or
   for good). The first four are the CLI's own settings: `pulsar agent
   settings` shows them.
+- Each message has an id. `pulsar agent inbox` lists a session's messages
+  both ways, `send --reply-to <id>` answers one, and the Messages tab
+  beside Changes and History shows the open session's. A Claude Code
+  session gets its mail through its Stop hook as its turn ends, so nothing
+  is typed into it; the others still get it typed into their prompt.
 - `pulsar job run -- <command>` runs a long command in a tmux of its own,
   keeps its output (`pulsar job log`), and notifies you when it ends.
   `--notify <session>` also tells that agent session how it ended.
 - `pulsar mcp` gives agents the same: `sessions`, `session_read`,
-  `session_message`, `job_start`, `jobs`, `job_log` and `job_stop`. The
+  `session_message` (with `reply_to`), `inbox`, `job_start`, `jobs`,
+  `job_log` and `job_stop`. The
   ones that change something are marked as writes, so the agent asks you
   first. A sandboxed agent doesn't have `pulsar mcp`.
 - `pulsar agent diff <name>` shows what a session changed since it started.

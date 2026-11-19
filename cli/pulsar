@@ -4465,7 +4465,13 @@ agent_alert_settings() {
     # are instructions to Claude
     # shellcheck disable=SC2016  # expanded by the hook's sh
     cmd='d="$HOME/'"${AGENT_ALERTS_REL}"'"; mkdir -p "$d" && cat > "$d/'"${id}"'.json"; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 0'
-    jq -cn --arg c "$cmd" '{hooks: {Stop: [{hooks: [{type: "command", command: $c}]}],
+    # At a turn's end, mail from other sessions (agent_mail_render) keeps it
+    # going: its first line is Stop's own answer, {"decision": "block",
+    # "reason": <the messages>}. Taken by renaming it, so it goes once; the
+    # bell after tells Pulsar which ones went (agent_notify).
+    # shellcheck disable=SC2016  # expanded by the hook's sh
+    stop='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null && head -n 1 "$m.taken"; '"$cmd"
+    jq -cn --arg c "$cmd" --arg s "$stop" '{hooks: {Stop: [{hooks: [{type: "command", command: $s}]}],
         Notification: [{hooks: [{type: "command", command: $c}]}]}}'
 }
 
@@ -4478,6 +4484,11 @@ agent_notify() {
     # the record's time is when it was last active (agent sessions --json)
     touch -c "${AGENT_SESSIONS}/${tname}.session"
     # looking at it already: a client on this session, in a focused terminal
+    # Claude's Stop hook took its mail and keeps going: what went comes off
+    # the queue, and it isn't waiting for anyone
+    if agent_mail_taken "$tname"; then
+        return 0
+    fi
     if atmux_watched "$tname"; then
         return 0
     fi
@@ -4913,12 +4924,13 @@ agent_whoami() {
 }
 
 agent_send() {
-    local usage="usage: pulsar agent send <session> [--from <session>] [--now] <text>"
-    local to="" from="" now=0 text=""
+    local usage="usage: pulsar agent send <session> [--from <session>] [--reply-to <id>] [--now] <text>"
+    local to="" from="" now=0 text="" re=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --from) [ $# -ge 2 ] || die "$usage"; from=$2; shift ;;
             --now) now=1 ;;
+            --reply-to) [ $# -ge 2 ] || die "$usage"; re=$2; shift ;;
             -h|--help) printf '%s\n' "$usage"; return 0 ;;
             --) shift; text="$*"; break ;;
             *) if [ -z "$to" ]; then to=$1; else text="$*"; break; fi ;;
@@ -4943,26 +4955,131 @@ agent_send() {
             '[.[] | select(.from == $f and .to == $t and .at >= $since)] | length' "$MSG_LOG" 2>/dev/null) || recent=0
         [ "$recent" -lt "$cap" ] || die "${from} has sent ${to} ${recent} messages in 10 minutes; that's the limit (a loop?)"
     fi
-    jq -n -c --arg f "${from:-you}" --arg t "$to" --arg x "$text" --argjson a "$at" '{at: $a, from: $f, to: $t, text: $x}' >> "$MSG_LOG"
-    jq -n -c --arg f "$from" --arg x "$text" --argjson a "$at" '{at: $a, from: $f, text: $x}' >> "${AGENT_SESSIONS}/${to}.inbox"
-    if [ "$now" = 1 ] || { at_prompt "$(atmux show-options -v -t "=${to}:" @pulsar-alert 2>/dev/null)" && ! atmux_watched "$to"; }; then
-        agent_deliver "$to" && { printf 'delivered to %s\n' "$to"; return 0; }
+    if [ -n "$re" ]; then
+        [[ "$re" =~ ^m[0-9]+-[0-9a-f]+$ ]] || die "--reply-to is a message's id (pulsar agent inbox)"
+        { [ -f "$MSG_LOG" ] && jq -e -s --arg r "$re" 'any(.[]; .id == $r)' "$MSG_LOG" >/dev/null; } \
+            || die "no message ${re} (pulsar agent inbox)"
     fi
-    printf 'queued for %s: it goes in at the end of its turn, or when nobody is watching it\n' "$to"
+    local id; id=$(printf 'm%s-%04x' "$at" "$((RANDOM % 65536))")
+    local line
+    line=$(jq -n -c --arg i "$id" --arg f "$from" --arg t "$to" --arg x "$text" --argjson a "$at" --arg r "$re" \
+        '{id: $i, at: $a, from: $f, to: $t, text: $x} + (if $r == "" then {} else {re: $r} end)')
+    printf '%s\n' "$line" >> "$MSG_LOG"
+    printf '%s\n' "$line" >> "${AGENT_SESSIONS}/${to}.inbox"
+    if [ "$now" = 1 ] || { at_prompt "$(atmux show-options -v -t "=${to}:" @pulsar-alert 2>/dev/null)" && ! atmux_watched "$to"; }; then
+        agent_deliver "$to" && { printf 'delivered to %s (%s)\n' "$to" "$id"; return 0; }
+    fi
+    agent_mail_render "$to"
+    printf 'queued for %s (%s): it goes in at the end of its turn, or when nobody is watching it\n' "$to" "$id"
 }
 
 # What waits in a session's inbox, into its prompt as one message, then Enter.
 agent_deliver() {
     local to=$1 inbox="${AGENT_SESSIONS}/${1}.inbox" text
     [ -s "$inbox" ] || return 1
-    text=$(jq -r -s 'map((if .from == "" then "[A message, via Pulsar]" else "[From the agent session \(.from), via Pulsar]" end) + "\n" + .text) | join("\n\n")' "$inbox") || return 1
+    text=$(inbox_text "$inbox") || return 1
     printf '%s' "$text" | atmux load-buffer -b pulsar-message - || return 1
     atmux paste-buffer -p -d -b pulsar-message -t "=${to}:" || return 1
     sleep 0.2
     atmux send-keys -t "=${to}:" Enter
     : > "$inbox"
+    agent_mail_render "$to"
     # it has something to do now: not waiting any more
     atmux set-option -u -t "=${to}:" @pulsar-alert 2>/dev/null || true
+}
+
+# Queued messages as the agent reads them: each labelled with who sent it
+# and its id, which a reply names.
+inbox_text() {
+    jq -r -s 'map(
+        (if .from == "" or .from == "you" then "[A message via Pulsar" else "[From the agent session \(.from), via Pulsar" end)
+        + (if .id then ", id \(.id)" else "" end)
+        + (if .re then ", answering \(.re)" else "" end) + "]\n" + .text) | join("\n\n")' "$1"
+}
+
+# A Claude session with a conversation: where its Stop hook looks for mail,
+# in your home and in its sandbox's.
+mail_paths() {
+    local n=$1 agent id
+    agent=$(session_get "$n" agent) || return 1
+    id=$(session_get "$n" id) || return 1
+    [ "$agent" = claude ] && [ -n "$id" ] || return 1
+    printf '%s\n' "${HOME}/${AGENT_ALERTS_REL}/${id}.mail" "${SANDBOX_HOMES}/claude/${AGENT_ALERTS_REL}/${id}.mail"
+}
+
+# The queue, as the answer Claude's Stop hook gives: line 1 Stop's JSON,
+# line 2 the ids it carries. None when nothing waits.
+agent_mail_render() {
+    local n=$1 inbox="${AGENT_SESSIONS}/${1}.inbox" m json ids
+    local -a paths
+    mapfile -t paths < <(mail_paths "$n") || true
+    [ ${#paths[@]} -gt 0 ] || return 0
+    if [ -s "$inbox" ]; then
+        json=$(jq -n -c --arg r "$(inbox_text "$inbox")" '{decision: "block", reason: $r}') || return 0
+        ids=$(jq -r -s 'map(.id // empty) | join(" ")' "$inbox")
+    fi
+    for m in "${paths[@]}"; do
+        [ -d "$(dirname "$m")" ] || [ "$m" = "${paths[0]}" ] || continue
+        if [ -s "$inbox" ]; then
+            mkdir -p "$(dirname "$m")"
+            printf '%s\n%s\n' "$json" "$ids" > "${m}.tmp" && mv -f "${m}.tmp" "$m"
+        else
+            rm -f "$m"
+        fi
+    done
+}
+
+# After Claude's Stop hook took mail: those messages are delivered.
+agent_mail_taken() {
+    local n=$1 inbox="${AGENT_SESSIONS}/${1}.inbox" m took=1 ids
+    local -a paths
+    mapfile -t paths < <(mail_paths "$n") || true
+    for m in "${paths[@]}"; do
+        [ -f "${m}.taken" ] || continue
+        took=0
+        ids=$(sed -n 2p "${m}.taken")
+        rm -f "${m}.taken"
+        [ -s "$inbox" ] || continue
+        jq -c --arg ids " $ids " 'select((.id // "") as $i | ($i == "" or ($ids | contains(" \($i) "))) | not)' "$inbox" > "${inbox}.tmp" \
+            && mv -f "${inbox}.tmp" "$inbox"
+    done
+    [ "$took" = 0 ] || return 1
+    agent_mail_render "$n"
+    atmux set-option -u -t "=${n}:" @pulsar-alert 2>/dev/null || true
+    return 0
+}
+
+# pulsar agent inbox [<session>] [--unread] [--keep]: the messages to and from
+# a session (default: the one this runs in), oldest first. Reading marks the
+# ones to it as read, unless --keep.
+agent_inbox() {
+    local usage="usage: pulsar agent inbox [<session>] [--unread] [--keep] [--json]" n="" unread=0 keep=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --unread) unread=1 ;;
+            --keep) keep=1 ;;
+            -h|--help) printf '%s\n' "$usage"; return 0 ;;
+            -*) die "$usage" ;;
+            *) [ -z "$n" ] || die "$usage"; n=$1 ;;
+        esac
+        shift
+    done
+    [ -n "$n" ] || n=$(JSON=0 agent_whoami 2>/dev/null) || die "which session? pulsar agent inbox <session>"
+    case "$n" in *[!A-Za-z0-9_-]*) die "$usage" ;; esac
+    need jq
+    local read="${AGENT_SESSIONS}/${n}.read" rows
+    rows=$({ [ -f "$MSG_LOG" ] && cat "$MSG_LOG"; } | jq -c -s --arg n "$n" --rawfile r <(cat "$read" 2>/dev/null || true) --argjson u "$unread" '
+        ($r | split("\n") | map(select(. != ""))) as $seen
+        | map(select(.id and (.to == $n or .from == $n))
+              | . + {read: (.to != $n or ((.id) as $i | $seen | index($i)) != null)})
+        | if $u == 1 then map(select(.read | not)) else . end') || rows='[]'
+    if [ "$keep" = 0 ]; then
+        mkdir -p "$AGENT_SESSIONS"
+        jq -r --arg n "$n" '.[] | select(.to == $n and (.read | not)) | .id' <<<"$rows" >> "$read"
+    fi
+    if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$rows"; return 0; fi
+    [ "$(jq length <<<"$rows")" -gt 0 ] || { printf 'no messages%s for %s\n' "$([ "$unread" = 1 ] && echo ' unread')" "$n"; return 0; }
+    jq -r --arg n "$n" '.[] | "\(if .to == $n then "from \(if .from == "" then "outside a session" else .from end)" else "to \(.to)" end)  \(.at | strftime("%b %d %H:%M"))  \(.id)\(if .re then "  answering \(.re)" else "" end)\(if .read then "" else "  new" end)\n\(.text)\n"' <<<"$rows"
 }
 
 # A turn's end, with the agent at its own prompt: Claude's Stop, and the
@@ -5414,9 +5531,12 @@ usage: pulsar agent                  the guide, installed agents, guard state
        pulsar agent read <session> [--lines N]
                                      what that session's screen shows, scrollback
                                      included (default 80 lines)
-       pulsar agent send <session> [--from <session>] [--now] <text>
+       pulsar agent send <session> [--from <session>] [--reply-to <id>] [--now] <text>
                                      type a message into its prompt at the end of
                                      its turn, labelled; logged and capped
+       pulsar agent inbox [<session>] [--unread] [--keep]
+                                     messages to and from a session (default: this
+                                     one), with ids to answer (send --reply-to)
        pulsar agent messages [on|off] [--cap N]
                                      whether sessions may message each other, and
                                      how many from one to another in 10 minutes
@@ -5546,6 +5666,9 @@ cmd_agent() {
         messages)
             need_user "agent messages"
             agent_messages "$@" ;;
+        inbox)
+            need_user "agent inbox"
+            agent_inbox "$@" ;;
         settings)
             need_user "agent settings"
             agent_settings "$@" ;;

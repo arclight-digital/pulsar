@@ -278,18 +278,27 @@ host).
 
 Sessions talking to each other: `session_read` returns another session's
 screen, which can hold anything that session's agent printed, so an agent
-reading it is reading untrusted text. A message from `session_message` is
-typed into the other agent's prompt with a label naming the sender, and
-pressed Enter on. So it goes in only when that agent has ended its turn and
-sits at its own prompt (Claude Code's Stop, or the turn-end hooks Pulsar gives
-Codex and Antigravity CLI), never on a permission question, where that Enter
-would answer for you, and never while you're looking at the session. Every
-message is logged in `~/.local/state/pulsar/agents/messages.log`. One session
-can send another at most 10 in 10 minutes, and Agents > Preferences (or
-`pulsar agent messages off|on --cap N`) turns messages between sessions off
-or changes the cap. A job started with
-`job_start` runs as you, outside any sandbox, so a sandboxed agent can't
-start one: it has no `pulsar mcp`.
+reading it is reading untrusted text.
+
+A message from `session_message` reaches the other agent with a label naming
+the sender, only once that agent has ended its turn. A Claude Code session
+gets it from its own Stop hook: the hook answers "keep going" with the
+messages, and nothing is typed. Every other agent gets it typed into its
+prompt with Enter, so for them it waits until the agent sits at its own
+prompt (the turn-end hooks Pulsar gives Codex and Antigravity CLI) and nobody
+is looking at the session. It never goes in on a permission question, where
+that Enter would answer for you.
+
+Every message is logged in `~/.local/state/pulsar/agents/messages.log`. One
+session can send another at most 10 in 10 minutes, and Agents > Preferences
+(or `pulsar agent messages off|on --cap N`) turns messages between sessions
+off or changes the cap. The sender's name is what the sending session said
+it was: Pulsar fills it in for an agent using `session_message`, but an agent
+with a shell can run `pulsar agent send --from` with any name. A message with
+no sender is labelled "A message via Pulsar", never as from you.
+
+A job started with `job_start` runs as you, outside any sandbox, so a
+sandboxed agent can't start one: it has no `pulsar mcp`.
 
 ## A local model
 

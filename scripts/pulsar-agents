@@ -147,6 +147,9 @@ CSS = """
                                        background-color: alpha(@accent_color, .16); color: @accent_color; }
 .pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
 .pulsar-agents .home-text { font-size: 1.2em; }
+.pulsar-agents .rail row.message { background: none; min-height: 0; padding-top: 4px; }
+.pulsar-agents .rail .outbound { opacity: .7; }
+.pulsar-agents .rail .message-text { font-size: .95em; }
 .pulsar-agents .home-box button.suggested-action:disabled { background: alpha(currentColor, .08);
     color: alpha(currentColor, .3); box-shadow: none; -gtk-icon-filter: none; }
 .pulsar-agents .home-box button.suggested-action { transition: background-color 150ms ease-out, box-shadow 150ms ease-out; }
@@ -483,6 +486,8 @@ class Agents(Adw.ApplicationWindow):
         self.side_head.set_show_title(not on)
         self.new_button.set_visible(not on)
         self.primary_menu.set_visible(not on)
+        # the + tile says it, in a column too narrow for words
+        self.empty.set_visible(not on)
         self.compact_new.set_visible(on)
         self.fold.set_icon_name("sidebar-show-right-symbolic" if on else "sidebar-show-symbolic")
         self.fold.set_tooltip_text("Widen the List (Ctrl+Shift+B)" if on else "Narrow the List (Ctrl+Shift+B)")
@@ -1601,6 +1606,19 @@ class Rail:
         self.stack.add_titled_with_icon(Gtk.ScrolledWindow(child=snap_box, vexpand=True), "history", "History",
                                         "document-open-recent-symbolic")
 
+        # messages: this session and the others (agent inbox), read only; you
+        # talk to the agent in its terminal
+        self.msgs = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+        self.msg_note = Gtk.Label(xalign=0, wrap=True, css_classes=["caption", "dim-label"])
+        msg_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=12, margin_bottom=12,
+                          margin_start=12, margin_end=12)
+        msg_box.append(self.msg_note)
+        msg_box.append(self.msgs)
+        self.msg_scroll = Gtk.ScrolledWindow(child=msg_box, vexpand=True)
+        self.msg_page = self.stack.add_titled_with_icon(self.msg_scroll, "messages", "Messages", "mail-unread-symbolic")
+        self.stack.connect("notify::visible-child-name", lambda *_: self.visible and self._messages())
+        self._msg_seen = None
+
         bar = Adw.InlineViewSwitcher(stack=self.stack, css_classes=["flat"], margin_top=8, margin_bottom=2,
                                      margin_start=10, margin_end=10, homogeneous=True)
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["rail"])
@@ -1627,6 +1645,7 @@ class Rail:
             self.buffer.set_text("")
             self.summary.set_label("")
             self._fill_files([])
+            self._msg_seen = None
             if self.visible:
                 self.reload()
 
@@ -1634,6 +1653,9 @@ class Rail:
         self.s = s
         if (old.get("state") == "ended") != (s.get("state") == "ended"):
             self._snapshots()
+        # messages come and go around a turn's end
+        if old.get("state") != s.get("state"):
+            self._messages()
 
     def shown(self, visible):
         self.visible = visible
@@ -1649,6 +1671,66 @@ class Rail:
         name = self.s["name"]
         run(self.win.agent_argv("diff", name, *self._scope_args(), "--files", "--json"), self._listed_files, name)
         self._snapshots()
+        self._messages()
+
+    def _messages(self):
+        if not self.visible or not self.s or self.stack.get_visible_child_name() != "messages":
+            return
+        name = self.s["name"]
+        # --keep: you reading them isn't the agent reading them
+        run(self.win.agent_argv("inbox", name, "--keep", "--json"), self._got_messages, name)
+
+    def _got_messages(self, ok, out, name):
+        if not self.s or name != self.s["name"]:
+            return
+        rows = parse(out) if ok else None
+        if not isinstance(rows, list):
+            self.msg_note.set_label("Could not read the messages")
+            return
+        key = (name, len(rows), rows[-1].get("id") if rows else None, tuple(r.get("read") for r in rows))
+        if key == self._msg_seen:
+            return
+        self._msg_seen = key
+        me = self.s.get("real_name") or name
+        while (child := self.msgs.get_first_child()) is not None:
+            self.msgs.remove(child)
+        self.msgs.set_visible(bool(rows))
+        if not rows:
+            self.msg_note.set_label("No messages. Another session's agent can send this one a message, "
+                                    "and the agent here can answer it.")
+            return
+        unread = sum(1 for r in rows if r.get("to") == me and not r.get("read"))
+        self.msg_note.set_label(f"{len(rows)} message{'s' if len(rows) != 1 else ''}"
+                                + (f" · {unread} the agent hasn't opened" if unread else ""))
+        def excerpt(t):
+            line = (t or "").split("\n", 1)[0]
+            return line if len(line) <= 48 else line[:47].rstrip() + "…"
+        short = {r.get("id"): excerpt(r.get("text")) for r in rows}
+        now = self.win._now()
+        for r in rows:
+            inbound = r.get("to") == me
+            other = (r.get("from") or "outside a session") if inbound else r.get("to")
+            head = f"From {other}" if inbound else f"To {other}"
+            sub = [when(r.get("at"), now)]
+            if r.get("re") in short:
+                sub.append(f"answering “{short[r['re']]}”")
+            elif r.get("re"):
+                sub.append("answering an earlier message")
+            row = Adw.ActionRow(title=head, subtitle=" · ".join(x for x in sub if x), css_classes=["message"])
+            if not inbound:
+                row.add_css_class("outbound")
+            if inbound and not r.get("read"):
+                row.add_suffix(Gtk.Box(css_classes=["title-dot", "needs"], valign=Gtk.Align.CENTER,
+                                       tooltip_text="The agent hasn't opened it with its inbox"))
+            body = Gtk.Label(label=r.get("text") or "", xalign=0, wrap=True, selectable=True,
+                             wrap_mode=Pango.WrapMode.WORD_CHAR, css_classes=["message-text"],
+                             margin_start=12, margin_end=12, margin_bottom=10)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            box.append(row)
+            box.append(body)
+            self.msgs.append(box)
+        GLib.idle_add(lambda: self.msg_scroll.get_vadjustment().set_value(
+            self.msg_scroll.get_vadjustment().get_upper()) and False)
 
     def _listed_files(self, ok, out, name):
         if not self.s or name != self.s["name"]:

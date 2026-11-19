@@ -4913,8 +4913,10 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     notify_env
     local settings
     settings=$(pane work | grep -x '{.*hooks.*}')
-    [ "$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$settings")" = "$(jq -r '.hooks.Notification[0].hooks[0].command' <<<"$settings")" ]
-    local cmd; cmd=$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$settings")
+    # Stop is Notification's command after the mail check (which says nothing without mail)
+    local cmd note; cmd=$(jq -r '.hooks.Stop[0].hooks[0].command' <<<"$settings")
+    note=$(jq -r '.hooks.Notification[0].hooks[0].command' <<<"$settings")
+    [[ "$cmd" == *".mail\""*"; ${note}" ]] || fail "$cmd"
     # a stand-in Claude whose terminal is a file
     local tty="${BATS_TEST_TMPDIR}/tty"
     sleep 30 > "$tty" & local pid=$!
@@ -6337,9 +6339,9 @@ pane_of() { "${T[@]}" capture-pane -p -J -t "=$1:"; }
     "${T[@]}" set-option -t =a: @pulsar-alert Stop
     run "$PULSAR" agent send a --from b "run the tests"
     [ "$status" -eq 0 ] || { msg_teardown; fail "$output"; }
-    [ "$output" = "delivered to a" ] || { msg_teardown; fail "$output"; }
+    [[ "$output" =~ ^"delivered to a (m"[0-9]+-[0-9a-f]{4}")"$ ]] || { msg_teardown; fail "$output"; }
     sleep 0.4
-    [[ "$(pane_of a)" == *"[From the agent session b, via Pulsar]"*"run the tests"* ]] || { msg_teardown; fail "$(pane_of a)"; }
+    [[ "$(pane_of a)" == *"[From the agent session b, via Pulsar, id m"*"]"*"run the tests"* ]] || { msg_teardown; fail "$(pane_of a)"; }
     [ -z "$("${T[@]}" show-options -v -t =a: @pulsar-alert 2>/dev/null)" ] || { msg_teardown; fail "still waiting"; }
     # working: queued
     run "$PULSAR" agent send a --from b "and then the lint"
@@ -6432,8 +6434,9 @@ pane_of() { "${T[@]}" capture-pane -p -J -t "=$1:"; }
     sleep 0.4
     local pane; pane=$(pane_of a)
     msg_teardown
-    [ "$output" = "delivered to a" ] || fail "$output"
-    [[ "$pane" == *"[A message, via Pulsar]"*"now please"* ]] || fail "$pane"
+    [[ "$output" == "delivered to a (m"* ]] || fail "$output"
+    # no --from: it doesn't claim a sender, least of all you
+    [[ "$pane" == *"[A message via Pulsar, id m"*"]"*"now please"* ]] || fail "$pane"
     run "$PULSAR" agent send gone "x"; [ "$status" -ne 0 ]
 }
 
@@ -6484,4 +6487,80 @@ pane_of() { "${T[@]}" capture-pane -p -J -t "=$1:"; }
     run "$PULSAR" job run --name 'bad name' -- true; [ "$status" -ne 0 ]
     run "$PULSAR" job run --notify 'a;b' -- true; [ "$status" -ne 0 ]
     msg_teardown
+}
+
+
+# Claude's Stop hook command, as Pulsar gives it to Claude for conversation $1
+stop_hook() {
+    bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR'); agent_alert_settings '$1'" \
+        | jq -r ".hooks.${2:-Stop}[0].hooks[0].command"
+}
+
+@test "inbox: a Claude session's mail goes in through its Stop hook at the turn's end, nothing typed, in a sandbox too" {
+    msg_env
+    msg_session a
+    local alerts="${HOME}/.local/state/pulsar/agent-alerts" sbx="${BATS_TEST_TMPDIR}/sbx"
+    export PULSAR_SANDBOX_HOMES="$sbx"
+    mkdir -p "${sbx}/claude/.local/state/pulsar/agent-alerts"
+    "$PULSAR" agent send a --from b "please run the tests" >/dev/null
+    "$PULSAR" agent send a "and the lint" >/dev/null
+    [ -s "${alerts}/sid-a.mail" ] && [ -s "${sbx}/claude/.local/state/pulsar/agent-alerts/sid-a.mail" ] || { msg_teardown; fail "no mail"; }
+    # the hook, as Claude runs it at the turn's end (its bell goes to a sleeper)
+    sleep 20 & local sp=$!
+    local out stop; stop=$(stop_hook sid-a)
+    out=$(echo '{"hook_event_name":"Stop"}' | CLAUDE_PID=$sp sh -c "$stop")
+    [ "$(jq -r .decision <<<"$out")" = block ] || { kill $sp; msg_teardown; fail "$out"; }
+    [[ "$(jq -r .reason <<<"$out")" == "[From the agent session b, via Pulsar, id m"*$'\n'"please run the tests"$'\n\n'"[A message via Pulsar, id m"*$'\n'"and the lint" ]] \
+        || { kill $sp; msg_teardown; fail "$out"; }
+    # what its bell sets off: those two are delivered, and it is working, not waiting
+    "${T[@]}" set-option -t =a: @pulsar-alert Stop
+    claude_said a Stop
+    "$PULSAR" agent notify a
+    [ ! -s "${PULSAR_AGENT_SESSIONS}/a.inbox" ] || { kill $sp; msg_teardown; fail "still queued"; }
+    [ -z "$("${T[@]}" show-options -v -t =a: @pulsar-alert 2>/dev/null)" ] || { kill $sp; msg_teardown; fail "waiting"; }
+    [ ! -e "${alerts}/sid-a.mail" ] && [ ! -e "${alerts}/sid-a.mail.taken" ] || { kill $sp; msg_teardown; fail "$(ls "$alerts")"; }
+    [ ! -e "${sbx}/claude/.local/state/pulsar/agent-alerts/sid-a.mail" ] || { kill $sp; msg_teardown; fail "sandbox mail left"; }
+    [ ! -s "$NOTES" ] || { kill $sp; msg_teardown; fail "notified: $(cat "$NOTES")"; }
+    [[ "$(pane_of a)" != *"please run"* ]] || { kill $sp; msg_teardown; fail "typed"; }
+    # the next turn's end, nothing new: the hook says nothing, so Claude stops
+    out=$(echo '{"hook_event_name":"Stop"}' | CLAUDE_PID=$sp sh -c "$stop")
+    [ -z "$out" ] || { kill $sp; msg_teardown; fail "$out"; }
+    # a Notification hook never answers with mail
+    "$PULSAR" agent send a --from b "again" >/dev/null
+    out=$(echo '{"hook_event_name":"Notification"}' | CLAUDE_PID=$sp sh -c "$(stop_hook sid-a Notification)")
+    [ -z "$out" ] && [ -s "${alerts}/sid-a.mail" ] || { kill $sp; msg_teardown; fail "$out"; }
+    # typed in instead (an idle session), the mail goes with it
+    "$PULSAR" agent send a --now --from b "now" >/dev/null
+    kill $sp
+    msg_teardown
+    [ ! -e "${alerts}/sid-a.mail" ] || fail "mail left after typing"
+}
+
+@test "inbox: ids, replies that name what they answer, read and unread, from this session by default" {
+    msg_env
+    msg_session a
+    msg_session b
+    run "$PULSAR" agent send a --from b "please run the tests"
+    local id; id=$(jq -r .id "${PULSAR_AGENT_SESSIONS}/messages.log")
+    [[ "$id" =~ ^m[0-9]+-[0-9a-f]{4}$ ]] || { msg_teardown; fail "$id"; }
+    run "$PULSAR" agent send b --from a --reply-to m1-abcd "x"
+    [ "$status" -ne 0 ] && [[ "$output" == *"no message m1-abcd"* ]] || { msg_teardown; fail "$output"; }
+    run "$PULSAR" agent send b --from a --reply-to 'm1;x' "x"
+    [ "$status" -ne 0 ] && [[ "$output" == *"--reply-to is a message's id"* ]] || { msg_teardown; fail "$output"; }
+    "$PULSAR" agent send b --from a --reply-to "$id" "all green" >/dev/null
+    "$PULSAR" agent send a "from outside" >/dev/null
+    msg_teardown
+    # b's view: one new, the answer to its own; --keep leaves it new
+    run "$PULSAR" --json agent inbox b --unread --keep
+    [ "$(jq -c 'map([.from, .text, .re == $id, .read])' --arg id "$id" <<<"$output")" = '[["a","all green",true,false]]' ] || fail "$output"
+    PULSAR_SESSION_RECORD="${PULSAR_AGENT_SESSIONS}/b.session" run "$PULSAR" agent inbox --unread
+    [[ "$output" == "from a  "*"answering ${id}  new"$'\n'"all green"* ]] || fail "$output"
+    run "$PULSAR" agent inbox b --unread
+    [ "$output" = "no messages unread for b" ] || fail "$output"
+    # a's view: both ways, oldest first; one without a sender says so
+    run "$PULSAR" --json agent inbox a
+    [ "$(jq -c 'map(.from + ">" + .to)' <<<"$output")" = '["b>a","a>b",">a"]' ] || fail "$output"
+    run "$PULSAR" agent inbox a --keep
+    [[ "$output" == *"from outside a session  "* ]] || fail "$output"
+    run "$PULSAR" agent inbox 'a;b'; [ "$status" -ne 0 ]
 }

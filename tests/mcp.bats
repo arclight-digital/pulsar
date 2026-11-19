@@ -144,3 +144,20 @@ PY
     grep -qx -- "agent send a -- x" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
     grep -qx -- "job run -- make" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
 }
+
+
+@test "inbox is the calling session's; replies name the message they answer, and only an id can be one" {
+    WHOAMI=me run rpc \
+        '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inbox","arguments":{"unread":true}}}' \
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"a","text":"done","reply_to":"m17-ab12"}}}' \
+        '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"a","text":"x","reply_to":"--now"}}}'
+    grep -qx -- "--json agent inbox me --unread" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "agent send a --from me --reply-to m17-ab12 -- done" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    [ "$(grep -c '^agent send' "$CLI_LOG")" -eq 1 ] || fail "$(cat "$CLI_LOG")"
+    [ "$(echo "$output" | jq -s -r '.[2].result.isError')" = true ]
+    # outside a session there is no inbox to read
+    : > "$CLI_LOG"
+    run rpc '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inbox","arguments":{}}}'
+    [ "$(echo "$output" | jq -r '.result.isError')" = true ] || fail "$output"
+    ! grep -q 'agent inbox' "$CLI_LOG"
+}
