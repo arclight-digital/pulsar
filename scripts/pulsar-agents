@@ -24,6 +24,7 @@ import fcntl
 import json
 import os
 import pathlib
+import re
 import struct
 import sys
 
@@ -38,7 +39,7 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, home, parse,  # noqa: E402,F401
+from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter, home, parse,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -102,6 +103,16 @@ CSS = """
 .pulsar-agents .added { color: @success_color; }
 .pulsar-agents .removed { color: @error_color; }
 .pulsar-agents .placeholder { opacity: .45; }
+.pulsar-agents levelbar.meter trough { min-height: 3px; border-radius: 2px; background-color: alpha(currentColor, .1);
+                                       padding: 0; border: none; box-shadow: none; }
+.pulsar-agents levelbar.meter block { min-height: 3px; border-radius: 2px; border: none; }
+.pulsar-agents levelbar.meter block.filled { background-color: @accent_color; }
+.pulsar-agents levelbar.meter.high block.filled { background-color: @warning_color; }
+.pulsar-agents levelbar.meter.full block.filled { background-color: @error_color; }
+.pulsar-agents levelbar.meter block.empty { background: none; }
+.pulsar-agents .statusbar { padding: 5px 14px 7px 14px; font-size: .84em; }
+.pulsar-agents .statusbar .key { color: alpha(currentColor, .5); }
+.pulsar-agents .statusbar .val { font-feature-settings: "tnum"; }
 .pulsar-agents .home-text { font-size: 1.2em; }
 .pulsar-agents .stage .home-box { padding: 6px 8px 8px 16px; border-radius: 18px; }
 .pulsar-agents .launch-heading { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 18px; }
@@ -213,9 +224,6 @@ def header_subtitle(s, now):
              session_status(s, now).split(" · ")[0]]
     if s.get("dir"):
         parts.append(home(s["dir"]))
-    u = s.get("usage") or {}
-    if u.get("context"):
-        parts.append(f"{tokens(u['context'])} context")
     return " · ".join(parts)
 
 
@@ -318,6 +326,8 @@ class Agents(Adw.ApplicationWindow):
         self.term_stack.set_visible_child_name("none")
         center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         center.append(self.term_stack)
+        self.status = StatusBar()
+        center.append(self.status.widget)
         self.rail = Rail(self)
         self.overlay = Adw.OverlaySplitView(content=center, sidebar=self.rail.widget,
                                             sidebar_position=Gtk.PackType.END, show_sidebar=False,
@@ -424,6 +434,7 @@ class Agents(Adw.ApplicationWindow):
             return
         before = self.sessions
         for s in found:
+            s["meter"] = session_meter(s) if not s.get("archived") else None
             # the agent quit and its pane sits at a shell: here that is a
             # stopped session (Continue), not a shell to use; a terminal
             # attached elsewhere still has the shell
@@ -454,6 +465,7 @@ class Agents(Adw.ApplicationWindow):
             if s.get("state") == "waiting" and old.get("state") != "waiting":
                 self.rail.reload()
             self.rail.session_changed(s, old)
+            self.status.update(s, now)
         elif self.current:
             self._clear_current()
         if self.term_stack.get_visible_child_name() == "none" and self.listed_once:
@@ -528,6 +540,7 @@ class Agents(Adw.ApplicationWindow):
 
     def _clear_current(self):
         self.current = None
+        self.status.update(None, 0)
         self.title.set_title("")
         self.title.set_subtitle("")
         self.term_stack.set_visible_child_name("none")
@@ -552,6 +565,7 @@ class Agents(Adw.ApplicationWindow):
         if name in self.rows:
             self.list.select_row(self.rows[name])
         self._actions_for(s)
+        self.status.update(s, self._now())
         self.banner.set_revealed(False)
         t = self.terms.get(name)
         if t is not None and not t.dead and not s.get("lingering"):
@@ -952,6 +966,88 @@ class Agents(Adw.ApplicationWindow):
         GLib.timeout_add_seconds(2, lambda: self.refresh() and False)
 
 
+def meter_bar(width=-1):
+    bar = Gtk.LevelBar(min_value=0, max_value=100, css_classes=["meter"], valign=Gtk.Align.CENTER,
+                       width_request=width, visible=False)
+    for o in ("low", "high", "full"):
+        bar.remove_offset_value(o)
+    return bar
+
+
+def set_meter(bar, percent):
+    bar.set_visible(percent is not None)
+    if percent is None:
+        return
+    bar.set_value(max(0.0, min(100.0, percent)))
+    for c in ("high", "full"):
+        bar.remove_css_class(c)
+    if percent >= 90:
+        bar.add_css_class("full")
+    elif percent >= 75:
+        bar.add_css_class("high")
+
+
+def short_tokens(n):
+    """tokens(), but a whole million is 1M, not 1.0M"""
+    return f"{n // 1_000_000}M" if n and n >= 1_000_000 and n % 1_000_000 == 0 else tokens(n)
+
+
+def model_name(model):
+    """claude-opus-5-5 is Opus 5.5; any other id as it is"""
+    m = re.match(r"claude-([a-z]+)-(\d+)-(\d+)", model or "")
+    return f"{m.group(1).capitalize()} {m.group(2)}.{m.group(3)}" if m else (model or "")
+
+
+def context_text(m):
+    """142k of 1M · 14%"""
+    if m.get("window"):
+        return f"{short_tokens(m['context'])} of {short_tokens(m['window'])} · {round(m['percent'])}%"
+    return short_tokens(m["context"])
+
+
+class StatusBar:
+    """Under the active session's terminal: the model, how full its context
+    is, and the plan's limits where the agent writes them down."""
+
+    def __init__(self):
+        self.widget = Gtk.Box(spacing=18, css_classes=["statusbar"], visible=False)
+        self.model = Gtk.Label(css_classes=["val"], visible=False)
+        self.widget.append(self.model)
+        self.ctx_bar = meter_bar(110)
+        self.ctx_val = Gtk.Label(css_classes=["val"])
+        ctx = Gtk.Box(spacing=8)
+        ctx.append(Gtk.Label(label="Context", css_classes=["key"]))
+        ctx.append(self.ctx_bar)
+        ctx.append(self.ctx_val)
+        self.widget.append(ctx)
+        self.limits = Gtk.Box(spacing=18)
+        self.widget.append(self.limits)
+
+    def update(self, s, now):
+        m = (s or {}).get("meter")
+        live = bool(s) and s.get("state") != "ended"
+        self.widget.set_visible(bool(m) and live)
+        if not (m and live):
+            return
+        self.model.set_label(model_name(m.get("model")))
+        self.model.set_visible(bool(m.get("model")))
+        set_meter(self.ctx_bar, m.get("percent"))
+        self.ctx_val.set_label(context_text(m))
+        while (c := self.limits.get_first_child()) is not None:
+            self.limits.remove(c)
+        for lim in m.get("limits") or []:
+            box = Gtk.Box(spacing=8)
+            box.append(Gtk.Label(label=lim["label"], css_classes=["key"]))
+            bar = meter_bar(70)
+            set_meter(bar, lim["percent"])
+            box.append(bar)
+            box.append(Gtk.Label(label=f"{round(lim['percent'])}%", css_classes=["val"]))
+            r = resets_in(lim.get("resets_at"), now)
+            if r:
+                box.set_tooltip_text(r)
+            self.limits.append(box)
+
+
 class ProjectRow(Gtk.ListBoxRow):
     """A project's heading in the sidebar; activating it folds it."""
 
@@ -989,6 +1085,9 @@ class SessionRow(Gtk.ListBoxRow):
         self.sub = Gtk.Label(xalign=0, css_classes=["caption", "dim-label"], ellipsize=Pango.EllipsizeMode.END)
         text.append(self.label)
         text.append(self.sub)
+        self.meter = meter_bar()
+        self.meter.set_margin_top(4)
+        text.append(self.meter)
         self.dot = Gtk.Box(css_classes=["dot"], valign=Gtk.Align.CENTER)
         self.lock = Gtk.Image(icon_name="security-high-symbolic", tooltip_text="Sandboxed", visible=False,
                               css_classes=["dim-label"])
@@ -1039,6 +1138,9 @@ class SessionRow(Gtk.ListBoxRow):
             self.dot.add_css_class("unseen")
         self.dot.set_visible(unseen)
         self.lock.set_visible(s.get("sandbox") == "on")
+        m = s.get("meter")
+        set_meter(self.meter, m and m.get("percent"))
+        self.meter.set_tooltip_text(context_text(m) if m else None)
         self.set_opacity(1 if s.get("state") != "ended" or unseen else .62)
 
 

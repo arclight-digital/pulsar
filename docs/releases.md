@@ -40,6 +40,12 @@ CLI, and opencode moves to version 2.
   line aren't there, and when the agent quits you get Continue, not a
   shell. The mouse wheel scrolls back through the session. A terminal
   attached to the same session keeps tmux as it was.
+- Each session in the list has a bar for how full its context is, and a
+  status bar under the open session shows the model, the context used
+  against the window, and for Codex CLI its 5-hour and weekly limits.
+  The numbers come from each agent's own files. Claude Code and
+  Antigravity CLI don't write their plan limits to disk, so those two
+  show context only.
 - History lists the snapshot taken at each start, and Go Back puts the
   files back, stopping the agent first if it's working. The Undo button
   that appears after takes it back.

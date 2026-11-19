@@ -380,3 +380,246 @@ def comment_line(path, line, text):
     """A comment on a diff line as the agent reads it: path:line: text, and
     a space to go on typing after."""
     return f"{path}:{line}: {' '.join(text.split())} "
+
+
+# ------------------------------------------------------------- meters ----
+# How full a session's context is, and the plan's limits where the agent
+# writes them down. Read from each agent's own files, never from its
+# status line (which would change the agent's screen in a terminal too):
+#   Claude Code: the transcript's last request (pulsar agent sessions
+#     --json, usage.context), against its model's window. No plan limits
+#     on disk.
+#   Codex: the session's rollout log, whose token_count events carry the
+#     context, the model's window and both rate-limit windows.
+#   Antigravity CLI: its conversation database, gen_metadata's
+#     ContextWindowMetadata (tokens used, the window).
+#   opencode: its database's last assistant message. No plan limits.
+SANDBOX_HOMES = pathlib.Path(os.environ.get("PULSAR_SANDBOX_HOMES") or
+                             os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
+                                          "pulsar", "sandbox"))
+_meter_cache = {}
+
+
+def agent_homes(s):
+    """Where a session's agent keeps its files: the sandbox's home first for
+    a sandboxed session, then the real one."""
+    real = pathlib.Path(os.path.expanduser("~"))
+    box = SANDBOX_HOMES / (s.get("agent") or "")
+    return [box, real] if s.get("sandbox") == "on" else [real, box]
+
+
+def context_window(model):
+    """Claude's window for a model id: 1M for the 5 family (Anthropic's
+    default for them), 1M for a [1m] model, else 200K."""
+    m = (model or "").lower()
+    if "[1m]" in m or re.search(r"(opus|sonnet|haiku)-5|fable-5", m):
+        return 1_000_000
+    return 200_000 if m.startswith("claude") else None
+
+
+def _varint(b, i):
+    v = s = 0
+    while True:
+        c = b[i]
+        i += 1
+        v |= (c & 0x7f) << s
+        s += 7
+        if c < 0x80:
+            return v, i
+
+
+def pb_fields(b):
+    """A protobuf message's fields, in order: [(number, int or bytes)]."""
+    out, i = [], 0
+    while i < len(b):
+        key, i = _varint(b, i)
+        f, w = key >> 3, key & 7
+        if w == 0:
+            v, i = _varint(b, i)
+        elif w == 2:
+            n, i = _varint(b, i)
+            v, i = bytes(b[i:i + n]), i + n
+        elif w == 1:
+            v, i = bytes(b[i:i + 8]), i + 8
+        elif w == 5:
+            v, i = bytes(b[i:i + 4]), i + 4
+        else:
+            raise ValueError(f"wire type {w}")
+        out.append((f, v))
+    return out
+
+
+def pb_get(b, *path):
+    for p in path:
+        hit = [v for f, v in pb_fields(b) if f == p]
+        if not hit:
+            return None
+        b = hit[0]
+    return b
+
+
+def _cached(key, path, read):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _meter_cache.get(key)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    try:
+        val = read(path)
+    except Exception:  # an agent's file format is not ours to trust
+        val = None
+    _meter_cache[key] = (stamp, val)
+    return val
+
+
+def _sqlite_ro(path):
+    import sqlite3
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=0.5)
+
+
+def agy_meter(s):
+    conv = s.get("conversation")
+    if not conv:
+        return None
+    for h in agent_homes(s):
+        db = h / ".gemini" / "antigravity-cli" / "conversations" / f"{conv}.db"
+        wal = db.with_name(db.name + "-wal")
+        stamp_path = wal if wal.exists() else db
+
+        def read(_p, db=db):
+            with _sqlite_ro(db) as c:
+                row = c.execute("select data from gen_metadata order by idx desc limit 1").fetchone()
+            cw = pb_get(row[0], 1, 9, 10) if row else None
+            if cw is None:
+                return None
+            vals = dict((f, v) for f, v in pb_fields(cw) if isinstance(v, int))
+            if not vals.get(4):
+                return None
+            return {"context": vals.get(1, 0), "window": vals[4], "limits": []}
+        if db.exists():
+            return _cached(("agy", str(db)), stamp_path, read)
+    return None
+
+
+def _window_label(minutes):
+    if minutes == 10080:
+        return "Weekly"
+    if minutes and minutes % 1440 == 0:
+        return f"{minutes // 1440}-day"
+    return f"{round((minutes or 0) / 60)}-hour"
+
+
+def codex_token_count(line):
+    """A Codex rollout's token_count event as a meter, or None."""
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return None
+    p = ev.get("payload") or {}
+    if p.get("type") != "token_count":
+        return None
+    info = p.get("info") or {}
+    last = (info.get("last_token_usage") or {}).get("total_tokens")
+    limits = []
+    for w in ("primary", "secondary"):
+        r = (p.get("rate_limits") or {}).get(w)
+        if isinstance(r, dict) and r.get("used_percent") is not None:
+            limits.append({"label": _window_label(r.get("window_minutes")),
+                           "percent": float(r["used_percent"]), "resets_at": r.get("resets_at")})
+    if last is None and not limits:
+        return None
+    return {"context": last, "window": info.get("model_context_window"), "limits": limits}
+
+
+def codex_meter(s):
+    d = s.get("dir")
+    if not d:
+        return None
+    files = []
+    for h in agent_homes(s):
+        root = pathlib.Path(os.environ.get("CODEX_HOME") or h / ".codex") / "sessions"
+        files += root.glob("*/*/*/rollout-*.jsonl")
+    for f in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:40]:
+        try:
+            with open(f, "rb") as fh:
+                meta = json.loads(fh.readline() or b"{}")
+        except (OSError, ValueError):
+            continue
+        if (meta.get("payload") or {}).get("cwd") != d:
+            continue
+
+        def read(p):
+            with open(p, "rb") as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - 262144))
+                tail = fh.read().decode("utf-8", "replace").splitlines()
+            for line in reversed(tail):
+                if '"token_count"' in line and (m := codex_token_count(line)):
+                    return m
+            return None
+        return _cached(("codex", str(f)), f, read)
+    return None
+
+
+def opencode_meter(s):
+    sid = s.get("conversation")
+    if not sid:
+        return None
+    for h in agent_homes(s):
+        db = pathlib.Path(os.environ.get("OPENCODE_DB") or h / ".local" / "share" / "opencode" / "opencode.db")
+
+        def read(_p, db=db):
+            with _sqlite_ro(db) as c:
+                cols = [r[1] for r in c.execute("pragma table_info(session_message)")]
+                scol = next((x for x in cols if x.startswith("session")), None)
+                if not scol or "data" not in cols:
+                    return None
+                rows = c.execute(f"select data from session_message where {scol} = ? order by rowid desc limit 20",
+                                 (sid,)).fetchall()
+            for (data,) in rows:
+                m = json.loads(data)
+                t = m.get("tokens") if isinstance(m, dict) else None
+                if isinstance(t, dict) and (t.get("input") or t.get("output")):
+                    cache = t.get("cache") or {}
+                    return {"context": (t.get("input") or 0) + (cache.get("read") or 0) + (cache.get("write") or 0),
+                            "window": None, "limits": []}
+            return None
+        if db.exists():
+            wal = db.with_name(db.name + "-wal")
+            return _cached(("opencode", str(db), sid), wal if wal.exists() else db, read)
+    return None
+
+
+def session_meter(s):
+    """{context, window, percent, model, limits: [{label, percent,
+    resets_at}]} for a session, or None when its agent left nothing."""
+    agent = s.get("agent")
+    m = None
+    if agent == "claude":
+        u = s.get("usage") or {}
+        if u.get("context"):
+            m = {"context": u["context"], "window": context_window(u.get("model")), "limits": [],
+                 "model": u.get("model")}
+    elif agent == "codex":
+        m = codex_meter(s)
+    elif agent == "agy":
+        m = agy_meter(s)
+    elif agent == "opencode":
+        m = opencode_meter(s)
+    if not m or not m.get("context"):
+        return None
+    m = dict(m)
+    m["percent"] = min(100.0, 100.0 * m["context"] / m["window"]) if m.get("window") else None
+    return m
+
+
+def resets_in(ts, now):
+    """"resets in 2 h", "resets in 3 days"."""
+    try:
+        d = int(ts) - now
+    except (TypeError, ValueError):
+        return None
+    return "resets now" if d <= 0 else f"resets in {ago(d)}"

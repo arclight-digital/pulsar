@@ -105,7 +105,7 @@ print(m.diff_summary(""))'
     [ "${lines[5]}" = "No changes since the session started" ]
 }
 
-@test "the header says who, what it is doing, where, and for Claude how full its context is" {
+@test "the header says who, what it is doing and where (the status bar has the context)" {
     need_gtk
     run env HOME=/home/u bash -c "$(declare -f app); APP='$APP' app '
 now = 1_000_000
@@ -114,7 +114,7 @@ print(m.header_subtitle({\"agent\": \"claude\", \"state\": \"waiting\", \"waitin
 print(m.header_subtitle({\"agent\": \"agy\", \"state\": \"running\", \"started\": now - 600, \"dir\": \"/srv/x\", \"usage\": None}, now))
 print(m.header_subtitle({\"agent\": None, \"state\": \"ended\"}, now))'"
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "Claude Code · Needs you · ~/p · 142k context" ]
+    [ "${lines[0]}" = "Claude Code · Needs you · ~/p" ]
     [ "${lines[1]}" = "Antigravity CLI · Working · /srv/x" ]
     [ "${lines[2]}" = "Started by hand · Stopped" ]
 }
@@ -270,4 +270,129 @@ for a in (now, now - 86400, now - 5 * 86400 - 10, now - 6 * 86400, now - 7 * 864
     [ "${lines[3]}" = "deleted tomorrow" ]
     [ "${lines[4]}" = "deleted today" ]
     [ "${lines[5]}" = "deleted today" ]
+}
+
+# python with pulsar_gui loaded as g (Gio only: runs where GTK isn't)
+gui() {
+    python3 -c 'import gi; from gi.repository import Gio' 2>/dev/null || skip "no PyGObject here"
+    python3 - "${REPO}/scripts" <<PY
+import sys; sys.path.insert(0, sys.argv[1]); import pulsar_gui as g
+$1
+PY
+}
+
+@test "meters: Claude's context against its model's window; a whole million reads 1M" {
+    run gui '
+print(g.context_window("claude-opus-5-5"), g.context_window("claude-fable-5-2"), g.context_window("claude-sonnet-4-6"),
+      g.context_window("claude-sonnet-4-6[1m]"), g.context_window("gpt-5"))
+m = g.session_meter({"agent": "claude", "usage": {"context": 142310, "model": "claude-opus-5-5"}})
+print(m["context"], m["window"], round(m["percent"], 1))
+print(g.session_meter({"agent": "claude", "usage": None}), g.session_meter({"agent": "claude", "usage": {"context": 0}}))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "1000000 1000000 200000 1000000 None" ]
+    [ "${lines[1]}" = "142310 1000000 14.2" ]
+    [ "${lines[2]}" = "None None" ]
+}
+
+@test "meters: Codex's last token_count gives the context, its window, and both limits by their length" {
+    local h="${BATS_TEST_TMPDIR}/h" d="${BATS_TEST_TMPDIR}/proj"
+    mkdir -p "${h}/.codex/sessions/2026/11/18" "${h}/.codex/sessions/2026/11/17" "$d"
+    { printf '{"type":"session_meta","payload":{"cwd":"%s"}}\n' "$d"
+      printf '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":10},"model_context_window":100},"rate_limits":null}}\n'
+      printf '{"type":"event_msg","payload":{"type":"agent_message"}}\n'
+      printf '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":96000},"model_context_window":272000},"rate_limits":{"primary":{"used_percent":23.5,"window_minutes":300,"resets_at":5},"secondary":{"used_percent":41,"window_minutes":10080,"resets_at":9}}}}\n'
+      printf '{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":null}}\n'
+      printf '{"type":"event_msg","payload":{"type":"agent_message","message":"token_count","info":{"last_token_usage":{"total_tokens":1}}}}\n'; } \
+        > "${h}/.codex/sessions/2026/11/18/rollout-a.jsonl"
+    mkdir -p "${h}/zero/.codex/sessions/2026/11/18"
+    { printf '{"type":"session_meta","payload":{"cwd":"%s"}}\n' "$d"
+      printf '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":0},"model_context_window":9},"rate_limits":null}}\n'; } \
+        > "${h}/zero/.codex/sessions/2026/11/18/rollout-z.jsonl"
+    printf '{"type":"session_meta","payload":{"cwd":"/elsewhere"}}\n{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":1},"model_context_window":2}}}\n' \
+        > "${h}/.codex/sessions/2026/11/17/rollout-b.jsonl"
+    touch "${h}/.codex/sessions/2026/11/17/rollout-b.jsonl"
+    run env HOME="$h" bash -c "$(declare -f gui); REPO='$REPO' gui '
+m = g.session_meter({\"agent\": \"codex\", \"dir\": \"$d\", \"sandbox\": \"off\"})
+print(m[\"context\"], m[\"window\"], round(m[\"percent\"]))
+print([(l[\"label\"], l[\"percent\"], l[\"resets_at\"]) for l in m[\"limits\"]])
+print(g._window_label(60), g._window_label(2880))
+print(g.session_meter({\"agent\": \"codex\", \"dir\": \"/nowhere\", \"sandbox\": \"off\"}))
+import os; os.environ[\"CODEX_HOME\"] = \"$h/zero/.codex\"
+print(g.session_meter({\"agent\": \"codex\", \"dir\": \"$d\", \"sandbox\": \"off\"}))'"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "96000 272000 35" ]
+    [ "${lines[1]}" = "[('5-hour', 23.5, 5), ('Weekly', 41.0, 9)]" ]
+    [ "${lines[2]}" = "1-hour 2-day" ]
+    [ "${lines[3]}" = None ]
+    [ "${lines[4]}" = None ]
+}
+
+@test "meters: Antigravity's conversation database holds the tokens in context and the window, as protobuf" {
+    local h="${BATS_TEST_TMPDIR}/h"
+    mkdir -p "${h}/.gemini/antigravity-cli/conversations"
+    run env HOME="$h" bash -c "$(declare -f gui); REPO='$REPO' gui '
+import sqlite3, os
+def vi(n):
+    b = b\"\"
+    while True:
+        c = n & 0x7f; n >>= 7
+        b += bytes([c | (0x80 if n else 0)])
+        if not n: return b
+def ld(f, b): return vi(f << 3 | 2) + vi(len(b)) + b
+def iv(f, n): return vi(f << 3) + vi(n)
+cw = iv(1, 402012) + iv(4, 512000)
+blob = ld(1, iv(2, 7) + ld(9, iv(3, 1) + ld(10, cw)))
+db = os.path.expanduser(\"~/.gemini/antigravity-cli/conversations/c1.db\")
+c = sqlite3.connect(db); c.execute(\"create table gen_metadata (idx integer primary key, data blob)\")
+c.execute(\"insert into gen_metadata values (1, ?)\", (ld(1, ld(9, ld(10, iv(1, 5) + iv(4, 10)))),))
+c.execute(\"insert into gen_metadata values (2, ?)\", (blob,)); c.commit(); c.close()
+print(g.pb_get(blob, 1, 9, 10) == cw, g.pb_fields(iv(1, 300) + ld(2, b\"hi\")))
+m = g.session_meter({\"agent\": \"agy\", \"conversation\": \"c1\", \"sandbox\": \"off\"})
+print(m[\"context\"], m[\"window\"], round(m[\"percent\"]))
+print(g.session_meter({\"agent\": \"agy\", \"conversation\": \"nope\", \"sandbox\": \"off\"}), g.session_meter({\"agent\": \"agy\"}))'"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "True [(1, 300), (2, b'hi')]" ]
+    [ "${lines[1]}" = "402012 512000 79" ]
+    [ "${lines[2]}" = "None None" ]
+}
+
+@test "meters: opencode's last assistant message with tokens: input plus the cache, read and written" {
+    local h="${BATS_TEST_TMPDIR}/h"
+    mkdir -p "${h}/.local/share/opencode"
+    run env HOME="$h" bash -c "$(declare -f gui); REPO='$REPO' gui '
+import sqlite3, os, json
+db = os.path.expanduser(\"~/.local/share/opencode/opencode.db\")
+c = sqlite3.connect(db); c.execute(\"create table session_message (id text, session_id text, type text, data text)\")
+rows = [(\"m1\", \"ses_a\", \"assistant\", {\"tokens\": {\"input\": 5, \"output\": 1, \"cache\": {\"read\": 0, \"write\": 0}}}),
+        (\"m2\", \"ses_b\", \"assistant\", {\"tokens\": {\"input\": 999, \"output\": 1}}),
+        (\"m3\", \"ses_a\", \"assistant\", {\"tokens\": {\"input\": 1200, \"output\": 300, \"cache\": {\"read\": 40000, \"write\": 800}}}),
+        (\"m4\", \"ses_a\", \"user\", {\"text\": \"hi\"})]
+c.executemany(\"insert into session_message values (?, ?, ?, ?)\", [(a, b, t, json.dumps(d)) for a, b, t, d in rows]); c.commit(); c.close()
+m = g.session_meter({\"agent\": \"opencode\", \"conversation\": \"ses_a\", \"sandbox\": \"off\"})
+print(m[\"context\"], m[\"window\"], m[\"percent\"])'"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "42000 None None" ]
+}
+
+@test "meters: a sandboxed session's agent files are read from its sandbox home first" {
+    run env PULSAR_SANDBOX_HOMES=/box HOME=/home/u bash -c "$(declare -f gui); REPO='$REPO' gui '
+print([str(p) for p in g.agent_homes({\"agent\": \"codex\", \"sandbox\": \"on\"})])
+print([str(p) for p in g.agent_homes({\"agent\": \"codex\", \"sandbox\": \"off\"})])
+print(g.resets_in(1000 + 7500, 1000), g.resets_in(10, 1000))'"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['/box/codex', '/home/u']" ]
+    [ "${lines[1]}" = "['/home/u', '/box/codex']" ]
+    [ "${lines[2]}" = "resets in 2 h 5 min resets now" ]
+}
+
+@test "the status bar names Claude's model the way people say it, and a whole million as 1M" {
+    need_gtk
+    run app '
+print(m.model_name("claude-opus-5-5"), "|", m.model_name("claude-fable-5-2"), "|", m.model_name("gpt-5.1-codex"), "|", m.model_name(None))
+print(m.short_tokens(1_000_000), m.short_tokens(1_500_000), m.short_tokens(272000))
+print(m.context_text({"context": 142310, "window": 1_000_000, "percent": 14.231}), "|", m.context_text({"context": 42000}))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "Opus 5.5 | Fable 5.2 | gpt-5.1-codex | " ]
+    [ "${lines[1]}" = "1M 1.5M 272k" ]
+    [ "${lines[2]}" = "142k of 1M · 14% | 42k" ]
 }
