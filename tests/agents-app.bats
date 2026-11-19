@@ -431,3 +431,36 @@ print(g.disk_level(85e9, need), g.disk_level(30e9, need), g.disk_level(17e9, nee
     [ "${lines[0]}" = "['0 B', '999 B', '1.5 KB', '43 GB', '85 GB', '1.2 TB', '0 B']" ]
     [ "${lines[1]}" = "ok low critical critical low ok ok" ]
 }
+
+@test "other machines' sessions join the list renamed name@machine; their commands go through pulsar machine exec there" {
+    run gui '
+local = [{"name": "fix", "dir": "/p"}]
+remote = {"machines": [{"name": "mag", "ok": True}],
+          "sessions": [{"name": "fix", "machine": "mag", "dir": "/p", "title": None}, {"name": "x"}]}
+m = g.merge_machine_sessions(local, remote)
+print([(s["name"], s.get("real_name"), s.get("machine")) for s in m])
+S = {s["name"]: s for s in m}
+print(" ".join(g.agent_argv(S, "attach", "fix@mag")[1:]))
+print(" ".join(g.agent_argv(S, "sessions", "--title", "fix@mag", "t")[1:]))
+print(" ".join(g.agent_argv(S, "attach", "fix")[1:]))
+print(g.session_title(S["fix@mag"]), g.merge_machine_sessions(local, None) == local)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[('fix', None, None), ('fix@mag', 'fix', 'mag')]" ]
+    [ "${lines[1]}" = "machine exec mag -- agent attach fix" ]
+    [ "${lines[2]}" = "machine exec mag -- agent sessions --title fix t" ]
+    [ "${lines[3]}" = "agent attach fix" ]
+    [ "${lines[4]}" = "fix True" ]
+}
+
+@test "a project on another machine is its own group, headed with the machine's name" {
+    run gui '
+a = {"project": "/home/n/rl", "machine": "mag"}; b = {"project": "/home/n/rl"}
+print(g.session_project(a), g.session_project(b), g.split_project("mag:/home/n/rl"), g.split_project("/x"), g.split_project("/srv/a:b"))
+ps = ["mag:/home/n/rl", "/home/n/rl", "box:/srv/a/app", "box:/srv/b/app"]
+print([g.project_label(p, ps) for p in ps])
+print([p for p, _ in g.project_groups([a, b])])'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "mag:/home/n/rl /home/n/rl ('mag', '/home/n/rl') (None, '/x') (None, '/srv/a:b')" ]
+    [ "${lines[1]}" = "['rl · mag', 'rl', 'app (a) · box', 'app (b) · box']" ]
+    [ "${lines[2]}" = "['/home/n/rl', 'mag:/home/n/rl']" ] || [ "${lines[2]}" = "['mag:/home/n/rl', '/home/n/rl']" ]
+}

@@ -40,7 +40,8 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
-                        session_icon, hsl_rgb, human_bytes, disk_level, home, parse,  # noqa: E402,F401
+                        session_icon, hsl_rgb, human_bytes, disk_level, home, parse,
+                        merge_machine_sessions, agent_argv as _agent_argv,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -255,7 +256,8 @@ def header_subtitle(s, now):
     parts = [AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand"),
              session_status(s, now).split(" · ")[0]]
     if s.get("dir"):
-        parts.append(home(s["dir"]))
+        parts.append((s["dir"] if s.get("machine") else home(s["dir"]))
+                     + (f" on {s['machine']}" if s.get("machine") else ""))
     return " · ".join(parts)
 
 
@@ -304,6 +306,9 @@ class Agents(Adw.ApplicationWindow):
         self.rows = {}          # name -> SessionRow
         self.terms = {}         # name -> Vte.Terminal
         self.collapsed = set()  # projects folded shut
+        self.machines = []      # pulsar machine list
+        self.remote = None      # pulsar machine sessions --json
+        self._local = []
         self.current = None
         self.want = None        # a session asked for before it was listed
         self.listed_once = False
@@ -447,6 +452,7 @@ class Agents(Adw.ApplicationWindow):
         self.connect("notify::is-active", lambda *_: self.is_active() and self._seen(self.current))
         if self.state.get("compact"):
             self.set_compact(True)
+        run([PULSAR, "machine", "list", "--json"], self._machines)
         # archived sessions older than a week go (never a worktree with uncommitted changes)
         run([PULSAR, "agent", "sessions", "--tidy", "--days", str(TIDY_DAYS)], lambda *_: self.refresh())
         self._start_poll()
@@ -512,14 +518,51 @@ class Agents(Adw.ApplicationWindow):
 
     def refresh(self):
         run([PULSAR, "agent", "sessions", "--json"], self._listed)
+        # other machines every few polls, in the background; slower, and a
+        # gone machine costs its timeout
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self.machines and self._ticks % 3 == 1 and not getattr(self, "_remote_busy", False):
+            self._remote_busy = True
+            run([PULSAR, "machine", "sessions", "--json"], self._remote_listed)
+
+    def _remote_listed(self, ok, out):
+        self._remote_busy = False
+        d = parse(out) if ok else None
+        if isinstance(d, dict):
+            self.remote = d
+            self._apply(self._local)
+
+    def _machines(self, ok, out):
+        found = parse(out) if ok else None
+        self.machines = [m["name"] for m in found] if isinstance(found, list) else []
+        if self.machines:
+            self._ticks = 0
+            self.refresh()
+
+    def _notify(self, s):
+        n = Gio.Notification.new(f"{session_title(s)} on {s['machine']} needs you")
+        n.set_body(AGENT_NAMES.get(s.get("agent"), s.get("agent") or "The agent") + " is waiting for you.")
+        n.set_default_action_and_target_value("app.open-session", GLib.Variant.new_string(s["name"]))
+        self.get_application().send_notification(f"session-{s['name']}", n)
+
+    def agent_argv(self, *args):
+        """pulsar agent <args>, on whichever machine the session named is on"""
+        return _agent_argv(self.sessions, *args)
 
     def _listed(self, ok, out):
         found = parse(out) if ok else None
         if not isinstance(found, list):
             return
+        self._local = found
+        self._apply(found)
+
+    def _apply(self, local):
+        found = merge_machine_sessions(local, self.remote)
         before = self.sessions
         for s in found:
-            s["meter"] = session_meter(s) if not s.get("archived") else None
+            # another machine's agent files aren't here: Claude's usage comes in its JSON
+            s["meter"] = (session_meter(s) if not s.get("archived")
+                          and (not s.get("machine") or s.get("agent") == "claude") else None)
             # the agent quit and its pane sits at a shell: here that is a
             # stopped session (Continue), not a shell to use; a terminal
             # attached elsewhere still has the shell
@@ -529,6 +572,12 @@ class Agents(Adw.ApplicationWindow):
         if self.listed_once:
             looking = self.current if self.is_active() else None
             self.unseen |= newly_unseen(before, self.sessions, looking)
+            # here, the CLI's bell hook notifies; another machine's can't reach
+            # this desktop, so the app does, while it runs
+            for k, s in self.sessions.items():
+                if (s.get("machine") and s.get("state") == "waiting" and k != looking
+                        and before.get(k, {}).get("state") not in (None, "waiting")):
+                    self._notify(s)
         self.unseen &= set(self.sessions)
         if self.unseen != set(self.state["unseen"]):
             self.remember()
@@ -681,7 +730,7 @@ class Agents(Adw.ApplicationWindow):
             # its pane is a shell now: end it, then attach starts the agent again
             name = self.current
             s["lingering"] = False
-            run([PULSAR, "agent", "sessions", "--kill", name], lambda *_: name == self.current and self.resume())
+            run(self.agent_argv("sessions", "--kill", name), lambda *_: name == self.current and self.resume())
             return
         t = self.attach(self.current)
         t.resuming = True
@@ -794,7 +843,7 @@ class Agents(Adw.ApplicationWindow):
             self.alert("Could not open the session", error.message)
 
     def attach(self, name):
-        return self.spawn(name, [PULSAR, "agent", "attach", name])
+        return self.spawn(name, self.agent_argv("attach", name))
 
     def _exited(self, term, status):
         term.dead = True
@@ -883,7 +932,7 @@ class Agents(Adw.ApplicationWindow):
         if not s:
             return
         try:
-            Gio.Subprocess.new(["ptyxis", "--new-window", "--", PULSAR, "agent", "attach", s["name"]],
+            Gio.Subprocess.new(["ptyxis", "--new-window", "--", *self.agent_argv("attach", s["name"])],
                                Gio.SubprocessFlags.NONE)
         except GLib.Error as e:
             self.alert("Could not open a terminal", e.message)
@@ -918,7 +967,7 @@ class Agents(Adw.ApplicationWindow):
             if then:
                 then(ok, out)
             self.refresh()
-        run([PULSAR, "agent", *args], done)
+        run(self.agent_argv(*args), done)
 
     def stop_session(self):
         s = self.sessions.get(self.current)
@@ -996,7 +1045,7 @@ class Agents(Adw.ApplicationWindow):
                 self.alert("Nothing to undo" if ok else "Could not go back", text[-600:])
                 return
             self.confirm(f"Go back in {session_title(s)}?", text[-1200:], "undo", "Put Files Back",
-                         lambda: run([PULSAR, "agent", "undo", name, *extra, "--yes"], undone))
+                         lambda: run(self.agent_argv("undo", name, *extra, "--yes"), undone))
 
         def undone(ok, out):
             self.refresh()
@@ -1006,7 +1055,7 @@ class Agents(Adw.ApplicationWindow):
                 return
             self.toast("Files put back", undo=lambda: self._cmd("Could not redo", "undo", name, "--redo", "--yes",
                                                                 then=lambda *_: self.rail.reload()))
-        run([PULSAR, "agent", "undo", name, *extra, "--dry-run"], shown)
+        run(self.agent_argv("undo", name, *extra, "--dry-run"), shown)
 
     def revert_file(self, path, uncommitted):
         name = self.current
@@ -1022,7 +1071,7 @@ class Agents(Adw.ApplicationWindow):
             self.toast(f"Reverted {os.path.basename(path)}",
                        undo=lambda: self._cmd("Could not redo", "undo", name, "--redo", "--yes",
                                               then=lambda *_: self.rail.reload()))
-        run([PULSAR, "agent", "undo", name, "--file", path, *extra, "--yes"], done)
+        run(self.agent_argv("undo", name, "--file", path, *extra, "--yes"), done)
 
     def add_comment(self, path, line, text):
         """A comment on a diff line, typed into the agent's own prompt as
@@ -1230,7 +1279,9 @@ class StatusBar:
         for w in (self.who, self.doing, self.ctx, self.limits):
             self.widget.append(w)
         self.widget.append(Gtk.Box(hexpand=True))
-        for w in (self.lock, self.branch, self.changes):
+        self.machine_label = Gtk.Label()
+        self.machine = seg(Gtk.Image(icon_name="network-server-symbolic"), self.machine_label, cls=("dim",))
+        for w in (self.machine, self.lock, self.branch, self.changes):
             self.widget.append(w)
         # clipped at the window's width rather than widening it
         self.outer = Gtk.ScrolledWindow(child=self.widget, hscrollbar_policy=Gtk.PolicyType.EXTERNAL,
@@ -1282,6 +1333,8 @@ class StatusBar:
                 b.append(k)
             self.limits.append(b)
         self.lock.set_visible(s.get("sandbox") == "on")
+        self.machine.set_visible(bool(s.get("machine")))
+        self.machine_label.set_label(s.get("machine") or "")
         self._git(s, now)
 
     def _git(self, s, now):
@@ -1299,9 +1352,10 @@ class StatusBar:
             self.changes.set_visible(False)
         self.changes_for, self.changes_at = name, now
         d = s.get("dir")
-        if d:
+        # a folder on another machine isn't here to ask git about
+        if d and not s.get("machine"):
             run(["git", "-C", d, "branch", "--show-current"], self._branch, name)
-        run([PULSAR, "agent", "diff", name, "--files", "--json"], self._changes, name)
+        run(self.win.agent_argv("diff", name, "--files", "--json"), self._changes, name)
 
     def _branch(self, ok, out, name):
         if (self.s or {}).get("name") != name:
@@ -1574,7 +1628,7 @@ class Rail:
         if not self.visible or not self.s:
             return
         name = self.s["name"]
-        run([PULSAR, "agent", "diff", name, *self._scope_args(), "--files", "--json"], self._listed_files, name)
+        run(self.win.agent_argv("diff", name, *self._scope_args(), "--files", "--json"), self._listed_files, name)
         self._snapshots()
 
     def _listed_files(self, ok, out, name):
@@ -1626,7 +1680,7 @@ class Rail:
         self.revert.set_sensitive(True)
         self.target.set_label(row.path)
         name = self.s["name"]
-        run([PULSAR, "agent", "diff", name, *self._scope_args(), "--", row.path], self._diff, name, row.path)
+        run(self.win.agent_argv("diff", name, *self._scope_args(), "--", row.path), self._diff, name, row.path)
 
     def _diff(self, ok, out, name, path):
         if not self.s or name != self.s["name"] or path != self.path:
@@ -1673,7 +1727,7 @@ class Rail:
     def _snapshots(self):
         if not self.s:
             return
-        run([PULSAR, "agent", "undo", self.s["name"], "--list", "--json"], self._listed, self.s["name"])
+        run(self.win.agent_argv("undo", self.s["name"], "--list", "--json"), self._listed, self.s["name"])
 
     def _listed(self, ok, out, name):
         if not self.s or name != self.s["name"]:
@@ -2143,6 +2197,13 @@ def main(argv):
         elif args:
             w.show_session(args[0])
         return 0
+    def open_session(_act, param):
+        w = app.get_active_window() or Agents(app)
+        w.present()
+        w.show_session(param.get_string())
+    act = Gio.SimpleAction.new("open-session", GLib.VariantType.new("s"))
+    act.connect("activate", open_session)
+    app.add_action(act)
     app.connect("startup", startup)
     app.connect("command-line", command_line)
     return app.run(argv)

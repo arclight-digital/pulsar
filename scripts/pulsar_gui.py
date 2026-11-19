@@ -212,7 +212,7 @@ def title_from_prompt(text, limit=48):
 
 
 def session_title(s):
-    return s.get("title") or s.get("name", "")
+    return s.get("title") or s.get("real_name") or s.get("name", "")
 
 
 def when(ts, now):
@@ -259,8 +259,19 @@ def session_status(s, now):
 
 
 def session_project(s):
-    """The project a session belongs to: its repository, else its folder."""
-    return s.get("project") or s.get("worktree_of") or s.get("dir") or ""
+    """The project a session belongs to: its repository, else its folder;
+    on another machine, "<machine>:<path>", so it's grouped apart from the
+    same path here."""
+    p = s.get("project") or s.get("worktree_of") or s.get("dir") or ""
+    return f"{s['machine']}:{p}" if s.get("machine") and p else p
+
+
+def split_project(project):
+    """("<machine>" or None, path) for a session_project value."""
+    if project and not project.startswith("/") and ":" in project:
+        m, path = project.split(":", 1)
+        return m, path
+    return None, project
 
 
 def _rank(s):
@@ -289,9 +300,15 @@ def project_groups(sessions):
 
 def project_label(project, projects):
     """A project's heading: its folder's name, with the parent's when two
-    projects share a name."""
+    projects share a name, and the machine's for one on another machine."""
+    machine, path = split_project(project)
+    if machine:
+        here = [split_project(p)[1] for p in projects if split_project(p)[0] == machine]
+        return f"{project_label(path, here)} · {machine}"
     base = os.path.basename(project.rstrip("/")) or project or "No folder"
-    same = [p for p in projects if os.path.basename(p.rstrip("/")) == os.path.basename(project.rstrip("/"))]
+    # only this machine's projects can clash: another machine's say whose they are
+    same = [p for p in projects if split_project(p)[0] is None
+            and os.path.basename(p.rstrip("/")) == os.path.basename(project.rstrip("/"))]
     if len(same) > 1:
         parent = os.path.basename(os.path.dirname(project.rstrip("/")))
         if parent:
@@ -686,3 +703,33 @@ def disk_level(free, need):
     if free < max(DISK_LOW, 2 * (need or 0)):
         return "low"
     return "ok"
+
+
+# ---------------------------------------------------------------- machines --
+def merge_machine_sessions(local, remote):
+    """The app's one list: this machine's sessions as they are, then the
+    other machines' (pulsar machine sessions --json), each renamed to
+    "<name>@<machine>" so names never collide, with its own name kept as
+    real_name. A session's machine is in "machine"."""
+    out = [dict(s) for s in (local or [])]
+    for s in (remote or {}).get("sessions") or []:
+        m = s.get("machine")
+        if not m or not s.get("name"):
+            continue
+        r = dict(s)
+        r["real_name"], r["name"] = s["name"], f"{s['name']}@{m}"
+        out.append(r)
+    return out
+
+
+def agent_argv(sessions, *args):
+    """The command for `pulsar agent <args>`: here, or, when an argument
+    names a session on another machine, through `pulsar machine exec` there
+    with that session's own name."""
+    for i, a in enumerate(args):
+        s = sessions.get(a) if isinstance(a, str) else None
+        if s and s.get("machine"):
+            rest = list(args)
+            rest[i] = s["real_name"]
+            return [PULSAR, "machine", "exec", s["machine"], "--", "agent", *rest]
+    return [PULSAR, "agent", *args]
