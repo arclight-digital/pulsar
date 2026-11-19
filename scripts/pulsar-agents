@@ -1921,7 +1921,7 @@ class Preferences(Adw.PreferencesDialog):
         new.add(self.push)
         page.add(new)
 
-        talk = Adw.PreferencesGroup(title="Between Sessions",
+        talk = Adw.PreferencesGroup(title="Session Communication",
                                     description="Messages go into the other agent's prompt between its turns, "
                                                 "labelled with the session they came from.")
         self.messages = Adw.SwitchRow(title="Sessions Can Message Each Other", sensitive=False)
