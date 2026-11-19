@@ -3503,6 +3503,7 @@ AGENT_SESSIONS=${PULSAR_AGENT_SESSIONS:-${XDG_STATE_HOME:-$HOME/.local/state}/pu
 # shellcheck disable=SC2016  # expanded by the pane's bash, not here
 AGENT_TMUX_PANE='"$@"; s=$?
 [ -z "${PULSAR_SESSION_RECORD:-}" ] || touch -c "$PULSAR_SESSION_RECORD"
+tmux set-option -w @pulsar-exited "$s" 2>/dev/null
 printf "\n[%s exited with status %s. This shell keeps the scrollback; exit ends the session.]\n" "$0" "$s"
 exec "${SHELL:-/bin/bash}" -l'
 
@@ -3514,6 +3515,39 @@ atmux_argv() {
 atmux() { atmux_argv; "${ATMUX[@]}" "$@"; }
 
 atmux_running() { atmux has-session -t "=$1" 2>/dev/null; }
+
+# The Agents app's view of a session: a session of its own in the same
+# group (the same windows, so the same agent), named <session>~app<n>, with
+# options of its own: no prefix key, an empty key table (so no tmux key or
+# menu at all, every key is the agent's), no status line, and tmux's mouse
+# off, so a drag is the app's own selection (the app scrolls tmux's history
+# itself). A terminal attaches to the session itself and keeps tmux as it
+# is. Gone when the app lets go (destroy-unattached). Attaches, in place of
+# the caller.
+atmux_view() {
+    local v="${1}~app$$"
+    # the table has to exist to be chosen; the wheel is the app's, since
+    # mouse is off here, so this binding never fires
+    atmux bind -T pulsar-app WheelUpPane send -M 2>/dev/null || return 1
+    # looking at it is looking at the session: its "needs you" is seen
+    atmux set-option -u -t "=${1}:" @pulsar-alert 2>/dev/null || true
+    unset TMUX
+    atmux_argv
+    # created attached, so destroy-unattached never sees it without a client
+    exec "${ATMUX[@]}" new-session -t "=$1" -s "$v" \; \
+        set -t "=$v:" destroy-unattached on \; set -t "=$v:" prefix None \; set -t "=$v:" prefix2 None \; \
+        set -t "=$v:" key-table pulsar-app \; set -t "=$v:" status off \; set -t "=$v:" mouse off
+}
+
+# A session and every view of it: a view left behind would keep its windows,
+# and so the agent, running.
+atmux_end() {
+    local v
+    while IFS= read -r v; do
+        case "$v" in "${1}~"*) atmux kill-session -t "=$v" 2>/dev/null || true ;; esac
+    done < <(atmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    atmux kill-session -t "=$1"
+}
 
 # One word for tmux's command parser: single-quoted, and a ' inside as "'".
 tq() { local s=${1//\'/\'\"\'\"\'}; printf "'%s'" "$s"; }
@@ -3808,7 +3842,7 @@ agent_tmux() {
     # parser reads this string; ## is a # its formats leave alone.
     local hook
     hook="$(sq "$cli") agent notify"
-    atmux set-hook -g alert-bell "run-shell -b $(tq "${hook//\#/\#\#} #{session_name}")"
+    atmux set-hook -g alert-bell "run-shell -b $(tq "${hook//\#/\#\#} #{?session_grouped,#{session_group},#{session_name}}")"
     atmux set-hook -g client-session-changed "set-option -u @pulsar-alert"
     atmux set-hook -g client-attached "set-option -u @pulsar-alert"
     exec {lk}>&-
@@ -3999,7 +4033,7 @@ undo_busy() {
         [ -d "$d" ] && t=$(undo_top "$d") && [ "$t" = "$top" ] || continue
         printf '%s\n' "$n"
         return 0
-    done < <(atmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    done < <(atmux list-sessions -F '#{session_name}' 2>/dev/null | grep -v '~' || true)
     return 1
 }
 
@@ -4305,7 +4339,8 @@ agent_notify() {
     # the record's time is when it was last active (agent sessions --json)
     touch -c "${AGENT_SESSIONS}/${tname}.session"
     # looking at it already: a client on this session, in a focused terminal
-    if atmux list-clients -t "=${tname}" -F '#{client_flags}' 2>/dev/null | grep -q 'focused'; then
+    if atmux list-clients -F $'#{?session_grouped,#{session_group},#{session_name}}\t#{client_flags}' 2>/dev/null \
+        | awk -F'\t' -v n="$tname" '$1 == n && $2 ~ /focused/ { f = 1 } END { exit !f }'; then
         return 0
     fi
     local agent dir id f="" c event="" msg="" title body
@@ -4377,6 +4412,9 @@ agent_tmux_attach() {
         printf '%s is running; attach with: pulsar agent attach %s\n' "$1" "$1"
         exit 0
     fi
+    if [ "${PULSAR_AGENT_VIEW:-0}" = 1 ]; then
+        atmux_view "$1" || die "tmux could not open ${1}"
+    fi
     atmux_argv
     case "${TMUX:-}" in
         */"$AGENT_TMUX_SOCKET",*) exec "${ATMUX[@]}" switch-client -t "=$1" ;;
@@ -4400,6 +4438,7 @@ agent_attach() {
         have tmux || die "no agent session is running"
         # last attached first; never-attached ones by when they started
         s=$(atmux list-sessions -F $'#{session_last_attached}\t#{session_created}\t#{session_name}' 2>/dev/null \
+            | awk -F'\t' '$3 !~ /~/' \
             | sort -t $'\t' -k1,1nr -k2,2nr | head -n 1 | cut -f3) || s=""
         [ -n "$s" ] || die "no agent session is running; pulsar agent sessions lists the ended ones, and pulsar agent attach <name> brings one back"
     fi
@@ -4471,7 +4510,7 @@ agent_sessions() {
         --archive)
             [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
             # an archived session is one that is done with: it stops
-            [ "$running" = 0 ] || atmux kill-session -t "=$2"
+            [ "$running" = 0 ] || atmux_end "$2"
             local at; at=$(date +%s)
             session_set "$2" archived "$at"
             if [ "${JSON:-0}" = 1 ]; then
@@ -4499,7 +4538,7 @@ agent_sessions() {
             return 0 ;;
         --kill)
             [ "$running" = 1 ] || die "$2 is not running"
-            atmux kill-session -t "=$2"
+            atmux_end "$2"
             if [ "$(session_get "$2" agent || true)" = claude ]; then
                 printf 'ended %s; pulsar agent attach %s brings it back on the same conversation\n' "$2" "$2"
             else
@@ -4557,7 +4596,8 @@ agent_sessions() {
             return 0 ;;
     esac
     local live="" names n f row
-    ! have tmux || live=$(atmux list-sessions -F $'#{session_name}\t#{session_created}\t#{session_activity}\t#{@pulsar-alert}' 2>/dev/null) || live=""
+    ! have tmux || live=$(atmux list-sessions -F $'#{session_name}\t#{session_created}\t#{session_activity}\t#{?@pulsar-alert,#{@pulsar-alert},-}\t#{?@pulsar-exited,#{@pulsar-exited},-}' 2>/dev/null \
+        | awk -F'\t' '$1 !~ /~/') || live=""
     names=$( { cut -f1 <<<"$live"
                for f in "$AGENT_SESSIONS"/*.session; do
                    [ ! -e "$f" ] || basename "$f" .session
@@ -4584,9 +4624,9 @@ agent_sessions() {
         dir=$(session_get "$n" dir) || dir=-
         state=ended; since=-; ctx=-
         if [ -n "$row" ]; then
-            IFS=$'\t' read -r _ since _ state <<<"$row"
+            IFS=$'\t' read -r _ since _ state _ <<<"$row"
             since=$(human_age $(( now - since )))
-            case "$state" in "") state=running ;; *) state=waiting ;; esac
+            case "$state" in ""|-) state=running ;; *) state=waiting ;; esac
         fi
         if [ "$agent" = claude ] && u=$(session_usage "$n"); then
             ctx=$(jq -r '.context' <<<"$u" | human_tokens)
@@ -4681,8 +4721,11 @@ agent_usage() {
 
 # one session, as `agent sessions --json` lists it. $2: its tmux row, if live
 agent_session_json() {
-    local n=$1 row=$2 created="" activity="" alert="" top="" snaps=0 u
-    [ -z "$row" ] || IFS=$'\t' read -r _ created activity alert <<<"$row"
+    local n=$1 row=$2 created="" activity="" alert="" exited="" top="" snaps=0 u
+    # a field tmux has no value for comes as -: read merges empty tab fields
+    [ -z "$row" ] || IFS=$'\t' read -r _ created activity alert exited <<<"$row"
+    [ "$alert" != - ] || alert=""
+    [ "$exited" != - ] || exited=""
     local dir repo agent conv project="" last=""
     dir=$(session_get "$n" dir) || dir=""
     repo=$(session_get "$n" repo) || repo=""
@@ -4706,7 +4749,7 @@ agent_session_json() {
         --arg conv "$conv" --arg repo "$repo" \
         --arg live "$([ -n "$row" ] && echo 1)" --arg created "$created" --arg alert "$alert" \
         --arg archived "$(session_get "$n" archived || true)" --arg title "$(session_get "$n" title || true)" \
-        --arg last "$last" --arg project "$project" \
+        --arg last "$last" --arg project "$project" --arg exited "$exited" \
         --argjson snaps "$snaps" --argjson usage "$u" \
         'def num: if . == "" then null else tonumber end;
          def str: if . == "" then null else . end;
@@ -4719,7 +4762,8 @@ agent_session_json() {
           conversation: ($conv | str),
           snapshots: $snaps, usage: $usage,
           archived: ($archived | num), title: ($title | str),
-          last_active: ($last | num), project: ($project | str)}'
+          last_active: ($last | num), project: ($project | str),
+          exited: (if $live == "" then null else ($exited | num) end)}'
 }
 
 # ---------------------------------------------------------------------------

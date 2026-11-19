@@ -257,21 +257,6 @@ open(m.STATE_FILE, \"w\").write(\"[1]\"); print(sorted(m.load_state()))'"
     [ -f "${BATS_TEST_TMPDIR}/st/pulsar/agents-app.json" ]
 }
 
-@test "the agents' tmux has no status line, scrolls with the wheel and copies a selection to the desktop clipboard" {
-    local c="${REPO}/system_files/usr/share/pulsar/agents-tmux.conf"
-    grep -qx 'set -g status off' "$c"
-    grep -qx 'set -g mouse on' "$c"
-    grep -qx "set -s copy-command 'wl-copy'" "$c"
-    # and tmux itself takes the file
-    if command -v tmux >/dev/null; then
-        local sock="agents-conf-test-$$"
-        tmux -L "$sock" -f "$c" new-session -d -s t 'sleep 5'
-        run tmux -L "$sock" show -gv status
-        tmux -L "$sock" kill-server
-        [ "$output" = off ]
-    fi
-}
-
 @test "an archived session says when it will be deleted" {
     need_gtk
     run app '

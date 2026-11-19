@@ -20,9 +20,11 @@ a second launch raises the open window and turns to it. A notification's
 Open lands here.
 """
 import configparser
+import fcntl
 import json
 import os
 import pathlib
+import struct
 import sys
 
 import gi
@@ -36,7 +38,7 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, comment_line, home, parse,  # noqa: E402,F401
+from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, home, parse,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -421,6 +423,12 @@ class Agents(Adw.ApplicationWindow):
         if not isinstance(found, list):
             return
         before = self.sessions
+        for s in found:
+            # the agent quit and its pane sits at a shell: here that is a
+            # stopped session (Continue), not a shell to use; a terminal
+            # attached elsewhere still has the shell
+            if s.get("exited") is not None and s.get("state") != "ended":
+                s["state"], s["lingering"] = "ended", True
         self.sessions = {s["name"]: s for s in found}
         if self.listed_once:
             looking = self.current if self.is_active() else None
@@ -440,6 +448,8 @@ class Agents(Adw.ApplicationWindow):
             self.title.set_subtitle(header_subtitle(s, now))
             self._actions_for(s)
             old = before.get(self.current, {})
+            if s.get("lingering") and not old.get("lingering"):
+                self._show_stopped(s)
             # the agent finished a turn or wants something: its changes are worth a look
             if s.get("state") == "waiting" and old.get("state") != "waiting":
                 self.rail.reload()
@@ -544,7 +554,7 @@ class Agents(Adw.ApplicationWindow):
         self._actions_for(s)
         self.banner.set_revealed(False)
         t = self.terms.get(name)
-        if t is not None and not t.dead:
+        if t is not None and not t.dead and not s.get("lingering"):
             self.term_stack.set_visible_child(t)
             t.grab_focus()
         elif s.get("state") != "ended":
@@ -568,6 +578,12 @@ class Agents(Adw.ApplicationWindow):
         self.banner.set_title(resume_note(s) + "…")
         self.banner.set_button_label(None)
         self.banner.set_revealed(True)
+        if s.get("lingering"):
+            # its pane is a shell now: end it, then attach starts the agent again
+            name = self.current
+            s["lingering"] = False
+            run([PULSAR, "agent", "sessions", "--kill", name], lambda *_: name == self.current and self.resume())
+            return
         t = self.attach(self.current)
         t.resuming = True
         GLib.timeout_add_seconds(2, lambda: self.refresh() and False)
@@ -601,6 +617,12 @@ class Agents(Adw.ApplicationWindow):
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._term_key, t)
         t.add_controller(keys)
+        # the wheel scrolls tmux's history: tmux's mouse is off in the view,
+        # so a drag stays the terminal's own selection
+        wheel = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL,
+                                          propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        wheel.connect("scroll", self._term_scroll, t)
+        t.add_controller(wheel)
         self._color(t)
         self.terms[name] = t
         self.term_stack.add_child(t)
@@ -619,9 +641,49 @@ class Agents(Adw.ApplicationWindow):
             return True
         return False
 
+    def _pane(self, t):
+        """The tmux pane this terminal shows, found by its client's tty."""
+        if getattr(t, "pane", None):
+            return t.pane
+        pty = t.get_pty()
+        if pty is None:
+            return None
+        try:
+            n = struct.unpack("I", fcntl.ioctl(pty.get_fd(), 0x80045430, b"\0" * 4))[0]  # TIOCGPTN
+            ok, out, _e, st = GLib.spawn_sync(None, ["tmux", "-L", TMUX_SOCKET, "display", "-c", f"/dev/pts/{n}",
+                                                     "-p", "#{pane_id}"], None, GLib.SpawnFlags.SEARCH_PATH,
+                                              None, None)
+        except (OSError, GLib.Error):
+            return None
+        pane = out.decode().strip() if ok and st == 0 else ""
+        t.pane = pane if pane.startswith("%") else None
+        return t.pane
+
+    def _term_scroll(self, _c, _dx, dy, t):
+        pane = self._pane(t)
+        if not pane or not dy:
+            return False
+        n = str(max(1, round(abs(dy) * 3)))
+        if dy < 0:
+            # an agent drawing on the alternate screen gets arrow keys, as a
+            # terminal gives it; otherwise tmux's history, a few lines a notch
+            cmd = ["if", "-F", "-t", pane, "#{alternate_on}", f"send -t {pane} Up",
+                   f"copy-mode -e -t {pane} ; send -X -t {pane} -N {n} scroll-up"]
+        else:
+            cmd = ["if", "-F", "-t", pane, "#{pane_in_mode}", f"send -X -t {pane} -N {n} scroll-down",
+                   f"if -F -t {pane} '#{{alternate_on}}' 'send -t {pane} Down'"]
+        try:
+            GLib.spawn_async(["tmux", "-L", TMUX_SOCKET, *cmd], flags=GLib.SpawnFlags.SEARCH_PATH)
+        except GLib.Error:
+            return False
+        return True
+
     def spawn(self, name, argv):
         t = self._terminal(name)
-        env = ["TMUX=", "TERM_PROGRAM=pulsar-agents"]
+        # PULSAR_AGENT_VIEW: attach through the app's own view of the session
+        # (agent attach: no tmux keys, menus or status line here; a terminal
+        # attached elsewhere keeps them)
+        env = ["TMUX=", "TERM_PROGRAM=pulsar-agents", "PULSAR_AGENT_VIEW=1"]
         t.spawn_async(Vte.PtyFlags.DEFAULT, os.path.expanduser("~"), argv, env, GLib.SpawnFlags.DEFAULT,
                       None, None, -1, None, self._spawned, name)
         t.grab_focus()

@@ -36,8 +36,10 @@ CLI, and opencode moves to version 2.
   since the last commit, with each file's diff and Revert File. A comment
   on a diff line is typed into the agent's prompt as `path:line: …` for
   you to send.
-- The agents' tmux has no status line. The mouse wheel scrolls back
-  through a session, and a drag-selection is copied to the clipboard.
+- In the app a session is only its agent: tmux's keys, menus and status
+  line aren't there, and when the agent quits you get Continue, not a
+  shell. The mouse wheel scrolls back through the session. A terminal
+  attached to the same session keeps tmux as it was.
 - History lists the snapshot taken at each start, and Go Back puts the
   files back, stopping the agent first if it's working. The Undo button
   that appears after takes it back.

@@ -4190,9 +4190,11 @@ case "$cmd" in
                 *session_last_attached*)   # when last attached (0: never), created, name
                     printf '%s\t%s\t%s\n' "$(cat "${TMUX_LIVE}/.${n}.attached" 2>/dev/null || echo 0)" \
                         "$(stat -c %Y "$f")" "$n" ;;
-                *session_activity*)   # name, created, last activity (TMUX_ACTIVITY, else created), @pulsar-alert
-                    printf '%s\t%s\t%s\t%s\n' "$n" "$(stat -c %Y "$f")" "${TMUX_ACTIVITY:-$(stat -c %Y "$f")}" \
-                        "$(sed -n 2p "${TMUX_LIVE}/.${n}.opt" 2>/dev/null)" ;;
+                *session_activity*)   # name, created, last activity (TMUX_ACTIVITY, else created),
+                                      # @pulsar-alert, @pulsar-exited; - for no value, as the format asks
+                    a=$(sed -n 2p "${TMUX_LIVE}/.${n}.opt" 2>/dev/null)
+                    printf '%s\t%s\t%s\t%s\t%s\n' "$n" "$(stat -c %Y "$f")" "${TMUX_ACTIVITY:-$(stat -c %Y "$f")}" \
+                        "${a:--}" "$(cat "${TMUX_LIVE}/.${n}.exited" 2>/dev/null || echo -)" ;;
                 *)  # name, created, @pulsar-alert
                     printf '%s\t%s\t%s\n' "$n" "$(stat -c %Y "$f")" "$(sed -n 2p "${TMUX_LIVE}/.${n}.opt" 2>/dev/null)" ;;
             esac
@@ -4205,7 +4207,11 @@ case "$cmd" in
         echo "attached ${t}" ;;
     set-hook) ;;
     set-option) t=$(target "$@"); t=${t%:}; [ -e "${TMUX_LIVE}/${t}" ] || exit 1; printf '%s\n' "${@: -2}" > "${TMUX_LIVE}/.${t}.opt" ;;
-    list-clients) t=$(target "$@"); cat "${TMUX_LIVE}/.${t}.clients" 2>/dev/null; true ;;
+    list-clients)   # every client: its session (a view's group) and flags
+        for f in "$TMUX_LIVE"/.*.clients; do
+            [ -e "$f" ] || continue; n=${f##*/.}; n=${n%.clients}
+            while IFS= read -r l; do printf '%s\t%s\n' "$n" "$l"; done < "$f"
+        done; true ;;
     *) exit 9 ;;
 esac
 SH
@@ -4455,7 +4461,7 @@ agent_args() {
     [ "${#words[@]}" -eq 3 ] || fail "${#words[@]} words: ${hook}"
     [ "${words[0]}" = run-shell ] && [ "${words[1]}" = -b ] || fail "$hook"
     # then run-shell expands its formats (## is #) and hands it to sh
-    local cmd=${words[2]//\#\{session_name\}/work}
+    local cmd=${words[2]//\#\{?session_grouped,\#\{session_group\},\#\{session_name\}\}/work}
     cmd=${cmd//\#\#/\#}
     mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
     sh -c "$cmd"
@@ -5014,8 +5020,10 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     printf 'attached,focused,UTF-8\n' > "${TMUX_LIVE}/.work.clients"
     "$PULSAR" agent notify work
     [ ! -e "$SD_ARGS" ]
-    # attached, but the terminal is in the background
+    # attached, but the terminal is in the background; the focused one
+    # shows another session
     printf 'attached,UTF-8\n' > "${TMUX_LIVE}/.work.clients"
+    printf 'attached,focused,UTF-8\n' > "${TMUX_LIVE}/.other.clients"
     "$PULSAR" agent notify work
     [ "$(sd_arg 1)" = "work: Claude Code is done" ]
     touch -d '-2 minutes' "${ALERTS}/${ID}.json"
@@ -5824,4 +5832,65 @@ model_env() {
     "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
     grep -A1 -x -- '--network' "$PODMAN_LOG" | grep -qx 'pasta:-T,8080'
     grep -qx "${HOME}/.config/pulsar/model-key:${HOME}/.config/pulsar/model-key:ro" "$PODMAN_LOG"
+}
+
+@test "agent attach from the Agents app: a view of its own with no tmux keys, menus or status line; unlisted, and ended with its session" {
+    command -v tmux >/dev/null && command -v python3 >/dev/null || skip "needs tmux and python3"
+    export PULSAR_AGENT_TMUX_SOCKET="pview-$$" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec"
+    export PULSAR_AGENT_TMUX_CONF="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/agents-tmux.conf"
+    local T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET")
+    mkdir -p "$PULSAR_AGENT_SESSIONS"
+    printf 'agent=claude\ndir=%s\n' "$BATS_TEST_TMPDIR" > "${PULSAR_AGENT_SESSIONS}/t1.session"
+    "${T[@]}" -f "$PULSAR_AGENT_TMUX_CONF" new-session -d -s t1 -x 80 -y 20 'sleep 60'
+    # attach wants a terminal: python's pty gives it one
+    PULSAR_AGENT_VIEW=1 python3 -c 'import pty, sys; pty.spawn(sys.argv[1:])' "$PULSAR" agent attach t1 \
+        </dev/null >/dev/null 2>&1 &
+    local v="" i
+    for i in $(seq 50); do
+        v=$("${T[@]}" list-sessions -F '#{session_name}' 2>/dev/null | grep '^t1~app' || true)
+        [ -z "$v" ] || break; sleep 0.1
+    done
+    [ -n "$v" ] || { "${T[@]}" kill-server; fail "no view"; }
+    local opts; opts=$(for o in prefix prefix2 key-table status mouse destroy-unattached; do
+        "${T[@]}" show -t "=${v}:" -v "$o"; done | paste -sd ' ')
+    local own; own=$("${T[@]}" show -gv prefix)
+    run "$PULSAR" agent sessions --json
+    "${T[@]}" kill-server 2>/dev/null || true
+    [ "$opts" = "None None pulsar-app off off on" ] || fail "view options: $opts"
+    # the session itself, where a terminal attaches, keeps tmux's own keys
+    [ "$own" = C-b ]
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '[.[].name] | join(",")' <<<"$output")" = t1 ] || fail "$output"
+}
+
+@test "agent sessions --kill ends the Agents app's views with the session, or their windows would keep the agent going" {
+    command -v tmux >/dev/null || skip "needs tmux"
+    export PULSAR_AGENT_TMUX_SOCKET="pkill-$$" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec"
+    local T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET" -f /dev/null)
+    mkdir -p "$PULSAR_AGENT_SESSIONS"
+    printf 'agent=codex\ndir=%s\n' "$BATS_TEST_TMPDIR" > "${PULSAR_AGENT_SESSIONS}/t1.session"
+    "${T[@]}" new-session -d -s t1 'sleep 60'
+    "${T[@]}" new-session -d -t =t1 -s 't1~app9'
+    "${T[@]}" new-session -d -s t10 'sleep 60'
+    "$PULSAR" agent sessions --kill t1 >/dev/null
+    local left; left=$("${T[@]}" list-sessions -F '#{session_name}' 2>/dev/null | paste -sd ' ')
+    "${T[@]}" kill-server 2>/dev/null || true
+    [ "$left" = t10 ] || fail "left: $left"
+}
+
+@test "agent sessions --json: an agent that quit, its pane left at a shell, says how it exited" {
+    command -v tmux >/dev/null || skip "needs tmux"
+    export PULSAR_AGENT_TMUX_SOCKET="pexit-$$" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec" SHELL=/bin/sh
+    local T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET" -f /dev/null)
+    mkdir -p "$PULSAR_AGENT_SESSIONS"
+    for s in quit busy; do printf 'agent=codex\ndir=%s\n' "$BATS_TEST_TMPDIR" > "${PULSAR_AGENT_SESSIONS}/${s}.session"; done
+    local pane; pane=$(sed -n "/^AGENT_TMUX_PANE='/,/-l'\$/p" "$PULSAR"); eval "$pane"
+    "${T[@]}" new-session -d -s quit -- bash -c "$AGENT_TMUX_PANE" fake sh -c 'exit 3'
+    "${T[@]}" new-session -d -s busy -- bash -c "$AGENT_TMUX_PANE" fake sleep 60
+    sleep 1
+    run "$PULSAR" agent sessions --json
+    "${T[@]}" kill-server 2>/dev/null || true
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -c '[.[] | {name, state, exited}] | sort_by(.name)' <<<"$output")" = \
+      '[{"name":"busy","state":"running","exited":null},{"name":"quit","state":"running","exited":3}]' ] || fail "$output"
 }

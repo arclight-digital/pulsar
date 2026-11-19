@@ -22,7 +22,7 @@ PULSAR = os.environ.get("PULSAR_CLI") or (
 # what `pulsar agent list` calls them
 AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex CLI", "agy": "Antigravity CLI",
                "opencode": "opencode", "gemini": "Gemini CLI", "aider": "aider"}
-TMUX_SOCKET = "pulsar-agents"
+TMUX_SOCKET = os.environ.get("PULSAR_AGENT_TMUX_SOCKET") or "pulsar-agents"
 
 
 def run(argv, done, *data):
