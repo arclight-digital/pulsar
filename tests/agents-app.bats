@@ -270,6 +270,21 @@ for a in (now, now - 86400, now - 5 * 86400 - 10, now - 6 * 86400, now - 7 * 864
     [ "${lines[3]}" = "deleted tomorrow" ]
     [ "${lines[4]}" = "deleted today" ]
     [ "${lines[5]}" = "deleted today" ]
+    # kept for good: nothing to say
+    run app 'print(repr(m.deleted_in(0, 10 * 86400, 0)))'
+    [ "$output" = "''" ] || fail "$output"
+}
+
+@test "Preferences: how long archived sessions are kept is the app's own; anything else falls back to a week" {
+    need_gtk
+    run app '
+class W: pass
+w = W()
+for v in (1, 30, 0, 5, "x", None):
+    w.state = {"tidy_days": v} if v is not None else {}
+    print(m.Agents.tidy_days(w))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(echo "$output" | paste -sd' ')" = "1 30 0 7 7 7" ] || fail "$output"
 }
 
 # python with pulsar_gui loaded as g (Gio only: runs where GTK isn't)

@@ -11,6 +11,8 @@ setup() {
 #!/bin/sh
 echo "$*" >> "$CLI_LOG"
 case "$*" in
+    "agent whoami") [ -n "${WHOAMI:-}" ] && echo "$WHOAMI" || { echo "not in an agent session" >&2; exit 1; } ;;
+    "--json agent sessions") echo '[{"name":"a","agent":"claude","state":"running","dir":"/p","usage":{"x":1},"archived":null},{"name":"old","archived":5}]' ;;
     *"update --check"*) echo '{"status":"available"}'; exit 10 ;;
     *doctor*) echo '{"checks":[],"ok":false}'; exit 1 ;;
     *) echo '{"ok":true}' ;;
@@ -18,6 +20,8 @@ esac
 SH
     chmod +x "$PULSAR_CLI"
 }
+
+fail() { echo "$*" >&2; return 1; }
 
 # send JSON-RPC lines, get the replies back one per line
 rpc() { printf '%s\n' "$@" | python3 "$MCP"; }
@@ -36,9 +40,9 @@ init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
     echo "$output" | jq -e '.id == 7 and .error.code == -32601'
 }
 
-@test "the tools are read-only except theme_set, and none of them is a root command" {
+@test "the tools that change things are marked so (the agent's own prompt asks), and none of them is a root command" {
     run rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-    echo "$output" | jq -e '[.result.tools[] | select(.annotations.readOnlyHint | not) | .name] == ["theme_set"]'
+    echo "$output" | jq -e '[.result.tools[] | select(.annotations.readOnlyHint | not) | .name] == ["session_message","job_start","job_stop","theme_set"]'
     for n in update rollback checkpoint guard pin pin_on; do
         echo "$output" | jq -e --arg n "$n" '[.result.tools[].name] | index($n) == null'
     done
@@ -107,4 +111,36 @@ PY
     [[ "$output" == *"waiting for JSON-RPC"* ]]
     [[ "$output" != *Traceback* ]]
     [[ "$output" == *"exit 130"* ]]
+}
+
+
+@test "sessions: this machine's, archived left out, and which one is calling" {
+    WHOAMI=me run rpc '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sessions","arguments":{}}}'
+    [ "$(echo "$output" | jq -r '.result.content[0].text | fromjson | [.you, (.sessions | map(.name) | join(","))] | join("|")')" = "me|a" ] || fail "$output"
+    [ "$(echo "$output" | jq -r '.result.content[0].text | fromjson | .sessions[0] | has("usage")')" = false ]
+}
+
+@test "session_read, session_message and jobs pass names that can't be options, and messages say who sent them" {
+    WHOAMI=me run rpc \
+        '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_read","arguments":{"name":"a","lines":20}}}' \
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"a","text":"--now hi"}}}' \
+        '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"session_read","arguments":{"name":"--now"}}}' \
+        '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"job_start","arguments":{"command":["python3","train.py","--epochs","3"],"dir":"/p","name":"train"}}}' \
+        '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"job_start","arguments":{"command":"rm -rf ~"}}}' \
+        '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"job_log","arguments":{"name":"train","lines":5}}}' \
+        '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"job_stop","arguments":{"name":"train"}}}'
+    grep -qx -- "--json agent read a --lines 20" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "agent send a --from me -- --now hi" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "job run --name train --dir /p --notify me -- python3 train.py --epochs 3" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "job log train --lines 5" "$CLI_LOG"
+    grep -qx -- "job stop train" "$CLI_LOG"
+    ! grep -q -- "read --now" "$CLI_LOG"
+    [ "$(grep -c '^job run' "$CLI_LOG")" -eq 1 ]
+    [ "$(echo "$output" | jq -s -r '.[2].result.isError, .[4].result.isError' | paste -sd' ')" = "true true" ]
+    # outside a session: no --from, no --notify
+    : > "$CLI_LOG"
+    run rpc '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"a","text":"x"}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"job_start","arguments":{"command":["make"],"notify_me":true}}}'
+    grep -qx -- "agent send a -- x" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "job run -- make" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
 }

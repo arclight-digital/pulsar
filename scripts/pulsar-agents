@@ -49,7 +49,8 @@ from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line,
 POLL_S = 3
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
          HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
-TIDY_DAYS = 7
+TIDY_CHOICES = ((1, "1 day"), (7, "1 week"), (30, "30 days"), (0, "Never"))
+PUSH_CHOICES = (("on", "Any branch"), ("branches", "All but the default"), ("off", "Off"))
 SANDBOX_CHOICES = (("As set for this project", None), ("On", True), ("Off", False))
 STATE_FILE = pathlib.Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")) \
     / "pulsar" / "agents-app.json"
@@ -146,6 +147,9 @@ CSS = """
                                        background-color: alpha(@accent_color, .16); color: @accent_color; }
 .pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
 .pulsar-agents .home-text { font-size: 1.2em; }
+.pulsar-agents .home-box button.suggested-action:disabled { background: alpha(currentColor, .08);
+    color: alpha(currentColor, .3); box-shadow: none; -gtk-icon-filter: none; }
+.pulsar-agents .home-box button.suggested-action { transition: background-color 150ms ease-out, box-shadow 150ms ease-out; }
 .pulsar-agents .stage .home-box { padding: 6px 8px 8px 16px; border-radius: 18px; }
 .pulsar-agents .launch-heading { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 18px; }
 .pulsar-agents .resume-card { border-radius: 14px; padding: 10px 12px; background-color: alpha(currentColor, .045);
@@ -324,6 +328,11 @@ class Agents(Adw.ApplicationWindow):
         side_head = Adw.HeaderBar(show_end_title_buttons=False)
         side_head.pack_start(new)
         side_head.pack_end(self.fold)
+        primary = Gio.Menu()
+        primary.append("Preferences", "win.preferences")
+        self.primary_menu = Gtk.MenuButton(icon_name="open-menu-symbolic", tooltip_text="Main Menu",
+                                           menu_model=primary, primary=True)
+        side_head.pack_end(self.primary_menu)
         self.side_head = side_head
         self.list = Gtk.ListBox(css_classes=["navigation-sidebar", "sessions"])
         self.list.connect("row-activated", self._activated)
@@ -422,7 +431,8 @@ class Agents(Adw.ApplicationWindow):
                          ("archive-current", lambda: self.current and self.archive(self.current)),
                          ("rail", lambda: self.rail_toggle.set_active(not self.rail_toggle.get_active())),
                          ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1)),
-                         ("fold", lambda: self.set_compact(not self.compact))):
+                         ("fold", lambda: self.set_compact(not self.compact)),
+                         ("preferences", lambda: Preferences(self).present(self))):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(a)
@@ -431,7 +441,7 @@ class Agents(Adw.ApplicationWindow):
             a = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             a.connect("activate", lambda _a, p, cb=cb: cb(p.get_string()))
             self.add_action(a)
-        for action, keys in (("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
+        for action, keys in (("win.preferences", ["<Ctrl>comma"]), ("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
                              ("win.rail", ["<Ctrl><Shift>d"]), ("win.fold", ["<Ctrl><Shift>b"]),
                              ("win.next", ["<Ctrl>Page_Down"]), ("win.previous", ["<Ctrl>Page_Up"])):
             app.set_accels_for_action(action, keys)
@@ -454,8 +464,15 @@ class Agents(Adw.ApplicationWindow):
             self.set_compact(True)
         run([PULSAR, "machine", "list", "--json"], self._machines)
         # archived sessions older than a week go (never a worktree with uncommitted changes)
-        run([PULSAR, "agent", "sessions", "--tidy", "--days", str(TIDY_DAYS)], lambda *_: self.refresh())
+        if self.tidy_days():
+            run([PULSAR, "agent", "sessions", "--tidy", "--days", str(self.tidy_days())], lambda *_: self.refresh())
+        else:
+            self.refresh()
         self._start_poll()
+
+    def tidy_days(self):
+        d = self.state.get("tidy_days", 7)
+        return d if d in [c for c, _ in TIDY_CHOICES] else 7
 
     # ---- the list, narrowed to its tiles for focus ----
     def set_compact(self, on):
@@ -465,6 +482,7 @@ class Agents(Adw.ApplicationWindow):
         self.split.set_sidebar_width_fraction(0 if on else .25)
         self.side_head.set_show_title(not on)
         self.new_button.set_visible(not on)
+        self.primary_menu.set_visible(not on)
         self.compact_new.set_visible(on)
         self.fold.set_icon_name("sidebar-show-right-symbolic" if on else "sidebar-show-symbolic")
         self.fold.set_tooltip_text("Widen the List (Ctrl+Shift+B)" if on else "Narrow the List (Ctrl+Shift+B)")
@@ -993,8 +1011,9 @@ class Agents(Adw.ApplicationWindow):
             self.unseen.discard(name)
             self.remember()
             left = self.disk.session_bytes(name)
-            self.toast(f"Archived {title}" + (f" · its {human_bytes(left)} of scratch goes in {TIDY_DAYS} days"
-                                              if left >= 100_000_000 else ""),
+            days = self.tidy_days()
+            self.toast(f"Archived {title}" + (f" · its {human_bytes(left)} of scratch goes in {days} days"
+                                              if left >= 100_000_000 and days else ""),
                        undo=lambda: self.unarchive(name))
         self._cmd("Could not archive the session", "sessions", "--archive", name, then=done)
 
@@ -1872,9 +1891,118 @@ class DiskButton:
         d.present(self.win)
 
 
+class Preferences(Adw.PreferencesDialog):
+    """How new sessions start, whether sessions may message each other, and
+    how long archived ones are kept. All but the last are the CLI's own
+    settings (pulsar agent default, sandbox, messages), so a terminal and
+    the app agree; read from `pulsar --json agent settings`."""
+
+    def __init__(self, win):
+        super().__init__(title="Preferences", search_enabled=False, content_width=600)
+        self.win = win
+        self._busy = True
+        page = Adw.PreferencesPage()
+
+        new = Adw.PreferencesGroup(title="New Sessions",
+                                   description="A project can set its own sandbox and pushes, in the box where you start a session.")
+        self.agents = []
+        self.agent = Adw.ComboRow(title="Agent", sensitive=False)
+        self.agent.connect("notify::selected", lambda *_: self._set_agent())
+        new.add(self.agent)
+        self.sandbox = Adw.SwitchRow(title="Sandbox", subtitle="The agent sees its project, not your home folder",
+                                     sensitive=False)
+        self.sandbox.connect("notify::active", lambda *_: self._set(["agent", "sandbox",
+                                                                     "on" if self.sandbox.get_active() else "off"]))
+        new.add(self.sandbox)
+        self.push = Adw.ComboRow(title="Pushes from the Sandbox", subtitle="To which branches",
+                                 model=Gtk.StringList.new([t for _, t in PUSH_CHOICES]), sensitive=False)
+        self.push.connect("notify::selected", lambda *_: self._set(["agent", "sandbox", "push",
+                                                                    PUSH_CHOICES[self.push.get_selected()][0]]))
+        new.add(self.push)
+        page.add(new)
+
+        talk = Adw.PreferencesGroup(title="Between Sessions",
+                                    description="Messages go into the other agent's prompt between its turns, "
+                                                "labelled with the session they came from.")
+        self.messages = Adw.SwitchRow(title="Sessions Can Message Each Other", sensitive=False)
+        self.messages.connect("notify::active", lambda *_: self._set(["agent", "messages",
+                                                                      "on" if self.messages.get_active() else "off"]))
+        talk.add(self.messages)
+        self.cap = Adw.SpinRow.new_with_range(1, 60, 1)
+        self.cap.set_title("Messages per 10 Minutes")
+        self.cap.set_subtitle("From one session to another")
+        self.cap.set_sensitive(False)
+        self.cap.connect("notify::value", lambda *_: self._cap_changed())
+        self.messages.bind_property("active", self.cap, "visible", GObject.BindingFlags.SYNC_CREATE)
+        talk.add(self.cap)
+        page.add(talk)
+
+        keep = Adw.PreferencesGroup(title="Archive",
+                                    description="An archived session is deleted with its snapshots and scratch folder. "
+                                                "Branches, and worktrees with uncommitted changes, stay.")
+        self.tidy = Adw.ComboRow(title="Delete Archived Sessions After",
+                                 model=Gtk.StringList.new([t for _, t in TIDY_CHOICES]))
+        self.tidy.set_selected([d for d, _ in TIDY_CHOICES].index(win.tidy_days()))
+        self.tidy.connect("notify::selected", lambda *_: self._set_tidy())
+        keep.add(self.tidy)
+        page.add(keep)
+        self.add(page)
+        self._cap_timer = 0
+        run([PULSAR, "--json", "agent", "settings"], self._loaded)
+
+    def _loaded(self, ok, out):
+        d = parse(out) if ok else None
+        if not isinstance(d, dict):
+            self.add_toast(Adw.Toast(title="Could not read the agent settings"))
+            return
+        self.agents = [a for a in d.get("installed") or [] if isinstance(a, str)]
+        self.agent.set_model(Gtk.StringList.new([AGENT_NAMES.get(a, a) for a in self.agents]))
+        if d.get("default") in self.agents:
+            self.agent.set_selected(self.agents.index(d["default"]))
+        self.agent.set_sensitive(len(self.agents) > 1)
+        self.sandbox.set_active(d.get("sandbox") == "on")
+        self.push.set_selected(next((i for i, (k, _) in enumerate(PUSH_CHOICES) if k == d.get("push")), 0))
+        self.messages.set_active(d.get("messages") != "off")
+        cap = d.get("message_cap")
+        self.cap.set_value(cap if isinstance(cap, int) and 1 <= cap <= 60 else 10)
+        for w in (self.sandbox, self.push, self.messages, self.cap):
+            w.set_sensitive(True)
+        self._busy = False
+
+    def _set(self, args):
+        if self._busy:
+            return
+        run([PULSAR, *args], lambda ok, out: ok or self.add_toast(
+            Adw.Toast(title=(out.strip().splitlines() or ["Could not save that"])[-1][:120])))
+
+    def _set_agent(self):
+        i = self.agent.get_selected()
+        if not self._busy and 0 <= i < len(self.agents):
+            self._set(["agent", "default", self.agents[i]])
+            self.win.launcher._load_agents()
+
+    def _cap_changed(self):
+        # one write when the spinning stops, not one per step
+        if self._busy:
+            return
+        if self._cap_timer:
+            GLib.source_remove(self._cap_timer)
+        def save():
+            self._cap_timer = 0
+            self._set(["agent", "messages", "--cap", str(int(self.cap.get_value()))])
+            return False
+        self._cap_timer = GLib.timeout_add(600, save)
+
+    def _set_tidy(self):
+        i = self.tidy.get_selected()
+        if 0 <= i < len(TIDY_CHOICES):
+            self.win.state["tidy_days"] = TIDY_CHOICES[i][0]
+            self.win.remember()
+
+
 class ArchivedDialog(Adw.Dialog):
     """Archived sessions: back to the list, or deleted now. Pulsar deletes
-    them after a week anyway."""
+    them after a week anyway, or as long as Preferences says."""
 
     def __init__(self, win):
         super().__init__(title="Archived", content_width=480)
@@ -1886,7 +2014,7 @@ class ArchivedDialog(Adw.Dialog):
         for s in arch:
             row = Adw.ActionRow(title=session_title(s),
                                 subtitle=" · ".join(x for x in (home(session_project(s)),
-                                                                deleted_in(s["archived"], now, TIDY_DAYS)) if x))
+                                                                deleted_in(s["archived"], now, win.tidy_days())) if x))
             back = Gtk.Button(label="Restore", valign=Gtk.Align.CENTER)
             back.connect("clicked", lambda _b, n=s["name"], r=row: self._restore(n, r))
             gone = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Delete Now", valign=Gtk.Align.CENTER,
@@ -1933,7 +2061,7 @@ class Launcher:
         self.view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=10, bottom_margin=10,
                                  accepts_tab=False, hexpand=True, css_classes=["home-text"])
         self.buffer = self.view.get_buffer()
-        self.buffer.connect("changed", lambda *_: self.placeholder.set_visible(not self._text()))
+        self.buffer.connect("changed", lambda *_: self._typed())
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._key)
         self.view.add_controller(keys)
@@ -2100,6 +2228,12 @@ class Launcher:
             self._load_agents()
         self.view.grab_focus()
 
+    def _typed(self):
+        """Start only once there's something for the agent to do."""
+        has = bool(self._text().strip())
+        self.placeholder.set_visible(not self._text())
+        self.start.set_sensitive(bool(self.agents) and bool(self.folder) and has)
+
     def _project_row(self, _l, row):
         self.project_pop.popdown()
         if row.path is None:
@@ -2136,7 +2270,7 @@ class Launcher:
             if a in self.agents:
                 self.agent.set_selected(self.agents.index(a))
         self._applying = False
-        self.start.set_sensitive(bool(self.agents) and bool(self.folder))
+        self._typed()
 
     def _remember(self):
         if getattr(self, "_applying", False) or not self.folder or not self.agents:
@@ -2162,7 +2296,7 @@ class Launcher:
             self.show(f.get_path())
 
     def _go(self):
-        if not (self.agents and self.folder):
+        if not (self.agents and self.folder and self._text().strip()):
             return
         c = self._choices()
         prompt = self._text().strip()

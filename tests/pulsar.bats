@@ -5848,7 +5848,7 @@ model_env() {
 
 @test "agent attach from the Agents app: a view of its own with no tmux keys, menus or status line; unlisted, and ended with its session" {
     command -v tmux >/dev/null && command -v python3 >/dev/null || skip "needs tmux and python3"
-    export PULSAR_AGENT_TMUX_SOCKET="pview-$$" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec"
+    export PULSAR_AGENT_TMUX_SOCKET="pview-$$" TMUX_TMPDIR="$BATS_TEST_TMPDIR" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec"
     export PULSAR_AGENT_TMUX_CONF="${BATS_TEST_DIRNAME}/../system_files/usr/share/pulsar/agents-tmux.conf"
     local T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET")
     mkdir -p "$PULSAR_AGENT_SESSIONS"
@@ -5877,7 +5877,7 @@ model_env() {
 
 @test "agent sessions --kill ends the Agents app's views with the session, or their windows would keep the agent going" {
     command -v tmux >/dev/null || skip "needs tmux"
-    export PULSAR_AGENT_TMUX_SOCKET="pkill-$$" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec"
+    export PULSAR_AGENT_TMUX_SOCKET="pkill-$$" TMUX_TMPDIR="$BATS_TEST_TMPDIR" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec"
     local T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET" -f /dev/null)
     mkdir -p "$PULSAR_AGENT_SESSIONS"
     printf 'agent=codex\ndir=%s\n' "$BATS_TEST_TMPDIR" > "${PULSAR_AGENT_SESSIONS}/t1.session"
@@ -5892,7 +5892,7 @@ model_env() {
 
 @test "agent sessions --json: an agent that quit, its pane left at a shell, says how it exited" {
     command -v tmux >/dev/null || skip "needs tmux"
-    export PULSAR_AGENT_TMUX_SOCKET="pexit-$$" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec" SHELL=/bin/sh
+    export PULSAR_AGENT_TMUX_SOCKET="pexit-$$" TMUX_TMPDIR="$BATS_TEST_TMPDIR" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec" SHELL=/bin/sh
     local T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET" -f /dev/null)
     mkdir -p "$PULSAR_AGENT_SESSIONS"
     for s in quit busy; do printf 'agent=codex\ndir=%s\n' "$BATS_TEST_TMPDIR" > "${PULSAR_AGENT_SESSIONS}/${s}.session"; done
@@ -6270,4 +6270,218 @@ print(run(base), run(dict(base, PULSAR_SANDBOX="1")))')
     printf 'agent=agy\ndir=%s\n' "$PROJ" > "${REC}/work.session"
     "$PULSAR" agent notify work
     [ "$(sd_arg 1)" = "work: Antigravity CLI is waiting for you" ] || fail "$(sd_arg 1)"
+}
+
+# sessions talking to each other: a real tmux on servers of the test's own;
+# tmux is wrapped so a test can say someone is looking at a session
+msg_env() {
+    [ "$(id -u)" -eq 0 ] && skip "agent commands refuse root; these run as a user"
+    command -v tmux >/dev/null || skip "needs tmux"
+    export HOME="${BATS_TEST_TMPDIR}/home" STUB="${BATS_TEST_TMPDIR}/stub"
+    export PULSAR_AGENT_TMUX_SOCKET="msg-$$-${BATS_TEST_NUMBER}" PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/rec"
+    export PULSAR_JOB_TMUX_SOCKET="job-$$-${BATS_TEST_NUMBER}" PULSAR_JOBS="${BATS_TEST_TMPDIR}/jobs"
+    export NOTES="${BATS_TEST_TMPDIR}/notes" PULSAR_AGENT_TMUX_CONF=/dev/null
+    export PULSAR_AGENT_CONF="${BATS_TEST_TMPDIR}/agent.conf" PULSAR_AGENT_PROJECTS="${BATS_TEST_TMPDIR}/agent-projects"
+    # the servers' sockets in the test's own folder, gone with it
+    export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+    mkdir -p "$HOME" "$STUB" "$PULSAR_AGENT_SESSIONS"
+    local real; real=$(command -v tmux)
+    cat > "${STUB}/tmux" <<SH
+#!/bin/sh
+case " \$* " in
+    *" list-clients "*) [ -z "\${FAKE_WATCHING:-}" ] || { printf '%s\t%s\n' "\$FAKE_WATCHING" "\${FAKE_FLAGS:-attached,focused,UTF-8}"; exit 0; } ;;
+esac
+exec "$real" "\$@"
+SH
+    printf '#!/bin/sh\necho "$*" >> "%s"\n' "$NOTES" > "${STUB}/notify-send"
+    printf '#!/bin/sh\nexit 1\n' > "${STUB}/systemd-run"
+    chmod +x "${STUB}"/*
+    export PATH="${STUB}:${PATH}"
+    T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET")
+}
+msg_teardown() { tmux -L "$PULSAR_AGENT_TMUX_SOCKET" kill-server 2>/dev/null || true; tmux -L "$PULSAR_JOB_TMUX_SOCKET" kill-server 2>/dev/null || true; }
+# a session whose "agent" echoes what it is sent
+msg_session() {
+    printf 'agent=claude\ndir=%s\nid=sid-%s\n' "$HOME" "$1" > "${PULSAR_AGENT_SESSIONS}/$1.session"
+    "${T[@]}" new-session -d -s "$1" -x 120 -y 30 "stty -echo; cat"
+}
+# what Claude's hook last said for session $1: Stop, or Notification of a type
+claude_said() {
+    mkdir -p "${HOME}/.local/state/pulsar/agent-alerts"
+    jq -n -c --arg e "$2" --arg t "${3:-}" '{hook_event_name: $e} + (if $t == "" then {} else {notification_type: $t} end)' \
+        > "${HOME}/.local/state/pulsar/agent-alerts/sid-$1.json"
+}
+pane_of() { "${T[@]}" capture-pane -p -J -t "=$1:"; }
+
+@test "agent read: what a session's screen shows, scrollback included, as many lines as asked" {
+    msg_env
+    printf 'agent=codex\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/w.session"
+    "${T[@]}" new-session -d -s w -x 80 -y 10 "seq 1 40; sleep 30"
+    sleep 0.5
+    run "$PULSAR" agent read w --lines 100
+    [ "$status" -eq 0 ] || { msg_teardown; fail "$output"; }
+    [ "${lines[0]}" = 1 ] && [ "${lines[-1]}" = 40 ] || { msg_teardown; fail "$output"; }
+    run "$PULSAR" agent read w --lines 5 --json
+    msg_teardown
+    [ "$(jq -r '.agent' <<<"$output")" = codex ]
+    [ "$(jq -r '.text | split("\n") | .[-1]' <<<"$output")" = 40 ] || fail "$output"
+    [ "$(jq -r '.text | split("\n") | length' <<<"$output")" -le 15 ] || fail "$output"
+    run "$PULSAR" agent read w; [ "$status" -ne 0 ]
+    run "$PULSAR" agent read 'w;x'; [ "$status" -ne 0 ]
+}
+
+@test "agent send: into a session at the end of its turn, nobody watching, at once; else queued until such a turn end" {
+    msg_env
+    msg_session a
+    # its turn is over and unwatched: in now, labelled, and it is working again
+    "${T[@]}" set-option -t =a: @pulsar-alert Stop
+    run "$PULSAR" agent send a --from b "run the tests"
+    [ "$status" -eq 0 ] || { msg_teardown; fail "$output"; }
+    [ "$output" = "delivered to a" ] || { msg_teardown; fail "$output"; }
+    sleep 0.4
+    [[ "$(pane_of a)" == *"[From the agent session b, via Pulsar]"*"run the tests"* ]] || { msg_teardown; fail "$(pane_of a)"; }
+    [ -z "$("${T[@]}" show-options -v -t =a: @pulsar-alert 2>/dev/null)" ] || { msg_teardown; fail "still waiting"; }
+    # working: queued
+    run "$PULSAR" agent send a --from b "and then the lint"
+    [[ "$output" == "queued for a"* ]] || { msg_teardown; fail "$output"; }
+    [ "$(jq -r .text "${PULSAR_AGENT_SESSIONS}/a.inbox")" = "and then the lint" ]
+    # its turn ends while someone is looking at it: still queued
+    claude_said a Stop
+    FAKE_WATCHING=a "$PULSAR" agent notify a
+    [ -s "${PULSAR_AGENT_SESSIONS}/a.inbox" ] || { msg_teardown; fail "delivered while watched"; }
+    # a terminal on it that isn't focused is nobody looking: in
+    FAKE_WATCHING=a FAKE_FLAGS=attached,UTF-8 "$PULSAR" agent notify a
+    sleep 0.4
+    local pane; pane=$(pane_of a)
+    [ ! -s "${PULSAR_AGENT_SESSIONS}/a.inbox" ] || { msg_teardown; fail "still queued"; }
+    [[ "$pane" == *"and then the lint"* ]] || { msg_teardown; fail "$pane"; }
+    # Codex and agy: Pulsar's own turn-end hook is the bell
+    printf 'agent=codex\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/c.session"
+    "${T[@]}" new-session -d -s c -x 120 -y 30 "stty -echo; cat"
+    "$PULSAR" agent send c --from b "over to you" >/dev/null
+    "$PULSAR" agent notify c
+    sleep 0.4
+    pane=$(pane_of c)
+    msg_teardown
+    [[ "$pane" == *"over to you"* ]] || fail "$pane"
+    # every message is logged
+    [ "$(jq -r -s 'map("\(.from)>\(.to)") | join(" ")' "${PULSAR_AGENT_SESSIONS}/messages.log")" = "b>a b>a b>c" ]
+}
+
+@test "agent send: never into a permission question or on a bare bell, where its Enter would answer for you" {
+    msg_env
+    msg_session a
+    "$PULSAR" agent send a --from b "rm it all" >/dev/null
+    # Claude asks for permission: the alert says Notification
+    claude_said a Notification permission_prompt
+    "$PULSAR" agent notify a
+    [ "$("${T[@]}" show-options -v -t =a: @pulsar-alert)" = Notification ] || { msg_teardown; fail "no alert"; }
+    run "$PULSAR" agent send a --from b "and this"
+    [[ "$output" == "queued for a"* ]] || { msg_teardown; fail "$output"; }
+    # a bell with nothing said about it
+    rm -f "${HOME}/.local/state/pulsar/agent-alerts/sid-a.json"
+    "$PULSAR" agent notify a
+    sleep 0.4
+    local pane; pane=$(pane_of a)
+    [[ "$pane" != *"rm it all"* ]] || { msg_teardown; fail "$pane"; }
+    [ "$(jq -s length "${PULSAR_AGENT_SESSIONS}/a.inbox")" = 2 ] || { msg_teardown; fail "$(cat "${PULSAR_AGENT_SESSIONS}/a.inbox")"; }
+    # still at its prompt a while after a turn (Claude's idle notice): in, both
+    claude_said a Notification idle_prompt
+    "$PULSAR" agent notify a
+    sleep 0.4
+    pane=$(pane_of a)
+    msg_teardown
+    [[ "$pane" == *"rm it all"*"and this"* ]] || fail "$pane"
+}
+
+@test "agent messages: off stops agents messaging each other (you still can); the cap is a setting" {
+    msg_env
+    msg_session a
+    run "$PULSAR" agent messages off --cap 2
+    [ "$output" = "messages between sessions: off, at most 2 from one to another in 10 minutes" ] || { msg_teardown; fail "$output"; }
+    run "$PULSAR" agent send a --from b "hi"
+    [ "$status" -ne 0 ] && [[ "$output" == *"messages between sessions are off"* ]] || { msg_teardown; fail "$output"; }
+    run "$PULSAR" agent send a "from you"
+    [ "$status" -eq 0 ] || { msg_teardown; fail "$output"; }
+    "$PULSAR" agent messages on >/dev/null
+    "$PULSAR" agent send a --from b one >/dev/null && "$PULSAR" agent send a --from b two >/dev/null
+    run "$PULSAR" agent send a --from b three
+    msg_teardown
+    [[ "$output" == *"2 messages in 10 minutes"* ]] || fail "$output"
+    run "$PULSAR" --json agent settings
+    [ "$(jq -c '[.messages, .message_cap, .sandbox, .push]' <<<"$output")" = '["on",2,"off","on"]' ] || fail "$output"
+    run "$PULSAR" agent messages --cap 0; [ "$status" -ne 0 ]
+    run "$PULSAR" agent messages maybe; [ "$status" -ne 0 ]
+    printf 'message_cap = lots\n' > "$PULSAR_AGENT_CONF"
+    run "$PULSAR" --json agent messages
+    [ "$(jq -c . <<<"$output")" = '{"messages":"on","message_cap":10}' ] || fail "$output"
+}
+
+@test "agent send: a cap per pair in 10 minutes, no messages to itself, --now even mid-turn" {
+    msg_env
+    msg_session a
+    local i
+    for i in 1 2 3; do PULSAR_MSG_CAP=3 "$PULSAR" agent send a --from b "m$i" >/dev/null || { msg_teardown; fail "m$i refused"; }; done
+    PULSAR_MSG_CAP=3 run "$PULSAR" agent send a --from b "m4"
+    [ "$status" -ne 0 ] && [[ "$output" == *"3 messages in 10 minutes"* ]] || { msg_teardown; fail "$output"; }
+    # another sender has its own allowance
+    PULSAR_MSG_CAP=3 run "$PULSAR" agent send a --from c "hi"
+    [ "$status" -eq 0 ] || { msg_teardown; fail "$output"; }
+    run "$PULSAR" agent send a --from a "me"; [ "$status" -ne 0 ] || { msg_teardown; fail "sent to itself"; }
+    run "$PULSAR" agent send a --now "now please"
+    sleep 0.4
+    local pane; pane=$(pane_of a)
+    msg_teardown
+    [ "$output" = "delivered to a" ] || fail "$output"
+    [[ "$pane" == *"[A message, via Pulsar]"*"now please"* ]] || fail "$pane"
+    run "$PULSAR" agent send gone "x"; [ "$status" -ne 0 ]
+}
+
+@test "agent whoami: the session an agent runs in, from its pane's record or its process's pane" {
+    msg_env
+    PULSAR_SESSION_RECORD="${PULSAR_AGENT_SESSIONS}/fix.session" run "$PULSAR" agent whoami
+    [ "$output" = fix ] || fail "$output"
+    msg_session a
+    local out="${BATS_TEST_TMPDIR}/who"
+    "${T[@]}" new-session -d -s inner -x 80 -y 10 "env -u PULSAR_SESSION_RECORD bash -c '\"$PULSAR\" agent whoami > \"$out\" 2>&1; sleep 5'"
+    sleep 1
+    msg_teardown
+    [ "$(cat "$out")" = inner ] || fail "$(cat "$out")"
+    run env -u PULSAR_SESSION_RECORD -u TMUX "$PULSAR" agent whoami
+    [ "$status" -ne 0 ] && [[ "$output" == *"not in an agent session"* ]] || fail "$output"
+}
+
+@test "job: runs on a tmux of its own, logs, says how it ended on the desktop and to the session that asked" {
+    msg_env
+    msg_session a
+    run "$PULSAR" job run --name t1 --dir "$HOME" --notify a -- bash -c 'echo one; echo two; exit 3'
+    [ "$status" -eq 0 ] || { msg_teardown; fail "$output"; }
+    local i; for i in $(seq 30); do [ "$(jq -r '.[0].state' <<<"$("$PULSAR" job list --json)")" = done ] && break; sleep 0.2; done
+    run "$PULSAR" job list --json
+    [ "$(jq -c '.[0] | [.name, .state, .status, .notify]' <<<"$output")" = '["t1","done",3,"a"]' ] || { msg_teardown; fail "$output"; }
+    run "$PULSAR" job log t1
+    [ "$output" = $'one\ntwo' ] || { msg_teardown; fail "$output"; }
+    grep -q 'Job t1 failed (exit 3) two' "$NOTES" || { msg_teardown; fail "$(cat "$NOTES")"; }
+    [[ "$(jq -r .text "${PULSAR_AGENT_SESSIONS}/a.inbox")" == "The job t1 failed (exit 3). Its last lines:"$'\n'"one"$'\n'"two"* ]] \
+        || { msg_teardown; fail "$(cat "${PULSAR_AGENT_SESSIONS}/a.inbox")"; }
+    # never one of the agent sessions
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '[.[].name] | join(",")' <<<"$output")" = a ] || { msg_teardown; fail "$output"; }
+    # a running one stops, keeps its log, then goes
+    "$PULSAR" job run --name t2 --dir "$HOME" -- bash -c 'echo started; sleep 60' >/dev/null
+    sleep 0.5
+    run "$PULSAR" job rm t2; [ "$status" -ne 0 ] || { msg_teardown; fail "removed a running job"; }
+    "$PULSAR" job stop t2 >/dev/null
+    run "$PULSAR" job list --json
+    [ "$(jq -r '.[] | select(.name == "t2") | .state' <<<"$output")" = stopped ] || { msg_teardown; fail "$output"; }
+    run "$PULSAR" job log t2
+    [ "$output" = started ] || { msg_teardown; fail "$output"; }
+    # a late word from its pane doesn't turn stopped into failed
+    "$PULSAR" job done t2 143
+    [ "$(jq -r '.[] | select(.name == "t2") | .state' <<<"$("$PULSAR" job list --json)")" = stopped ] || { msg_teardown; fail "not stopped"; }
+    "$PULSAR" job rm t2 >/dev/null
+    [ ! -e "${PULSAR_JOBS}/t2.job" ] && [ ! -e "${PULSAR_JOBS}/t2.log" ]
+    run "$PULSAR" job run --name 'bad name' -- true; [ "$status" -ne 0 ]
+    run "$PULSAR" job run --notify 'a;b' -- true; [ "$status" -ne 0 ]
+    msg_teardown
 }

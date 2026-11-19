@@ -269,10 +269,27 @@ CLI (`~/.gemini/config/mcp_config.json`), Gemini CLI and opencode. Tools are the
 `manifest`, `report`, `crashes`, `update_check`, `agent_status`,
 `theme_list`, `theme_current`, plus the guide as a resource.
 
-Its one write is `theme_set` (the user's desktop theme, undone by
-`pulsar theme revert`). Nothing needs root and no root command is exposed:
-update, rollback, checkpoint, guard and pin stay yours. The sandbox doesn't
-include it (it reads the host).
+Its writes are `theme_set` (the user's desktop theme, undone by
+`pulsar theme revert`), `session_message`, `job_start` and `job_stop`, each
+marked as a write so the agent's own permission prompt asks you. Nothing
+needs root and no root command is exposed: update, rollback, checkpoint,
+guard and pin stay yours. The sandbox doesn't include it (it reads the
+host).
+
+Sessions talking to each other: `session_read` returns another session's
+screen, which can hold anything that session's agent printed, so an agent
+reading it is reading untrusted text. A message from `session_message` is
+typed into the other agent's prompt with a label naming the sender, and
+pressed Enter on. So it goes in only when that agent has ended its turn and
+sits at its own prompt (Claude Code's Stop, or the turn-end hooks Pulsar gives
+Codex and Antigravity CLI), never on a permission question, where that Enter
+would answer for you, and never while you're looking at the session. Every
+message is logged in `~/.local/state/pulsar/agents/messages.log`. One session
+can send another at most 10 in 10 minutes, and Agents > Preferences (or
+`pulsar agent messages off|on --cap N`) turns messages between sessions off
+or changes the cap. A job started with
+`job_start` runs as you, outside any sandbox, so a sandboxed agent can't
+start one: it has no `pulsar mcp`.
 
 ## A local model
 

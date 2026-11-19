@@ -3639,6 +3639,13 @@ atmux() { atmux_argv; "${ATMUX[@]}" "$@"; }
 
 atmux_running() { atmux has-session -t "=$1" 2>/dev/null; }
 
+# Whether someone is looking at a session: a client on it (or on a view of
+# it), in a focused terminal.
+atmux_watched() {
+    atmux list-clients -F $'#{?session_grouped,#{session_group},#{session_name}}\t#{client_flags}' 2>/dev/null \
+        | awk -F'\t' -v n="$1" '$1 == n && $2 ~ /focused/ { f = 1 } END { exit !f }'
+}
+
 # The Agents app's view of a session: a session of its own in the same
 # group (the same windows, so the same agent), named <session>~app<n>, with
 # options of its own: no prefix key, an empty key table (so no tmux key or
@@ -4471,8 +4478,7 @@ agent_notify() {
     # the record's time is when it was last active (agent sessions --json)
     touch -c "${AGENT_SESSIONS}/${tname}.session"
     # looking at it already: a client on this session, in a focused terminal
-    if atmux list-clients -F $'#{?session_grouped,#{session_group},#{session_name}}\t#{client_flags}' 2>/dev/null \
-        | awk -F'\t' -v n="$tname" '$1 == n && $2 ~ /focused/ { f = 1 } END { exit !f }'; then
+    if atmux_watched "$tname"; then
         return 0
     fi
     local agent dir id f="" c event="" msg="" title body
@@ -4486,13 +4492,23 @@ agent_notify() {
         done
         if [ -n "$f" ] && [ $(( $(date +%s) - $(stat -c %Y "$f") )) -le 30 ]; then
             event=$(jq -r '.hook_event_name // empty' "$f" 2>/dev/null) || event=""
-            [ "$(jq -r '.notification_type // empty' "$f" 2>/dev/null)" != idle_prompt ] || return 0
+            if [ "$(jq -r '.notification_type // empty' "$f" 2>/dev/null)" = idle_prompt ]; then
+                # still at its prompt, a while after its turn: messages can go in
+                agent_deliver "$tname" >/dev/null 2>&1 || true
+                return 0
+            fi
             msg=$(jq -r '.message // empty' "$f" 2>/dev/null) || msg=""
         fi
     fi
     # agy's and Codex's bell is Pulsar's own turn-end hook (agy_turn_hook,
     # codex_turn_notify): the agent is waiting
     case "${event}:${agent}" in :agy|:codex|:opencode) event=Waiting ;; esac
+    # Messages from other sessions go in only at a turn's end, when the agent
+    # sits at its own prompt: never on a Notification (a permission question,
+    # where the Enter after the text would answer it) or a bare bell.
+    if at_prompt "$event" && agent_deliver "$tname" >/dev/null 2>&1; then
+        return 0
+    fi
     local who="The agent"
     if [ -n "$agent" ] && agent_row "$agent"; then who=${A_DESC%% (*}; fi
     case "$event" in
@@ -4778,6 +4794,180 @@ agent_sessions() {
         printf '%-16s %-9s %-8s %-8s %-8s %s\n' "$n" "$agent" "$state" "$since" "$ctx" "${dir/#"$HOME"/\~}"
     done <<<"$names"
 }
+
+# ---------------------------------------------------------------------------
+# agent read / send / whoami -- one session looking at, and talking to,
+# another. What an agent reads is the session's screen, scrollback included:
+# every agent has one, and it is what the user sees. What it sends goes into
+# the other agent's prompt, labelled as from another session, between that
+# agent's turns, never while someone is looking at it (it would land in the
+# middle of what they're typing): it waits in <name>.inbox until the next
+# turn end without a watcher (agent notify), or `agent send --now`.
+# Every message is logged; one session may send another 10 in 10 minutes
+# (message_cap in agent.conf), and messages = off stops them.
+# ---------------------------------------------------------------------------
+MSG_LOG="${AGENT_SESSIONS}/messages.log"
+# agent.conf: messages = on|off, message_cap = N (Agents > Preferences)
+agent_conf_get() {
+    [ -r "$AGENT_CONF" ] || return 1
+    awk -F' *= *' -v k="$1" '$1 == k { v = $2 } END { if (v == "") exit 1; print v }' "$AGENT_CONF"
+}
+msg_cap() {
+    local c=${PULSAR_MSG_CAP:-}
+    [ -n "$c" ] || c=$(agent_conf_get message_cap) || c=10
+    case "$c" in ''|*[!0-9]*|0) c=10 ;; esac
+    printf '%s\n' "$c"
+}
+
+# pulsar agent messages [on|off] [--cap N]: whether sessions may message each
+# other, and how many in 10 minutes from one to another.
+agent_messages() {
+    local usage="usage: pulsar agent messages [on|off] [--cap N]" onoff="" cap=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            on|off) onoff=$1 ;;
+            --cap) [ $# -ge 2 ] || die "$usage"; cap=$2; shift ;;
+            -h|--help) printf '%s\n' "$usage"; return 0 ;;
+            *) die "$usage" ;;
+        esac
+        shift
+    done
+    case "$cap" in '') ;; *[!0-9]*|0) die "--cap is a number from 1" ;; esac
+    [ -z "$onoff" ] || setting_write messages "$onoff" 0 ""
+    [ -z "$cap" ] || setting_write message_cap "$cap" 0 ""
+    local now; now=$(agent_conf_get messages) || now=on
+    if [ "${JSON:-0}" = 1 ]; then
+        jq -n -c --arg m "$now" --argjson c "$(msg_cap)" '{messages: $m, message_cap: $c}'
+    else
+        printf 'messages between sessions: %s, at most %s from one to another in 10 minutes\n' "$now" "$(msg_cap)"
+    fi
+}
+
+# What the Agents app's Preferences show: the default agent, the installed
+# ones, the global sandbox and push settings, and messages.
+agent_settings() {
+    [ $# -eq 0 ] || die "usage: pulsar agent settings"
+    need jq
+    local def inst sb push msgs n
+    def=$(agent_default_name 2>/dev/null) || def=""
+    inst=""
+    while IFS=$'\t' read -r n _; do agent_command "$n" >/dev/null && inst+="${inst:+ }${n}"; done < <(agent_rows)
+    sb=$(setting_resolve sandbox ""); sb=${sb%%$'\t'*}
+    push=$(setting_resolve push ""); push=${push%%$'\t'*}
+    msgs=$(agent_conf_get messages) || msgs=on
+    if [ "${JSON:-0}" = 1 ]; then
+        jq -n -c --arg d "$def" --arg i "$inst" --arg s "$sb" --arg p "$push" --arg m "$msgs" --argjson c "$(msg_cap)" \
+            '{default: (if $d == "" then null else $d end), installed: ($i | split(" ") | map(select(. != ""))),
+              sandbox: $s, push: $p, messages: $m, message_cap: $c}'
+    else
+        printf 'default   %s\ninstalled %s\nsandbox   %s\npush      %s\nmessages  %s, at most %s in 10 minutes\n' \
+            "${def:-none}" "${inst:-none}" "$sb" "$push" "$msgs" "$(msg_cap)"
+    fi
+}
+
+agent_read() {
+    local usage="usage: pulsar agent read <session> [--lines N] [--json]" n="" lines=80
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --lines) [ $# -ge 2 ] || die "$usage"; lines=$2; shift ;;
+            -h|--help) printf '%s\n' "$usage"; return 0 ;;
+            -*) die "$usage" ;;
+            *) [ -z "$n" ] || die "$usage"; n=$1 ;;
+        esac
+        shift
+    done
+    case "$n" in ''|*[!A-Za-z0-9_-]*) die "$usage" ;; esac
+    case "$lines" in ''|*[!0-9]*) die "--lines wants a number" ;; esac
+    [ "$lines" -le 2000 ] || lines=2000
+    { have tmux && atmux_running "$n"; } || die "$n is not running (pulsar agent sessions)"
+    local text
+    text=$(atmux capture-pane -p -J -S "-${lines}" -t "=${n}:" 2>/dev/null | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}') \
+        || die "could not read $n"
+    if [ "${JSON:-0}" = 1 ]; then
+        need jq
+        jq -n -c --arg n "$n" --arg a "$(session_get "$n" agent || true)" --arg t "$text" \
+            '{name: $n, agent: (if $a == "" then null else $a end), text: $t}'
+    else
+        printf '%s\n' "$text"
+    fi
+}
+
+# Which session this is, for an agent (or its MCP server) asking: the pane's
+# own record, else the tmux pane whose process this descends from.
+agent_whoami() {
+    local p pid name
+    if [ -n "${PULSAR_SESSION_RECORD:-}" ]; then
+        name=$(basename "$PULSAR_SESSION_RECORD" .session)
+    elif have tmux; then
+        local panes; panes=$(atmux list-panes -a -F '#{pane_pid} #{session_name}' 2>/dev/null | awk '$2 !~ /~/') || panes=""
+        pid=$PPID
+        while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
+            name=$(awk -v p="$pid" '$1 == p { print $2; exit }' <<<"$panes")
+            [ -z "$name" ] || break
+            p=$(awk '/^PPid:/ { print $2 }' "/proc/${pid}/status" 2>/dev/null) || p=""
+            pid=$p
+        done
+    fi
+    [ -n "${name:-}" ] || die "not in an agent session"
+    if [ "${JSON:-0}" = 1 ]; then jq -n -c --arg n "$name" '{name: $n}'; else printf '%s\n' "$name"; fi
+}
+
+agent_send() {
+    local usage="usage: pulsar agent send <session> [--from <session>] [--now] <text>"
+    local to="" from="" now=0 text=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --from) [ $# -ge 2 ] || die "$usage"; from=$2; shift ;;
+            --now) now=1 ;;
+            -h|--help) printf '%s\n' "$usage"; return 0 ;;
+            --) shift; text="$*"; break ;;
+            *) if [ -z "$to" ]; then to=$1; else text="$*"; break; fi ;;
+        esac
+        shift
+    done
+    case "$to" in ''|*[!A-Za-z0-9_-]*) die "$usage" ;; esac
+    case "$from" in *[!A-Za-z0-9_-]*) die "--from is a session's name" ;; esac
+    [ -n "${text//[[:space:]]/}" ] || die "$usage"
+    [ "$from" != "$to" ] || die "a session can't message itself"
+    { have tmux && atmux_running "$to"; } || die "$to is not running (pulsar agent sessions)"
+    need jq
+    mkdir -p "$AGENT_SESSIONS"
+    local at; at=$(date +%s)
+    if [ -n "$from" ] && [ "$(agent_conf_get messages || true)" = off ]; then
+        die "messages between sessions are off (Agents > Preferences, or pulsar agent messages on)"
+    fi
+    local cap; cap=$(msg_cap)
+    if [ -n "$from" ] && [ -f "$MSG_LOG" ]; then
+        local recent
+        recent=$(jq -s --arg f "$from" --arg t "$to" --argjson since $((at - 600)) \
+            '[.[] | select(.from == $f and .to == $t and .at >= $since)] | length' "$MSG_LOG" 2>/dev/null) || recent=0
+        [ "$recent" -lt "$cap" ] || die "${from} has sent ${to} ${recent} messages in 10 minutes; that's the limit (a loop?)"
+    fi
+    jq -n -c --arg f "${from:-you}" --arg t "$to" --arg x "$text" --argjson a "$at" '{at: $a, from: $f, to: $t, text: $x}' >> "$MSG_LOG"
+    jq -n -c --arg f "$from" --arg x "$text" --argjson a "$at" '{at: $a, from: $f, text: $x}' >> "${AGENT_SESSIONS}/${to}.inbox"
+    if [ "$now" = 1 ] || { at_prompt "$(atmux show-options -v -t "=${to}:" @pulsar-alert 2>/dev/null)" && ! atmux_watched "$to"; }; then
+        agent_deliver "$to" && { printf 'delivered to %s\n' "$to"; return 0; }
+    fi
+    printf 'queued for %s: it goes in at the end of its turn, or when nobody is watching it\n' "$to"
+}
+
+# What waits in a session's inbox, into its prompt as one message, then Enter.
+agent_deliver() {
+    local to=$1 inbox="${AGENT_SESSIONS}/${1}.inbox" text
+    [ -s "$inbox" ] || return 1
+    text=$(jq -r -s 'map((if .from == "" then "[A message, via Pulsar]" else "[From the agent session \(.from), via Pulsar]" end) + "\n" + .text) | join("\n\n")' "$inbox") || return 1
+    printf '%s' "$text" | atmux load-buffer -b pulsar-message - || return 1
+    atmux paste-buffer -p -d -b pulsar-message -t "=${to}:" || return 1
+    sleep 0.2
+    atmux send-keys -t "=${to}:" Enter
+    : > "$inbox"
+    # it has something to do now: not waiting any more
+    atmux set-option -u -t "=${to}:" @pulsar-alert 2>/dev/null || true
+}
+
+# A turn's end, with the agent at its own prompt: Claude's Stop, and the
+# turn-end hooks Pulsar gives the others (Waiting).
+at_prompt() { case "${1:-}" in Stop|Waiting) return 0 ;; *) return 1 ;; esac; }
 
 # 1536 -> 1.5 KB, 43459411968 -> 43 GB (decimal, as df -H and Files say)
 human_bytes() {
@@ -5221,6 +5411,17 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      looking at, a notification offers to open it.
                                      --worktree: its own git worktree and branch,
                                      <repo>/.worktrees/<session>
+       pulsar agent read <session> [--lines N]
+                                     what that session's screen shows, scrollback
+                                     included (default 80 lines)
+       pulsar agent send <session> [--from <session>] [--now] <text>
+                                     type a message into its prompt at the end of
+                                     its turn, labelled; logged and capped
+       pulsar agent messages [on|off] [--cap N]
+                                     whether sessions may message each other, and
+                                     how many from one to another in 10 minutes
+       pulsar agent whoami           the session this runs in
+       pulsar agent settings         the default agent, sandbox, push and messages
        pulsar agent attach [<session>]
                                      back onto a session, or the running one you
                                      were on last; an ended one starts again with
@@ -5332,6 +5533,22 @@ cmd_agent() {
         disk)
             need_user "agent disk"
             agent_disk "$@" ;;
+        read)
+            need_user "agent read"
+            agent_read "$@" ;;
+        send)
+            no_json "agent send"
+            need_user "agent send"
+            agent_send "$@" ;;
+        whoami)
+            need_user "agent whoami"
+            agent_whoami "$@" ;;
+        messages)
+            need_user "agent messages"
+            agent_messages "$@" ;;
+        settings)
+            need_user "agent settings"
+            agent_settings "$@" ;;
         sessions)
             need_user "agent sessions"
             agent_sessions "$@" ;;
@@ -7352,6 +7569,167 @@ cmd_checkpoint() {
 }
 
 # ---------------------------------------------------------------------------
+# job -- a long command (a training run, a build, a benchmark) in a tmux
+# session of its own, on a server of its own (so it is never taken for an
+# agent session), with its output in a log and a notification when it ends.
+# --notify <session> also tells that agent session, in its prompt, between
+# its turns (agent send): what an agent uses to start something and hear
+# back. The pane stays after the command ends, so `job attach` still shows it.
+# ---------------------------------------------------------------------------
+JOB_SOCKET=${PULSAR_JOB_TMUX_SOCKET:-pulsar-jobs}
+JOBS=${PULSAR_JOBS:-${XDG_STATE_HOME:-$HOME/.local/state}/pulsar/jobs}
+# shellcheck disable=SC2016  # the pane's bash expands these
+JOB_PANE='"$@"; s=$?; exec "$PULSAR_JOB_CLI" job done "$0" "$s"'
+jtmux() { tmux -L "$JOB_SOCKET" -f /dev/null "$@"; }
+job_get() {
+    local f="${JOBS}/$1.job" k v
+    [ -r "$f" ] || return 1
+    while IFS='=' read -r k v; do [ "$k" != "$2" ] || { printf '%s\n' "$v"; return 0; }; done < "$f"
+    return 1
+}
+job_set() {
+    local f="${JOBS}/$1.job" tmp
+    tmp=$(mktemp "${JOBS}/.$1.XXXXXX")
+    { [ ! -f "$f" ] || grep -v "^$2=" "$f"; printf '%s=%s\n' "$2" "$3"; } > "$tmp" && mv "$tmp" "$f"
+}
+# The pane's whole history, into the job's log file, while the pane is there.
+job_save() {
+    jtmux capture-pane -p -J -S - -t "=${1}:" 2>/dev/null | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > "${JOBS}/${1}.log.tmp" \
+        && [ -s "${JOBS}/${1}.log.tmp" ] && mv "${JOBS}/${1}.log.tmp" "${JOBS}/${1}.log"
+    rm -f "${JOBS}/${1}.log.tmp"
+}
+
+# a log as a person reads it: no terminal escapes, no carriage-return redraws
+job_clean() { sed -e 's/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' -e 's/\x1b\][^\x07]*\x07//g' -e 's/.*\r//' ; }
+
+job_state() {
+    local n=$1 st
+    st=$(job_get "$n" status) || st=""
+    if jtmux has-session -t "=$n" 2>/dev/null && [ "$(jtmux display -p -t "=${n}:" '#{pane_dead}' 2>/dev/null)" != 1 ]; then
+        printf 'running\n'
+    elif [ "$st" = stopped ]; then printf 'stopped\n'
+    elif [ -n "$st" ]; then printf 'done\n'
+    else printf 'gone\n'; fi
+}
+
+cmd_job() {
+    local usage="usage: pulsar job run [--name <name>] [--dir <folder>] [--notify <session>] -- <command>...
+       pulsar job list | log <name> [--lines N] | stop <name> | rm <name> | attach <name>"
+    local sub=${1:-list}; shift || true
+    case "$sub" in
+        -h|--help) printf '%s\n' "$usage"; return 0 ;;
+        run)
+            need tmux
+            local name="" dir=$PWD notify=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --name) [ $# -ge 2 ] || die "$usage"; name=$2; shift ;;
+                    --dir) [ $# -ge 2 ] || die "$usage"; dir=$2; shift ;;
+                    --notify) [ $# -ge 2 ] || die "$usage"; notify=$2; shift ;;
+                    --) shift; break ;;
+                    *) die "$usage" ;;
+                esac
+                shift
+            done
+            [ $# -gt 0 ] || die "$usage"
+            [ -d "$dir" ] || die "no folder $dir"
+            dir=$(cd "$dir" && pwd -P)
+            case "$notify" in *[!A-Za-z0-9_-]*) die "--notify is an agent session's name" ;; esac
+            if [ -z "$name" ]; then
+                name=$(basename -- "$1" | tr -c 'A-Za-z0-9_-' '-' | sed 's/-*$//'); name="${name:-job}-$(date +%H%M%S)"
+            fi
+            case "$name" in ''|-*|*[!A-Za-z0-9_-]*) die "a job's name is letters, digits, - and _: '$name'" ;; esac
+            ! jtmux has-session -t "=$name" 2>/dev/null || die "a job called $name is running"
+            mkdir -p "$JOBS"
+            local log="${JOBS}/${name}.log" cmdline="" w
+            for w in "$@"; do cmdline+=" $(printf '%q' "$w")"; done
+            : > "$log"
+            printf 'dir=%s\ncommand=%s\nstarted=%s\nnotify=%s\n' "$dir" "${cmdline# }" "$(date +%s)" "$notify" > "${JOBS}/${name}.job"
+            # the pane's history is the log while it runs (a long one, set
+            # before the pane exists), saved to the log file as it ends
+            jtmux start-server \; set-option -g history-limit 200000 \; \
+                new-session -d -s "$name" -x 200 -y 50 -c "$dir" \
+                -e "PULSAR_JOB_CLI=$(realpath "$SELF")" -- bash -c "$JOB_PANE" "$name" "$@" \
+                || die "tmux could not start $name"
+            jtmux set-option -t "=${name}:" remain-on-exit on 2>/dev/null || true
+            printf '%s is running in %s: pulsar job log %s, pulsar job attach %s\n' "$name" "${dir/#"$HOME"/\~}" "$name" "$name" ;;
+        done)
+            # the pane's last word: the command ended with $2
+            local n=${1:-} st=${2:-}
+            case "$n" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar job done <name> <status> (the job's pane runs this)" ;; esac
+            [ -f "${JOBS}/${n}.job" ] || return 0
+            job_save "$n"
+            [ "$(job_get "$n" status || true)" = stopped ] || job_set "$n" status "$st"
+            job_set "$n" ended "$(date +%s)"
+            local last; last=$(job_clean < "${JOBS}/${n}.log" 2>/dev/null | sed '/^[[:space:]]*$/d' | tail -n 5)
+            local head="${n} finished" ; [ "$st" = 0 ] || head="${n} failed (exit ${st})"
+            if have notify-send; then
+                notify-send --app-name=Pulsar --icon=utilities-terminal "Job ${head}" "${last##*$'\n'}" 2>/dev/null || true
+            fi
+            local to; to=$(job_get "$n" notify) || to=""
+            if [ -n "$to" ]; then
+                "$SELF" agent send "$to" -- "The job ${head}. Its last lines:
+${last}
+(pulsar job log ${n} for more)" >/dev/null 2>&1 || true
+            fi ;;
+        list)
+            [ $# -eq 0 ] || die "$usage"
+            local f n rows=()
+            for f in "$JOBS"/*.job; do
+                [ -e "$f" ] || continue
+                n=$(basename "$f" .job)
+                rows+=("$(jq -n -c --arg n "$n" --arg s "$(job_state "$n")" --arg d "$(job_get "$n" dir || true)" \
+                    --arg c "$(job_get "$n" command || true)" --arg st "$(job_get "$n" status || true)" \
+                    --arg t "$(job_get "$n" started || true)" --arg e "$(job_get "$n" ended || true)" \
+                    --arg no "$(job_get "$n" notify || true)" \
+                    '{name: $n, state: $s, dir: $d, command: $c, started: ($t | tonumber? // null),
+                      ended: ($e | tonumber? // null), status: ($st | tonumber? // (if $st == "" then null else $st end)),
+                      notify: (if $no == "" then null else $no end)}')")
+            done
+            if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "${rows[@]}" | jq -s -c 'sort_by(-(.started // 0))'; return 0; fi
+            [ ${#rows[@]} -gt 0 ] || { printf 'no jobs  (pulsar job run -- <command>)\n'; return 0; }
+            printf '%s\n' "${rows[@]}" | jq -r '"\(.name)\t\(.state)\(if .status != null and .state == "done" then " (exit \(.status))" else "" end)\t\(.command)"' \
+                | column -t -s $'\t' ;;
+        log)
+            local n=${1:-} lines=50; shift || true
+            [ "${1:-}" != --lines ] || { lines=${2:-50}; }
+            case "$lines" in ''|*[!0-9]*) die "--lines wants a number" ;; esac
+            [ -f "${JOBS}/${n}.job" ] || die "no job called ${n} (pulsar job list)"
+            local text
+            if [ "$(job_state "$n")" = running ]; then
+                text=$(jtmux capture-pane -p -J -S - -t "=${n}:" 2>/dev/null | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | tail -n "$lines")
+            else
+                text=$(job_clean < "${JOBS}/${n}.log" | tail -n "$lines")
+            fi
+            if [ "${JSON:-0}" = 1 ]; then
+                jq -n -c --arg n "$n" --arg s "$(job_state "$n")" --arg t "$text" '{name: $n, state: $s, text: $t}'
+            else printf '%s\n' "$text"; fi ;;
+        stop)
+            local n=${1:-}
+            [ -f "${JOBS}/${n}.job" ] || die "no job called ${n} (pulsar job list)"
+            [ "$(job_state "$n")" = running ] || die "${n} is not running"
+            job_set "$n" status stopped
+            job_save "$n"
+            jtmux kill-session -t "=$n"
+            printf 'stopped %s\n' "$n" ;;
+        rm)
+            local n=${1:-}
+            [ -f "${JOBS}/${n}.job" ] || die "no job called ${n} (pulsar job list)"
+            [ "$(job_state "$n")" != running ] || die "${n} is running; pulsar job stop ${n} first"
+            jtmux kill-session -t "=$n" 2>/dev/null || true
+            rm -f "${JOBS}/${n}.job" "${JOBS}/${n}.log"
+            printf 'removed %s\n' "$n" ;;
+        attach)
+            local n=${1:-}
+            [ -f "${JOBS}/${n}.job" ] || die "no job called ${n} (pulsar job list)"
+            jtmux has-session -t "=$n" 2>/dev/null || die "${n} has ended; pulsar job log ${n}"
+            unset TMUX
+            exec tmux -L "$JOB_SOCKET" attach-session -t "=$n" ;;
+        *) die "$usage" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # machine -- your other Pulsar machines, reached over SSH, so the Agents app
 # (and later your agents) can see and attach to their sessions.
 #
@@ -7536,6 +7914,9 @@ Agents
                            machine; --crash latest for the last crash
   pulsar mcp               this machine's facts as MCP tools, for any agent
                            (agent add registers it)
+  pulsar job               long commands (a training run, a build) in their own
+                           tmux, with a log and a notification when they end:
+                           run | list | log | stop | rm | attach
   pulsar machine           your other Pulsar machines, over SSH: add | remove |
                            list | check | sessions | exec <machine> -- agent ...
 
@@ -7620,7 +8001,7 @@ main() {
     # Commands with JSON output handle --json themselves, per subcommand
     # where only some have it. The rest refuse it here.
     case "$cmd" in
-        doctor|status|manifest|changelog|report|update|pin|checkpoint|agent|machine|help) ;;
+        doctor|status|manifest|changelog|report|update|pin|checkpoint|agent|machine|job|help) ;;
         *) no_json "$cmd" ;;
     esac
     # Commands without subcommands or flags take no arguments and say so.
@@ -7642,6 +8023,7 @@ main() {
         agent)      cmd_agent "$@" ;;
         mcp)        cmd_mcp "$@" ;;
         machine)    cmd_machine "$@" ;;
+        job)        cmd_job "$@" ;;
         help)       cmd_help "$@" ;;
         *)          usage >&2; die "unknown command: ${cmd}" ;;
     esac

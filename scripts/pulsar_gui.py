@@ -238,7 +238,9 @@ def when(ts, now):
 
 def deleted_in(archived, now, days):
     """When `agent sessions --tidy` deletes an archived session: "deleted in
-    6 days", "deleted tomorrow", "deleted today"."""
+    6 days", "deleted tomorrow", "deleted today"; nothing when it never is."""
+    if not days:
+        return ""
     left = days - (max(0, now - int(archived)) // 86400)
     if left <= 0:
         return "deleted today"

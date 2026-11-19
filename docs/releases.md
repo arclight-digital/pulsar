@@ -74,6 +74,25 @@ CLI, and opencode moves to version 2.
   `--tidy` do the same from a terminal.
 - A notification's Open, Pulsar Commands and Pulsar Settings' Agents page
   all open the session in the app.
+- Sessions can see each other. `pulsar agent read <name>` shows a
+  session's screen, and `pulsar agent send <name> <text>` types a message
+  into its prompt, labelled as from another session. It goes in when that
+  agent finishes a turn and you aren't looking at the session (or at once
+  with `--now`), never into a permission question. Messages are logged in
+  `~/.local/state/pulsar/agents/messages.log`, and one session can send
+  another at most 10 in 10 minutes.
+- Preferences (Ctrl+, or the main menu) sets the agent, sandbox and pushes
+  new sessions start with, whether sessions can message each other and how
+  many, and how long archived sessions are kept (a day, a week, 30 days or
+  for good). The first four are the CLI's own settings: `pulsar agent
+  settings` shows them.
+- `pulsar job run -- <command>` runs a long command in a tmux of its own,
+  keeps its output (`pulsar job log`), and notifies you when it ends.
+  `--notify <session>` also tells that agent session how it ended.
+- `pulsar mcp` gives agents the same: `sessions`, `session_read`,
+  `session_message`, `job_start`, `jobs`, `job_log` and `job_stop`. The
+  ones that change something are marked as writes, so the agent asks you
+  first. A sandboxed agent doesn't have `pulsar mcp`.
 - `pulsar agent diff <name>` shows what a session changed since it started.
   `pulsar agent run --prompt <text>` starts the agent with a first message.
 
