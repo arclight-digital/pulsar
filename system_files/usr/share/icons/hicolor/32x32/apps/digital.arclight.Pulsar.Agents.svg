@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+ <defs>
+  <linearGradient id="bt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2446"/><stop offset="1" stop-color="#0b0e1a"/></linearGradient>
+  <linearGradient id="ba" gradientUnits="userSpaceOnUse" x1="15.3" y1="18.5" x2="23.32" y2="10.2"><stop offset="0" stop-color="#6b5cff"/><stop offset="0.55" stop-color="#8fa8ff"/><stop offset="1" stop-color="#3fd0ff"/></linearGradient>
+  <radialGradient id="bo" cx="0.4" cy="0.35" r="0.65"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c4e9ff"/></radialGradient>
+  <radialGradient id="bh" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#8fd8ff" stop-opacity="0.55"/><stop offset="0.45" stop-color="#8fa8ff" stop-opacity="0.18"/><stop offset="1" stop-color="#8fa8ff" stop-opacity="0"/></radialGradient>
+ </defs>
+ <rect x="3" y="5" width="26" height="25" rx="6.5" fill="#07090f"/>
+ <rect x="3" y="3" width="26" height="25" rx="6.5" fill="url(#bt)"/>
+ <rect x="3.5" y="3.5" width="25" height="24" rx="6" fill="none" stroke="#8fa8ff" stroke-opacity="0.25"/>
+ <path d="M8 11.5l4 4-4 4" fill="none" stroke="#3fd0ff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/>
+ <circle cx="20.5" cy="15.5" r="8" fill="url(#bh)"/>
+ <path d="M14.55 18.94L14.38 18.63L14.22 18.31L14.09 17.98L13.97 17.64L13.87 17.3L13.78 16.96L13.71 16.61L13.67 16.26L13.64 15.9L13.63 15.55L13.63 15.19L13.66 14.84L13.7 14.49L13.76 14.14L13.84 13.79L13.94 13.45L14.05 13.11L14.18 12.78L14.33 12.46L14.5 12.15L14.68 11.84L14.88 11.54L15.09 11.26L15.31 10.99L15.55 10.72L15.81 10.48L16.07 10.24L16.35 10.02L16.64 9.81L16.94 9.62L17.25 9.44L17.56 9.28L17.89 9.14L18.22 9.01L18.56 8.9L18.9 8.81L19.25 8.74L19.6 8.68L19.95 8.65L20.31 8.63L20.66 8.63L21.02 8.64L21.37 8.68L21.72 8.73L22.07 8.81L22.41 8.9L22.75 9L23.08 9.13L23.41 9.27L23.73 9.43A0.88 0.88 0 0 1 22.91 10.97L22.67 10.86L22.43 10.75L22.18 10.66L21.93 10.58L21.67 10.51L21.41 10.46L21.15 10.42L20.89 10.39L20.62 10.38L20.36 10.38L20.09 10.39L19.83 10.42L19.57 10.46L19.31 10.52L19.05 10.58L18.8 10.66L18.55 10.76L18.31 10.87L18.08 10.99L17.85 11.12L17.62 11.26L17.41 11.41L17.2 11.58L17 11.75L16.81 11.94L16.63 12.13L16.47 12.34L16.31 12.55L16.16 12.77L16.03 13L15.9 13.23L15.79 13.47L15.69 13.72L15.61 13.97L15.54 14.23L15.48 14.48L15.43 14.74L15.4 15.01L15.38 15.27L15.38 15.54L15.38 15.8L15.41 16.06L15.44 16.33L15.49 16.59L15.55 16.84L15.63 17.1L15.72 17.35L15.82 17.59L15.94 17.83L16.06 18.06A0.88 0.88 0 0 1 14.55 18.94Z" fill="url(#ba)"/>
+ <circle cx="20.5" cy="15.5" r="2.5" fill="url(#bo)"/>
+ <circle cx="25.47" cy="12.14" r="1.25" fill="url(#bo)"/>
+</svg>

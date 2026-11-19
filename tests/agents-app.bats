@@ -123,7 +123,11 @@ print(m.header_subtitle({\"agent\": None, \"state\": \"ended\"}, now))'"
     local d="${REPO}/system_files/usr/share/applications/digital.arclight.Pulsar.Agents.desktop"
     grep -qx 'Exec=/usr/libexec/pulsar/pulsar-agents' "$d"
     grep -qx 'Icon=digital.arclight.Pulsar.Agents' "$d"
-    [ -f "${REPO}/system_files/usr/share/icons/hicolor/scalable/apps/digital.arclight.Pulsar.Agents.svg" ]
+    local i="${REPO}/system_files/usr/share/icons/hicolor"
+    [ -f "${i}/scalable/apps/digital.arclight.Pulsar.Agents.svg" ]
+    [ -f "${i}/symbolic/apps/digital.arclight.Pulsar.Agents-symbolic.svg" ]
+    [ -f "${i}/16x16/apps/digital.arclight.Pulsar.Agents.svg" ]
+    [ -f "${i}/32x32/apps/digital.arclight.Pulsar.Agents.svg" ]
     grep -q 'scripts/pulsar-agents ' "${REPO}/Containerfile"
     grep -q 'scripts/pulsar_gui.py ' "${REPO}/Containerfile"
     if command -v desktop-file-validate >/dev/null; then desktop-file-validate "$d"; fi
