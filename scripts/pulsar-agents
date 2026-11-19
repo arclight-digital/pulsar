@@ -40,7 +40,7 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
-                        session_glyph, hsl_rgb, home, parse,  # noqa: E402,F401
+                        session_icon, hsl_rgb, home, parse,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -1038,43 +1038,95 @@ class Agents(Adw.ApplicationWindow):
 
 
 class SessionIcon(Gtk.DrawingArea):
-    """A session's own icon (session_glyph): its pattern in its hue on a
-    tile tinted with it. The same name always draws the same icon, so two
-    sessions of one agent are told apart at a glance."""
+    """A session's own icon (session_icon): an outline in one hue with a
+    shape inside it in another, from a short fixed list. The same name
+    always draws the same icon, so two sessions of one agent are told
+    apart at a glance."""
 
     def __init__(self, name, size):
         super().__init__(content_width=size, content_height=size, css_classes=["tile", "glyph"])
-        self.size = size
-        self.glyph = None
+        self.icon = None
         self.set_draw_func(self._draw)
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self.queue_draw())
         self.set_glyph(name)
 
     def set_glyph(self, name):
-        g = session_glyph(name) if name else None
-        if g != self.glyph:
-            self.glyph = g
+        icon = session_icon(name) if name else None
+        if icon != self.icon:
+            self.icon = icon
             self.queue_draw()
 
     def _draw(self, _a, cr, w, h):
-        if not self.glyph:
+        if not self.icon:
             return
-        hue, cells = self.glyph
+        import math
+        outline, inside, turn, hue, hue2 = self.icon
         dark = Adw.StyleManager.get_default().get_dark()
-        r, g, b = hsl_rgb(hue, .62, .66 if dark else .44)
-        rad = round(w * .29)
-        cr.new_sub_path()
-        for cx, cy, a0 in ((w - rad, rad, -90), (w - rad, h - rad, 0), (rad, h - rad, 90), (rad, rad, 180)):
-            cr.arc(cx, cy, rad, a0 * 3.14159265 / 180, (a0 + 90) * 3.14159265 / 180)
-        cr.close_path()
-        cr.set_source_rgba(r, g, b, .17 if dark else .14)
-        cr.fill()
-        pad = w * .22
-        cell = (w - 2 * pad) / 5
-        cr.set_source_rgba(r, g, b, .95)
-        for row, col in cells:
-            cr.rectangle(pad + col * cell + .3, pad + row * cell + .3, cell - .6, cell - .6)
-        cr.fill()
+        r1, g1, b1 = hsl_rgb(hue, .6, .62 if dark else .46)
+        r2, g2, b2 = hsl_rgb(hue2, .72, .7 if dark else .42)
+        cx, cy = w / 2, h / 2
+        R = min(w, h) * .44
+        lw = max(1.2, w * .05)
+
+        # the outline: tinted inside, a line round it
+        if outline == "circle":
+            cr.arc(cx, cy, R, 0, 2 * math.pi)
+        elif outline == "squircle":
+            q, rad = R * .92, R * .5
+            for x, y, a in ((cx + q - rad, cy - q + rad, -90), (cx + q - rad, cy + q - rad, 0),
+                            (cx - q + rad, cy + q - rad, 90), (cx - q + rad, cy - q + rad, 180)):
+                cr.arc(x, y, rad, math.radians(a), math.radians(a + 90))
+            cr.close_path()
+        elif outline == "hexagon":
+            for k in range(6):
+                a = math.radians(60 * k - 90)
+                cr.line_to(cx + R * math.cos(a), cy + R * math.sin(a))
+            cr.close_path()
+        else:  # diamond
+            for dx, dy in ((0, -R), (R, 0), (0, R), (-R, 0)):
+                cr.line_to(cx + dx, cy + dy)
+            cr.close_path()
+        cr.set_source_rgba(r1, g1, b1, .2 if dark else .16)
+        cr.fill_preserve()
+        cr.set_source_rgba(r1, g1, b1, .9)
+        cr.set_line_width(lw)
+        cr.set_line_join(1)  # round
+        cr.stroke()
+
+        # the inside
+        cr.set_source_rgba(r2, g2, b2, .95)
+        r = R * .44
+        if inside == "dot":
+            cr.arc(cx, cy, R * .28, 0, 2 * math.pi)
+            cr.fill()
+        elif inside == "ring":
+            cr.set_line_width(R * .13)
+            cr.arc(cx, cy, R * .34, 0, 2 * math.pi)
+            cr.stroke()
+        elif inside == "half":
+            a = math.radians(90 * turn)
+            cr.arc(cx, cy, r, a, a + math.pi)
+            cr.close_path()
+            cr.fill()
+        elif inside == "quarter":
+            a = math.radians(90 * turn)
+            cr.move_to(cx, cy)
+            cr.arc(cx, cy, r * 1.08, a, a + math.pi / 2)
+            cr.close_path()
+            cr.fill()
+        elif inside == "orbit":
+            cr.set_line_width(R * .08)
+            cr.arc(cx, cy, r, 0, 2 * math.pi)
+            cr.stroke()
+            a = math.radians(45 * turn - 90)
+            cr.arc(cx + r * math.cos(a), cy + r * math.sin(a), R * .15, 0, 2 * math.pi)
+            cr.fill()
+        else:  # grid: four small squares
+            q, gap = R * .2, R * .1
+            for x in (cx - gap / 2 - q, cx + gap / 2):
+                for y in (cy - gap / 2 - q, cy + gap / 2):
+                    cr.rectangle(x, y, q, q)
+            cr.fill()
 
 
 def meter_bar(width=-1):

@@ -397,19 +397,26 @@ print(m.context_text({"context": 142310, "window": 1_000_000, "percent": 14.231}
     [ "${lines[2]}" = "142k of 1M · 14% | 42k" ]
 }
 
-@test "a session's icon comes from its name alone: the same every time, mirrored, never too sparse to read" {
+@test "a session's icon comes from its name alone, and only from the reviewed list of shapes" {
     run gui '
-a = g.session_glyph("fix-the-flaky-login"); b = g.session_glyph("fix-the-flaky-login"); c = g.session_glyph("gui")
-print(a == b, a != c)
-for n in ("fix-the-flaky-login", "gui", "blog", "pulsar", "pulsar-2", "", "x"):
-    hue, cells = g.session_glyph(n)
-    assert 0 <= hue < 360, hue
-    assert all((r, 4 - col) in cells for r, col in cells), n
-    assert len(cells) >= 6 and all(0 <= r < 5 and 0 <= col < 5 for r, col in cells), n
-print(g.session_glyph("gui"))
-print([round(v, 2) for v in g.hsl_rgb(0, 1, .5)], [round(v, 2) for v in g.hsl_rgb(120, 1, .5)])'
+a = g.session_icon("fix-the-flaky-login"); print(a == g.session_icon("fix-the-flaky-login"), a != g.session_icon("gui"))
+seen = set()
+for k in range(4000):
+    o, i, t, h1, h2 = g.session_icon(f"s{k}")
+    assert (o, i) in g.ICON_PAIRS, (o, i)
+    assert 0 <= t < g.ICON_TURNS.get(i, 1), (i, t)
+    assert 0 <= h1 < 360 and 60 <= (h2 - h1) % 360 <= 150, (h1, h2)
+    seen.add((o, i))
+print(len(seen) == len(g.ICON_PAIRS), len(g.ICON_PAIRS))
+print(sorted(g.ICON_OUTLINES), sorted(g.ICON_INSIDES))
+print([p for p in g.ICON_PAIRS if p[0] == "circle"])
+print(g.session_icon("gui"))'
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "True True" ]
-    [ "${lines[1]}" = "(304, [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (2, 1), (2, 2), (2, 3), (3, 0), (3, 1), (3, 3), (3, 4)])" ]
-    [ "${lines[2]}" = "[1.0, 0.0, 0.0] [0.0, 1.0, 0.0]" ]
+    [ "${lines[1]}" = "True 22" ]
+    # the reviewed list: no triangle or octagon, nothing long and round-ended, no pair of dots
+    [ "${lines[2]}" = "['circle', 'diamond', 'hexagon', 'squircle'] ['dot', 'grid', 'half', 'orbit', 'quarter', 'ring']" ]
+    [ "${lines[3]}" = "[('circle', 'half'), ('circle', 'quarter'), ('circle', 'orbit'), ('circle', 'grid')]" ]
+    # pinned: the same name keeps its icon across versions
+    [ "${lines[4]}" = "('hexagon', 'orbit', 7, 108, 184)" ]
 }

@@ -626,23 +626,33 @@ def resets_in(ts, now):
 
 
 # ---------------------------------------------------------- session icons --
-def session_glyph(name):
-    """A session's own icon, the same every time for the same name: a 5x5
-    pattern mirrored left to right (15 cells chosen, at least 6 lit) and a
-    hue, both from the name's SHA-256. Returns (hue 0-359, [(row, col)])."""
+# A session's icon is built from a short, fixed list of shapes, never drawn
+# freely, so no name can make it into a letter, a sign, or anything
+# suggestive: every pair below was looked at, and only these exist.
+# Outlines: no triangle (a warning sign) or octagon (a stop sign).
+# Insides: nothing long and round-ended, and no pair of dots.
+ICON_OUTLINES = ("circle", "squircle", "hexagon", "diamond")
+ICON_INSIDES = ("dot", "ring", "half", "quarter", "orbit", "grid")
+# a dot or a ring alone in a circle reads as a target or worse; only the
+# other insides go in a circle
+ICON_PAIRS = tuple((o, i) for o in ICON_OUTLINES for i in ICON_INSIDES
+                   if not (o == "circle" and i in ("dot", "ring")))
+# insides with a direction turn in quarters; orbit's moon sits at one of 8
+ICON_TURNS = {"half": 4, "quarter": 4, "orbit": 8}
+
+
+def session_icon(name):
+    """A session's icon, the same every time for the same name, from the
+    name's SHA-256: (outline, inside, turn, hue, inner hue). turn is the
+    inside's direction, in steps (quarters, eighths for orbit); hues are
+    degrees, the inside's 60-150 from the outline's so the two read apart."""
     import hashlib
     h = hashlib.sha256((name or "").encode()).digest()
-    bits = int.from_bytes(h[:4], "big")
-    cells = []
-    for i in range(15):
-        if bits >> i & 1:
-            r, c = divmod(i, 3)
-            cells += [(r, c)] + ([(r, 4 - c)] if c < 2 else [])
-    if len({(r, c) for r, c in cells}) < 6:
-        # too sparse to read: the middle column lit, then as chosen
-        cells += [(r, 2) for r in range(5)]
-    hue = int.from_bytes(h[4:6], "big") % 360
-    return hue, sorted(set(cells))
+    outline, inside = ICON_PAIRS[int.from_bytes(h[0:2], "big") % len(ICON_PAIRS)]
+    turn = h[2] % ICON_TURNS.get(inside, 1)
+    hue = int.from_bytes(h[3:5], "big") % 360
+    hue2 = (hue + 60 + h[5] % 91) % 360
+    return outline, inside, turn, hue, hue2
 
 
 def hsl_rgb(h, s, l):
