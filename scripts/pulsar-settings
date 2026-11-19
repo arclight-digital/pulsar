@@ -362,8 +362,20 @@ class Settings(Adw.ApplicationWindow):
             title="No sessions yet", subtitle="Start one in a terminal: pulsar agent run <agent> --tmux <name>",
             subtitle_selectable=True)
         self.sessions.add(self.sessions_empty)
+        # with the Agents app here, sessions are its business: one row that
+        # says how many and opens it, no End or Forget to second-guess it
+        self.agents_app_row = Adw.ActionRow(title="Agents app", activatable=True, visible=False)
+        self.agents_app_row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+        self.agents_app_row.connect("activated", lambda *_: self.open_agents_app())
+        self.sessions.add(self.agents_app_row)
         page.add(self.sessions)
         return page
+
+    def open_agents_app(self):
+        try:
+            Gio.Subprocess.new([str(AGENTS_APP)], Gio.SubprocessFlags.NONE)
+        except GLib.Error as e:
+            self.alert("Could not open the Agents app", e.message)
 
     def _agents_tick(self):
         row = self.sidebar.get_selected_row()
@@ -381,6 +393,17 @@ class Settings(Adw.ApplicationWindow):
         if not isinstance(found, list):
             return
         found.sort(key=session_order)
+        if AGENTS_APP.exists():
+            live = [s for s in found if not s.get("archived")]
+            waiting = sum(s.get("state") == "waiting" for s in live)
+            working = sum(s.get("state") == "running" for s in live)
+            said = [f"{waiting} need{'s' if waiting == 1 else ''} you" if waiting else "",
+                    f"{working} working" if working else "",
+                    f"{len(live)} session{'s' if len(live) != 1 else ''}" if live else "No sessions yet"]
+            self.agents_app_row.set_subtitle(" · ".join(x for x in said if x))
+            self.agents_app_row.set_visible(True)
+            self.sessions_empty.set_visible(False)
+            return
         names = [s["name"] for s in found]
         for name in list(self.session_rows):
             if name not in names:
