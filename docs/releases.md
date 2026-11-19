@@ -13,6 +13,59 @@ move independently: a month with no new Pulsar features keeps its release
 while the builds go on, so the About page may read
 `Pulsar 26.9.1 (44.20261103.0)` in November.
 
+## 26.11.2
+
+Coding-agent sessions get their own app. Antigravity CLI replaces Gemini
+CLI, and opencode moves to version 2.
+
+### The Agents app
+
+- Agents, in the app grid and Pulsar Commands, shows every agent session
+  under its project, with the ones that need you first. Each session is the
+  agent's own terminal, inside the window. Closing the window leaves them
+  working.
+- New Session asks for a project folder and, if you want, what the agent
+  should do. That text becomes the agent's first message and the session's
+  name. The agent, a worktree of its own and the sandbox are under Options,
+  remembered per project.
+- Opening a stopped session continues it, on the same conversation for
+  Claude Code and opencode, and for Antigravity CLI once Pulsar has seen
+  its conversation. Codex CLI picks up its latest conversation in that
+  folder, which is the same one for a session in its own worktree.
+- A box under the terminal sends a message to the agent. Changes lists the
+  files the agent changed, since the session started or since the last
+  commit, with each file's diff and Revert File. A comment on a diff line
+  waits beside the box and goes with your next message as `path:line`.
+- History lists the snapshot taken at each start, and Go Back puts the
+  files back, stopping the agent first if it's working. The Undo button
+  that appears after takes it back.
+- Archive (the × on a session, or Ctrl+Shift+Delete) hides a session, with
+  Undo. Archived sessions are deleted after 7 days with their undo
+  snapshots. A worktree with uncommitted changes is never deleted, and
+  branches stay. `pulsar agent sessions --archive`, `--unarchive` and
+  `--tidy` do the same from a terminal.
+- A notification's Open, Pulsar Commands and Pulsar Settings' Agents page
+  all open the session in the app.
+- `pulsar agent diff <name>` shows what a session changed since it started.
+  `pulsar agent run --prompt <text>` starts the agent with a first message.
+
+### Agents
+
+- Antigravity CLI (`agy`) replaces Gemini CLI in `pulsar agent add` and the
+  welcome. `gemini` and `aider` still run and can be removed if you have
+  them, but are no longer offered.
+- opencode is version 2 (`@opencode/cli`).
+
+### Also
+
+- git keeps HTTPS passwords in the keyring (`git-credential-libsecret` is
+  in the image) instead of in plain text in `~/.git-credentials`.
+- A speaker on the network (AirPlay and other network audio) plays only
+  when you pick it; PipeWire no longer makes one the default by itself.
+- Sublime Text's menu bar gets the glass blur, and GTK 3 windows take glass
+  like GTK 4 ones.
+- The NVIDIA driver is 620.70.06.
+
 ## 26.11.1
 
 Coding agents can run in sessions that outlive their terminal, and
