@@ -110,7 +110,10 @@ CSS = """
 .pulsar-agents .added { color: @success_color; }
 .pulsar-agents .removed { color: @error_color; }
 .pulsar-agents .placeholder { opacity: .45; }
-.pulsar-agents.compact .sessions row.project { margin: 8px 22px 6px 22px; min-height: 0; padding: 0; }
+.pulsar-agents.compact .sessions row.project { margin: 6px 14px 4px 14px; min-height: 0; padding: 0; }
+.pulsar-agents .fold-mark { border-radius: 8px; }
+.pulsar-agents.compact row.project .fold-rule { margin: 0 8px; }
+.pulsar-agents .fold-mark.folded { background-color: alpha(currentColor, .08); }
 .pulsar-agents .fold-rule { min-height: 1px; background-color: alpha(currentColor, .1); }
 .pulsar-agents .disk-button { font-size: .85em; color: alpha(currentColor, .55); }
 .pulsar-agents .disk-button.low { color: @warning_color; }
@@ -1477,17 +1480,23 @@ class ProjectRow(Gtk.ListBoxRow):
         box.append(Gtk.Image(icon_name="pan-end-symbolic" if collapsed else "pan-down-symbolic",
                              css_classes=["fold"], pixel_size=12))
         if compact:
-            # narrowed: a divider (another machine's icon) where a group starts;
-            # folded, a ⋯ to unfold it, with the dot when a session in it needs you
+            # narrowed: one fixed-size target per group, so nothing in it can
+            # widen the column. Another machine's icon, or ⋯ for a folded
+            # group; folded ones sit on a pill; the dot rides its corner.
             self.set_tooltip_text(label)
-            mark = Gtk.Box(spacing=4, halign=Gtk.Align.CENTER)
-            if machine:
-                mark.append(Gtk.Image(icon_name="network-server-symbolic", pixel_size=12, css_classes=["project-machine"]))
-            if collapsed:
-                mark.append(Gtk.Image(icon_name="view-more-horizontal-symbolic", pixel_size=12, css_classes=["project-machine"]))
+            icon = "network-server-symbolic" if machine else ("view-more-horizontal-symbolic" if collapsed else None)
+            if icon is None:
+                self.set_child(Gtk.Box(css_classes=["fold-rule"]))
+            else:
+                mark = Gtk.Overlay(halign=Gtk.Align.CENTER, width_request=32, height_request=24,
+                                   css_classes=["fold-mark"] + (["folded"] if collapsed else []))
+                mark.set_child(Gtk.Image(icon_name=icon, pixel_size=14, halign=Gtk.Align.CENTER,
+                                         valign=Gtk.Align.CENTER, css_classes=["project-machine"]))
                 box.remove(self.dot)
-                mark.append(self.dot)
-            self.set_child(mark if (machine or collapsed) else Gtk.Box(css_classes=["fold-rule"]))
+                self.dot.set_halign(Gtk.Align.END)
+                self.dot.set_valign(Gtk.Align.START)
+                mark.add_overlay(self.dot)
+                self.set_child(mark)
         else:
             self.set_child(box)
         self.collapsed = collapsed
