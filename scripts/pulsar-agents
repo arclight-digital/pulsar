@@ -31,7 +31,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Vte", "3.91")
 gi.require_version("GtkSource", "5")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, GtkSource, Pango, Vte  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSource, Pango, Vte  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -41,6 +42,8 @@ from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, home, message_with_comment
                         title_from_prompt, tokens, when, diff_line_ref, newly_unseen, forget_body, forget_left)
 
 POLL_S = 3
+BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
+         HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
 # the sidebar's tile per agent: two letters, since three of them start with C or A
 AGENT_TILES = {"claude": "Cl", "codex": "Cx", "agy": "Ag", "opencode": "Oc", "gemini": "Ge", "aider": "Ai"}
 TIDY_DAYS = 7
@@ -100,6 +103,20 @@ CSS = """
 .pulsar-agents .composer { padding: 6px 14px 14px 14px; }
 .pulsar-agents .composer textview, .pulsar-agents .composer textview text { background: transparent; }
 .pulsar-agents .placeholder { opacity: .45; }
+.pulsar-agents .mark { filter: drop-shadow(0 0 18px alpha(@accent_color, .45)); }
+.pulsar-agents .launch-heading { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 18px; }
+.pulsar-agents .resume-card { border-radius: 14px; padding: 10px 12px; background-color: alpha(currentColor, .045);
+                              box-shadow: inset 0 0 0 1px alpha(currentColor, .06); transition: all 140ms ease-out; }
+.pulsar-agents .resume-card:hover { background-color: alpha(@accent_color, .1);
+                                    box-shadow: inset 0 0 0 1px alpha(@accent_color, .35), 0 0 16px alpha(@accent_color, .15); }
+.pulsar-agents .resume-card:hover .tile { background-color: alpha(@accent_color, .2); color: @accent_color; }
+.pulsar-agents .title-dot { min-width: 8px; min-height: 8px; border-radius: 4px; }
+.pulsar-agents .title-dot.working { background-color: @accent_color; animation: working 2.6s ease-in-out infinite; }
+.pulsar-agents .title-dot.needs { background-color: @accent_color; box-shadow: 0 0 8px alpha(@accent_color, .8); }
+.pulsar-agents .stage .head-line { min-height: 1px; background-image: linear-gradient(to right,
+    alpha(@accent_color, 0), alpha(@accent_color, .35) 30%, alpha(@accent_color, .35) 70%, alpha(@accent_color, 0)); }
+.pulsar-agents .stage .head-line.needs { background-image: linear-gradient(to right,
+    alpha(@accent_color, 0), alpha(@accent_color, .8) 25%, alpha(@accent_color, .8) 75%, alpha(@accent_color, 0)); }
 .pulsar-agents menubutton.comments > button { border-radius: 999px; padding: 2px 10px; min-height: 0; font-size: .85em;
                                               background-color: alpha(@accent_color, .18); color: @accent_color; }
 .pulsar-agents .hairline { min-height: 1px; background-image: linear-gradient(to right,
@@ -278,7 +295,12 @@ class Agents(Adw.ApplicationWindow):
 
         # content: the session's terminal, the message box under it, the rail beside it
         self.title = Adw.WindowTitle(title="Agents")
-        head = Adw.HeaderBar(title_widget=self.title)
+        self.title_dot = Gtk.Box(css_classes=["title-dot"], valign=Gtk.Align.CENTER, visible=False)
+        title_box = Gtk.Box(spacing=8)
+        title_box.append(self.title_dot)
+        title_box.append(self.title)
+        head = Adw.HeaderBar(title_widget=title_box)
+        self.head_line = Gtk.Box(css_classes=["head-line"])
         self.rail_toggle = Gtk.ToggleButton(icon_name="sidebar-show-right-symbolic",
                                             tooltip_text="Changes and History (Ctrl+Shift+D)")
         self.menu_button = Gtk.MenuButton(icon_name="view-more-symbolic", tooltip_text="Session",
@@ -287,7 +309,8 @@ class Agents(Adw.ApplicationWindow):
         head.pack_end(self.rail_toggle)
         self.banner = Adw.Banner()
         self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
-        self.term_stack = Gtk.Stack(vexpand=True)
+        self.term_stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE,
+                                    transition_duration=150)
         self.stopped = Adw.StatusPage(icon_name="media-playback-pause-symbolic", css_classes=["compact"])
         again = Gtk.Button(label="Continue", halign=Gtk.Align.CENTER, css_classes=["pill", "suggested-action"])
         again.connect("clicked", lambda *_: self.resume())
@@ -313,12 +336,18 @@ class Agents(Adw.ApplicationWindow):
         self.overlay.set_vexpand(True)
         content = Adw.ToolbarView(content=body, css_classes=["stage"])
         content.add_top_bar(head)
+        content.add_top_bar(self.head_line)
 
         self.split = Adw.NavigationSplitView(sidebar=Adw.NavigationPage(child=side, title="Agents"),
                                              content=Adw.NavigationPage(child=content, title="Session"),
                                              min_sidebar_width=250, max_sidebar_width=330)
         self.toasts = Adw.ToastOverlay(child=self.split)
         self.set_content(self.toasts)
+        # it arrives rather than appears, as Pulsar Commands does
+        self.split.set_opacity(0)
+        self.fade_in = Adw.TimedAnimation.new(self.split, 0, 1, 180,
+                                              Adw.PropertyAnimationTarget.new(self.split, "opacity"))
+        self.connect("map", lambda *_: self.fade_in.play())
         narrow = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 640sp"))
         narrow.add_setter(self.split, "collapsed", True)
         self.add_breakpoint(narrow)
@@ -426,6 +455,8 @@ class Agents(Adw.ApplicationWindow):
             self.composer.set_session(s)
         elif self.current:
             self._clear_current()
+        if self.term_stack.get_visible_child_name() == "none" and self.listed_once:
+            self.launcher._cards()
         if self.want and self.want in self.sessions:
             w, self.want = self.want, None
             self.show_session(w)
@@ -663,7 +694,20 @@ class Agents(Adw.ApplicationWindow):
         m.append_section(None, end)
         return m
 
+    def _title_state(self, s):
+        st = (s or {}).get("state")
+        for c in ("working", "needs"):
+            self.title_dot.remove_css_class(c)
+        self.head_line.remove_css_class("needs")
+        if st == "running":
+            self.title_dot.add_css_class("working")
+        elif st == "waiting":
+            self.title_dot.add_css_class("needs")
+            self.head_line.add_css_class("needs")
+        self.title_dot.set_visible(st in ("running", "waiting"))
+
     def _actions_for(self, s):
+        self._title_state(s)
         live = bool(s) and s.get("state") != "ended"
         for name, on in (("stop", live), ("rename", bool(s)), ("archive-current", bool(s)),
                          ("terminal", bool(s) and bool(s.get("agent")))):
@@ -1224,7 +1268,27 @@ class Rail:
             return
         self.diff_text = out if ok else ""
         self.buffer.set_text(self.diff_text)
+        self._tint()
         self.buffer.place_cursor(self.buffer.get_start_iter())
+
+    def _tint(self):
+        """Added and removed lines on a faint green or red, hunks on the
+        accent, so the diff reads at a glance as a review does."""
+        tags = self.buffer.get_tag_table()
+        if tags.lookup("add") is None:
+            for name, rgba in (("add", "rgba(46,194,126,.13)"), ("del", "rgba(237,51,59,.13)"),
+                               ("hunk", "rgba(120,130,255,.12)")):
+                c = Gdk.RGBA()
+                c.parse(rgba)
+                self.buffer.create_tag(name, paragraph_background_rgba=c)
+        for i, ln in enumerate(self.diff_text.split("\n")):
+            tag = ("hunk" if ln.startswith("@@") else "add" if ln.startswith("+") and not ln.startswith("+++")
+                   else "del" if ln.startswith("-") and not ln.startswith("---") else None)
+            if tag:
+                ok_, start = self.buffer.get_iter_at_line(i)
+                end = start.copy()
+                end.forward_to_line_end()
+                self.buffer.apply_tag_by_name(tag, start, end)
 
     def _comment_target(self):
         it = self.buffer.get_iter_at_mark(self.buffer.get_insert())
@@ -1371,6 +1435,10 @@ class Launcher:
                               label="Enter starts it. Empty, the agent starts with no message.")
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, valign=Gtk.Align.CENTER,
                       margin_start=24, margin_end=24, margin_bottom=48)
+        self.mark = Gtk.Image(pixel_size=52, css_classes=["mark"], halign=Gtk.Align.START, margin_bottom=4)
+        self._mark()
+        Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._mark())
+        col.append(self.mark)
         col.append(top)
         col.append(Gtk.Box(css_classes=["hairline"]))
         for label, w in (("Project", self.projects), ("With", opts)):
@@ -1380,6 +1448,11 @@ class Launcher:
             row.append(w)
             col.append(row)
         col.append(self.hint)
+        self.resume_heading = Gtk.Label(label="Pick up where you left off", xalign=0,
+                                        css_classes=["launch-heading"], visible=False)
+        self.cards = Gtk.Box(spacing=8, homogeneous=True)
+        col.append(self.resume_heading)
+        col.append(self.cards)
         self.widget = Adw.Clamp(child=col, maximum_size=680, css_classes=["launcher"])
         self._loading = False
         self._load_agents()
@@ -1416,8 +1489,56 @@ class Launcher:
                 out.append(p)
         return out
 
+    def _mark(self):
+        d = next((d for d in BRAND if (d / "pulsar-mark.svg").exists()), None)
+        if d is None:
+            self.mark.set_visible(False)
+            return
+        name = "pulsar-mark.svg" if Adw.StyleManager.get_default().get_dark() else "pulsar-mark-light.svg"
+        px = 52 * 2
+        try:
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_size(str(d / name), px, px)
+            self.mark.set_from_paintable(Gdk.Texture.new_for_pixbuf(pb))
+        except GLib.Error:
+            self.mark.set_visible(False)
+
+    def _cards(self):
+        """The three sessions most recently at work, one click from here."""
+        while (c := self.cards.get_first_child()) is not None:
+            self.cards.remove(c)
+        now = self.win._now()
+        ss = [s for s in self.win.sessions.values() if not s.get("archived")]
+        ss.sort(key=lambda s: ({"waiting": 0, "running": 1}.get(s.get("state"), 2),
+                               -(s.get("last_active") or s.get("started") or 0)))
+        for s in ss[:3]:
+            agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "")
+            box = Gtk.Box(spacing=10)
+            tile = Gtk.Label(label=AGENT_TILES.get(s.get("agent"), agent[:1].upper()), css_classes=["tile"],
+                             valign=Gtk.Align.CENTER)
+            if s.get("state") == "waiting":
+                tile.add_css_class("needs")
+            elif s.get("state") == "running":
+                tile.add_css_class("working")
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER, hexpand=True)
+            text.append(Gtk.Label(label=session_title(s), xalign=0, css_classes=["session-title"],
+                                  ellipsize=Pango.EllipsizeMode.END))
+            sub = Gtk.Label(label=session_status(s, now), xalign=0, css_classes=["caption", "dim-label"],
+                            ellipsize=Pango.EllipsizeMode.END)
+            if s.get("state") == "waiting":
+                sub.add_css_class("needs")
+            text.append(sub)
+            text.append(Gtk.Label(label=os.path.basename(session_project(s).rstrip("/")), xalign=0,
+                                  css_classes=["caption", "dim-label"], ellipsize=Pango.EllipsizeMode.END))
+            box.append(tile)
+            box.append(text)
+            card = Gtk.Button(child=box, css_classes=["flat", "resume-card"])
+            card.connect("clicked", lambda _b, n=s["name"]: self.win.show_session(n))
+            self.cards.append(card)
+        self.resume_heading.set_visible(bool(ss))
+
     def show(self, project=None):
         """Fill in the projects; the one asked for, else the latest, chosen."""
+        self._cards()
         while (c := self.projects.get_first_child()) is not None:
             self.projects.remove(c)
         self.chips = {}
