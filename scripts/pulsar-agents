@@ -40,7 +40,7 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
-                        session_icon, hsl_rgb, human_bytes, disk_level, home, parse,
+                        session_icon, hsl_rgb, human_bytes, disk_level, home, parse, split_project,
                         merge_machine_sessions, agent_argv as _agent_argv,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
@@ -61,6 +61,7 @@ CSS = """
 .pulsar-agents .sessions row.session:selected:hover { background-color: alpha(@accent_color, .17); }
 .pulsar-agents .sessions row.project { margin: 14px 8px 2px 8px; border-radius: 8px; min-height: 0; padding: 6px 0; }
 .pulsar-agents .project-label { font-size: .8em; font-weight: 700; color: alpha(currentColor, .5); }
+.pulsar-agents .project-machine { color: alpha(currentColor, .5); }
 .pulsar-agents row.project .fold { opacity: 0; transition: opacity 120ms; }
 .pulsar-agents row.project:hover .fold, .pulsar-agents row.project.collapsed .fold { opacity: .5; }
 .pulsar-agents .tile { min-width: 34px; min-height: 34px; border-radius: 10px; font-weight: 700; font-size: .9em;
@@ -1418,14 +1419,23 @@ class ProjectRow(Gtk.ListBoxRow):
         super().__init__(selectable=False, css_classes=["project"] + (["collapsed"] if collapsed else []),
                          tooltip_text=home(project) or None, activatable=not compact)
         self.project = project
+        # a project on another machine: the machine icon the status bar uses, before its name
+        machine = split_project(project)[0]
         box = Gtk.Box(spacing=6, margin_start=10, margin_end=8)
+        if machine:
+            box.append(Gtk.Image(icon_name="network-server-symbolic", pixel_size=12, css_classes=["project-machine"]))
         box.append(Gtk.Label(label=label, xalign=0, hexpand=True, css_classes=["project-label"],
                              ellipsize=Pango.EllipsizeMode.END))
         self.dot = Gtk.Box(css_classes=["dot"], valign=Gtk.Align.CENTER, visible=False)
         box.append(self.dot)
         box.append(Gtk.Image(icon_name="pan-end-symbolic" if collapsed else "pan-down-symbolic",
                              css_classes=["fold"], pixel_size=12))
-        self.set_child(box if not compact else Gtk.Box(css_classes=["fold-rule"]))
+        if compact and machine:
+            # narrowed: the icon alone marks where that machine's sessions start
+            self.set_child(Gtk.Image(icon_name="network-server-symbolic", pixel_size=12, halign=Gtk.Align.CENTER,
+                                     css_classes=["project-machine"], tooltip_text=label))
+        else:
+            self.set_child(box if not compact else Gtk.Box(css_classes=["fold-rule"]))
         self.collapsed = collapsed
 
     def set_attention(self, on):
