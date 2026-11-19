@@ -3067,6 +3067,13 @@ sandbox_sync_in() {
                 local t; t=$(mktemp)
                 if jq 'del(.mcpServers.pulsar)' "$home/$rel" > "$t" 2>/dev/null; then mv "$t" "$home/$rel"; else rm -f "$t"; fi
             fi
+            # Codex: the block pulsar agent add wrote (marked), nothing of the user's
+            if [ "$rel" = .codex/config.toml ] && grep -q '^# pulsar-mcp: written by' "$home/$rel"; then
+                local t; t=$(mktemp)
+                awk '/^# pulsar-mcp: written by/ { skip = 1; next }
+                     skip && /^\[/ && !/^\[mcp_servers\.pulsar\]/ { skip = 0 }
+                     !skip' "$home/$rel" > "$t" && mv "$t" "$home/$rel"
+            fi
         else
             # gone on the host: gone in here too, not left over from before
             rm -f "${home:?}/$rel"
@@ -3244,6 +3251,10 @@ sandbox_git_defuse() {
         [ -z "${seen["$rec"]:-}" ] || continue
         p=${rec#*$'\t'}; p=${p#*$'\t'}
         { [ -e "$p" ] || [ -L "$p" ]; } || continue
+        # a worktree made meanwhile, on the host (another session's
+        # --worktree): its registration is in .git/worktrees, which the
+        # sandbox has read-only, so its .git file can't be the agent's
+        [ "$(basename "$p")" != .git ] || ! worktree_main "$(dirname "$p")" >/dev/null || continue
         rm -rf "${p}.from-sandbox"
         mv "$p" "${p}.from-sandbox"
         printf 'note: the sandboxed agent left %s, which your git would follow; renamed to %s.from-sandbox. Read it, and any git directory it points at, before renaming it back.\n' \
@@ -3313,8 +3324,13 @@ sandbox_run() {
     sandbox_build
     local img; img=$(sandbox_image)
 
-    local id mirror sock policy
+    local id sid mirror sock policy
     id=$(gate_id "$root")
+    # the mirror is the repository's; the socket and the state files are this
+    # session's, or two sandboxed sessions in one repository take each
+    # other's (the second's socket replaced the first's, and whichever ended
+    # first checked .git files against the other's snapshot)
+    sid="${id}.$$"
     mirror="${GATE_DIR}/${id}.git"
     python3 "$GATE_TOOL" setup "$mirror" "$root" "$GATE_TOOL" || die "could not set up the push gate"
     policy=$(setting_resolve push "$root"); policy=${policy%%$'\t'*}
@@ -3327,9 +3343,13 @@ sandbox_run() {
         before=$(sha256sum < "$HOME/$cred" | cut -c1-64)
     fi
 
+    # A worktree session sees its own worktree, not the whole checkout (where
+    # the other sessions' worktrees are); the repository's .git comes in
+    # through sandbox_git_mounts, as it must for commits.
+    local tree=${wt:-$root}
     local -a args=(run --rm -i --userns=keep-id --security-opt label=disable
         -v "${home}:${HOME}"
-        -v "${root}:${root}"
+        -v "${tree}:${tree}"
         -w "$PWD"
         -e "HOME=${HOME}" -e "USER=$(id -un)" -e PULSAR_SANDBOX=1
         # Fedora adds ~/.local/bin only for login shells; an agent's hooks
@@ -3340,17 +3360,24 @@ sandbox_run() {
     while IFS= read -r p; do
         [ -z "$p" ] || args+=(-v "$p")
     done < <(sandbox_git_mounts "$root" "$wtgit")
-    local gitstate="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gitstate-${id}"
+    local gitstate="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gitstate-${sid}"
     mkdir -p "$(dirname "$gitstate")"
     sandbox_git_state "$root" > "$gitstate"
     while IFS= read -r p; do
         [ -z "$p" ] || args+=(-v "$p")
     done < <(sandbox_ro_mounts "$name")
+    # opencode's config folder comes in read-only, as it is; its opencode.json
+    # without the pulsar MCP server goes over that one file
+    local occ="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+    if [ "$name" = opencode ] && [ -f "$occ" ] && have jq && jq -e '.mcp.pulsar' "$occ" >/dev/null 2>&1; then
+        jq 'del(.mcp.pulsar)' "$occ" > "${home}/.pulsar-opencode.json" 2>/dev/null \
+            && args+=(-v "${home}/.pulsar-opencode.json:${occ}:ro")
+    fi
     local p existed=""
     for p in $PROJECT_AGENT_CONFIG; do
-        { [ -e "${root}/${p}" ] || [ -L "${root}/${p}" ]; } || continue
+        { [ -e "${tree}/${p}" ] || [ -L "${tree}/${p}" ]; } || continue
         existed+="${p} "
-        args+=(-v "${root}/${p}:${root}/${p}:ro")
+        args+=(-v "${tree}/${p}:${tree}/${p}:ro")
     done
     for p in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git"; do
         [ ! -e "$p" ] || args+=(-v "${p}:${p}:ro")
@@ -3393,7 +3420,7 @@ sandbox_run() {
 
     # Every pinned remote's URL, rewritten to the gate, in the env rather than
     # in the project's config, which the user's own git keeps using.
-    sock="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.sock"
+    sock="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${sid}.sock"
     mkdir -p "$(dirname "$sock")"
     local n=0 rname url pin
     args+=(-v "${GATE_TOOL}:/usr/libexec/pulsar/pulsar-agent-gate:ro" -v "${sock}:/run/pulsar-gate.sock")
@@ -3418,19 +3445,19 @@ sandbox_run() {
     done < <(git -C "$mirror" config --get-regexp '^remote\..*\.url$' | sed 's/^remote\.\(.*\)\.url /\1 /')
     args+=(-e "GIT_CONFIG_COUNT=${n}")
 
-    local pushed="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.pushed"
+    local pushed="${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${sid}.pushed"
     rm -f "$pushed"
     PULSAR_GATE_PUSHED="$pushed" python3 "$GATE_TOOL" serve "$sock" "$mirror" \
         2>>"${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log" &
     local gate_pid=$!
     # shellcheck disable=SC2064  # the values are fixed now, on purpose
     # git's own files are defused first: sandbox_tracking runs git on the host
-    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'; sandbox_git_defuse '${root}' '${gitstate}'; sandbox_defuse '${root}' '${existed}'; sandbox_tracking '${root}' '${pushed}' '${mirror}'; sandbox_creds_out '${name}' '${home}' '${before}'" EXIT
+    trap "kill ${gate_pid} 2>/dev/null; rm -f '${sock}'; sandbox_git_defuse '${root}' '${gitstate}'; sandbox_defuse '${tree}' '${existed}'; sandbox_tracking '${root}' '${pushed}' '${mirror}'; sandbox_creds_out '${name}' '${home}' '${before}'" EXIT
     local waited=0
     while [ ! -S "$sock" ] && [ "$waited" -lt 50 ]; do sleep 0.1; waited=$((waited + 1)); done
     [ -S "$sock" ] || die "the push gate did not start (see ${XDG_RUNTIME_DIR:-/tmp}/pulsar/gate-${id}.log)"
 
-    printf 'sandboxed: %s and the paths you allowed are visible; push: %s, through the gate\n' "$root" "$policy" >&2
+    printf 'sandboxed: %s and the paths you allowed are visible; push: %s, through the gate\n' "$tree" "$policy" >&2
     [ "$name" != aider ] || [ ! -r "$AGENTS_MD" ] || set -- --read /usr/share/pulsar/AGENTS.md "$@"
     podman "${args[@]}" "$img" "$real" "$@"
 }

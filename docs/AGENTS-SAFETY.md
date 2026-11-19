@@ -110,8 +110,10 @@ as it starts.
 
 What it sees:
 
-- **The project** (the git root), read-write, except what git runs things
-  from, which is read-only: `.git/config`, `.git/hooks`, each submodule's
+- **The project** (the git root), read-write; for a session in its own
+  worktree (`--worktree`), only that worktree and the repository's `.git`,
+  not the checkout or the other sessions' worktrees. Read-only in either
+  case is what git runs things from: `.git/config`, `.git/hooks`, each submodule's
   config and hooks under `.git/modules`, and any in-project hooks path or
   included config (`core.hooksPath` such as husky's `.husky/_`,
   `include.path`). The agent can commit but can't plant a hook or

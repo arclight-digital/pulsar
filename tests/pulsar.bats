@@ -5189,7 +5189,7 @@ wt_env() {
     [ "$(cat f.txt)" = new ]
 }
 
-@test "a sandboxed agent in a session worktree sees the checkout; its git pointers are read-only" {
+@test "a sandboxed agent in a session worktree sees its worktree and the repository's .git, not the checkout or other worktrees" {
     wt_env
     git -C "$PROJ" worktree add -q "${PROJ}/.worktrees/other" -b other
     "$PULSAR" agent run claude --tmux fix --worktree >/dev/null 2>&1
@@ -5198,8 +5198,11 @@ wt_env() {
     cd "$WT"
     run "$PULSAR" agent run claude --sandbox -- --version
     [ "$status" -eq 0 ] || fail "$output"
-    [[ "$output" == *"sandboxed: ${PROJ} and the paths you allowed are visible"* ]]
-    grep -qx "${PROJ}:${PROJ}" "$PODMAN_LOG"
+    [[ "$output" == *"sandboxed: ${WT} and the paths you allowed are visible"* ]] || fail "$output"
+    grep -qx "${WT}:${WT}" "$PODMAN_LOG"
+    ! grep -qx "${PROJ}:${PROJ}" "$PODMAN_LOG" || fail "the whole checkout is mounted"
+    ! grep -q "^${PROJ}/.worktrees/other:" "$PODMAN_LOG" || fail "another worktree is mounted"
+    grep -qx "${PROJ}/.git:${PROJ}/.git" "$PODMAN_LOG"
     grep -qx "${adm}:${adm}" "$PODMAN_LOG"
     local f
     for f in commondir gitdir config.worktree; do grep -qx "${adm}/${f}:${adm}/${f}:ro" "$PODMAN_LOG" || fail "$f"; done
@@ -6019,4 +6022,71 @@ disk_env() {
     rm -rf "$s"
     PULSAR_SCRATCH="$s" "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
     grep -c -- "PULSAR_SCRATCH" "$PODMAN_LOG" | grep -qx 0
+}
+
+@test "two sandboxed sessions in one repository each have their own gate socket and .git snapshot" {
+    sandbox_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    local first; first=$(grep -o '[^:]*/gate-[0-9a-f]*\.[0-9]*\.sock' "$PODMAN_LOG" | head -1)
+    "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    local second; second=$(grep -o '[^:]*/gate-[0-9a-f]*\.[0-9]*\.sock' "$PODMAN_LOG" | head -1)
+    [ -n "$first" ] && [ -n "$second" ] || fail "$(cat "$PODMAN_LOG")"
+    [ "$first" != "$second" ] || fail "both used $first"
+    # the same repository's mirror, though
+    [ "${first%.*.sock}" = "${second%.*.sock}" ]
+}
+
+@test "session end leaves a worktree made meanwhile on the host alone, and still renames a .git the agent planted" {
+    wt_env
+    "$PULSAR" agent sandbox on --here >/dev/null
+    # what happens "inside" the sandbox while it runs: the host makes a worktree for
+    # another session, and the agent plants a .git file of its own
+    cat > "${STUB}/podman" <<SH
+#!/bin/sh
+case "\$1" in
+    image) exit 0 ;;
+    run) shift; for a in "\$@"; do printf '%s\n' "\$a"; done > "$PODMAN_LOG"
+         git -C "$PROJ" worktree add -q "$PROJ/.worktrees/new" -b new
+         mkdir -p "$PROJ/planted"; printf 'gitdir: /tmp/evil\n' > "$PROJ/planted/.git"
+         exit 0 ;;
+esac
+SH
+    chmod +x "${STUB}/podman"
+    cd "$PROJ"
+    run "$PULSAR" agent run claude --sandbox
+    [ -f "${PROJ}/.worktrees/new/.git" ] || fail "the new worktree's .git was renamed: $output"
+    [ ! -e "${PROJ}/.worktrees/new/.git.from-sandbox" ]
+    git -C "${PROJ}/.worktrees/new" rev-parse --is-inside-work-tree >/dev/null
+    [ ! -e "${PROJ}/planted/.git" ] && [ -f "${PROJ}/planted/.git.from-sandbox" ] || fail "$output"
+    [[ "$output" == *"planted/.git"* ]]
+}
+
+@test "a sandboxed codex or opencode gets its config without the host's pulsar MCP server, and the user's own entries as they are" {
+    sandbox_env
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/codex"; chmod +x "${STUB}/codex"
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/opencode"; chmod +x "${STUB}/opencode"
+    mkdir -p "${HOME}/.codex" "${HOME}/.config/opencode"
+    printf 'model = "gpt"\n\n[mcp_servers.mine]\ncommand = "x"\n\n# pulsar-mcp: written by pulsar agent add codex\n[mcp_servers.pulsar]\ncommand = "/usr/bin/pulsar"\nargs = ["mcp"]\n\n[profiles.fast]\nmodel = "mini"\n' \
+        > "${HOME}/.codex/config.toml"
+    echo '{"theme":"t","mcp":{"pulsar":{"type":"local","command":["/usr/bin/pulsar","mcp"]},"mine":{"type":"local","command":["x"]}}}' \
+        > "${HOME}/.config/opencode/opencode.json"
+    local sh="${HOME}/.local/share/pulsar/sandbox"
+    cd "$PROJ"
+    run "$PULSAR" agent run codex --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    ! grep -q 'mcp_servers.pulsar\|pulsar-mcp' "${sh}/codex/.codex/config.toml" || fail "$(cat "${sh}/codex/.codex/config.toml")"
+    grep -qx '\[mcp_servers.mine\]' "${sh}/codex/.codex/config.toml"
+    grep -qx 'model = "mini"' "${sh}/codex/.codex/config.toml"
+    grep -q 'mcp_servers.pulsar' "${HOME}/.codex/config.toml"
+    run "$PULSAR" agent run opencode --sandbox
+    [ "$status" -eq 0 ] || fail "$output"
+    local occ="${HOME}/.config/opencode/opencode.json"
+    grep -qx "${sh}/opencode/.pulsar-opencode.json:${occ}:ro" "$PODMAN_LOG" || fail "$(cat "$PODMAN_LOG")"
+    jq -e '.mcp.pulsar == null and .mcp.mine.command == ["x"] and .theme == "t"' "${sh}/opencode/.pulsar-opencode.json"
+    jq -e '.mcp.pulsar.command[0] == "/usr/bin/pulsar"' "$occ"
+    # without the entry, nothing goes over the user's file
+    echo '{"theme":"t"}' > "$occ"
+    run "$PULSAR" agent run opencode --sandbox
+    ! grep -q '.pulsar-opencode.json' "$PODMAN_LOG"
 }
