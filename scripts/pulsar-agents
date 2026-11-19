@@ -59,7 +59,7 @@ CSS = """
 .pulsar-agents .sessions row.session { border-radius: 12px; margin: 1px 8px; transition: background-color 120ms ease-out; }
 .pulsar-agents .sessions row.session:selected { background-color: alpha(@accent_color, .13); }
 .pulsar-agents .sessions row.session:selected:hover { background-color: alpha(@accent_color, .17); }
-.pulsar-agents .sessions row.project { margin: 14px 8px 2px 8px; border-radius: 8px; min-height: 0; padding: 2px 0; }
+.pulsar-agents .sessions row.project { margin: 14px 8px 2px 8px; border-radius: 8px; min-height: 0; padding: 6px 0; }
 .pulsar-agents .project-label { font-size: .8em; font-weight: 700; color: alpha(currentColor, .5); }
 .pulsar-agents row.project .fold { opacity: 0; transition: opacity 120ms; }
 .pulsar-agents row.project:hover .fold, .pulsar-agents row.project.collapsed .fold { opacity: .5; }
