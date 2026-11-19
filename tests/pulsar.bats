@@ -6582,11 +6582,18 @@ stop_hook() {
     sleep 30 3>&- & local sp=$!
     local err="${BATS_TEST_TMPDIR}/rewake"
     local waiter; waiter=$(PULSAR_MAIL_WAIT_TICKS=20 stop_hook sid-a Stop 1)
+    # an older waiter (the session's start) gives way to the newer one (this turn's end)
+    ( rc=0; CLAUDE_PID=$sp sh -c "$waiter" </dev/null >/dev/null 2>&1 || rc=$?; echo "exit $rc" > "${BATS_TEST_TMPDIR}/old.status" ) 3>&- &
+    local op=$!
+    sleep 0.5
     ( rc=0; echo '{"hook_event_name":"Stop"}' | CLAUDE_PID=$sp sh -c "$waiter" 2>"$err" >/dev/null || rc=$?
       echo "exit $rc" >> "${err}.status" ) 3>&- &
     local wp=$!
     FAKE_WATCHING=a PULSAR_MAIL_WAIT=5 run "$PULSAR" agent send a --from b "the build is green"
     wait "$wp" || true
+    wait "$op" || true
+    [ "$(cat "${BATS_TEST_TMPDIR}/old.status")" = "exit 0" ] || { kill $sp; msg_teardown; fail "old waiter: $(cat "${BATS_TEST_TMPDIR}/old.status")"; }
+    [ ! -e "${alerts}/sid-a.mail.waiter" ] || { kill $sp; msg_teardown; fail "waiter file left"; }
     [[ "$output" == "delivered to a (m"* ]] || { kill $sp; msg_teardown; fail "$output"; }
     [ "$(cat "${err}.status")" = "exit 2" ] || { kill $sp; msg_teardown; fail "$(cat "${err}.status")"; }
     [[ "$(cat "$err")" == "[From the agent session b, via Pulsar, id m"*$'\n'"the build is green" ]] || { kill $sp; msg_teardown; fail "$(cat "$err")"; }
@@ -6610,4 +6617,5 @@ stop_hook() {
     # a waiter with nothing to take gives up, quietly
     run env CLAUDE_PID=999999999 sh -c "$(PULSAR_MAIL_WAIT_TICKS=1 stop_hook sid-a Stop 1)" <<<'{}'
     [ "$status" -eq 0 ] && [ -z "$output" ] || fail "$status $output"
+    [ ! -e "${alerts}/sid-a.mail.waiter" ] || fail "a waiter that gave up left its file"
 }

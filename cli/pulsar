@@ -4479,7 +4479,9 @@ agent_alert_settings() {
     # 2, which is what wakes it; the bell is for Pulsar, as above. It gives
     # up after an hour, and the next turn's end starts another.
     # shellcheck disable=SC2016  # expanded by the hook's sh
-    wait_cmd='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; cat > /dev/null; i=0; while [ $i -lt '"${MAIL_WAIT_TICKS}"' ]; do if [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null; then tail -n +3 "$m.taken" >&2; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 2; fi; sleep 1; i=$((i + 1)); done; exit 0'
+    # One waiter per conversation: each writes its PID to <id>.mail.waiter,
+    # and an older one that finds another's there gives up.
+    wait_cmd='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; w="$m.waiter"; cat > /dev/null; mkdir -p "${m%/*}"; echo $$ > "$w"; i=0; while [ $i -lt '"${MAIL_WAIT_TICKS}"' ]; do [ "$(cat "$w" 2>/dev/null)" = "$$" ] || exit 0; if [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null; then rm -f "$w"; tail -n +3 "$m.taken" >&2; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 2; fi; sleep 1; i=$((i + 1)); done; rm -f "$w"; exit 0'
     jq -cn --arg c "$cmd" --arg s "$stop" --arg w "$wait_cmd" --argjson t "$((MAIL_WAIT_TICKS + 60))" '
         {type: "command", command: $w, async: true, asyncRewake: true, timeout: $t} as $waiter
         | {hooks: {Stop: [{hooks: [{type: "command", command: $s}]}, {hooks: [$waiter]}],
