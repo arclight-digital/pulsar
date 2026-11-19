@@ -6217,8 +6217,10 @@ SH
     mkdir -p "$(dirname "$h")"; echo '{"mine":{"Stop":[{"type":"command","command":"x"}]}}' > "$h"
     "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
     rm "${TMUX_LIVE}/ag"
+    local inode; inode=$(stat -c %i "$h")
     "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
     [ "$(jq -r 'keys | join(",")' "$h")" = "mine,pulsar" ] || fail "$(cat "$h")"
+    [ "$(stat -c %i "$h")" = "$inode" ] || fail "rewrote a current hooks.json"
     [ "$(jq -r '.pulsar.Stop | length' "$h")" = 1 ]
     # what it runs: rings when agy is fully idle and only in a Pulsar session
     local cmd bell="${BATS_TEST_TMPDIR}/tty"; cmd=$(jq -r '.pulsar.Stop[0].command' "$h")
@@ -6250,6 +6252,11 @@ def run(env):
 base = {k: v for k, v in os.environ.items() if k not in ("PULSAR_TTY", "PULSAR_SANDBOX")}
 print(run(base), run(dict(base, PULSAR_SANDBOX="1")))')
     [ "$pty" = "False True" ] || fail "outside a session / in the sandbox: $pty"
+    # an older one of ours (it rings PULSAR_TTY) is brought up to date
+    jq '.pulsar.Stop[0].command = "printf x > \"$PULSAR_TTY\""' "$h" > "${h}.old" && cp "${h}.old" "$h"
+    rm "${TMUX_LIVE}/ag"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(jq -r '.pulsar.Stop[0].command' "$h")" = "$cmd" ] || fail "kept the old hook: $(cat "$h")"
     # a "pulsar" hook the user wrote before is never replaced
     echo '{"pulsar":{"Stop":[{"type":"command","command":"mine"}]}}' > "${h}.mine"
     cp "$h" "${h}.ours"; cp "${h}.mine" "$h"
@@ -6618,4 +6625,49 @@ stop_hook() {
     run env CLAUDE_PID=999999999 sh -c "$(PULSAR_MAIL_WAIT_TICKS=1 stop_hook sid-a Stop 1)" <<<'{}'
     [ "$status" -eq 0 ] && [ -z "$output" ] || fail "$status $output"
     [ ! -e "${alerts}/sid-a.mail.waiter" ] || fail "a waiter that gave up left its file"
+}
+
+
+# agy's Stop hook command, as Pulsar installs it in ~/.gemini/config/hooks.json
+agy_hook() {
+    bash -c "have() { command -v \"\$1\" >/dev/null; }; source <(sed -n '/^AGENT_BELL=/p;/^agy_turn_hook() {/,/^}/p' '$PULSAR'); agy_turn_hook" >/dev/null
+    jq -r '.pulsar.Stop[0].command' "${HOME}/.gemini/config/hooks.json"
+}
+
+@test "inbox: agy's mail goes in through its Stop hook at a real turn end, as agy's own continue; not in its sandbox" {
+    msg_env
+    printf 'agent=agy\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/g.session"
+    "${T[@]}" new-session -d -s g -x 120 -y 30 "stty -echo; cat"
+    "$PULSAR" agent send g --from b "the deploy is done" >/dev/null
+    local mail="${PULSAR_AGENT_SESSIONS}/g.mail"
+    [ "$(head -n 1 "$mail" | jq -r .decision)" = continue ] || { msg_teardown; fail "$(cat "$mail")"; }
+    local cmd out tty="${BATS_TEST_TMPDIR}/tty"; cmd=$(agy_hook)
+    # a subagent finishing is not the turn's end: nothing taken
+    out=$(printf '{"fullyIdle":false}' | PULSAR_TTY="$tty" PULSAR_SESSION_RECORD="${PULSAR_AGENT_SESSIONS}/g.session" sh -c "$cmd")
+    [ -z "$out" ] && [ -f "$mail" ] || { msg_teardown; fail "$out"; }
+    # the turn's end: agy is told to continue with the message, and its bell lets Pulsar mark it delivered
+    out=$(printf '{"fullyIdle":true}' | PULSAR_TTY="$tty" PULSAR_SESSION_RECORD="${PULSAR_AGENT_SESSIONS}/g.session" sh -c "$cmd")
+    [ "$(jq -r .decision <<<"$out")" = continue ] || { msg_teardown; fail "$out"; }
+    [[ "$(jq -r .reason <<<"$out")" == "[From the agent session b, via Pulsar, id m"*$'\n'"the deploy is done" ]] || { msg_teardown; fail "$out"; }
+    "${T[@]}" set-option -t =g: @pulsar-alert Waiting
+    "$PULSAR" agent notify g
+    local pane; pane=$(pane_of g)
+    [ ! -s "${PULSAR_AGENT_SESSIONS}/g.inbox" ] && [ ! -e "${mail}.taken" ] || { msg_teardown; fail "still queued"; }
+    [ -z "$("${T[@]}" show-options -v -t =g: @pulsar-alert 2>/dev/null)" ] || { msg_teardown; fail "waiting"; }
+    [[ "$pane" != *"deploy is done"* ]] || { msg_teardown; fail "typed"; }
+    # outside a Pulsar session the same hook says nothing
+    "$PULSAR" agent send g --from b "x" >/dev/null
+    mkdir -p "${BATS_TEST_TMPDIR}/elsewhere"; head -n 1 "$mail" > "${BATS_TEST_TMPDIR}/elsewhere/.mail"
+    out=$(cd "${BATS_TEST_TMPDIR}/elsewhere" && printf '{"fullyIdle":true}' | env -u PULSAR_SESSION_RECORD PULSAR_TTY="$tty" sh -c "$cmd")
+    [ -z "$out" ] || { msg_teardown; fail "$out"; }
+    # sandboxed, it can't see the record's folder: no mail file, typed at the turn's end instead
+    printf 'agent=agy\ndir=%s\nsandbox=on\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/s.session"
+    "${T[@]}" new-session -d -s s -x 120 -y 30 "stty -echo; cat"
+    "$PULSAR" agent send s --from b "sandboxed" >/dev/null
+    [ ! -e "${PULSAR_AGENT_SESSIONS}/s.mail" ] || { msg_teardown; fail "mail for a sandbox"; }
+    "$PULSAR" agent notify s
+    sleep 0.4
+    pane=$(pane_of s)
+    msg_teardown
+    [[ "$pane" == *"sandboxed"* ]] || fail "$pane"
 }

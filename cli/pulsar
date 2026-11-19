@@ -2300,11 +2300,19 @@ agy_turn_hook() {
     have jq || return 0
     local f="${HOME}/.gemini/config/hooks.json" cmd tmp
     # shellcheck disable=SC2016
-    cmd='p=$(cat); case "$p" in *"\"fullyIdle\":false"*|*"\"fullyIdle\": false"*) exit 0 ;; esac; [ -n "${PULSAR_TTY}${PULSAR_SANDBOX}" ] || exit 0; '"$AGENT_BELL"
+    # At a real turn end (fullyIdle) in a Pulsar session: mail from other
+    # sessions (agent_mail_render, <session>.mail beside its record) is
+    # agy's own "keep going", {"decision": "continue", "reason": ...},
+    # taken by renaming it as Claude's is; then the bell, for Pulsar.
+    cmd='p=$(cat); case "$p" in *"\"fullyIdle\":false"*|*"\"fullyIdle\": false"*) exit 0 ;; esac; [ -n "${PULSAR_TTY}${PULSAR_SANDBOX}" ] || exit 0; m="${PULSAR_SESSION_RECORD%.session}.mail"; [ -n "${PULSAR_SESSION_RECORD:-}" ] && [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null && head -n 1 "$m.taken"; '"$AGENT_BELL"
     mkdir -p "$(dirname "$f")"
     [ -s "$f" ] || printf '{}\n' > "$f"
     jq -e 'type == "object"' "$f" >/dev/null 2>&1 || { printf '%s is not JSON; left alone\n' "$f"; return 0; }
-    jq -e '.pulsar' "$f" >/dev/null 2>&1 && return 0
+    # ours as this version writes it: nothing to do. An older one of ours
+    # (it rings $PULSAR_TTY) is replaced; a "pulsar" entry the user wrote stays.
+    local have; have=$(jq -r '.pulsar.Stop[0].command // empty' "$f" 2>/dev/null) || have=""
+    [ "$have" != "$cmd" ] || return 0
+    if jq -e '.pulsar' "$f" >/dev/null 2>&1 && [[ "$have" != *PULSAR_TTY* ]]; then return 0; fi
     tmp=$(mktemp "${f}.XXXXXX")
     jq --arg c "$cmd" '.pulsar = {Stop: [{type: "command", command: $c, timeout: 5}]}' "$f" > "$tmp" \
         && chmod --reference="$f" "$tmp" && mv "$tmp" "$f"
@@ -4980,7 +4988,7 @@ agent_send() {
         '{id: $i, at: $a, from: $f, to: $t, text: $x} + (if $r == "" then {} else {re: $r} end)')
     printf '%s\n' "$line" >> "$MSG_LOG"
     printf '%s\n' "$line" >> "${AGENT_SESSIONS}/${to}.inbox"
-    if [ "$now" = 0 ] && mail_paths "$to" >/dev/null; then
+    if [ "$now" = 0 ] && [ "$(session_get "$to" agent || true)" = claude ] && mail_paths "$to" >/dev/null; then
         # Claude: its mail waiter takes it between turns, nothing typed
         agent_mail_render "$to"
         if mail_wait "$to"; then
@@ -5025,9 +5033,17 @@ inbox_text() {
 mail_paths() {
     local n=$1 agent id
     agent=$(session_get "$n" agent) || return 1
-    id=$(session_get "$n" id) || return 1
-    [ "$agent" = claude ] && [ -n "$id" ] || return 1
-    printf '%s\n' "${HOME}/${AGENT_ALERTS_REL}/${id}.mail" "${SANDBOX_HOMES}/claude/${AGENT_ALERTS_REL}/${id}.mail"
+    id=$(session_get "$n" id) || id=""
+    case "$agent" in
+        claude)
+            [ -n "$id" ] || return 1
+            printf '%s\n' "${HOME}/${AGENT_ALERTS_REL}/${id}.mail" "${SANDBOX_HOMES}/claude/${AGENT_ALERTS_REL}/${id}.mail" ;;
+        agy)
+            # its hook finds it beside the session's record, which a sandbox doesn't see
+            [ "$(session_get "$n" sandbox || true)" != on ] || return 1
+            printf '%s\n' "${AGENT_SESSIONS}/${n}.mail" ;;
+        *) return 1 ;;
+    esac
 }
 
 # The queue, as the answer Claude's Stop hook gives: line 1 Stop's JSON,
@@ -5039,7 +5055,9 @@ agent_mail_render() {
     [ ${#paths[@]} -gt 0 ] || return 0
     if [ -s "$inbox" ]; then
         text=$(inbox_text "$inbox") || return 0
-        json=$(jq -n -c --arg r "$text" '{decision: "block", reason: $r}') || return 0
+        # Claude's Stop says "block" to keep going, agy's says "continue"
+        local word="block"; [ "$(session_get "$n" agent || true)" != agy ] || word="continue"
+        json=$(jq -n -c --arg r "$text" --arg d "$word" '{decision: $d, reason: $r}') || return 0
         ids=$(jq -r -s 'map(.id // empty) | join(" ")' "$inbox")
     fi
     for m in "${paths[@]}"; do

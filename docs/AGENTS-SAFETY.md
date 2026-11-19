@@ -286,10 +286,12 @@ gets it from its own hooks, and nothing is typed: at the end of a turn its
 Stop hook answers "keep going" with the messages, and while it sits idle a
 background hook (`asyncRewake`) waits up to an hour for mail and wakes it
 with the messages. That can happen while you're looking at the session; it
-doesn't touch what you're typing. Every other agent gets it typed into its
-prompt with Enter, so for them it waits until the agent sits at its own
-prompt (the turn-end hooks Pulsar gives Codex and Antigravity CLI) and nobody
-is looking at the session. It never goes in on a permission question, where
+doesn't touch what you're typing. Antigravity CLI gets it from its Stop hook
+the same way at the end of a turn ("continue", in agy's words), unless it is
+sandboxed. Codex CLI, and an idle or sandboxed Antigravity CLI, get it typed
+into the prompt with Enter, so for them it waits until the agent sits at its
+own prompt (the turn-end hooks Pulsar gives them) and nobody is looking at
+the session. It never goes in on a permission question, where
 that Enter would answer for you.
 
 Every message is logged in `~/.local/state/pulsar/agents/messages.log`. One
