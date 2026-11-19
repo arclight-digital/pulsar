@@ -103,9 +103,17 @@ CSS = """
 .pulsar-agents .added { color: @success_color; }
 .pulsar-agents .removed { color: @error_color; }
 .pulsar-agents .placeholder { opacity: .45; }
-.pulsar-agents.compact .sessions row.session { margin: 2px 6px; padding: 0; }
-.pulsar-agents.compact .sessions row.project { margin: 6px 14px 4px 14px; min-height: 0; padding: 0; }
+.pulsar-agents.compact .sessions row.project { margin: 8px 22px 6px 22px; min-height: 0; padding: 0; }
 .pulsar-agents .fold-rule { min-height: 1px; background-color: alpha(currentColor, .1); }
+.pulsar-agents .tile-new { min-width: 34px; min-height: 34px; border-radius: 10px; padding: 0;
+                           background: none; color: @accent_color;
+                           box-shadow: inset 0 0 0 1px alpha(@accent_color, .45); }
+.pulsar-agents .tile-new:hover { background-color: alpha(@accent_color, .14);
+                                 box-shadow: inset 0 0 0 1px alpha(@accent_color, .7), 0 0 12px alpha(@accent_color, .25); }
+.pulsar-agents .dot.corner { min-width: 9px; min-height: 9px; border-radius: 5px; margin: -2px -2px 0 0;
+                             box-shadow: 0 0 0 2px @sidebar_bg_color, 0 0 6px alpha(@accent_color, .6); }
+.pulsar-agents.compact .sessions row.session { border-radius: 12px; margin: 2px 8px; }
+.pulsar-agents.compact .sessions row.session > box { margin-top: 4px; margin-bottom: 4px; }
 .pulsar-agents levelbar.meter trough { min-height: 3px; border-radius: 2px; background-color: alpha(currentColor, .1);
                                        padding: 0; border: none; box-shadow: none; }
 .pulsar-agents levelbar.meter block { min-height: 3px; border-radius: 2px; border: none; }
@@ -313,7 +321,15 @@ class Agents(Adw.ApplicationWindow):
         self.archived_button = Gtk.Button(css_classes=["flat", "footer-button"], margin_start=6, margin_end=6,
                                           margin_bottom=6, margin_top=4, visible=False)
         self.archived_button.connect("clicked", lambda *_: ArchivedDialog(self).present(self))
-        side = Adw.ToolbarView(content=self.side_stack)
+        self.compact_new = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="New Session (Ctrl+Shift+N)",
+                                      css_classes=["tile-new"], halign=Gtk.Align.CENTER, margin_top=6,
+                                      margin_bottom=4, visible=False)
+        self.compact_new.connect("clicked", lambda *_: self.new_session())
+        side_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        side_body.append(self.compact_new)
+        side_body.append(self.side_stack)
+        self.side_stack.set_vexpand(True)
+        side = Adw.ToolbarView(content=side_body)
         side.add_top_bar(side_head)
         side.add_bottom_bar(self.archived_button)
 
@@ -428,14 +444,25 @@ class Agents(Adw.ApplicationWindow):
         self.split.set_sidebar_width_fraction(0 if on else .25)
         self.side_head.set_show_title(not on)
         self.new_button.set_visible(not on)
+        self.compact_new.set_visible(on)
         self.fold.set_icon_name("sidebar-show-right-symbolic" if on else "sidebar-show-symbolic")
         self.fold.set_tooltip_text("Widen the List (Ctrl+Shift+B)" if on else "Narrow the List (Ctrl+Shift+B)")
-        self.archived_button.get_parent() and self.archived_button.set_visible(
-            not on and any(x.get("archived") for x in self.sessions.values()))
+        self._archived_label()
         (self.add_css_class if on else self.remove_css_class)("compact")
         self._shape = None
         self._rebuild()
         self.remember(compact=on)
+
+    def _archived_label(self):
+        n = sum(1 for x in self.sessions.values() if x.get("archived"))
+        if self.compact:
+            self.archived_button.set_child(Gtk.Image(icon_name="document-open-recent-symbolic"))
+            self.archived_button.set_tooltip_text(f"Archived · {n}")
+        else:
+            self.archived_button.set_child(Adw.ButtonContent(icon_name="document-open-recent-symbolic",
+                                                             label=f"Archived · {n}"))
+            self.archived_button.set_tooltip_text(None)
+        self.archived_button.set_visible(bool(n))
 
     # ---- remembered state ----
     def remember(self, **kw):
@@ -490,9 +517,7 @@ class Agents(Adw.ApplicationWindow):
             self.remember()
         self._rebuild()
         archived = [s for s in found if s.get("archived")]
-        self.archived_button.set_child(Adw.ButtonContent(icon_name="document-open-recent-symbolic",
-                                                         label=f"Archived · {len(archived)}"))
-        self.archived_button.set_visible(bool(archived) and not self.compact)
+        self._archived_label()
         now = self._now()
         if self.current in self.sessions and not self.sessions[self.current].get("archived"):
             s = self.sessions[self.current]
@@ -1240,7 +1265,16 @@ class SessionRow(Gtk.ListBoxRow):
                           css_classes=["flat", "circular", "archive"])
         self.arch = arch
         arch.connect("clicked", lambda *_: win.archive(name))
-        box.append(self.tile)
+        self.cdot = Gtk.Box(css_classes=["dot", "corner"], halign=Gtk.Align.END, valign=Gtk.Align.START,
+                            visible=False)
+        tile_over = Gtk.Overlay(child=self.tile)
+        tile_over.add_overlay(self.cdot)
+        self.cmeter = meter_bar(30)
+        self.cmeter.set_halign(Gtk.Align.CENTER)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, valign=Gtk.Align.CENTER)
+        col.append(tile_over)
+        col.append(self.cmeter)
+        box.append(col)
         box.append(text)
         box.append(self.lock)
         box.append(self.dot)
@@ -1259,10 +1293,11 @@ class SessionRow(Gtk.ListBoxRow):
         self.add_controller(click)
 
     def set_compact(self, on):
-        """Narrowed list: the tile alone, its title on hover."""
+        """Narrowed list: the tile alone, a dot on its corner when it changed
+        unseen, its context under it, its title on hover."""
         self.compact = on
-        for w in (self.text, self.arch):
-            w.set_visible(not on)
+        for w in (self.text, self.arch, self.dot):
+            w.set_visible(not on and (w is not self.dot or self.dot.has_css_class("unseen")))
         self.lock.set_visible(not on and getattr(self, "sandboxed", False))
         self.set_tooltip_text(self.label.get_label() if on else None)
         self.get_child().set_halign(Gtk.Align.CENTER if on else Gtk.Align.FILL)
@@ -1292,13 +1327,17 @@ class SessionRow(Gtk.ListBoxRow):
             self.tile.add_css_class("working")
         if unseen:
             self.dot.add_css_class("unseen")
-        self.dot.set_visible(unseen)
+        compact = getattr(self, "compact", False)
+        self.dot.set_visible(unseen and not compact)
+        (self.cdot.add_css_class if unseen else self.cdot.remove_css_class)("unseen")
+        self.cdot.set_visible(unseen and compact)
         self.sandboxed = s.get("sandbox") == "on"
         self.lock.set_visible(self.sandboxed and not getattr(self, "compact", False))
         if getattr(self, "compact", False):
             self.set_tooltip_text(f"{session_title(s)}\n{session_status(s, now)}")
         m = s.get("meter")
         set_meter(self.meter, m and m.get("percent"))
+        set_meter(self.cmeter, m and m.get("percent") if getattr(self, "compact", False) else None)
         self.meter.set_tooltip_text(context_text(m) if m else None)
         self.set_opacity(1 if s.get("state") != "ended" or unseen else .62)
 
