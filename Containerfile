@@ -845,7 +845,7 @@ RUN chmod 0755 /usr/bin/pulsar /usr/libexec/pulsar/rpm-sbom.sh \
 #
 # vte291-gtk4 and gtksourceview5: pulsar-agents' terminal and diff view.
 # ---------------------------------------------------------------------------
-COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py scripts/pulsar_whats_new.py scripts/pulsar_gui.py scripts/pulsar-settings scripts/pulsar-welcome scripts/pulsar-agents /usr/libexec/pulsar/
+COPY scripts/pulsar-theme scripts/pulsar-theme-picker scripts/pulsar_theme_engine.py scripts/pulsar_theme_cards.py scripts/pulsar_whats_new.py scripts/pulsar_gui.py scripts/pulsar-settings scripts/pulsar-agents scripts/pulsar-welcome /usr/libexec/pulsar/
 RUN set -eu; \
     chmod 0755 /usr/libexec/pulsar/pulsar-theme /usr/libexec/pulsar/pulsar-theme-picker /usr/libexec/pulsar/pulsar-welcome /usr/libexec/pulsar/pulsar-settings /usr/libexec/pulsar/pulsar-agents; \
     free_kb=$(df --output=avail -k / | tail -1); \
