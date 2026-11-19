@@ -367,10 +367,7 @@ def diff_line_ref(diff, index):
     return None
 
 
-def message_with_comments(text, comments):
-    """The composer's message: the queued diff comments as path:line lines,
-    then what was typed."""
-    lines = [f"{c['path']}:{c['line']}: {c['text']}" for c in comments if c.get("text", "").strip()]
-    if lines and (text or "").strip():
-        return "\n".join(lines) + "\n\n" + text.strip()
-    return "\n".join(lines) if lines else (text or "").strip()
+def comment_line(path, line, text):
+    """A comment on a diff line as the agent reads it: path:line: text, and
+    a space to go on typing after."""
+    return f"{path}:{line}: {' '.join(text.split())} "

@@ -207,7 +207,7 @@ print(sorted(m.newly_unseen(before, after, "a")))'
     [ "${lines[1]}" = "['d']" ]
 }
 
-@test "a comment on a diff line names the file and the line on its side; it goes before the message" {
+@test "a comment on a diff line names the file and the line on its side, for the agent's own prompt" {
     need_gtk
     local d="${BATS_TEST_TMPDIR}/d.diff"
     printf '%s\n' 'diff --git a/x.py b/x.py' 'index 1..2 100644' '--- a/x.py' '+++ b/x.py' '@@ -3,4 +5,5 @@ def f():' \
@@ -218,15 +218,11 @@ print(sorted(m.newly_unseen(before, after, "a")))'
 d = open('$d').read()
 print([m.diff_line_ref(d, i) for i in range(17)])
 print(m.diff_line_ref(d, 99), m.diff_line_ref(open('${d}2').read(), 3))
-print(repr(m.message_with_comments('run the tests', [{'path': 'x.py', 'line': 4, 'text': 'why?'}, {'path': 'x.py', 'line': 5, 'text': ' '}])))
-print(repr(m.message_with_comments('', [{'path': 'n.txt', 'line': 1, 'text': 'drop this'}])))
-print(repr(m.message_with_comments(' hi ', [])))"
+print(repr(m.comment_line('x.py', 4, '  why\n not  this? ')))"
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "[None, None, None, None, ('x.py', 5), ('x.py', 5), ('x.py', 4), ('x.py', 6), ('x.py', 7), ('x.py', 8), None, None, None, None, ('n.txt', 1), ('n.txt', 1), ('n.txt', 2)]" ]
     [ "${lines[1]}" = "None ('z.txt', 1)" ]
-    [ "${lines[2]}" = "'x.py:4: why?\n\nrun the tests'" ]
-    [ "${lines[3]}" = "'n.txt:1: drop this'" ]
-    [ "${lines[4]}" = "'hi'" ]
+    [ "${lines[2]}" = "'x.py:4: why not this? '" ]
 }
 
 @test "the changes summary counts files and lines, and says what it compares with when there are none" {
@@ -255,4 +251,19 @@ open(m.STATE_FILE, \"w\").write(\"[1]\"); print(sorted(m.load_state()))'"
     [ "${lines[1]}" = "x ['x']" ]
     [ "${lines[2]}" = "['projects', 'recent', 'unseen']" ]
     [ -f "${BATS_TEST_TMPDIR}/st/pulsar/agents-app.json" ]
+}
+
+@test "the agents' tmux has no status line, scrolls with the wheel and copies a selection to the desktop clipboard" {
+    local c="${REPO}/system_files/usr/share/pulsar/agents-tmux.conf"
+    grep -qx 'set -g status off' "$c"
+    grep -qx 'set -g mouse on' "$c"
+    grep -qx "set -s copy-command 'wl-copy'" "$c"
+    # and tmux itself takes the file
+    if command -v tmux >/dev/null; then
+        local sock="agents-conf-test-$$"
+        tmux -L "$sock" -f "$c" new-session -d -s t 'sleep 5'
+        run tmux -L "$sock" show -gv status
+        tmux -L "$sock" kill-server
+        [ "$output" = off ]
+    fi
 }

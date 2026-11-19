@@ -36,7 +36,7 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, home, message_with_comments, parse,  # noqa: E402,F401
+from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, comment_line, home, parse,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -99,9 +99,9 @@ CSS = """
 .pulsar-agents .count { font-family: monospace; font-size: .82em; }
 .pulsar-agents .added { color: @success_color; }
 .pulsar-agents .removed { color: @error_color; }
-.pulsar-agents .composer { padding: 6px 14px 14px 14px; }
-.pulsar-agents .composer textview, .pulsar-agents .composer textview text { background: transparent; }
 .pulsar-agents .placeholder { opacity: .45; }
+.pulsar-agents .home-text { font-size: 1.2em; }
+.pulsar-agents .stage .home-box { padding: 6px 8px 8px 16px; border-radius: 18px; }
 .pulsar-agents .launch-heading { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 18px; }
 .pulsar-agents .resume-card { border-radius: 14px; padding: 10px 12px; background-color: alpha(currentColor, .045);
                               box-shadow: inset 0 0 0 1px alpha(currentColor, .06); transition: all 140ms ease-out; }
@@ -115,8 +115,6 @@ CSS = """
     alpha(@accent_color, 0), alpha(@accent_color, .35) 30%, alpha(@accent_color, .35) 70%, alpha(@accent_color, 0)); }
 .pulsar-agents .stage .head-line.needs { background-image: linear-gradient(to right,
     alpha(@accent_color, 0), alpha(@accent_color, .8) 25%, alpha(@accent_color, .8) 75%, alpha(@accent_color, 0)); }
-.pulsar-agents menubutton.comments > button { border-radius: 999px; padding: 2px 10px; min-height: 0; font-size: .85em;
-                                              background-color: alpha(@accent_color, .18); color: @accent_color; }
 .pulsar-agents .hairline { min-height: 1px; background-image: linear-gradient(to right,
     alpha(@accent_color, 0), alpha(@accent_color, .6) 35%, alpha(@accent_color, .6) 65%, alpha(@accent_color, 0)); }
 """
@@ -263,8 +261,6 @@ class Agents(Adw.ApplicationWindow):
         self.sessions = {}      # name -> session JSON, archived ones too
         self.rows = {}          # name -> SessionRow
         self.terms = {}         # name -> Vte.Terminal
-        self.comments = {}      # name -> [{path, line, text}], queued for the next message
-        self.drafts = {}        # name -> unsent composer text
         self.collapsed = set()  # projects folded shut
         self.current = None
         self.want = None        # a session asked for before it was listed
@@ -279,7 +275,8 @@ class Agents(Adw.ApplicationWindow):
         side_head.pack_start(new)
         self.list = Gtk.ListBox(css_classes=["navigation-sidebar", "sessions"])
         self.list.connect("row-activated", self._activated)
-        self.empty = Adw.StatusPage(title="No sessions", css_classes=["compact"])
+        self.empty = Gtk.Label(label="No sessions", valign=Gtk.Align.START, margin_top=18,
+                               css_classes=["dim-label"])
         self.side_stack = Gtk.Stack()
         self.side_stack.add_named(self.empty, "empty")
         self.side_stack.add_named(Gtk.ScrolledWindow(child=self.list, hscrollbar_policy=Gtk.PolicyType.NEVER), "list")
@@ -291,7 +288,7 @@ class Agents(Adw.ApplicationWindow):
         side.add_bottom_bar(self.archived_button)
 
         # content: the session's terminal, the message box under it, the rail beside it
-        self.title = Adw.WindowTitle(title="Agents")
+        self.title = Adw.WindowTitle(title="")
         self.title_dot = Gtk.Box(css_classes=["title-dot"], valign=Gtk.Align.CENTER, visible=False)
         title_box = Gtk.Box(spacing=8)
         title_box.append(self.title_dot)
@@ -316,10 +313,8 @@ class Agents(Adw.ApplicationWindow):
         self.launcher = Launcher(self)
         self.term_stack.add_named(self.launcher.widget, "none")
         self.term_stack.set_visible_child_name("none")
-        self.composer = Composer(self)
         center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         center.append(self.term_stack)
-        center.append(self.composer.widget)
         self.rail = Rail(self)
         self.overlay = Adw.OverlaySplitView(content=center, sidebar=self.rail.widget,
                                             sidebar_position=Gtk.PackType.END, show_sidebar=False,
@@ -355,7 +350,6 @@ class Agents(Adw.ApplicationWindow):
         for name, cb in (("stop", lambda: self.stop_session()), ("rename", lambda: self.rename()),
                          ("terminal", lambda: self.open_in_terminal()), ("new", lambda: self.new_session()),
                          ("archive-current", lambda: self.current and self.archive(self.current)),
-                         ("message", lambda: self.composer.focus()),
                          ("rail", lambda: self.rail_toggle.set_active(not self.rail_toggle.get_active())),
                          ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1))):
             a = Gio.SimpleAction.new(name, None)
@@ -367,7 +361,7 @@ class Agents(Adw.ApplicationWindow):
             a.connect("activate", lambda _a, p, cb=cb: cb(p.get_string()))
             self.add_action(a)
         for action, keys in (("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
-                             ("win.message", ["<Ctrl><Shift>m"]), ("win.rail", ["<Ctrl><Shift>d"]),
+                             ("win.rail", ["<Ctrl><Shift>d"]),
                              ("win.next", ["<Ctrl>Page_Down"]), ("win.previous", ["<Ctrl>Page_Up"])):
             app.set_accels_for_action(action, keys)
         for i in range(1, 10):
@@ -449,7 +443,6 @@ class Agents(Adw.ApplicationWindow):
             if s.get("state") == "waiting" and old.get("state") != "waiting":
                 self.rail.reload()
             self.rail.session_changed(s, old)
-            self.composer.set_session(s)
         elif self.current:
             self._clear_current()
         if self.term_stack.get_visible_child_name() == "none" and self.listed_once:
@@ -524,12 +517,11 @@ class Agents(Adw.ApplicationWindow):
 
     def _clear_current(self):
         self.current = None
-        self.title.set_title("Agents")
+        self.title.set_title("")
         self.title.set_subtitle("")
         self.term_stack.set_visible_child_name("none")
         self.banner.set_revealed(False)
         self._actions_for(None)
-        self.composer.set_session(None)
         self.overlay.set_show_sidebar(False)
 
     # ---- one session ----
@@ -550,7 +542,6 @@ class Agents(Adw.ApplicationWindow):
             self.list.select_row(self.rows[name])
         self._actions_for(s)
         self.banner.set_revealed(False)
-        self.composer.set_session(s)
         t = self.terms.get(name)
         if t is not None and not t.dead:
             self.term_stack.set_visible_child(t)
@@ -605,11 +596,27 @@ class Agents(Adw.ApplicationWindow):
         t.connect("child-exited", self._exited)
         t.connect("bell", lambda term: None)
         t.connect("contents-changed", self._drew)
+        # a terminal's own copy and paste keys; every other key is the agent's
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._term_key, t)
+        t.add_controller(keys)
         self._color(t)
         self.terms[name] = t
         self.term_stack.add_child(t)
         self.term_stack.set_visible_child(t)
         return t
+
+    def _term_key(self, _c, keyval, _code, state, t):
+        mods = state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.ALT_MASK)
+        if mods != Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK:
+            return False
+        if keyval in (Gdk.KEY_C, Gdk.KEY_c):
+            t.copy_clipboard_format(Vte.Format.TEXT)
+            return True
+        if keyval in (Gdk.KEY_V, Gdk.KEY_v):
+            t.paste_clipboard()
+            return True
+        return False
 
     def spawn(self, name, argv):
         t = self._terminal(name)
@@ -643,7 +650,6 @@ class Agents(Adw.ApplicationWindow):
             else:
                 self.banner.set_revealed(False)
                 self._show_stopped(s)
-                self.composer.set_session(s)
         run([PULSAR, "agent", "sessions", "--json"], then)
 
     def _banner_clicked(self):
@@ -852,21 +858,16 @@ class Agents(Adw.ApplicationWindow):
                                               then=lambda *_: self.rail.reload()))
         run([PULSAR, "agent", "undo", name, "--file", path, *extra, "--yes"], done)
 
-    def send(self, text):
-        """The message box's text into the agent: pasted, then Enter."""
+    def add_comment(self, path, line, text):
+        """A comment on a diff line, typed into the agent's own prompt as
+        path:line: text, not sent: the agent's prompt is the one place to
+        type, and Enter there sends it with whatever else is said."""
         t = self.terms.get(self.current)
         if t is None or t.dead or not text.strip():
             return False
-        t.paste_text(text)
-        GLib.timeout_add(180, lambda: t.feed_child(b"\r") and False)
+        t.paste_text(comment_line(path, line, text))
         t.grab_focus()
         return True
-
-    def add_comment(self, path, line, text):
-        if not self.current or not text.strip():
-            return
-        self.comments.setdefault(self.current, []).append({"path": path, "line": line, "text": text.strip()})
-        self.composer.update_chip()
 
     def new_session(self):
         project = session_project(self.sessions.get(self.current) or {}) or None
@@ -882,7 +883,6 @@ class Agents(Adw.ApplicationWindow):
         stub = {"name": name, "agent": agent, "state": "running", "title": title}
         self._actions_for(stub)
         self.banner.set_revealed(False)
-        self.composer.set_session(stub)
         self.spawn(name, argv)
         self.remember(last=name)
         self.split.set_show_content(True)
@@ -977,107 +977,6 @@ class SessionRow(Gtk.ListBoxRow):
         self.dot.set_visible(unseen)
         self.lock.set_visible(s.get("sandbox") == "on")
         self.set_opacity(1 if s.get("state") != "ended" or unseen else .62)
-
-
-class Composer:
-    """Under the terminal: a message for the agent. Enter sends it (pasted
-    into the agent's prompt, then Enter), Shift+Enter is a new line. Comments
-    from the diff wait in a chip and go with the next message."""
-
-    def __init__(self, win):
-        self.win = win
-        self.s = None
-        self.view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=6, bottom_margin=6,
-                                 accepts_tab=False, hexpand=True)
-        self.buffer = self.view.get_buffer()
-        self.buffer.connect("changed", lambda *_: self._changed())
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", self._key)
-        self.view.add_controller(keys)
-        self.placeholder = Gtk.Label(xalign=0, css_classes=["placeholder"], can_target=False,
-                                     valign=Gtk.Align.START, margin_top=6, margin_start=2)
-        over = Gtk.Overlay(child=Gtk.ScrolledWindow(child=self.view, propagate_natural_height=True,
-                                                    max_content_height=160,
-                                                    hscrollbar_policy=Gtk.PolicyType.NEVER, hexpand=True))
-        over.add_overlay(self.placeholder)
-        self.chip = Gtk.MenuButton(css_classes=["chip", "comments"], halign=Gtk.Align.START, visible=False,
-                                   margin_top=6)
-        self.chip_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=8, margin_bottom=8,
-                                 margin_start=8, margin_end=8)
-        self.chip.set_popover(Gtk.Popover(child=self.chip_list))
-        self.send_button = Gtk.Button(icon_name="go-up-symbolic", tooltip_text="Send (Enter)",
-                                      css_classes=["circular", "suggested-action"], valign=Gtk.Align.END,
-                                      sensitive=False)
-        self.send_button.connect("clicked", lambda *_: self._send())
-        line = Gtk.Box(spacing=6)
-        line.append(over)
-        line.append(self.send_button)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["composer-box"])
-        box.append(self.chip)
-        box.append(line)
-        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["composer"], visible=False)
-        self.widget.append(box)
-
-    def focus(self):
-        if self.widget.get_visible() and self.view.get_sensitive():
-            self.view.grab_focus()
-
-    def set_session(self, s):
-        name = (s or {}).get("name")
-        old = (self.s or {}).get("name")
-        if old != name:
-            if old:
-                self.win.drafts[old] = self._text()
-            self.buffer.set_text(self.win.drafts.get(name, "") if name else "")
-        self.s = s
-        live = bool(s) and s.get("state") != "ended"
-        self.widget.set_visible(live)
-        self.view.set_sensitive(live)
-        self.placeholder.set_label(f"Message {AGENT_NAMES.get(s.get('agent'), 'the agent')}" if live else "")
-        self.update_chip()
-        self._changed()
-
-    def _text(self):
-        return self.buffer.get_text(self.buffer.get_start_iter(), self.buffer.get_end_iter(), False)
-
-    def _changed(self):
-        empty = not self._text()
-        self.placeholder.set_visible(empty)
-        comments = self.win.comments.get((self.s or {}).get("name"), [])
-        self.send_button.set_sensitive(self.view.get_sensitive() and (not empty or bool(comments)))
-
-    def update_chip(self):
-        name = (self.s or {}).get("name")
-        comments = self.win.comments.get(name, [])
-        self.chip.set_visible(bool(comments))
-        self.chip.set_label("1 comment" if len(comments) == 1 else f"{len(comments)} comments")
-        while (c := self.chip_list.get_first_child()) is not None:
-            self.chip_list.remove(c)
-        for c in comments:
-            self.chip_list.append(Gtk.Label(label=f"{c['path']}:{c['line']}  {c['text']}", xalign=0, wrap=True,
-                                            max_width_chars=50))
-        clear = Gtk.Button(label="Clear Comments", css_classes=["flat"])
-        clear.connect("clicked", lambda *_: (self.win.comments.pop(name, None), self.chip.popdown(),
-                                             self.update_chip(), self._changed()))
-        self.chip_list.append(clear)
-        self._changed()
-
-    def _key(self, _c, keyval, _code, state):
-        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not state & Gdk.ModifierType.SHIFT_MASK:
-            self._send()
-            return True
-        return False
-
-    def _send(self):
-        name = (self.s or {}).get("name")
-        if not name:
-            return
-        msg = message_with_comments(self._text(), self.win.comments.get(name, []))
-        if msg and self.win.send(msg):
-            self.buffer.set_text("")
-            self.win.drafts.pop(name, None)
-            self.win.comments.pop(name, None)
-            self.update_chip()
 
 
 class Rail:
@@ -1391,51 +1290,68 @@ class Launcher:
         self.agents = []
         self.default_agent = None
         self.folder = None
-        self.chips = {}
-        self.entry = Gtk.Entry(placeholder_text="What should the agent do?", hexpand=True,
-                               css_classes=["launch-entry"])
-        self.entry.connect("activate", lambda *_: self._go())
-        self.start = Gtk.Button(label="Start", css_classes=["pill", "suggested-action"], valign=Gtk.Align.CENTER,
-                                sensitive=False)
-        self.start.connect("clicked", lambda *_: self._go())
-        top = Gtk.Box(spacing=10)
-        top.append(self.entry)
-        top.append(self.start)
+        self.recent_paths = []
+        # the box: what to do, and under it the project, agent, worktree,
+        # sandbox and Start, the way the session's message box is built
+        self.view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=10, bottom_margin=10,
+                                 accepts_tab=False, hexpand=True, css_classes=["home-text"])
+        self.buffer = self.view.get_buffer()
+        self.buffer.connect("changed", lambda *_: self.placeholder.set_visible(not self._text()))
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._key)
+        self.view.add_controller(keys)
+        self.placeholder = Gtk.Label(label="What should the agent do?", xalign=0, can_target=False,
+                                     valign=Gtk.Align.START, margin_top=10, css_classes=["placeholder", "home-text"])
+        over = Gtk.Overlay(child=Gtk.ScrolledWindow(child=self.view, propagate_natural_height=True,
+                                                    min_content_height=64, max_content_height=220,
+                                                    hscrollbar_policy=Gtk.PolicyType.NEVER))
+        over.add_overlay(self.placeholder)
 
-        self.projects = Adw.WrapBox(child_spacing=6, line_spacing=6)
-        other = Gtk.Button(label="Other…", css_classes=["chip", "flat"])
-        other.connect("clicked", lambda *_: self._pick())
-        self.other = other
+        self.project_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.END, max_width_chars=22)
+        pbox = Gtk.Box(spacing=6)
+        pbox.append(Gtk.Image(icon_name="folder-symbolic"))
+        pbox.append(self.project_label)
+        self.project_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["navigation-sidebar"])
+        self.project_list.connect("row-activated", self._project_row)
+        self.project_pop = Gtk.Popover(child=self.project_list)
+        self.project = Gtk.MenuButton(child=pbox, popover=self.project_pop, css_classes=["chip", "flat"],
+                                      always_show_arrow=True)
 
-        self.agent = Gtk.DropDown(css_classes=["chip"], tooltip_text="Agent")
+        self.agent = Gtk.DropDown(css_classes=["chip", "flat"])
         self.agent.connect("notify::selected", lambda *_: self._remember())
-        self.worktree = Gtk.ToggleButton(label="Worktree", css_classes=["chip"])
+        self.worktree = Gtk.ToggleButton(label="Worktree", css_classes=["chip", "flat"])
         self.worktree.connect("toggled", lambda *_: self._remember())
         self.sandbox = Gtk.DropDown.new_from_strings([c[0] for c in self.SANDBOX])
-        self.sandbox.add_css_class("chip")
+        for c in ("chip", "flat"):
+            self.sandbox.add_css_class(c)
         self.sandbox.connect("notify::selected", lambda *_: self._remember())
-        opts = Gtk.Box(spacing=6)
-        for w in (self.agent, self.worktree, self.sandbox):
-            opts.append(w)
+        self.start = Gtk.Button(icon_name="go-up-symbolic", tooltip_text="Start (Enter)", sensitive=False,
+                                css_classes=["circular", "suggested-action"], valign=Gtk.Align.CENTER)
+        self.start.connect("clicked", lambda *_: self._go())
+        bar = Gtk.Box(spacing=4)
+        for w in (self.project, self.agent, self.worktree, self.sandbox):
+            bar.append(w)
+        bar.append(Gtk.Box(hexpand=True))
+        bar.append(self.start)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, css_classes=["composer-box", "home-box"])
+        box.append(over)
+        box.append(bar)
 
         self.hint = Gtk.Label(xalign=0, wrap=True, css_classes=["caption", "error"], visible=False)
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, valign=Gtk.Align.CENTER,
-                      margin_start=24, margin_end=24, margin_bottom=48)
-        self.mark = Gtk.Image(pixel_size=52, css_classes=["mark"], halign=Gtk.Align.START, margin_bottom=4)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, valign=Gtk.Align.CENTER,
+                      margin_start=24, margin_end=24, margin_bottom=56)
+        self.mark = Gtk.Image(pixel_size=56, css_classes=["mark"], halign=Gtk.Align.CENTER, margin_bottom=6)
         self._mark()
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._mark())
         col.append(self.mark)
-        col.append(top)
-        col.append(Gtk.Box(css_classes=["hairline"]))
-        col.append(self.projects)
-        col.append(opts)
+        col.append(box)
         col.append(self.hint)
         self.resume_heading = Gtk.Label(label="Recent", xalign=0,
                                         css_classes=["launch-heading"], visible=False)
         self.cards = Gtk.Box(spacing=8, homogeneous=True)
         col.append(self.resume_heading)
         col.append(self.cards)
-        self.widget = Adw.Clamp(child=col, maximum_size=680, css_classes=["launcher"])
+        self.widget = Adw.Clamp(child=col, maximum_size=720, css_classes=["launcher"])
         self._loading = False
         self._load_agents()
 
@@ -1519,37 +1435,53 @@ class Launcher:
         self.resume_heading.set_visible(bool(ss))
 
     def show(self, project=None):
-        """Fill in the projects; the one asked for, else the latest, chosen."""
+        """The projects in the picker; the one asked for, else the latest, chosen."""
         self._cards()
-        while (c := self.projects.get_first_child()) is not None:
-            self.projects.remove(c)
-        self.chips = {}
-        recent = self.recent()[:6]
-        if project and project not in recent:
-            recent.insert(0, project)
-        if self.folder and self.folder not in recent and os.path.isdir(self.folder):
-            recent.insert(0, self.folder)
-        first = None
+        recent = self.recent()[:8]
+        for p in (self.folder, project):
+            if p and p not in recent and os.path.isdir(p):
+                recent.insert(0, p)
+        self.recent_paths = recent
+        while (r := self.project_list.get_first_child()) is not None:
+            self.project_list.remove(r)
         for p in recent:
-            names = [os.path.basename(x.rstrip("/")) for x in recent]
-            chip = Gtk.ToggleButton(label=project_label(p, recent) if names.count(os.path.basename(p.rstrip("/"))) > 1
-                                    else os.path.basename(p.rstrip("/")) or p,
-                                    css_classes=["chip"], tooltip_text=home(p), group=first)
-            first = first or chip
-            chip.connect("toggled", lambda c, p=p: c.get_active() and self._set(p))
-            self.projects.append(chip)
-            self.chips[p] = chip
-        self.projects.append(self.other)
-        want = project or self.folder or (recent[0] if recent else None)
-        if want in self.chips:
-            self.chips[want].set_active(True)
-        self._set(want)
+            row = Gtk.ListBoxRow()
+            row.path = p
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin_top=4, margin_bottom=4, margin_start=4,
+                        margin_end=8)
+            v.append(Gtk.Label(label=project_label(p, recent), xalign=0))
+            v.append(Gtk.Label(label=home(p), xalign=0, css_classes=["caption", "dim-label"]))
+            row.set_child(v)
+            self.project_list.append(row)
+        other = Gtk.ListBoxRow()
+        other.path = None
+        other.set_child(Gtk.Label(label="Other Folder…", xalign=0, margin_top=6, margin_bottom=6, margin_start=4))
+        self.project_list.append(other)
+        self._set(project or (self.folder if self.folder in recent else None) or (recent[0] if recent else None))
         if not self.agents:
             self._load_agents()
-        self.entry.grab_focus()
+        self.view.grab_focus()
+
+    def _project_row(self, _l, row):
+        self.project_pop.popdown()
+        if row.path is None:
+            self._pick()
+        else:
+            self._set(row.path)
+
+    def _text(self):
+        return self.buffer.get_text(self.buffer.get_start_iter(), self.buffer.get_end_iter(), False)
+
+    def _key(self, _c, keyval, _code, state):
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not state & Gdk.ModifierType.SHIFT_MASK:
+            self._go()
+            return True
+        return False
 
     def _set(self, path):
         self.folder = path
+        self.project_label.set_label(project_label(path, self.recent_paths) if path else "Choose a project")
+        self.project.set_tooltip_text(home(path) if path else None)
         self._apply()
 
     def _apply(self):
@@ -1595,7 +1527,7 @@ class Launcher:
         if not (self.agents and self.folder):
             return
         c = self._choices()
-        prompt = self.entry.get_text().strip()
+        prompt = self._text().strip()
         taken = set(self.win.sessions)
         name = slug_name(prompt, taken) or session_name_for(self.folder, taken)
         title = title_from_prompt(prompt) or None
@@ -1604,7 +1536,7 @@ class Launcher:
         st["recent"] = [self.folder] + [p for p in st.get("recent", []) if p != self.folder][:9]
         argv = run_argv(c["agent"], name, self.folder, c["worktree"], c["sandbox"], title=title,
                         prompt=prompt or None)
-        self.entry.set_text("")
+        self.buffer.set_text("")
         self.win.started(name, c["agent"], title, argv)
 
 
