@@ -1078,22 +1078,33 @@ class SessionIcon(Gtk.DrawingArea):
         if not self.icon:
             return
         import math
-        outline, inside, turn, hue, hue2 = self.icon
+        outline, inside, turn, hue, _hue2 = self.icon
         dark = Adw.StyleManager.get_default().get_dark()
-        r1, g1, b1 = hsl_rgb(hue, .6, .62 if dark else .46)
-        r2, g2, b2 = hsl_rgb(hue2, .72, .7 if dark else .42)
-        cx, cy = w / 2, h / 2
-        R = min(w, h) * .44
-        lw = max(1.2, w * .05)
+        # an avatar, not a light: every icon is the same muted tile in its
+        # hue, the glyph inside in one lighter tone of it
+        tr, tg, tb = hsl_rgb(hue, .32, .26 if dark else .86)
+        gr, gg, gb = hsl_rgb(hue, .55, .74 if dark else .36)
+        rad = w * .28
+        cr.new_sub_path()
+        for x, y, a in ((w - rad, rad, -90), (w - rad, h - rad, 0), (rad, h - rad, 90), (rad, rad, 180)):
+            cr.arc(x, y, rad, math.radians(a), math.radians(a + 90))
+        cr.close_path()
+        cr.set_source_rgb(tr, tg, tb)
+        cr.fill()
 
-        # the outline: tinted inside, a line round it
+        cx, cy = w / 2, h / 2
+        R = min(w, h) * .27
+        cr.set_source_rgb(gr, gg, gb)
+        cr.set_line_width(max(1.2, w * .045))
+        cr.set_line_join(1)
         if outline == "circle":
             cr.arc(cx, cy, R, 0, 2 * math.pi)
         elif outline == "squircle":
-            q, rad = R * .92, R * .5
-            for x, y, a in ((cx + q - rad, cy - q + rad, -90), (cx + q - rad, cy + q - rad, 0),
-                            (cx - q + rad, cy + q - rad, 90), (cx - q + rad, cy - q + rad, 180)):
-                cr.arc(x, y, rad, math.radians(a), math.radians(a + 90))
+            q, rr = R * .92, R * .45
+            cr.new_sub_path()
+            for x, y, a in ((cx + q - rr, cy - q + rr, -90), (cx + q - rr, cy + q - rr, 0),
+                            (cx - q + rr, cy + q - rr, 90), (cx - q + rr, cy - q + rr, 180)):
+                cr.arc(x, y, rr, math.radians(a), math.radians(a + 90))
             cr.close_path()
         elif outline == "hexagon":
             for k in range(6):
@@ -1102,24 +1113,17 @@ class SessionIcon(Gtk.DrawingArea):
             cr.close_path()
         else:  # diamond
             for dx, dy in ((0, -R), (R, 0), (0, R), (-R, 0)):
-                cr.line_to(cx + dx, cy + dy)
+                cr.line_to(cx + dx * 1.1, cy + dy * 1.1)
             cr.close_path()
-        cr.set_source_rgba(r1, g1, b1, .2 if dark else .16)
-        cr.fill_preserve()
-        cr.set_source_rgba(r1, g1, b1, .9)
-        cr.set_line_width(lw)
-        cr.set_line_join(1)  # round
         cr.stroke()
 
-        # the inside
-        cr.set_source_rgba(r2, g2, b2, .95)
-        r = R * .44
+        r = R * .5
         if inside == "dot":
-            cr.arc(cx, cy, R * .28, 0, 2 * math.pi)
+            cr.arc(cx, cy, R * .3, 0, 2 * math.pi)
             cr.fill()
         elif inside == "ring":
-            cr.set_line_width(R * .13)
-            cr.arc(cx, cy, R * .34, 0, 2 * math.pi)
+            cr.set_line_width(max(1, R * .14))
+            cr.arc(cx, cy, R * .38, 0, 2 * math.pi)
             cr.stroke()
         elif inside == "half":
             a = math.radians(90 * turn)
@@ -1129,18 +1133,15 @@ class SessionIcon(Gtk.DrawingArea):
         elif inside == "quarter":
             a = math.radians(90 * turn)
             cr.move_to(cx, cy)
-            cr.arc(cx, cy, r * 1.08, a, a + math.pi / 2)
+            cr.arc(cx, cy, r * 1.1, a, a + math.pi / 2)
             cr.close_path()
             cr.fill()
         elif inside == "orbit":
-            cr.set_line_width(R * .08)
-            cr.arc(cx, cy, r, 0, 2 * math.pi)
-            cr.stroke()
             a = math.radians(45 * turn - 90)
-            cr.arc(cx + r * math.cos(a), cy + r * math.sin(a), R * .15, 0, 2 * math.pi)
+            cr.arc(cx + r * math.cos(a), cy + r * math.sin(a), R * .2, 0, 2 * math.pi)
             cr.fill()
-        else:  # grid: four small squares
-            q, gap = R * .2, R * .1
+        else:  # grid
+            q, gap = R * .3, R * .16
             for x in (cx - gap / 2 - q, cx + gap / 2):
                 for y in (cy - gap / 2 - q, cy + gap / 2):
                     cr.rectangle(x, y, q, q)
