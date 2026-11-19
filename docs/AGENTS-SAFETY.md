@@ -74,6 +74,14 @@ update and rollback.
   leaves ignored files, commits and branches alone, and it is not a backup.
   `pulsar agent diff <name>` shows what changed since that snapshot, and the
   Agents app shows the same diff beside the session's terminal.
+  `pulsar agent undo <name> --file <path>` puts back one file, even while the
+  session runs, and `--redo` takes that back too.
+  Archiving a session (`pulsar agent sessions --archive <name>`, or Archive
+  in the Agents app) ends it and keeps its record, worktree, branch and
+  snapshots. `pulsar agent sessions --tidy`, which the Agents app runs at
+  each start, forgets sessions archived 7 or more days ago: their snapshots
+  are deleted and a clean worktree is removed. A worktree with uncommitted
+  changes is never removed, and branches always stay.
 - **`/etc` across rollback.** Each deployment has its own `/etc`; updates
   carry local edits forward with a three-way merge. Rolling back boots the
   older copy, which can restore files you meant to change, lack edits made
