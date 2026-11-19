@@ -1208,10 +1208,8 @@ class StatusBar:
                 b.append(k)
             return b
 
-        self.tile = SessionIcon(None, 22)
-        self.tile.add_css_class("mini")
         self.model = Gtk.Label(css_classes=["strong"])
-        self.who = seg(self.tile, self.model)
+        self.who = seg(self.model)
         self.dot = Gtk.Box(css_classes=["title-dot"], valign=Gtk.Align.CENTER)
         self.state = Gtk.Label()
         self.doing = seg(self.dot, self.state)
@@ -1247,9 +1245,8 @@ class StatusBar:
             return
         m = s.get("meter") or {}
         agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand")
-        self.tile.set_glyph(s["name"])
         self.model.set_label(model_name(m.get("model")) or agent)
-        self.tile.set_tooltip_text(agent)
+        self.model.set_tooltip_text(agent)
         st = s.get("state")
         for c in ("working", "needs"):
             self.dot.remove_css_class(c)
