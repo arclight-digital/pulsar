@@ -714,7 +714,7 @@ def disk_level(free, need):
 
 # ---------------------------------------------------------------- machines --
 # what the app keeps of another machine's session while it can't be asked
-SEEN_FIELDS = ("name", "title", "agent", "dir", "project", "worktree_of", "started", "last_active", "sandbox")
+SEEN_FIELDS = ("name", "title", "agent", "dir", "project", "worktree_of", "started", "last_active", "sandbox", "usage")
 
 
 def remember_machines(seen, remote, now):

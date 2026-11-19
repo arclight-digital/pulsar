@@ -500,7 +500,7 @@ print(json.dumps([[s["name"], s.get("offline")] for s in out]))
 print(g.session_status(out[0], 50 + 7200 + 10))
 print(g.session_status(dict(out[0], offline="unreachable"), 50 + 7200 + 10))'
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = '{"mag": {"at": 50, "sessions": [{"agent": "codex", "dir": "/h/p", "name": "fix"}]}, "talos": {"at": 100, "sessions": [{"agent": "claude", "dir": "/h/rl", "last_active": null, "name": "train", "project": null, "sandbox": null, "started": null, "title": null, "worktree_of": null}]}}' ] || fail "${lines[0]}"
+    [ "${lines[0]}" = '{"mag": {"at": 50, "sessions": [{"agent": "codex", "dir": "/h/p", "name": "fix"}]}, "talos": {"at": 100, "sessions": [{"agent": "claude", "dir": "/h/rl", "last_active": null, "name": "train", "project": null, "sandbox": null, "started": null, "title": null, "usage": {"context": 5}, "worktree_of": null}]}}' ] || fail "${lines[0]}"
     [ "${lines[1]}" = '{"at": 200, "sessions": []}' ] || fail "${lines[1]}"
     [ "${lines[2]}" = True ]
     [ "${lines[3]}" = '[["here", null, null, null], ["train@talos", "running", null, null], ["old@talos", null, null, null], ["fix@mag", "offline", "unreachable", 50]]' ] || fail "${lines[3]}"
