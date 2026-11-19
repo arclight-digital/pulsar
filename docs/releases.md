@@ -24,9 +24,9 @@ CLI, and opencode moves to version 2.
   under its project, with the ones that need you first. Each session is the
   agent's own terminal, inside the window. Closing the window leaves them
   working.
-- New Session asks for a project folder and, if you want, what the agent
-  should do. That text becomes the agent's first message and the session's
-  name. The agent, a worktree of its own and the sandbox are under Options,
+- With no session open, the window asks what the agent should do, in which
+  project. That text becomes the agent's first message and the session's
+  name. The agent, a worktree of its own and the sandbox sit beside it,
   remembered per project.
 - Opening a stopped session continues it, on the same conversation for
   Claude Code and opencode, and for Antigravity CLI once Pulsar has seen
