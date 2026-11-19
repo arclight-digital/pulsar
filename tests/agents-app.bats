@@ -15,10 +15,15 @@ setup() {
 
 fail() { echo "$*" >&2; return 1; }
 
-# python with the app loaded as m
-app() {
+# skip where the app can't load (the builder has no GTK); called in the
+# test itself, since skip inside `run` or `bash -c` does not skip
+need_gtk() {
     python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); gi.require_version("Vte", "3.91"); gi.require_version("GtkSource", "5"); from gi.repository import Adw, Vte, GtkSource' 2>/dev/null \
         || skip "no PyGObject GTK 4 / libadwaita / VTE / GtkSourceView here"
+}
+
+# python with the app loaded as m
+app() {
     python3 - "$APP" <<PY
 import importlib.machinery, importlib.util, sys
 path = sys.argv[1]; sys.argv = [path]
@@ -29,6 +34,7 @@ PY
 }
 
 @test "a new session's name comes from its folder, made a valid session name, and never one that is taken" {
+    need_gtk
     run app '
 print(m.session_name_for("/home/u/code/my app", set()))
 print(m.session_name_for("/home/u/code/my app/", {"my-app"}))
@@ -46,6 +52,7 @@ print(bool(m.NAME_OK.match("ok_1-a")), bool(m.NAME_OK.match("-no")), bool(m.NAME
 }
 
 @test "a new session starts with agent run --tmux --new in its folder; worktree, sandbox, title and prompt only when asked" {
+    need_gtk
     run env PULSAR_CLI=/usr/bin/pulsar bash -c "$(declare -f app); APP='$APP' app '
 print(\" \".join(m.run_argv(\"claude\", \"fix\", \"/home/u/p\")))
 print(\" \".join(m.run_argv(\"agy\", \"fix\", \"/home/u/p\", worktree=True, sandbox=True)))
@@ -59,6 +66,7 @@ print(m.run_argv(\"claude\", \"fix\", \"/p\", title=\"Fix it\", prompt=\"fix the
 }
 
 @test "the terminal takes the theme's Ptyxis palette, the variant that matches the desktop's style" {
+    need_gtk
     local pal="${BATS_TEST_TMPDIR}/t.palette"
     { printf '[Palette]\nName=T\n\n[Light]\nForeground=#111111\nBackground=#eeeeee\nCursor=#0000ff\n'
       for i in $(seq 0 15); do printf 'Color%d=#0000%02d\n' "$i" "$i"; done
@@ -80,6 +88,7 @@ print(m.terminal_palette('${BATS_TEST_TMPDIR}/none', True))"
 }
 
 @test "snapshots read as the session's start or a restart; a diff's summary is git's last --stat line" {
+    need_gtk
     run app '
 print(m.snapshot_title({"subject": "pulsar: work started 2026-11-18 16:31"}))
 print(m.snapshot_title({"subject": "pulsar: work restarted 2026-11-18 17:06"}))
@@ -97,6 +106,7 @@ print(m.diff_summary(""))'
 }
 
 @test "the header says who, what it is doing, where, and for Claude how full its context is" {
+    need_gtk
     run env HOME=/home/u bash -c "$(declare -f app); APP='$APP' app '
 now = 1_000_000
 print(m.header_subtitle({\"agent\": \"claude\", \"state\": \"waiting\", \"waiting_for\": \"Notification\",
@@ -120,6 +130,7 @@ print(m.header_subtitle({\"agent\": None, \"state\": \"ended\"}, now))'"
 }
 
 @test "a session started with a prompt is named and titled from it; without one, from its folder" {
+    need_gtk
     run app '
 print(m.slug_name("Fix the flaky login test!", set()))
 print(m.slug_name("Fix the flaky login test", {"fix-the-flaky-login"}))
@@ -137,6 +148,7 @@ print(m.session_title({"name": "n", "title": None}), m.session_title({"name": "n
 }
 
 @test "the sidebar groups sessions by project, needs-you first, archived ones left out" {
+    need_gtk
     run app '
 now = 1_000_000
 ss = [{"name": "b", "project": "/p/two", "state": "running", "started": now - 100, "last_active": now - 5},
@@ -155,6 +167,7 @@ print(m.project_label("/a/x/app", ["/a/x/app", "/b/y/app"]), m.project_label("/a
 }
 
 @test "a row says what a session is doing and since when; a stopped one comes back on its conversation where the agent can" {
+    need_gtk
     run env TZ=UTC bash -c "$(declare -f app); APP='$APP' app '
 now = 1_000_000
 print(m.session_status({\"state\": \"waiting\", \"waiting_for\": \"Notification\", \"last_active\": now - 120}, now))
@@ -181,6 +194,7 @@ for s in ({\"agent\": \"claude\"}, {\"agent\": \"opencode\"}, {\"agent\": \"agy\
 }
 
 @test "a session lights up when it stops or waits while another one is on screen" {
+    need_gtk
     run app '
 before = {"a": {"state": "running"}, "b": {"state": "running"}, "c": {"state": "waiting"}, "d": {"state": "running"},
           "g": {"state": "waiting"}}
@@ -194,6 +208,7 @@ print(sorted(m.newly_unseen(before, after, "a")))'
 }
 
 @test "a comment on a diff line names the file and the line on its side; it goes before the message" {
+    need_gtk
     local d="${BATS_TEST_TMPDIR}/d.diff"
     printf '%s\n' 'diff --git a/x.py b/x.py' 'index 1..2 100644' '--- a/x.py' '+++ b/x.py' '@@ -3,4 +5,5 @@ def f():' \
         ' a' '-b' '+c' '+d' ' e' 'diff --git a/n.txt b/n.txt' 'new file mode 100644' '--- /dev/null' '+++ b/n.txt' \
@@ -215,6 +230,7 @@ print(repr(m.message_with_comments(' hi ', [])))"
 }
 
 @test "the changes summary counts files and lines, and says what it compares with when there are none" {
+    need_gtk
     run app '
 print(m.files_summary([{"path": "a", "added": 2, "removed": 1}, {"path": "b", "added": None, "removed": None}], False))
 print(m.files_summary([{"path": "a", "added": 1, "removed": 0}], True))
@@ -228,6 +244,7 @@ print(m.files_summary([], True))'
 }
 
 @test "the app remembers what it saw in its own state file, and starts clean from a bad one" {
+    need_gtk
     run env XDG_STATE_HOME="${BATS_TEST_TMPDIR}/st" bash -c "$(declare -f app); APP='$APP' app '
 d = m.load_state(); print(sorted(d))
 d[\"unseen\"] = [\"x\"]; d[\"last\"] = \"x\"; m.save_state(d)
