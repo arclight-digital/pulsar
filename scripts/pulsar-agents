@@ -103,6 +103,9 @@ CSS = """
 .pulsar-agents .added { color: @success_color; }
 .pulsar-agents .removed { color: @error_color; }
 .pulsar-agents .placeholder { opacity: .45; }
+.pulsar-agents.compact .sessions row.session { margin: 2px 6px; padding: 0; }
+.pulsar-agents.compact .sessions row.project { margin: 6px 14px 4px 14px; min-height: 0; padding: 0; }
+.pulsar-agents .fold-rule { min-height: 1px; background-color: alpha(currentColor, .1); }
 .pulsar-agents levelbar.meter trough { min-height: 3px; border-radius: 2px; background-color: alpha(currentColor, .1);
                                        padding: 0; border: none; box-shadow: none; }
 .pulsar-agents levelbar.meter block { min-height: 3px; border-radius: 2px; border: none; }
@@ -110,9 +113,20 @@ CSS = """
 .pulsar-agents levelbar.meter.high block.filled { background-color: @warning_color; }
 .pulsar-agents levelbar.meter.full block.filled { background-color: @error_color; }
 .pulsar-agents levelbar.meter block.empty { background: none; }
-.pulsar-agents .statusbar { padding: 7px 14px 8px 14px; font-size: .84em; }
+.pulsar-agents .statusbar { padding: 5px 8px 6px 8px; font-size: .84em; min-height: 30px; }
+.pulsar-agents .statusbar .seg { padding: 0 12px; border-right: 1px solid alpha(currentColor, .09); }
+.pulsar-agents .statusbar .seg:last-child, .pulsar-agents .statusbar .seg.last { border-right: none; }
+.pulsar-agents .statusbar .dim { color: alpha(currentColor, .6); border-right: none; padding: 0 8px; }
 .pulsar-agents .statusbar .key { color: alpha(currentColor, .5); }
+.pulsar-agents .statusbar .strong { font-weight: 600; }
 .pulsar-agents .statusbar .val { font-feature-settings: "tnum"; }
+.pulsar-agents .statusbar .pct { font-weight: 600; }
+.pulsar-agents .statusbar .pct.high { color: @warning_color; }
+.pulsar-agents .statusbar .pct.full { color: @error_color; }
+.pulsar-agents .statusbar label.needs { color: @accent_color; font-weight: 600; }
+.pulsar-agents .statusbar .tile.mini { min-width: 22px; min-height: 22px; border-radius: 7px; font-size: .78em;
+                                       background-color: alpha(@accent_color, .16); color: @accent_color; }
+.pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
 .pulsar-agents .home-text { font-size: 1.2em; }
 .pulsar-agents .stage .home-box { padding: 6px 8px 8px 16px; border-radius: 18px; }
 .pulsar-agents .launch-heading { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 18px; }
@@ -139,7 +153,7 @@ def stage_css(fg, bg):
     return f"""
 .pulsar-agents .stage {{ background-color: {bg}; color: {fg}; }}
 .pulsar-agents .stage .rail {{ background-color: mix({bg}, {fg}, .035); box-shadow: inset 1px 0 alpha({fg}, .07); }}
-.pulsar-agents .stage .statusbar {{ background-color: mix({bg}, {fg}, .065); box-shadow: inset 0 1px alpha({fg}, .14); }}
+.pulsar-agents .stage .statusbar-outer {{ background-color: mix({bg}, {fg}, .065); box-shadow: inset 0 1px alpha({fg}, .14); }}
 .pulsar-agents .stage .composer-box {{ border-radius: 14px; padding: 4px 4px 4px 12px;
     background-color: mix({bg}, {fg}, .07);
     box-shadow: 0 8px 22px alpha(black, .22), inset 0 0 0 1px alpha({fg}, .08); }}
@@ -282,8 +296,13 @@ class Agents(Adw.ApplicationWindow):
         # sidebar: sessions by project
         new = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="New Session (Ctrl+Shift+N)")
         new.connect("clicked", lambda *_: self.new_session())
-        side_head = Adw.HeaderBar()
+        self.new_button = new
+        self.fold = Gtk.Button(icon_name="sidebar-show-symbolic", tooltip_text="Narrow the List (Ctrl+Shift+B)")
+        self.fold.connect("clicked", lambda *_: self.set_compact(not self.compact))
+        side_head = Adw.HeaderBar(show_end_title_buttons=False)
         side_head.pack_start(new)
+        side_head.pack_end(self.fold)
+        self.side_head = side_head
         self.list = Gtk.ListBox(css_classes=["navigation-sidebar", "sessions"])
         self.list.connect("row-activated", self._activated)
         self.empty = Gtk.Label(label="No sessions", valign=Gtk.Align.START, margin_top=18,
@@ -327,8 +346,8 @@ class Agents(Adw.ApplicationWindow):
         self.term_stack.set_visible_child_name("none")
         center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         center.append(self.term_stack)
-        self.status = StatusBar()
-        center.append(self.status.widget)
+        self.status = StatusBar(self)
+        center.append(self.status.outer)
         self.rail = Rail(self)
         self.overlay = Adw.OverlaySplitView(content=center, sidebar=self.rail.widget,
                                             sidebar_position=Gtk.PackType.END, show_sidebar=False,
@@ -347,6 +366,7 @@ class Agents(Adw.ApplicationWindow):
         self.split = Adw.NavigationSplitView(sidebar=Adw.NavigationPage(child=side, title="Agents"),
                                              content=Adw.NavigationPage(child=content, title="Session"),
                                              min_sidebar_width=250, max_sidebar_width=330)
+        self.compact = False
         self.toasts = Adw.ToastOverlay(child=self.split)
         self.set_content(self.toasts)
         # it arrives rather than appears, as Pulsar Commands does
@@ -365,7 +385,8 @@ class Agents(Adw.ApplicationWindow):
                          ("terminal", lambda: self.open_in_terminal()), ("new", lambda: self.new_session()),
                          ("archive-current", lambda: self.current and self.archive(self.current)),
                          ("rail", lambda: self.rail_toggle.set_active(not self.rail_toggle.get_active())),
-                         ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1))):
+                         ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1)),
+                         ("fold", lambda: self.set_compact(not self.compact))):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(a)
@@ -375,7 +396,7 @@ class Agents(Adw.ApplicationWindow):
             a.connect("activate", lambda _a, p, cb=cb: cb(p.get_string()))
             self.add_action(a)
         for action, keys in (("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
-                             ("win.rail", ["<Ctrl><Shift>d"]),
+                             ("win.rail", ["<Ctrl><Shift>d"]), ("win.fold", ["<Ctrl><Shift>b"]),
                              ("win.next", ["<Ctrl>Page_Down"]), ("win.previous", ["<Ctrl>Page_Up"])):
             app.set_accels_for_action(action, keys)
         for i in range(1, 10):
@@ -393,9 +414,28 @@ class Agents(Adw.ApplicationWindow):
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._recolor())
         self.connect("notify::visible", lambda *_: self._start_poll())
         self.connect("notify::is-active", lambda *_: self.is_active() and self._seen(self.current))
+        if self.state.get("compact"):
+            self.set_compact(True)
         # archived sessions older than a week go (never a worktree with uncommitted changes)
         run([PULSAR, "agent", "sessions", "--tidy", "--days", str(TIDY_DAYS)], lambda *_: self.refresh())
         self._start_poll()
+
+    # ---- the list, narrowed to its tiles for focus ----
+    def set_compact(self, on):
+        self.compact = on
+        self.split.set_min_sidebar_width(68 if on else 250)
+        self.split.set_max_sidebar_width(68 if on else 330)
+        self.split.set_sidebar_width_fraction(0 if on else .25)
+        self.side_head.set_show_title(not on)
+        self.new_button.set_visible(not on)
+        self.fold.set_icon_name("sidebar-show-right-symbolic" if on else "sidebar-show-symbolic")
+        self.fold.set_tooltip_text("Widen the List (Ctrl+Shift+B)" if on else "Narrow the List (Ctrl+Shift+B)")
+        self.archived_button.get_parent() and self.archived_button.set_visible(
+            not on and any(x.get("archived") for x in self.sessions.values()))
+        (self.add_css_class if on else self.remove_css_class)("compact")
+        self._shape = None
+        self._rebuild()
+        self.remember(compact=on)
 
     # ---- remembered state ----
     def remember(self, **kw):
@@ -452,7 +492,7 @@ class Agents(Adw.ApplicationWindow):
         archived = [s for s in found if s.get("archived")]
         self.archived_button.set_child(Adw.ButtonContent(icon_name="document-open-recent-symbolic",
                                                          label=f"Archived · {len(archived)}"))
-        self.archived_button.set_visible(bool(archived))
+        self.archived_button.set_visible(bool(archived) and not self.compact)
         now = self._now()
         if self.current in self.sessions and not self.sessions[self.current].get("archived"):
             s = self.sessions[self.current]
@@ -495,11 +535,13 @@ class Agents(Adw.ApplicationWindow):
                 self.list.remove(r)
             rows = {}
             for p, ss in groups:
-                self.list.append(ProjectRow(p, project_label(p, projects), p in self.collapsed))
-                if p in self.collapsed:
+                self.list.append(ProjectRow(p, project_label(p, projects), p in self.collapsed and not self.compact,
+                                            self.compact))
+                if p in self.collapsed and not self.compact:
                     continue
                 for s in ss:
                     rows[s["name"]] = self.rows.get(s["name"]) or SessionRow(self, s["name"])
+                    rows[s["name"]].set_compact(self.compact)
                     self.list.append(rows[s["name"]])
             self.rows = rows
         for p, ss in groups:
@@ -1006,55 +1048,156 @@ def context_text(m):
     return short_tokens(m["context"])
 
 
-class StatusBar:
-    """Under the active session's terminal: the model, how full its context
-    is, and the plan's limits where the agent writes them down."""
+SHORT_LIMITS = {"5-hour": "5h", "Weekly": "Week"}
 
-    def __init__(self):
-        self.widget = Gtk.Box(spacing=18, css_classes=["statusbar"], visible=False)
-        self.model = Gtk.Label(css_classes=["val"], visible=False)
-        self.widget.append(self.model)
-        self.ctx_bar = meter_bar(110)
+
+class StatusBar:
+    """Under the open session's terminal, in segments: who (the agent's
+    tile and model), what it is doing, how full its context is, the plan's
+    limits where the agent writes them down, then the sandbox, the branch,
+    and what changed since the session started (which opens Changes)."""
+
+    def __init__(self, win):
+        self.win = win
+        self.s = None
+        self.changes_for = None
+        self.changes_at = 0
+        self.widget = Gtk.Box(spacing=0, css_classes=["statusbar"], visible=False)
+
+        def seg(*kids, cls=()):
+            b = Gtk.Box(spacing=7, css_classes=["seg", *cls], valign=Gtk.Align.CENTER)
+            for k in kids:
+                b.append(k)
+            return b
+
+        self.tile = Gtk.Label(css_classes=["tile", "mini"])
+        self.model = Gtk.Label(css_classes=["strong"])
+        self.who = seg(self.tile, self.model)
+        self.dot = Gtk.Box(css_classes=["title-dot"], valign=Gtk.Align.CENTER)
+        self.state = Gtk.Label()
+        self.doing = seg(self.dot, self.state)
+        self.ctx_bar = meter_bar(70)
         self.ctx_val = Gtk.Label(css_classes=["val"])
-        ctx = Gtk.Box(spacing=8)
-        ctx.append(Gtk.Label(label="Context", css_classes=["key"]))
-        ctx.append(self.ctx_bar)
-        ctx.append(self.ctx_val)
-        self.widget.append(ctx)
-        self.limits = Gtk.Box(spacing=18)
-        self.widget.append(self.limits)
+        self.ctx_pct = Gtk.Label(css_classes=["val", "pct"])
+        self.ctx = seg(Gtk.Label(label="Context", css_classes=["key"]), self.ctx_bar, self.ctx_val, self.ctx_pct)
+        self.limits = Gtk.Box(spacing=0)
+        self.lock = seg(Gtk.Image(icon_name="security-high-symbolic"), Gtk.Label(label="Sandboxed"), cls=("dim",))
+        self.branch_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.MIDDLE, max_width_chars=28)
+        self.branch = seg(self.branch_label, cls=("dim",))
+        self.branch.set_tooltip_text("Branch")
+        self.changes_label = Gtk.Label(css_classes=["val"])
+        self.changes = Gtk.Button(child=self.changes_label, css_classes=["flat", "changes-btn"],
+                                  tooltip_text="Changes (Ctrl+Shift+D)", valign=Gtk.Align.CENTER)
+        self.changes.connect("clicked", lambda *_: win.rail_toggle.set_active(not win.rail_toggle.get_active()))
+        for w in (self.who, self.doing, self.ctx, self.limits):
+            self.widget.append(w)
+        self.widget.append(Gtk.Box(hexpand=True))
+        for w in (self.lock, self.branch, self.changes):
+            self.widget.append(w)
+        # clipped at the window's width rather than widening it
+        self.outer = Gtk.ScrolledWindow(child=self.widget, hscrollbar_policy=Gtk.PolicyType.EXTERNAL,
+                                        vscrollbar_policy=Gtk.PolicyType.NEVER, css_classes=["statusbar-outer"],
+                                        visible=False)
 
     def update(self, s, now):
-        m = (s or {}).get("meter")
+        self.s = s
         live = bool(s) and s.get("state") != "ended"
-        self.widget.set_visible(bool(m) and live)
-        if not (m and live):
+        self.widget.set_visible(live)
+        self.outer.set_visible(live)
+        if not live:
             return
-        self.model.set_label(model_name(m.get("model")))
-        self.model.set_visible(bool(m.get("model")))
-        set_meter(self.ctx_bar, m.get("percent"))
-        self.ctx_val.set_label(context_text(m))
+        m = s.get("meter") or {}
+        agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand")
+        self.tile.set_label(AGENT_TILES.get(s.get("agent"), agent[:1].upper()))
+        self.model.set_label(model_name(m.get("model")) or agent)
+        self.tile.set_tooltip_text(agent)
+        st = s.get("state")
+        for c in ("working", "needs"):
+            self.dot.remove_css_class(c)
+            self.state.remove_css_class(c)
+        self.dot.add_css_class("needs" if st == "waiting" else "working")
+        if st == "waiting":
+            self.state.add_css_class("needs")
+        self.state.set_label(session_status(s, now))
+        self.ctx.set_visible(bool(m))
+        if m:
+            set_meter(self.ctx_bar, m.get("percent"))
+            self.ctx_val.set_label(f"{short_tokens(m['context'])} / {short_tokens(m['window'])}"
+                                   if m.get("window") else short_tokens(m["context"]))
+            pct = m.get("percent")
+            self.ctx_pct.set_label(f"{round(pct)}%" if pct is not None else "")
+            self.ctx_pct.set_visible(pct is not None)
+            for c in ("high", "full"):
+                self.ctx_pct.remove_css_class(c)
+            if pct is not None and pct >= 75:
+                self.ctx_pct.add_css_class("full" if pct >= 90 else "high")
         while (c := self.limits.get_first_child()) is not None:
             self.limits.remove(c)
         for lim in m.get("limits") or []:
-            box = Gtk.Box(spacing=8)
-            box.append(Gtk.Label(label=lim["label"], css_classes=["key"]))
-            bar = meter_bar(70)
+            bar = meter_bar(48)
             set_meter(bar, lim["percent"])
-            box.append(bar)
-            box.append(Gtk.Label(label=f"{round(lim['percent'])}%", css_classes=["val"]))
+            kids = [Gtk.Label(label=SHORT_LIMITS.get(lim["label"], lim["label"]), css_classes=["key"]), bar,
+                    Gtk.Label(label=f"{round(lim['percent'])}%", css_classes=["val"])]
             r = resets_in(lim.get("resets_at"), now)
-            if r:
-                box.set_tooltip_text(r)
-            self.limits.append(box)
+            b = Gtk.Box(spacing=7, css_classes=["seg"], valign=Gtk.Align.CENTER,
+                        tooltip_text=f"{lim['label']} limit, {r}" if r else f"{lim['label']} limit")
+            for k in kids:
+                b.append(k)
+            self.limits.append(b)
+        self.lock.set_visible(s.get("sandbox") == "on")
+        self._git(s, now)
+
+    def _git(self, s, now):
+        """The branch, and what changed since the session started: read
+        again when the session changes, when its agent stops to wait, and
+        every 20 seconds while it works."""
+        name = s["name"]
+        due = (name != self.changes_for or now - self.changes_at >= 20
+               or (s.get("state") == "waiting" and getattr(self, "_was", None) != "waiting"))
+        self._was = s.get("state")
+        if not due:
+            return
+        if name != self.changes_for:
+            self.branch.set_visible(False)
+            self.changes.set_visible(False)
+        self.changes_for, self.changes_at = name, now
+        d = s.get("dir")
+        if d:
+            run(["git", "-C", d, "branch", "--show-current"], self._branch, name)
+        run([PULSAR, "agent", "diff", name, "--files", "--json"], self._changes, name)
+
+    def _branch(self, ok, out, name):
+        if (self.s or {}).get("name") != name:
+            return
+        b = out.strip() if ok else ""
+        self.branch_label.set_label(b)
+        self.branch.set_visible(bool(b))
+
+    def _changes(self, ok, out, name):
+        if (self.s or {}).get("name") != name:
+            return
+        files = parse(out) if ok else None
+        if not isinstance(files, list):
+            self.changes.set_visible(False)
+            return
+        if not files:
+            self.changes_label.set_markup('<span alpha="55%">No changes</span>')
+        else:
+            a = sum(f.get("added") or 0 for f in files)
+            r = sum(f.get("removed") or 0 for f in files)
+            n = len(files)
+            self.changes_label.set_markup(f"{n} file{'s' if n != 1 else ''}  "
+                                          f"<span foreground='#2ec27e'>+{a}</span> "
+                                          f"<span foreground='#e66100'>−{r}</span>")
+        self.changes.set_visible(True)
 
 
 class ProjectRow(Gtk.ListBoxRow):
     """A project's heading in the sidebar; activating it folds it."""
 
-    def __init__(self, project, label, collapsed):
+    def __init__(self, project, label, collapsed, compact=False):
         super().__init__(selectable=False, css_classes=["project"] + (["collapsed"] if collapsed else []),
-                         tooltip_text=home(project) or None)
+                         tooltip_text=home(project) or None, activatable=not compact)
         self.project = project
         box = Gtk.Box(spacing=6, margin_start=10, margin_end=8)
         box.append(Gtk.Label(label=label, xalign=0, hexpand=True, css_classes=["project-label"],
@@ -1063,7 +1206,7 @@ class ProjectRow(Gtk.ListBoxRow):
         box.append(self.dot)
         box.append(Gtk.Image(icon_name="pan-end-symbolic" if collapsed else "pan-down-symbolic",
                              css_classes=["fold"], pixel_size=12))
-        self.set_child(box)
+        self.set_child(box if not compact else Gtk.Box(css_classes=["fold-rule"]))
         self.collapsed = collapsed
 
     def set_attention(self, on):
@@ -1084,6 +1227,7 @@ class SessionRow(Gtk.ListBoxRow):
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
         self.label = Gtk.Label(label=name, xalign=0, css_classes=["session-title"], ellipsize=Pango.EllipsizeMode.END)
         self.sub = Gtk.Label(xalign=0, css_classes=["caption", "dim-label"], ellipsize=Pango.EllipsizeMode.END)
+        self.text = text
         text.append(self.label)
         text.append(self.sub)
         self.meter = meter_bar()
@@ -1094,6 +1238,7 @@ class SessionRow(Gtk.ListBoxRow):
                               css_classes=["dim-label"])
         arch = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Archive", valign=Gtk.Align.CENTER,
                           css_classes=["flat", "circular", "archive"])
+        self.arch = arch
         arch.connect("clicked", lambda *_: win.archive(name))
         box.append(self.tile)
         box.append(text)
@@ -1112,6 +1257,16 @@ class SessionRow(Gtk.ListBoxRow):
         click = Gtk.GestureClick(button=3)
         click.connect("pressed", self._menu)
         self.add_controller(click)
+
+    def set_compact(self, on):
+        """Narrowed list: the tile alone, its title on hover."""
+        self.compact = on
+        for w in (self.text, self.arch):
+            w.set_visible(not on)
+        self.lock.set_visible(not on and getattr(self, "sandboxed", False))
+        self.set_tooltip_text(self.label.get_label() if on else None)
+        self.get_child().set_halign(Gtk.Align.CENTER if on else Gtk.Align.FILL)
+        (self.add_css_class if on else self.remove_css_class)("compact")
 
     def _menu(self, _g, _n, x, y):
         r = Gdk.Rectangle()
@@ -1138,7 +1293,10 @@ class SessionRow(Gtk.ListBoxRow):
         if unseen:
             self.dot.add_css_class("unseen")
         self.dot.set_visible(unseen)
-        self.lock.set_visible(s.get("sandbox") == "on")
+        self.sandboxed = s.get("sandbox") == "on"
+        self.lock.set_visible(self.sandboxed and not getattr(self, "compact", False))
+        if getattr(self, "compact", False):
+            self.set_tooltip_text(f"{session_title(s)}\n{session_status(s, now)}")
         m = s.get("meter")
         set_meter(self.meter, m and m.get("percent"))
         self.meter.set_tooltip_text(context_text(m) if m else None)
