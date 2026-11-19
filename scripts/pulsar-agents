@@ -1773,19 +1773,9 @@ class DiskButton:
         if level != "ok":
             self.widget.add_css_class(level)
         self.label.set_label(f"{human_bytes(free)} free" if free is not None else "")
-        tip = f"{human_bytes(free)} free"
-        if need:
-            tip += f"; suspend needs {human_bytes(need)}"
-        self.widget.set_tooltip_text(tip)
-        self.head.set_label(f"{human_bytes(free)} free" + (f" · suspend needs {human_bytes(need)}" if need else ""))
-        why = ""
-        if level == "critical" and need and free is not None and free < need:
-            why = ("The machine can't suspend: the graphics driver saves the GPU's memory to disk "
-                   "as it goes to sleep, and there isn't room.")
-        elif level != "ok":
-            why = "Getting tight. These are the big things agents tend to leave."
-        self.why.set_label(why)
-        self.why.set_visible(bool(why))
+        self.widget.set_tooltip_text(f"{human_bytes(free)} free" if free is not None else None)
+        self.head.set_label(f"{human_bytes(free)} free" if free is not None else "")
+        self.why.set_visible(False)
         while (r := self.list.get_first_child()) is not None:
             self.list.remove(r)
         items = d.get("items") or []
