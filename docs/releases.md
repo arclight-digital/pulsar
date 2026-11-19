@@ -32,10 +32,12 @@ CLI, and opencode moves to version 2.
   Claude Code and opencode, and for Antigravity CLI once Pulsar has seen
   its conversation. Codex CLI picks up its latest conversation in that
   folder, which is the same one for a session in its own worktree.
-- A box under the terminal sends a message to the agent. Changes lists the
-  files the agent changed, since the session started or since the last
-  commit, with each file's diff and Revert File. A comment on a diff line
-  waits beside the box and goes with your next message as `path:line`.
+- Changes lists the files the agent changed, since the session started or
+  since the last commit, with each file's diff and Revert File. A comment
+  on a diff line is typed into the agent's prompt as `path:line: …` for
+  you to send.
+- The agents' tmux has no status line. The mouse wheel scrolls back
+  through a session, and a drag-selection is copied to the clipboard.
 - History lists the snapshot taken at each start, and Go Back puts the
   files back, stopping the agent first if it's working. The Undo button
   that appears after takes it back.
