@@ -5933,6 +5933,8 @@ model_env() {
 }
 
 disk_env() {
+    # agent disk is the user's, like the other agent commands; the build host runs as root
+    [ "$(id -u)" -eq 0 ] && skip "agent disk refuses root; these run as a user"
     export HOME="${BATS_TEST_TMPDIR}/home" PULSAR_DISK_MIN=1000
     export PULSAR_DISK_TMP="${BATS_TEST_TMPDIR}/vartmp" XDG_CACHE_HOME="${HOME}/.cache"
     export PULSAR_AGENT_SCRATCH="${PULSAR_DISK_TMP}/pulsar-agents" PULSAR_NVIDIA_PARAMS=/nonexistent
