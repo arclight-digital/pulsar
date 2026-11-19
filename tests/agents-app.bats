@@ -420,3 +420,14 @@ print(g.session_icon("gui"))'
     # pinned: the same name keeps its icon across versions
     [ "${lines[4]}" = "('hexagon', 'orbit', 7, 108, 184)" ]
 }
+
+@test "disk: sizes read as Files says them; amber when tight, red when suspend won't fit" {
+    run gui '
+print([g.human_bytes(b) for b in (0, 999, 1536, 43459411968, 85094682624, 1_200_000_000_000, None)])
+need = 17_094_934_528
+print(g.disk_level(85e9, need), g.disk_level(30e9, need), g.disk_level(17e9, need), g.disk_level(4e9, None),
+      g.disk_level(19e9, None), g.disk_level(21e9, None), g.disk_level(None, need))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['0 B', '999 B', '1.5 KB', '43 GB', '85 GB', '1.2 TB', '0 B']" ]
+    [ "${lines[1]}" = "ok low critical critical low ok ok" ]
+}

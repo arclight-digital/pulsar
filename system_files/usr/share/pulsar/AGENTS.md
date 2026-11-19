@@ -30,7 +30,7 @@ and guard state.
 | `/var` | Writable, persistent, shared by all deployments. `/home` = `/var/home`. |
 | `/usr/local`, `/opt` | Symlinks into `/var`. Not in the image, shadow it on `PATH`, survive every update and rollback, invisible to `rpm-ostree status`. Don't install there (`sudo make install`, vendor `.sh` installers); use a toolbox, `mise` or `~/.local/bin`. |
 | `$HOME` | User data. Nothing rolls it back. |
-| `/tmp` | tmpfs: held in RAM, up to half of it ([systemd's `tmp.mount`](https://github.com/systemd/systemd/blob/main/units/tmp.mount)). What you leave there pushes the user's apps into swap. Keep it to small files. Disk images, VM images and build trees go in `/var/tmp` or `~/.cache` (on disk; `TMPDIR=/var/tmp` for tools and tests that make them). Delete them when you're done. |
+| `/tmp` | tmpfs: held in RAM, up to half of it ([systemd's `tmp.mount`](https://github.com/systemd/systemd/blob/main/units/tmp.mount)). What you leave there pushes the user's apps into swap. Keep it to small files. Disk images, VM images and build trees go in `$PULSAR_SCRATCH` when it's set (an agent session's own folder on disk, deleted with the session), else `/var/tmp` or `~/.cache` (`TMPDIR=/var/tmp` for tools and tests that make them). Delete them when you're done: on the NVIDIA image a full `/var` also stops the machine suspending. |
 
 ## Where software goes
 
@@ -91,7 +91,8 @@ works there.
 
 ## Sandboxed agents (`PULSAR_SANDBOX=1`)
 
-You are in a container that sees only the project.
+You are in a container that sees only the project, and `$PULSAR_SCRATCH`
+when the session has one: the place for big files you make and don't keep.
 
 - Not there: the rest of `$HOME`, SSH keys, `sudo`, `pulsar`, `toolbox`,
   `rpm-ostree`. Don't look for them or try to reach the host.

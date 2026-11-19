@@ -659,3 +659,30 @@ def hsl_rgb(h, s, l):
     """HSL (h in degrees, s and l 0-1) to RGB 0-1."""
     import colorsys
     return colorsys.hls_to_rgb(h / 360, l, s)
+
+
+# ------------------------------------------------------------------ disk ----
+def human_bytes(b):
+    """43459411968 -> 43 GB, 1536 -> 1.5 KB: decimal, as Files and df -H say."""
+    b = float(b or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1000 or unit == "TB":
+            return f"{b:.0f} {unit}" if unit == "B" or b >= 10 else f"{b:.1f} {unit}"
+        b /= 1000
+    return f"{b:.0f} TB"
+
+
+DISK_LOW = 20_000_000_000
+
+
+def disk_level(free, need):
+    """How worried to be about the disk agents write to: "critical" when
+    suspend won't have room (less free than the GPU's memory), or under
+    5 GB; "low" under 20 GB or twice the GPU's memory; else "ok"."""
+    if free is None:
+        return "ok"
+    if (need and free < need) or free < 5_000_000_000:
+        return "critical"
+    if free < max(DISK_LOW, 2 * (need or 0)):
+        return "low"
+    return "ok"

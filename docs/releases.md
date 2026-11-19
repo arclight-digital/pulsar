@@ -50,6 +50,15 @@ CLI, and opencode moves to version 2.
   show context only.
 - Ctrl+Shift+B (or the button over the list) narrows the session list to
   the agents' tiles, which still show who is working and who needs you.
+- The list's footer shows how much room is left on `/var`, amber when it's
+  getting tight and red when the machine can't suspend (on the NVIDIA image
+  the driver saves the GPU's memory to disk as it sleeps). Click it for the
+  big things in `/var/tmp`, `~/.cache` and the sessions' scratch folders,
+  each with Delete. `pulsar agent disk` lists the same, and
+  `pulsar doctor suspend-room` says whether a suspend will fit.
+- Each session started with `--tmux` gets a scratch folder,
+  `$PULSAR_SCRATCH`, for VM disks, builds and downloads, mounted into the
+  sandbox too. It's deleted with the session.
 - History lists the snapshot taken at each start, and Go Back puts the
   files back, stopping the agent first if it's working. The Undo button
   that appears after takes it back.

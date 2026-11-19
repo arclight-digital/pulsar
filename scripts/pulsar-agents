@@ -40,7 +40,7 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk, GtkSourc
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
-                        session_icon, hsl_rgb, home, parse,  # noqa: E402,F401
+                        session_icon, hsl_rgb, human_bytes, disk_level, home, parse,  # noqa: E402,F401
                         project_groups, project_label, resume_note, run, run_argv, session_doing,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
@@ -108,6 +108,12 @@ CSS = """
 .pulsar-agents .placeholder { opacity: .45; }
 .pulsar-agents.compact .sessions row.project { margin: 8px 22px 6px 22px; min-height: 0; padding: 0; }
 .pulsar-agents .fold-rule { min-height: 1px; background-color: alpha(currentColor, .1); }
+.pulsar-agents .disk-button { font-size: .85em; color: alpha(currentColor, .55); }
+.pulsar-agents .disk-button.low { color: @warning_color; }
+.pulsar-agents .disk-button.critical { color: @error_color; font-weight: 600; }
+.pulsar-agents .disk-pop { min-width: 380px; }
+.pulsar-agents .disk-pop .head { font-weight: 600; }
+.pulsar-agents .disk-pop .why { font-size: .85em; }
 .pulsar-agents .tile-new { min-width: 34px; min-height: 34px; border-radius: 10px; padding: 0;
                            background: none; color: @accent_color;
                            box-shadow: inset 0 0 0 1px alpha(@accent_color, .45); }
@@ -332,9 +338,15 @@ class Agents(Adw.ApplicationWindow):
         side_body.append(self.compact_new)
         side_body.append(self.side_stack)
         self.side_stack.set_vexpand(True)
+        self.disk = DiskButton(self)
+        foot = Gtk.Box(spacing=0)
+        foot.append(self.disk.widget)
+        foot.append(Gtk.Box(hexpand=True))
+        foot.append(self.archived_button)
+        self.foot = foot
         side = Adw.ToolbarView(content=side_body)
         side.add_top_bar(side_head)
-        side.add_bottom_bar(self.archived_button)
+        side.add_bottom_bar(foot)
 
         # content: the session's terminal, the message box under it, the rail beside it
         self.title = Adw.WindowTitle(title="")
@@ -451,6 +463,8 @@ class Agents(Adw.ApplicationWindow):
         self.fold.set_icon_name("sidebar-show-right-symbolic" if on else "sidebar-show-symbolic")
         self.fold.set_tooltip_text("Widen the List (Ctrl+Shift+B)" if on else "Narrow the List (Ctrl+Shift+B)")
         self._archived_label()
+        self.foot.set_orientation(Gtk.Orientation.VERTICAL if on else Gtk.Orientation.HORIZONTAL)
+        self.disk.set_compact(on)
         (self.add_css_class if on else self.remove_css_class)("compact")
         self._shape = None
         self._rebuild()
@@ -929,13 +943,17 @@ class Agents(Adw.ApplicationWindow):
                 self._clear_current()
             self.unseen.discard(name)
             self.remember()
-            self.toast(f"Archived {title}", undo=lambda: self.unarchive(name))
+            left = self.disk.session_bytes(name)
+            self.toast(f"Archived {title}" + (f" · its {human_bytes(left)} of scratch goes in {TIDY_DAYS} days"
+                                              if left >= 100_000_000 else ""),
+                       undo=lambda: self.unarchive(name))
         self._cmd("Could not archive the session", "sessions", "--archive", name, then=done)
 
     def unarchive(self, name):
         self._cmd("Could not bring the session back", "sessions", "--unarchive", name)
 
     def delete(self, name):
+        GLib.timeout_add_seconds(2, lambda: self.disk.refresh() and False)
         self._cmd("Could not delete the session", "sessions", "--forget", name, "--json",
                   then=lambda ok, out: ok and (left := forget_left(parse((out.strip().splitlines() or [""])[-1])))
                   and self.alert(*left))
@@ -1690,6 +1708,126 @@ def files_summary(files, uncommitted):
     removed = sum(f.get("removed") or 0 for f in files)
     n = len(files)
     return f"{n} file{'s' if n != 1 else ''} · +{added} −{removed}"
+
+
+class DiskButton:
+    """In the sidebar's footer: how much room is left where agents write,
+    amber when it's getting tight, red when suspend won't fit. Its popover
+    lists the big things in /var/tmp, ~/.cache and the sessions' scratch
+    folders (pulsar agent disk), each with Delete."""
+
+    REFRESH_S = 600
+
+    def __init__(self, win):
+        self.win = win
+        self.data = None
+        self.compact = False
+        self.label = Gtk.Label()
+        self.icon = Gtk.Image(icon_name="drive-harddisk-symbolic")
+        box = Gtk.Box(spacing=6)
+        box.append(self.icon)
+        box.append(self.label)
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
+        self.head = Gtk.Label(xalign=0, css_classes=["head"])
+        self.why = Gtk.Label(xalign=0, wrap=True, max_width_chars=48, css_classes=["why", "dim-label"])
+        self.busy = Gtk.Spinner(spinning=True, visible=False, halign=Gtk.Align.CENTER)
+        pop_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=10, margin_bottom=10,
+                          margin_start=10, margin_end=10, css_classes=["disk-pop"])
+        for w in (self.head, self.why, self.busy):
+            pop_box.append(w)
+        pop_box.append(Gtk.ScrolledWindow(child=self.list, propagate_natural_height=True, max_content_height=420,
+                                          hscrollbar_policy=Gtk.PolicyType.NEVER))
+        self.pop = Gtk.Popover(child=pop_box)
+        self.pop.connect("show", lambda *_: self.refresh())
+        self.widget = Gtk.MenuButton(child=box, popover=self.pop, css_classes=["flat", "disk-button"],
+                                     margin_start=6, margin_bottom=6, margin_top=4)
+        GLib.timeout_add_seconds(2, lambda: self.refresh() and False)
+        GLib.timeout_add_seconds(self.REFRESH_S, lambda: self.refresh() or True)
+
+    def set_compact(self, on):
+        self.compact = on
+        self.label.set_visible(not on)
+
+    def refresh(self):
+        if getattr(self, "_running", False):
+            return
+        self._running = True
+        self.busy.set_visible(self.data is None)
+        run([PULSAR, "agent", "disk", "--json"], self._got)
+
+    def session_bytes(self, name):
+        for it in (self.data or {}).get("items", []):
+            if it.get("kind") == "session" and it.get("session") == name:
+                return it.get("bytes") or 0
+        return 0
+
+    def _got(self, ok, out):
+        self._running = False
+        self.busy.set_visible(False)
+        d = parse(out) if ok else None
+        if not isinstance(d, dict):
+            return
+        self.data = d
+        free, need = d.get("free"), d.get("suspend_need")
+        level = disk_level(free, need)
+        for c in ("low", "critical"):
+            self.widget.remove_css_class(c)
+        if level != "ok":
+            self.widget.add_css_class(level)
+        self.label.set_label(f"{human_bytes(free)} free" if free is not None else "")
+        tip = f"{human_bytes(free)} free"
+        if need:
+            tip += f"; suspend needs {human_bytes(need)}"
+        self.widget.set_tooltip_text(tip)
+        self.head.set_label(f"{human_bytes(free)} free" + (f" · suspend needs {human_bytes(need)}" if need else ""))
+        why = ""
+        if level == "critical" and need and free is not None and free < need:
+            why = ("The machine can't suspend: the graphics driver saves the GPU's memory to disk "
+                   "as it goes to sleep, and there isn't room.")
+        elif level != "ok":
+            why = "Getting tight. These are the big things agents tend to leave."
+        self.why.set_label(why)
+        self.why.set_visible(bool(why))
+        while (r := self.list.get_first_child()) is not None:
+            self.list.remove(r)
+        items = d.get("items") or []
+        now = GLib.get_real_time() // 1_000_000
+        for it in items:
+            if it.get("kind") == "session" and not it.get("bytes"):
+                continue
+            path = it.get("path", "")
+            sess = it.get("session")
+            title = session_title(self.win.sessions.get(sess, {"name": sess})) if sess else os.path.basename(path)
+            where = {"session": "session scratch", "tmp": "/var/tmp", "cache": "~/.cache"}.get(it.get("kind"), "")
+            row = Adw.ActionRow(title=title, subtitle=" · ".join(x for x in (
+                human_bytes(it.get("bytes")), where, when(it.get("modified"), now)) if x))
+            row.set_tooltip_text(home(path))
+            gone = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Delete…", valign=Gtk.Align.CENTER,
+                              css_classes=["flat"])
+            gone.connect("clicked", lambda _b, it=it: self._delete(it))
+            row.add_suffix(gone)
+            self.list.append(row)
+        self.list.set_visible(bool(self.list.get_first_child()))
+
+    def _delete(self, it):
+        path = it.get("path", "")
+        d = Adw.AlertDialog(heading=f"Delete {os.path.basename(path)}?",
+                            body=f"{home(path)}, {human_bytes(it.get('bytes'))}. This can't be undone.")
+        d.add_response("cancel", "Cancel")
+        d.add_response("delete", "Delete")
+        d.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.set_close_response("cancel")
+
+        def done(ok, out):
+            if not ok:
+                self.win.alert("Could not delete it", out.strip()[-600:])
+            else:
+                self.win.toast(out.strip().splitlines()[-1].replace(os.path.expanduser("~"), "~")
+                               .replace("deleted", "Deleted", 1))
+            self.refresh()
+        d.connect("response", lambda _d, r: r == "delete" and run([PULSAR, "agent", "disk", "--delete", path], done))
+        self.pop.popdown()
+        d.present(self.win)
 
 
 class ArchivedDialog(Adw.Dialog):

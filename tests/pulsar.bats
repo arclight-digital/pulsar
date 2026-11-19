@@ -5899,3 +5899,124 @@ model_env() {
     [ "$(jq -c '[.[] | {name, state, exited}] | sort_by(.name)' <<<"$output")" = \
       '[{"name":"busy","state":"running","exited":null},{"name":"quit","state":"running","exited":3}]' ] || fail "$output"
 }
+
+@test "doctor suspend-room: on the NVIDIA image, fails when /var has less free than the GPU's memory" {
+    local d="${BATS_TEST_TMPDIR}"
+    printf 'PreserveVideoMemoryAllocations: 1\nTemporaryFilePath: "/var/lib/systemd/sleep"\n' > "${d}/params"
+    printf '#!/bin/sh\nprintf "16303\\n"\n' > "${d}/smi"; chmod +x "${d}/smi"
+    printf '#!/bin/sh\nprintf "Avail\\n%%s\\n" "$FREE"\n' > "${d}/df"; chmod +x "${d}/df"
+    export PULSAR_NVIDIA_PARAMS="${d}/params" PULSAR_NVIDIA_SMI="${d}/smi" PULSAR_DF="${d}/df"
+    FREE=3000000000 run "$PULSAR" doctor suspend-room --json
+    [ "$status" -eq 1 ] || fail "$output"
+    [ "$(jq -r '.checks[0].status' <<<"$output")" = fail ]
+    [[ "$(jq -r '.checks[0].summary' <<<"$output")" == "suspend will fail: 3.0 GB free, the GPU needs 17 GB" ]] || fail "$output"
+    [[ "$(jq -r '.checks[0].detail' <<<"$output")" == *"/var/lib/systemd/sleep"* ]]
+    FREE=17094934529 run "$PULSAR" doctor suspend-room --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '.checks[0].status' <<<"$output")" = ok ]
+    # two GPUs: both are saved
+    printf '#!/bin/sh\nprintf "8000\\n8000\\n"\n' > "${d}/smi"
+    FREE=10000000000 run "$PULSAR" doctor suspend-room --json
+    [ "$(jq -r '.checks[0].status' <<<"$output")" = fail ] || fail "$output"
+    # without preserved video memory (or without NVIDIA) there is nothing to check
+    printf 'PreserveVideoMemoryAllocations: 0\n' > "${d}/params"
+    FREE=1 run "$PULSAR" doctor suspend-room --json
+    [ "$(jq -r '[.checks[].status] | join(",")' <<<"$output")" = skip ] || fail "$output"
+    PULSAR_NVIDIA_PARAMS=/nonexistent FREE=1 run "$PULSAR" doctor suspend-room --json
+    [ "$(jq -r '[.checks[].status] | join(",")' <<<"$output")" = skip ] || fail "$output"
+    # and in a full run it says nothing at all
+    PULSAR_NVIDIA_PARAMS=/nonexistent FREE=1 run "$PULSAR" doctor --json
+    [ "$(jq -r '[.checks[] | select(.id == "suspend-room")] | length' <<<"$output")" = 0 ] || fail "$output"
+}
+
+disk_env() {
+    export HOME="${BATS_TEST_TMPDIR}/home" PULSAR_DISK_MIN=1000
+    export PULSAR_DISK_TMP="${BATS_TEST_TMPDIR}/vartmp" XDG_CACHE_HOME="${HOME}/.cache"
+    export PULSAR_AGENT_SCRATCH="${PULSAR_DISK_TMP}/pulsar-agents" PULSAR_NVIDIA_PARAMS=/nonexistent
+    unset PULSAR_DF
+    mkdir -p "$PULSAR_DISK_TMP/vm" "$XDG_CACHE_HOME/browsers" "$XDG_CACHE_HOME/tiny" "$PULSAR_AGENT_SCRATCH/s1" "$PULSAR_AGENT_SCRATCH/s2"
+    head -c 5000 /dev/zero > "$PULSAR_DISK_TMP/vm/disk.qcow2"
+    head -c 3000 /dev/zero > "$XDG_CACHE_HOME/browsers/chrome"
+    head -c 10 /dev/zero > "$XDG_CACHE_HOME/tiny/x"
+    head -c 2000 /dev/zero > "$PULSAR_AGENT_SCRATCH/s1/build.tar"
+    head -c 4000 /dev/zero > "${BATS_TEST_TMPDIR}/elsewhere"
+    ln -s "${BATS_TEST_TMPDIR}/elsewhere" "$PULSAR_DISK_TMP/link"
+}
+
+@test "agent disk: free space and the big things in /var/tmp, ~/.cache and the sessions' scratch, biggest first" {
+    disk_env
+    run "$PULSAR" agent disk --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '.free > 0' <<<"$output")" = true ]
+    [ "$(jq -r '.suspend_need' <<<"$output")" = null ]
+    # small cache entries are left out, a session's folder is listed whatever its size,
+    # the scratch root isn't listed as a /var/tmp entry, and a symlink isn't followed
+    [ "$(jq -r '[.items[] | "\(.kind):\(.path | split("/") | last):\(.bytes)"] | join(" ")' <<<"$output")" = \
+      "tmp:vm:5000 cache:browsers:3000 session:s1:2000 session:s2:0" ] || fail "$output"
+    [ "$(jq -r '.items[] | select(.kind == "session") | .session' <<<"$output" | paste -sd ' ')" = "s1 s2" ]
+    run "$PULSAR" agent disk
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "${lines[1]}" == *"5.0 KB  ${PULSAR_DISK_TMP}/vm" ]] || fail "$output"
+    [[ "${lines[2]}" == *"3.0 KB  ~/.cache/browsers" ]] || fail "$output"
+    # free space it can't read is null, not a failure
+    printf '#!/bin/sh\nexit 1\n' > "${BATS_TEST_TMPDIR}/df"; chmod +x "${BATS_TEST_TMPDIR}/df"
+    PULSAR_DF="${BATS_TEST_TMPDIR}/df" run "$PULSAR" agent disk --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '.free' <<<"$output")" = null ] || fail "$output"
+}
+
+@test "agent disk --delete: only what it lists, one entry at a time, never a root, a symlink or anything else" {
+    disk_env
+    run "$PULSAR" agent disk --delete "$PULSAR_DISK_TMP/vm"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ ! -e "$PULSAR_DISK_TMP/vm" ]
+    [[ "$output" == "deleted ${PULSAR_DISK_TMP}/vm (5.0 KB)" ]] || fail "$output"
+    "$PULSAR" agent disk --delete "$XDG_CACHE_HOME/browsers" >/dev/null
+    [ ! -e "$XDG_CACHE_HOME/browsers" ]
+    "$PULSAR" agent disk --delete "$PULSAR_AGENT_SCRATCH/s1" >/dev/null
+    [ ! -e "$PULSAR_AGENT_SCRATCH/s1" ]
+    local p
+    for p in "$PULSAR_DISK_TMP" "$XDG_CACHE_HOME" "$PULSAR_AGENT_SCRATCH" "$XDG_CACHE_HOME/tiny/x" \
+             "$PULSAR_DISK_TMP/link" "${BATS_TEST_TMPDIR}/elsewhere" "$HOME" "vartmp/x" \
+             "$XDG_CACHE_HOME/../.cache/tiny" "$XDG_CACHE_HOME//tiny" "$PULSAR_DISK_TMP/missing"; do
+        run "$PULSAR" agent disk --delete "$p"
+        [ "$status" -ne 0 ] || fail "deleted $p"
+        [[ "$output" == *"not one of the things agent disk lists"* ]] || fail "$p: $output"
+    done
+    [ -e "${BATS_TEST_TMPDIR}/elsewhere" ] && [ -e "$XDG_CACHE_HOME/tiny/x" ] && [ -e "$PULSAR_AGENT_SCRATCH/s2" ]
+}
+
+@test "agent run --tmux: a scratch folder per session, private, in the agent's environment; deleted with the session" {
+    wt_env
+    export PULSAR_AGENT_SCRATCH="${BATS_TEST_TMPDIR}/scratch"
+    "$PULSAR" agent run claude --tmux fix >/dev/null 2>&1
+    [ -d "${PULSAR_AGENT_SCRATCH}/fix" ]
+    [ "$(stat -c %a "${PULSAR_AGENT_SCRATCH}/fix")" = 700 ]
+    grep -qxF "PULSAR_SCRATCH=${PULSAR_AGENT_SCRATCH}/fix" "$TMUX_CALLS" || fail "$(cat "$TMUX_CALLS")"
+    head -c 4000 /dev/zero > "${PULSAR_AGENT_SCRATCH}/fix/vm.img"
+    rm "${TMUX_LIVE}/fix"
+    run "$PULSAR" agent sessions --forget fix --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '.scratch_freed' <<<"${lines[-1]}")" -ge 4000 ] || fail "$output"
+    [ ! -e "${PULSAR_AGENT_SCRATCH}/fix" ]
+    # another session's folder stays
+    mkdir -p "${PULSAR_AGENT_SCRATCH}/other"
+    "$PULSAR" agent run claude --tmux gone >/dev/null 2>&1; rm "${TMUX_LIVE}/gone"
+    run "$PULSAR" agent sessions --forget gone
+    [ -d "${PULSAR_AGENT_SCRATCH}/other" ]
+}
+
+@test "a sandboxed agent gets its session's scratch folder, read-write, and nothing more of /var/tmp" {
+    sandbox_env
+    cd "$PROJ"
+    local s="${BATS_TEST_TMPDIR}/scratch/work"
+    mkdir -p "$s"
+    PULSAR_SCRATCH="$s" "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    grep -qxF -- "${s}:${s}" "$PODMAN_LOG" || fail "$(cat "$PODMAN_LOG")"
+    grep -qxF -- "PULSAR_SCRATCH=${s}" "$PODMAN_LOG" || fail "$(cat "$PODMAN_LOG")"
+    ! grep -q '^/var/tmp' "$PODMAN_LOG"
+    # no folder, no mount
+    rm -rf "$s"
+    PULSAR_SCRATCH="$s" "$PULSAR" agent run claude --sandbox >/dev/null 2>&1
+    grep -c -- "PULSAR_SCRATCH" "$PODMAN_LOG" | grep -qx 0
+}

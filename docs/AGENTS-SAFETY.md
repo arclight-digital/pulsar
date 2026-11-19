@@ -141,6 +141,10 @@ What it sees:
   It isn't your real `~/.claude` because an agent that could write its own
   settings could add a hook or MCP server your unsandboxed agent would run on
   the host.
+- **Its session's scratch folder**, read-write, for a session started with
+  `--tmux`: `/var/tmp/pulsar-agents/<session>` (`$PULSAR_SCRATCH`), where the
+  guide tells agents to put VM disks, builds and downloads. It's deleted with
+  the session (`--forget`, or `--tidy` a week after it's archived).
 - `~/.gitconfig` (read-only, so commits are yours), the guide and skills, and
   anything you `pulsar agent sandbox allow` (read-only unless `--rw`).
 
