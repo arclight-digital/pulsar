@@ -71,7 +71,6 @@ CSS = """
 .pulsar-agents .tile.working { color: @accent_color; animation: working 2.6s ease-in-out infinite; }
 .pulsar-agents .sessions row.session:selected .tile { background-color: alpha(@accent_color, .2); color: @accent_color; }
 .pulsar-agents .session-title { font-weight: 600; }
-.pulsar-agents row.session:selected .session-title { text-shadow: 0 0 8px alpha(@accent_color, .45); }
 .pulsar-agents label.needs { opacity: 1; color: @accent_color; font-weight: 600; }
 .pulsar-agents .dot { min-width: 7px; min-height: 7px; border-radius: 4px; }
 .pulsar-agents .dot.unseen, .pulsar-agents .dot.waiting
@@ -103,7 +102,6 @@ CSS = """
 .pulsar-agents .composer { padding: 6px 14px 14px 14px; }
 .pulsar-agents .composer textview, .pulsar-agents .composer textview text { background: transparent; }
 .pulsar-agents .placeholder { opacity: .45; }
-.pulsar-agents .mark { filter: drop-shadow(0 0 18px alpha(@accent_color, .45)); }
 .pulsar-agents .launch-heading { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 18px; }
 .pulsar-agents .resume-card { border-radius: 14px; padding: 10px 12px; background-color: alpha(currentColor, .045);
                               box-shadow: inset 0 0 0 1px alpha(currentColor, .06); transition: all 140ms ease-out; }
@@ -281,8 +279,7 @@ class Agents(Adw.ApplicationWindow):
         side_head.pack_start(new)
         self.list = Gtk.ListBox(css_classes=["navigation-sidebar", "sessions"])
         self.list.connect("row-activated", self._activated)
-        self.empty = Adw.StatusPage(title="No sessions", css_classes=["compact"],
-                                    description="An agent you start keeps working when this window closes.")
+        self.empty = Adw.StatusPage(title="No sessions", css_classes=["compact"])
         self.side_stack = Gtk.Stack()
         self.side_stack.add_named(self.empty, "empty")
         self.side_stack.add_named(Gtk.ScrolledWindow(child=self.list, hscrollbar_policy=Gtk.PolicyType.NEVER), "list")
@@ -311,10 +308,10 @@ class Agents(Adw.ApplicationWindow):
         self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
         self.term_stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE,
                                     transition_duration=150)
-        self.stopped = Adw.StatusPage(icon_name="media-playback-pause-symbolic", css_classes=["compact"])
-        again = Gtk.Button(label="Continue", halign=Gtk.Align.CENTER, css_classes=["pill", "suggested-action"])
+        again = Gtk.Button(label="Continue", halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
+                           css_classes=["pill", "suggested-action"])
         again.connect("clicked", lambda *_: self.resume())
-        self.stopped.set_child(again)
+        self.stopped = again
         self.term_stack.add_named(self.stopped, "stopped")
         self.launcher = Launcher(self)
         self.term_stack.add_named(self.launcher.widget, "none")
@@ -568,8 +565,6 @@ class Agents(Adw.ApplicationWindow):
         self.rail.set_session(s)
 
     def _show_stopped(self, s):
-        self.stopped.set_title(f"{session_title(s)} is stopped")
-        self.stopped.set_description(resume_note(s).replace("Resuming", "Continue picks it up") + ".")
         self.term_stack.set_visible_child_name("stopped")
 
     def resume(self):
@@ -642,7 +637,7 @@ class Agents(Adw.ApplicationWindow):
                 return
             s = self.sessions.get(term.name, {})
             if s.get("state") in ("running", "waiting"):
-                self.banner.set_title("This window let go of the session; it is still working")
+                self.banner.set_title("Detached")
                 self.banner.set_button_label("Attach")
                 self.banner.set_revealed(True)
             else:
@@ -762,7 +757,7 @@ class Agents(Adw.ApplicationWindow):
         if not s:
             return
         self._cmd("Could not stop the session", "sessions", "--kill", s["name"],
-                  then=lambda ok, _o: ok and self.toast(f"Stopped {session_title(s)}. Open it to continue."))
+                  then=lambda ok, _o: ok and self.toast(f"Stopped {session_title(s)}"))
 
     def archive(self, name):
         s = self.sessions.get(name)
@@ -816,9 +811,7 @@ class Agents(Adw.ApplicationWindow):
         if not s:
             return
         if s.get("state") != "ended" and not stopped:
-            self.confirm(f"Stop {session_title(s)} and go back?",
-                         "The agent stops first, so it can't write while the files go back. "
-                         "Next you see which files change.", "stop", "Stop and Go Back",
+            self.confirm(f"Stop {session_title(s)} and go back?", "", "stop", "Stop and Go Back",
                          lambda: self._cmd("Could not stop the session", "sessions", "--kill", name,
                                            then=lambda ok, _o: ok and self.undo(to, stopped=True)),
                          destructive=False)
@@ -1037,11 +1030,10 @@ class Composer:
                 self.win.drafts[old] = self._text()
             self.buffer.set_text(self.win.drafts.get(name, "") if name else "")
         self.s = s
-        self.widget.set_visible(bool(s))
         live = bool(s) and s.get("state") != "ended"
+        self.widget.set_visible(live)
         self.view.set_sensitive(live)
-        self.placeholder.set_label(f"Message {AGENT_NAMES.get(s.get('agent'), 'the agent')}"
-                                   if live else "Continue the session to send it a message" if s else "")
+        self.placeholder.set_label(f"Message {AGENT_NAMES.get(s.get('agent'), 'the agent')}" if live else "")
         self.update_chip()
         self._changed()
 
@@ -1132,8 +1124,7 @@ class Rail:
         self.comment_entry.connect("activate", lambda *_: self._comment())
         self.comment_pop = Gtk.Popover(child=self.comment_entry)
         self.comment_button = Gtk.MenuButton(icon_name="chat-message-new-symbolic", popover=self.comment_pop,
-                                             tooltip_text="Comment on the line under the cursor; it goes with "
-                                                          "your next message")
+                                             tooltip_text="Comment")
         self.comment_pop.connect("show", lambda *_: self._comment_target())
         self.revert = Gtk.Button(label="Revert File", css_classes=["flat"], sensitive=False)
         self.revert.connect("clicked", lambda *_: self.path and self.win.revert_file(
@@ -1318,13 +1309,12 @@ class Rail:
         snaps = parse(out) if ok else None
         live = self.s.get("state") != "ended"
         if not isinstance(snaps, list) or not snaps:
-            self.snap_note.set_label("No snapshots yet. One is taken each time the session starts.")
+            self.snap_note.set_label("No snapshots")
+            self.snap_note.set_visible(True)
             self.snaps.set_visible(False)
             return
         self.snaps.set_visible(True)
-        self.snap_note.set_label("One is taken each time the session starts. Going back puts the files as they "
-                                 "were then (files git ignores stay, and so do commits)"
-                                 + (", and stops the agent first." if live else "."))
+        self.snap_note.set_visible(False)
         for snap in snaps:
             when_ = GLib.DateTime.new_from_unix_local(int(snap.get("time", 0))).format("%b %-d, %H:%M")
             row = Adw.ActionRow(title=snapshot_title(snap), subtitle=when_)
@@ -1353,7 +1343,7 @@ class ArchivedDialog(Adw.Dialog):
         self.win = win
         page = Adw.PreferencesPage()
         group = Adw.PreferencesGroup(
-            description=f"Archived sessions are deleted after {TIDY_DAYS} days, with their undo snapshots. "
+            description=f"Deleted after {TIDY_DAYS} days."
                         "A worktree with uncommitted changes is kept, and so is every branch.")
         now = win._now()
         arch = sorted((s for s in win.sessions.values() if s.get("archived")), key=lambda s: -(s["archived"] or 0))
@@ -1394,7 +1384,7 @@ class Launcher:
     the agent should do, in which project, with which agent. The project's
     agent, worktree and sandbox are remembered."""
 
-    SANDBOX = (("Sandbox as set", None), ("Sandboxed", True), ("Not sandboxed", False))
+    SANDBOX = (("Sandbox: default", None), ("Sandbox: on", True), ("Sandbox: off", False))
 
     def __init__(self, win):
         self.win = win
@@ -1409,30 +1399,26 @@ class Launcher:
                                 sensitive=False)
         self.start.connect("clicked", lambda *_: self._go())
         top = Gtk.Box(spacing=10)
-        top.append(Gtk.Image(icon_name="utilities-terminal-symbolic", css_classes=["launch-icon"]))
         top.append(self.entry)
         top.append(self.start)
 
         self.projects = Adw.WrapBox(child_spacing=6, line_spacing=6)
-        other = Gtk.Button(label="Other…", css_classes=["chip", "flat"], tooltip_text="Pick a project folder")
+        other = Gtk.Button(label="Other…", css_classes=["chip", "flat"])
         other.connect("clicked", lambda *_: self._pick())
         self.other = other
 
         self.agent = Gtk.DropDown(css_classes=["chip"], tooltip_text="Agent")
         self.agent.connect("notify::selected", lambda *_: self._remember())
-        self.worktree = Gtk.ToggleButton(label="Own worktree", css_classes=["chip"],
-                                         tooltip_text="Its own branch and folder, so it can't trip over other sessions")
+        self.worktree = Gtk.ToggleButton(label="Worktree", css_classes=["chip"])
         self.worktree.connect("toggled", lambda *_: self._remember())
         self.sandbox = Gtk.DropDown.new_from_strings([c[0] for c in self.SANDBOX])
         self.sandbox.add_css_class("chip")
-        self.sandbox.set_tooltip_text("The sandbox sees only this project")
         self.sandbox.connect("notify::selected", lambda *_: self._remember())
         opts = Gtk.Box(spacing=6)
         for w in (self.agent, self.worktree, self.sandbox):
             opts.append(w)
 
-        self.hint = Gtk.Label(xalign=0, wrap=True, css_classes=["caption", "dim-label"],
-                              label="Enter starts it. Empty, the agent starts with no message.")
+        self.hint = Gtk.Label(xalign=0, wrap=True, css_classes=["caption", "error"], visible=False)
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, valign=Gtk.Align.CENTER,
                       margin_start=24, margin_end=24, margin_bottom=48)
         self.mark = Gtk.Image(pixel_size=52, css_classes=["mark"], halign=Gtk.Align.START, margin_bottom=4)
@@ -1441,14 +1427,10 @@ class Launcher:
         col.append(self.mark)
         col.append(top)
         col.append(Gtk.Box(css_classes=["hairline"]))
-        for label, w in (("Project", self.projects), ("With", opts)):
-            row = Gtk.Box(spacing=12)
-            row.append(Gtk.Label(label=label, xalign=0, width_chars=7, valign=Gtk.Align.START,
-                                 css_classes=["launch-label"]))
-            row.append(w)
-            col.append(row)
+        col.append(self.projects)
+        col.append(opts)
         col.append(self.hint)
-        self.resume_heading = Gtk.Label(label="Pick up where you left off", xalign=0,
+        self.resume_heading = Gtk.Label(label="Recent", xalign=0,
                                         css_classes=["launch-heading"], visible=False)
         self.cards = Gtk.Box(spacing=8, homogeneous=True)
         col.append(self.resume_heading)
@@ -1476,8 +1458,8 @@ class Launcher:
         elif self.agents:
             self.default_agent = self.agents[0]
         if not self.agents:
-            self.hint.set_label("No agent is installed. Pulsar Welcome or pulsar agent add <name> installs one.")
-            self.hint.add_css_class("error")
+            self.hint.set_label("No agent is installed")
+            self.hint.set_visible(True)
         self._apply()
 
     def recent(self):

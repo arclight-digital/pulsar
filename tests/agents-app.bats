@@ -166,7 +166,7 @@ print(m.project_label("/a/x/app", ["/a/x/app", "/b/y/app"]), m.project_label("/a
     [ "${lines[2]}" = "app (x) web" ]
 }
 
-@test "a row says what a session is doing and since when; a stopped one comes back on its conversation where the agent can" {
+@test "a row says what a session is doing and since when; a stopped one says so only when it may come back on another conversation" {
     need_gtk
     run env TZ=UTC bash -c "$(declare -f app); APP='$APP' app '
 now = 1_000_000
@@ -184,13 +184,13 @@ for s in ({\"agent\": \"claude\"}, {\"agent\": \"opencode\"}, {\"agent\": \"agy\
     [ "${lines[2]}" = "Working · 14 min" ]
     [ "${lines[3]}" = "Stopped · yesterday" ]
     [ "${lines[4]}" = "Stopped" ]
-    [ "${lines[5]}" = "Resuming on the same conversation" ]
-    [ "${lines[6]}" = "Resuming on the same conversation" ]
-    [ "${lines[7]}" = "Resuming on the same conversation" ]
-    [ "${lines[8]}" = "Resuming on the latest conversation in this folder" ]
-    [ "${lines[9]}" = "Resuming on the same conversation" ]
-    [ "${lines[10]}" = "Resuming on the latest conversation in this folder" ]
-    [ "${lines[11]}" = "Starting again" ]
+    [ "${lines[5]}" = "Resuming" ]
+    [ "${lines[6]}" = "Resuming" ]
+    [ "${lines[7]}" = "Resuming" ]
+    [ "${lines[8]}" = "Resuming this folder's latest conversation" ]
+    [ "${lines[9]}" = "Resuming" ]
+    [ "${lines[10]}" = "Resuming this folder's latest conversation" ]
+    [ "${lines[11]}" = "Starting" ]
 }
 
 @test "a session lights up when it stops or waits while another one is on screen" {

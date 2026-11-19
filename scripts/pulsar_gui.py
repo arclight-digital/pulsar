@@ -304,15 +304,12 @@ def newly_unseen(before, after, looking_at):
 
 
 def resume_note(s):
-    """What the banner says while a stopped session comes back."""
+    """The banner while a stopped session comes back; it names the
+    conversation only when it may not be the one the session had."""
     agent = s.get("agent")
-    if agent in ("claude", "opencode") or (agent == "agy" and s.get("conversation")):
-        return "Resuming on the same conversation"
-    if agent in ("codex", "agy"):
-        if s.get("worktree_of"):
-            return "Resuming on the same conversation"
-        return "Resuming on the latest conversation in this folder"
-    return "Starting again"
+    if agent in ("codex", "agy") and not s.get("worktree_of") and not (agent == "agy" and s.get("conversation")):
+        return "Resuming this folder's latest conversation"
+    return "Resuming" if agent else "Starting"
 
 
 def diff_line_ref(diff, index):
