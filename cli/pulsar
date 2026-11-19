@@ -3610,7 +3610,7 @@ atmux_view() {
     # created attached, so destroy-unattached never sees it without a client
     exec "${ATMUX[@]}" new-session -t "=$1" -s "$v" \; \
         set -t "=$v:" destroy-unattached on \; set -t "=$v:" prefix None \; set -t "=$v:" prefix2 None \; \
-        set -t "=$v:" key-table pulsar-app \; set -t "=$v:" status off \; set -t "=$v:" mouse off
+        set -t "=$v:" key-table pulsar-app \; set -t "=$v:" status off \; set -t "=$v:" mouse "${PULSAR_AGENT_VIEW_MOUSE:-off}"
 }
 
 # A session and every view of it: a view left behind would keep its windows,
@@ -7292,6 +7292,140 @@ cmd_checkpoint() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# machine -- your other Pulsar machines, reached over SSH, so the Agents app
+# (and later your agents) can see and attach to their sessions.
+#
+# A machine is a name and an ssh target ("magnetar", "nick@10.0.0.5"), in
+# MACHINES. Every call goes through one shared connection per machine
+# (ControlMaster, kept 2 minutes), with BatchMode: a key that needs a
+# passphrase prompt or a new host key fails here instead of asking; add the
+# host with plain ssh once. Nothing but `pulsar agent ...` runs on the other
+# side through exec, and its own Pulsar decides what that may do.
+# ---------------------------------------------------------------------------
+MACHINES=${PULSAR_MACHINES:-${XDG_CONFIG_HOME:-$HOME/.config}/pulsar/machines}
+REMOTE_PULSAR=${PULSAR_REMOTE_CLI:-/usr/bin/pulsar}
+
+machine_target() {
+    [ -r "$MACHINES" ] || return 1
+    awk -F'\t' -v n="$1" '$1 == n { print $2; f = 1; exit } END { exit !f }' "$MACHINES"
+}
+
+# mssh [-t] <target> <word>...: the words run on the other side as written
+# (each quoted for its shell)
+mssh() {
+    local tty=() target line="" w
+    [ "$1" != -t ] || { tty=(-t); shift; }
+    target=$1; shift
+    mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/pulsar"
+    for w in "$@"; do line+=" $(printf '%q' "$w")"; done
+    "${PULSAR_SSH:-ssh}" -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 \
+        -o ControlMaster=auto -o "ControlPath=${XDG_RUNTIME_DIR:-/tmp}/pulsar/ssh-%C" -o ControlPersist=120 \
+        "${tty[@]}" "$target" -- "${line# }"
+}
+
+machine_names() { [ ! -r "$MACHINES" ] || cut -f1 "$MACHINES"; }
+
+cmd_machine() {
+    local usage="usage: pulsar machine add <name> <ssh target> | remove <name> | list | check [<name>] |
+       sessions | exec <name> -- agent <args>"
+    local sub=${1:-list}; shift || true
+    case "$sub" in
+        -h|--help) printf '%s\n' "$usage"; return 0 ;;
+        add)
+            [ $# -eq 2 ] || die "$usage"
+            case "$1" in
+                local|'') die "'$1' can't be a machine's name" ;;
+                *[!a-z0-9-]*|-*) die "a machine's name is lowercase letters, digits and -: '$1'" ;;
+            esac
+            case "$2" in -*|*[[:space:]]*|'') die "not an ssh target: '$2'" ;; esac
+            local v
+            v=$(mssh "$2" "$REMOTE_PULSAR" --version 2>&1) \
+                || die "could not reach Pulsar on $2 over ssh (BatchMode: no prompts; ssh $2 once to accept its key): ${v##*$'\n'}"
+            mkdir -p "$(dirname "$MACHINES")"
+            { [ ! -r "$MACHINES" ] || awk -F'\t' -v n="$1" '$1 != n' "$MACHINES"
+              printf '%s\t%s\n' "$1" "$2"; } > "${MACHINES}.tmp" && mv "${MACHINES}.tmp" "$MACHINES"
+            printf 'added %s (%s): %s\n' "$1" "$2" "$v" ;;
+        remove)
+            [ $# -eq 1 ] || die "$usage"
+            machine_target "$1" >/dev/null || die "no machine called $1 (pulsar machine list)"
+            awk -F'\t' -v n="$1" '$1 != n' "$MACHINES" > "${MACHINES}.tmp" && mv "${MACHINES}.tmp" "$MACHINES"
+            printf 'removed %s\n' "$1" ;;
+        list)
+            [ $# -eq 0 ] || die "$usage"
+            if [ "${JSON:-0}" = 1 ]; then
+                { [ ! -r "$MACHINES" ] || cat "$MACHINES"; } \
+                    | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {name: .[0], target: .[1]})'
+                return 0
+            fi
+            [ -s "$MACHINES" ] || { printf 'no machines  (pulsar machine add <name> <ssh target>)\n'; return 0; }
+            column -t -s $'\t' "$MACHINES" ;;
+        check)
+            [ $# -le 1 ] || die "$usage"
+            local n t out rows=()
+            for n in ${1:-$(machine_names)}; do
+                t=$(machine_target "$n") || die "no machine called $n (pulsar machine list)"
+                if out=$(mssh "$t" "$REMOTE_PULSAR" manifest --json 2>&1) && jq -e . >/dev/null 2>&1 <<<"$out"; then
+                    local agents
+                    agents=$(mssh "$t" "$REMOTE_PULSAR" agent list --json 2>/dev/null) || agents='[]'
+                    rows+=("$(jq -n -c --arg n "$n" --arg t "$t" --argjson m "$out" --argjson a "$agents" \
+                        '{name: $n, target: $t, reachable: true, release: $m.release, version: $m.version,
+                          variant: $m.variant, gpu: ($m.host.gpu // null),
+                          agents: [$a[]? | select(.state == "installed" or .state == "native") | .name]}')")
+                else
+                    rows+=("$(jq -n -c --arg n "$n" --arg t "$t" --arg e "${out##*$'\n'}" \
+                        '{name: $n, target: $t, reachable: false, error: $e}')")
+                fi
+            done
+            if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "${rows[@]}" | jq -s -c .; return 0; fi
+            [ ${#rows[@]} -gt 0 ] || { printf 'no machines\n'; return 0; }
+            printf '%s\n' "${rows[@]}" | jq -r 'if .reachable
+                then "\(.name)\t\(.target)\tPulsar \(.release // "?") (\(.version // "?"))\t\(.agents | join(" "))"
+                else "\(.name)\t\(.target)\tunreachable: \(.error)" end' | column -t -s $'\t' ;;
+        sessions)
+            [ $# -eq 0 ] || die "$usage"
+            # every machine at once; a slow or gone one costs its timeout, not the others'
+            local d n t; d=$(mktemp -d)
+            while IFS= read -r n; do
+                [ -n "$n" ] || continue
+                t=$(machine_target "$n") || continue
+                ( if mssh "$t" "$REMOTE_PULSAR" agent sessions --json > "${d}/${n}.out" 2> "${d}/${n}.err" \
+                      && jq -e 'type == "array"' "${d}/${n}.out" >/dev/null 2>&1; then :
+                  else rm -f "${d}/${n}.out"; fi ) &
+            done < <(machine_names)
+            wait
+            local res='{"machines": [], "sessions": []}'
+            while IFS= read -r n; do
+                [ -n "$n" ] || continue
+                if [ -f "${d}/${n}.out" ]; then
+                    res=$(jq -c --arg n "$n" --slurpfile s "${d}/${n}.out" \
+                        '.machines += [{name: $n, ok: true}] | .sessions += [$s[0][] | .machine = $n]' <<<"$res")
+                else
+                    res=$(jq -c --arg n "$n" --arg e "$(tail -n 1 "${d}/${n}.err" 2>/dev/null)" \
+                        '.machines += [{name: $n, ok: false, error: $e}]' <<<"$res")
+                fi
+            done < <(machine_names)
+            rm -rf "$d"
+            if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$res"; return 0; fi
+            jq -r '(.machines[] | select(.ok | not) | "\(.name): unreachable (\(.error))"),
+                   (.sessions[] | "\(.machine)\t\(.name)\t\(.agent // "-")\t\(.state)\t\(.dir // "-")")' <<<"$res" ;;
+        exec)
+            local n=${1:-}; shift || true
+            [ "${1:-}" = -- ] && [ "${2:-}" = agent ] || die "$usage"
+            shift 2
+            local t; t=$(machine_target "$n") || die "no machine called $n (pulsar machine list)"
+            # the app's own view of a session, there as here; with the mouse
+            # on, since the app can't drive that machine's tmux to scroll
+            local -a pre=()
+            [ "${PULSAR_AGENT_VIEW:-0}" != 1 ] || pre=(env PULSAR_AGENT_VIEW=1 PULSAR_AGENT_VIEW_MOUSE=on)
+            local -a tt=()
+            [ ! -t 0 ] || [ ! -t 1 ] || tt=(-t)
+            [ "${JSON:-0}" != 1 ] || set -- --json "$@"
+            mssh "${tt[@]}" "$t" "${pre[@]}" "$REMOTE_PULSAR" agent "$@" ;;
+        *) die "$usage" ;;
+    esac
+}
+
 usage() {
     cat <<'EOF'
 pulsar: manage a Pulsar system
@@ -7343,6 +7477,8 @@ Agents
                            machine; --crash latest for the last crash
   pulsar mcp               this machine's facts as MCP tools, for any agent
                            (agent add registers it)
+  pulsar machine           your other Pulsar machines, over SSH: add | remove |
+                           list | check | sessions | exec <machine> -- agent ...
 
 Options
   --json                   JSON output, anywhere on the line. A command
@@ -7425,7 +7561,7 @@ main() {
     # Commands with JSON output handle --json themselves, per subcommand
     # where only some have it. The rest refuse it here.
     case "$cmd" in
-        doctor|status|manifest|changelog|report|update|pin|checkpoint|agent|help) ;;
+        doctor|status|manifest|changelog|report|update|pin|checkpoint|agent|machine|help) ;;
         *) no_json "$cmd" ;;
     esac
     # Commands without subcommands or flags take no arguments and say so.
@@ -7446,6 +7582,7 @@ main() {
         setup)      cmd_setup "$@" ;;
         agent)      cmd_agent "$@" ;;
         mcp)        cmd_mcp "$@" ;;
+        machine)    cmd_machine "$@" ;;
         help)       cmd_help "$@" ;;
         *)          usage >&2; die "unknown command: ${cmd}" ;;
     esac

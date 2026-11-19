@@ -6092,3 +6092,101 @@ SH
     run "$PULSAR" agent run opencode --sandbox
     ! grep -q '.pulsar-opencode.json' "$PODMAN_LOG"
 }
+
+# machines: a stub ssh that runs the far side here, each target with a home
+# and session records of its own; "down" is a machine that doesn't answer
+machine_env() {
+    [ "$(id -u)" -eq 0 ] && skip "agent commands refuse root; these run as a user"
+    export HOME="${BATS_TEST_TMPDIR}/home" REMOTES="${BATS_TEST_TMPDIR}/remotes"
+    export SSH_LOG="${BATS_TEST_TMPDIR}/ssh.log" PULSAR_REMOTE_CLI="$PULSAR"
+    export XDG_RUNTIME_DIR="${BATS_TEST_TMPDIR}/run" PULSAR_SSH="${BATS_TEST_TMPDIR}/ssh"
+    mkdir -p "$HOME" "$REMOTES" "$XDG_RUNTIME_DIR"
+    unset XDG_CONFIG_HOME
+    cat > "$PULSAR_SSH" <<'SH'
+#!/bin/bash
+t=""; tty=0
+while [ $# -gt 0 ]; do
+    case "$1" in -o) shift 2 ;; -t) tty=1; shift ;; --) shift; break ;; -*) shift ;; *) t=$1; shift ;; esac
+done
+printf '%s|tty=%s|%s\n' "$t" "$tty" "$*" >> "$SSH_LOG"
+[ "$t" != down ] || { echo "ssh: connect to host down port 22: No route to host" >&2; exit 255; }
+export HOME="${REMOTES}/${t}" PULSAR_AGENT_SESSIONS="${REMOTES}/${t}/sessions" PULSAR_AGENT_TMUX_SOCKET="none-$$"
+mkdir -p "$PULSAR_AGENT_SESSIONS"
+exec bash -c "$*"
+SH
+    chmod +x "$PULSAR_SSH"
+}
+
+@test "machine add, list, remove: a name and an ssh target, checked for Pulsar over ssh first" {
+    machine_env
+    run "$PULSAR" machine add magnetar nick@magnetar
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "$output" == "added magnetar (nick@magnetar): pulsar "* ]] || fail "$output"
+    grep -q '^nick@magnetar|tty=0|.*--version' "$SSH_LOG"
+    "$PULSAR" machine add box other >/dev/null
+    "$PULSAR" machine add magnetar nick@10.0.0.5 >/dev/null
+    run "$PULSAR" machine list --json
+    [ "$output" = '[{"name":"box","target":"other"},{"name":"magnetar","target":"nick@10.0.0.5"}]' ] || fail "$output"
+    run "$PULSAR" machine add gone down
+    [ "$status" -ne 0 ]; [[ "$output" == *"could not reach Pulsar on down"*"No route to host"* ]] || fail "$output"
+    for bad in local "Big" "-x" "a b"; do
+        run "$PULSAR" machine add "$bad" x; [ "$status" -ne 0 ] || fail "took the name '$bad'"
+    done
+    run "$PULSAR" machine add ok "-oProxyCommand=evil"; [ "$status" -ne 0 ] || fail "took an option as the target"
+    "$PULSAR" machine remove box >/dev/null
+    run "$PULSAR" machine list --json
+    [ "$(jq -r '[.[].name] | join(",")' <<<"$output")" = magnetar ]
+    run "$PULSAR" machine remove nope; [ "$status" -ne 0 ]
+}
+
+@test "machine sessions: every machine's sessions, each marked with its machine; one that's down is said, not fatal" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    "$PULSAR" machine add b tb >/dev/null
+    printf 'down\tdown\n' >> "${HOME}/.config/pulsar/machines"
+    printf 'agent=claude\ndir=/home/x/my proj\n' > "${REMOTES}/ta/sessions/train.session"
+    printf 'agent=codex\ndir=/srv/y\ntitle=Two words\n' > "${REMOTES}/tb/sessions/fix.session"
+    run "$PULSAR" machine sessions --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -c '[.sessions[] | [.machine, .name, .agent, .dir, .state]]' <<<"$output")" = \
+      '[["a","train","claude","/home/x/my proj","ended"],["b","fix","codex","/srv/y","ended"]]' ] || fail "$output"
+    [ "$(jq -c '[.machines[] | [.name, .ok]]' <<<"$output")" = '[["a",true],["b",true],["down",false]]' ] || fail "$output"
+    [[ "$(jq -r '.machines[2].error' <<<"$output")" == *"No route to host"* ]] || fail "$output"
+    # no machines: nothing to say, still JSON
+    rm "${HOME}/.config/pulsar/machines"
+    run "$PULSAR" machine sessions --json
+    [ "$output" = '{"machines": [], "sessions": []}' ] || [ "$(jq -c . <<<"$output")" = '{"machines":[],"sessions":[]}' ] || fail "$output"
+}
+
+@test "machine exec: only pulsar agent on the far side, words passed through as written, the app's view and --json along" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    printf 'agent=claude\ndir=/srv/x\n' > "${REMOTES}/ta/sessions/w.session"
+    run "$PULSAR" machine exec a -- agent sessions --title w 'it; rm -rf ~ $(x) "q"'
+    [ "$status" -eq 0 ] || fail "$output"
+    grep -qxF 'title=it; rm -rf ~ $(x) "q"' "${REMOTES}/ta/sessions/w.session" || fail "$(cat "${REMOTES}/ta/sessions/w.session")"
+    run "$PULSAR" machine exec a -- agent sessions --json
+    [ "$(jq -r '.[0].title' <<<"$output")" = 'it; rm -rf ~ $(x) "q"' ] || fail "$output"
+    # --json before the --, where this CLI reads it, goes along too
+    run "$PULSAR" --json machine exec a -- agent sessions
+    [ "$(jq -r '.[0].name' <<<"$output")" = w ] || fail "$output"
+    PULSAR_AGENT_VIEW=1 run "$PULSAR" machine exec a -- agent sessions --json
+    grep -q 'env PULSAR_AGENT_VIEW=1 PULSAR_AGENT_VIEW_MOUSE=on ' "$SSH_LOG" || fail "$(cat "$SSH_LOG")"
+    for bad in "-- sh -c id" "-- doctor" "agent sessions" "--"; do
+        # shellcheck disable=SC2086
+        run "$PULSAR" machine exec a $bad; [ "$status" -ne 0 ] || fail "ran: $bad"
+    done
+    run "$PULSAR" machine exec nope -- agent sessions; [ "$status" -ne 0 ]
+}
+
+@test "machine check: each machine's Pulsar release and its installed agents, or why it can't be reached" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    printf 'down\tdown\n' >> "${HOME}/.config/pulsar/machines"
+    run "$PULSAR" machine check --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '.[0] | [.name, .reachable, .release] | join(",")' <<<"$output")" = "a,true,26.9.1" ] || fail "$output"
+    [ "$(jq -r '.[0].agents | type' <<<"$output")" = array ]
+    [ "$(jq -r '.[1] | [.name, .reachable] | join(",")' <<<"$output")" = "down,false" ] || fail "$output"
+    [[ "$(jq -r '.[1].error' <<<"$output")" == *"No route to host"* ]]
+}
