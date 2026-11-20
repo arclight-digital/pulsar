@@ -728,6 +728,7 @@ LABEL org.opencontainers.image.version="${PULSAR_VERSION}"
 # ---------------------------------------------------------------------------
 ARG PULSAR_CHANGELOG_URL="https://getpulsar.dev/changelog.json"
 COPY cli/pulsar /usr/bin/pulsar
+COPY cli/lib/ /usr/lib/pulsar/cli/
 COPY scripts/rpm-sbom.sh /usr/libexec/pulsar/rpm-sbom.sh
 COPY scripts/flatpak-defaults.sh /usr/libexec/pulsar/flatpak-defaults.sh
 COPY scripts/gamemode-group.sh /usr/libexec/pulsar/gamemode-group.sh
@@ -1039,18 +1040,18 @@ RUN set -eu; \
 # policy and let GNOME Software handle it" was not a policy, it was an outage.
 #
 # The fix is a comparison rpm-ostree already has both halves for, so the timer
-# stays small: see cmd_update_check in cli/pulsar.
+# stays small: see cmd_update_check in cli/lib/update.sh.
 #
 # pulsar-gl-check.path is --global for the same notification reason. It
 # watches flatpak's change marker and tells the user to restart an app that
 # is running without the NVIDIA driver's GL extension (see flatpak_gl_scan in
-# cli/pulsar). On the vanilla image it wakes up, finds no nvidia module, and
+# cli/lib/doctor.sh). On the vanilla image it wakes up, finds no nvidia module, and
 # exits.
 #
 # pulsar-crash-watch.path is --global for the same reason. It wakes when
 # systemd-coredump stores a core and, only for an account with a coding agent
 # installed, offers once per program per boot to hand the crash to it (see
-# crashes_notify in cli/pulsar). With no agent it exits without a word.
+# crashes_notify in cli/lib/report.sh). With no agent it exits without a word.
 #
 # pulsar-steam-gpu-watch.service is --global because it watches the user's
 # own Steam. After a resume on the NVIDIA driver, Steam's CEF GPU process can

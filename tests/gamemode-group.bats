@@ -245,7 +245,8 @@ EOF
     local unit="${BATS_TEST_DIRNAME}/../system_files/usr/lib/systemd/system/pulsar-gamemode-group.service"
     local cli="${BATS_TEST_DIRNAME}/../cli/pulsar"
     grep -q 'ExecStart=/usr/libexec/pulsar/gamemode-group.sh' "$unit"
-    grep -q '/usr/libexec/pulsar/gamemode-group.sh' "$cli"
+    # the CLI and its parts (cli/lib)
+    grep -q '/usr/libexec/pulsar/gamemode-group.sh' "$cli" "${cli%/*}"/lib/*.sh
 }
 
 @test "an image-only group is copied into /etc/group before anyone is enrolled" {

@@ -47,6 +47,7 @@ FROM ${BASE}
 # zz0/zz1 overrides and the picker's .desktop, plus the CLI verb.
 COPY system_files/ /
 COPY cli/pulsar /usr/bin/pulsar
+COPY cli/lib/ /usr/lib/pulsar/cli/
 ${step}
 RUN glib-compile-schemas /usr/share/glib-2.0/schemas && \\
     systemctl --global enable pulsar-theme-init.service && \\

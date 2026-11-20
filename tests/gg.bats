@@ -330,8 +330,9 @@ io.github.Faugus.faugus-launcher"
 }
 
 @test "steam-grants: setup migrates to the same PATH the grant sets" {
-    grep -qx "STEAM_SANDBOX_PATH=$(image_path steam)" "$PULSAR"
-    grep -qx "FAUGUS_SANDBOX_PATH=$(image_path faugus)" "$PULSAR"
+    # the CLI and its parts (cli/lib)
+    grep -qx "STEAM_SANDBOX_PATH=$(image_path steam)" "$PULSAR" "${PULSAR%/*}"/lib/*.sh
+    grep -qx "FAUGUS_SANDBOX_PATH=$(image_path faugus)" "$PULSAR" "${PULSAR%/*}"/lib/*.sh
 }
 
 @test "steam-grants: the unit runs the script the image installs, every boot" {

@@ -176,7 +176,7 @@ Containerfile.nvidia     -> ghcr.io/arclight-digital/pulsar-nvidia
 Containerfile.installer  the live installer ISO (the app is scripts/pulsar-installer)
 system_files/            files laid over the image (system_files.nvidia/: NVIDIA only)
 assets/                  source of truth for art; system_files/ branding is generated
-cli/pulsar               the pulsar command
+cli/pulsar               the pulsar command; its parts are cli/lib/*.sh (/usr/lib/pulsar/cli)
 scripts/build.sh         the build pipeline, the same on a workstation and the build host
 scripts/nightly.sh       version, build, push, publish; runs at 7:45 p.m. Mountain
 scripts/weekly.sh        installer ISOs, Sundays at 1:45 a.m. Mountain

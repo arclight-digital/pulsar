@@ -13,6 +13,10 @@
 
 setup() {
     PULSAR="${BATS_TEST_DIRNAME}/../cli/pulsar"
+    # the CLI's whole text, entry and parts, for tests that take one function
+    # out of it (sed -n '/^name() {/,/^}/p'), wherever it lives
+    PULSAR_TEXT="${BATS_TEST_TMPDIR}/pulsar-text"
+    cat "$PULSAR" "${BATS_TEST_DIRNAME}"/../cli/lib/*.sh > "$PULSAR_TEXT"
     export PULSAR_MANIFEST="${BATS_TEST_TMPDIR}/manifest.json"
     cat > "$PULSAR_MANIFEST" <<'JSON'
 {
@@ -4474,7 +4478,7 @@ agent_args() {
 @test "agent run --tmux: the bell's hook reaches the CLI wherever it is, spaces, quotes and # in its path too" {
     notify_env
     local d="${BATS_TEST_TMPDIR}/it's a #S dir" cli
-    mkdir -p "$d"; cp "$PULSAR" "${d}/pulsar"; cli=$(realpath "${d}/pulsar")
+    mkdir -p "$d"; cp "$PULSAR" "${d}/pulsar"; cp -r "${PULSAR%/*}/lib" "${d}/lib"; cli=$(realpath "${d}/pulsar")
     rm "${TMUX_LIVE}/work"; : > "$TMUX_CALLS"
     "$cli" agent run claude --tmux work >/dev/null
     local hook; hook=$(grep -A1 -x alert-bell "$TMUX_CALLS" | tail -n 1)
@@ -5929,7 +5933,7 @@ model_env() {
     local T=(tmux -L "$PULSAR_AGENT_TMUX_SOCKET" -f /dev/null)
     mkdir -p "$PULSAR_AGENT_SESSIONS"
     for s in quit busy; do printf 'agent=codex\ndir=%s\n' "$BATS_TEST_TMPDIR" > "${PULSAR_AGENT_SESSIONS}/${s}.session"; done
-    local pane; pane=$(sed -n "/^AGENT_TMUX_PANE='/,/-l'\$/p" "$PULSAR"); eval "$pane"
+    local pane; pane=$(sed -n "/^AGENT_TMUX_PANE='/,/-l'\$/p" "$PULSAR_TEXT"); eval "$pane"
     "${T[@]}" new-session -d -s quit -- bash -c "$AGENT_TMUX_PANE" fake sh -c 'exit 3'
     "${T[@]}" new-session -d -s busy -- bash -c "$AGENT_TMUX_PANE" fake sleep 60
     sleep 1
@@ -6312,7 +6316,7 @@ print(run(base), run(dict(base, PULSAR_SANDBOX="1")))')
 
 @test "the pane knows its terminal (PULSAR_TTY) for the hooks; an agy or Codex bell says it's waiting" {
     notify_env
-    local pane; pane=$(sed -n "/^AGENT_TMUX_PANE='/,/-l'\$/p" "$PULSAR"); eval "$pane"
+    local pane; pane=$(sed -n "/^AGENT_TMUX_PANE='/,/-l'\$/p" "$PULSAR_TEXT"); eval "$pane"
     [[ "$AGENT_TMUX_PANE" == "PULSAR_TTY=\$(tty 2>/dev/null) && export PULSAR_TTY"$'\n'* ]] || fail "$AGENT_TMUX_PANE"
     printf 'agent=agy\ndir=%s\n' "$PROJ" > "${REC}/work.session"
     # a bell alone (its output could ring one) isn't the turn's end
@@ -6560,7 +6564,7 @@ pane_of() { "${T[@]}" capture-pane -p -J -t "=$1:"; }
 
 # Claude's Stop hook command, as Pulsar gives it to Claude for conversation $1
 stop_hook() {
-    bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^MAIL_WAIT_TICKS=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR'); agent_alert_settings '$1'" \
+    bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^MAIL_WAIT_TICKS=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR_TEXT'); agent_alert_settings '$1'" \
         | jq -r ".hooks.${2:-Stop}[${3:-0}].hooks[0].command"
 }
 
@@ -6642,7 +6646,7 @@ stop_hook() {
     msg_session a
     local alerts="${HOME}/.local/state/pulsar/agent-alerts"
     # the settings: Stop's mail check, then the waiter, backgrounded and waking; one at session start too
-    local settings; settings=$(bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^MAIL_WAIT_TICKS=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR'); agent_alert_settings sid-a")
+    local settings; settings=$(bash -c "source <(sed -n '/^AGENT_ALERTS_REL=/p;/^MAIL_WAIT_TICKS=/p;/^agent_alert_settings() {/,/^}/p' '$PULSAR_TEXT'); agent_alert_settings sid-a")
     [ "$(jq -c '.hooks.Stop[1].hooks[0] | [.async, .asyncRewake, .timeout]' <<<"$settings")" = '[true,true,3660]' ] || { msg_teardown; fail "$settings"; }
     [ "$(jq -r '.hooks.SessionStart[0].hooks[0].command' <<<"$settings")" = "$(jq -r '.hooks.Stop[1].hooks[0].command' <<<"$settings")" ] || { msg_teardown; fail "$settings"; }
     # Claude idle at its prompt with its waiter running, and you looking at it
@@ -6698,7 +6702,7 @@ stop_hook() {
 
 # agy's Stop hook command, as Pulsar installs it in ~/.gemini/config/hooks.json
 agy_hook() {
-    bash -c "have() { command -v \"\$1\" >/dev/null; }; source <(sed -n '/^AGENT_BELL=/p;/^agy_turn_hook() {/,/^}/p' '$PULSAR'); agy_turn_hook" >/dev/null
+    bash -c "have() { command -v \"\$1\" >/dev/null; }; source <(sed -n '/^AGENT_BELL=/p;/^agy_turn_hook() {/,/^}/p' '$PULSAR_TEXT'); agy_turn_hook" >/dev/null
     jq -r '.pulsar.Stop[0].command' "${HOME}/.gemini/config/hooks.json"
 }
 
@@ -6977,7 +6981,7 @@ SH
 @test "a turn's end is marked by Pulsar's own hook: Codex's notify leaves <session>.turn beside the record, then rings" {
     local d="${BATS_TEST_TMPDIR}/rec" cmd
     mkdir -p "$d"
-    cmd=$(bash -c "source <(sed -n '/^AGENT_BELL=/p;/^AGENT_TURN=/p;/^codex_turn_notify() {/,/^}/p' '$PULSAR'); HOME='${BATS_TEST_TMPDIR}' codex_turn_notify" | sed -n 2p)
+    cmd=$(bash -c "source <(sed -n '/^AGENT_BELL=/p;/^AGENT_TURN=/p;/^codex_turn_notify() {/,/^}/p' '$PULSAR_TEXT'); HOME='${BATS_TEST_TMPDIR}' codex_turn_notify" | sed -n 2p)
     cmd=${cmd#notify=[\'sh\',\'-c\',\'}; cmd=${cmd%\']}
     PULSAR_SESSION_RECORD="${d}/w.session" PULSAR_TTY="${BATS_TEST_TMPDIR}/tty" sh -c "$cmd"
     [ -e "${d}/w.turn" ] || fail "no mark: $cmd"
@@ -7415,4 +7419,22 @@ PY
     [ "$status" -ne 0 ] && [[ "$output" == *"no machine called nope"* ]] || fail "$output"
     run "$PULSAR" machine shell box --bogus
     [ "$status" -ne 0 ] || fail "$output"
+}
+
+@test "the CLI's parts: read from beside it; one missing is named, not half a CLI; with none beside it, the image's" {
+    local d="${BATS_TEST_TMPDIR}/it's a #S dir"
+    mkdir -p "$d"; cp "$PULSAR" "${d}/pulsar"; cp -r "${PULSAR%/*}/lib" "${d}/lib"
+    # a link to it finds them beside the file it points to
+    ln -s "${d}/pulsar" "${BATS_TEST_TMPDIR}/linked"
+    run "${BATS_TEST_TMPDIR}/linked" --version
+    [ "$status" -eq 0 ] || fail "$output"
+    rm "${d}/lib/job.sh"
+    run "${d}/pulsar" --version
+    [ "$status" -eq 1 ] && [ "$output" = "pulsar: missing ${d}/lib/job.sh" ] || fail "$output"
+    # nothing beside it: the image's folder, never this checkout's
+    rm -r "${d}/lib"
+    if [ ! -d /usr/lib/pulsar/cli ]; then
+        run "${d}/pulsar" --version
+        [ "$status" -eq 1 ] && [ "$output" = "pulsar: missing /usr/lib/pulsar/cli/common.sh" ] || fail "$output"
+    fi
 }

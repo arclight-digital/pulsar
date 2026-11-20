@@ -31,7 +31,6 @@ say() { printf '\n==> %s\n' "$*"; }
 # scripts run both in the build and on user machines.
 say "shellcheck"
 shellcheck \
-  cli/pulsar \
   scripts/akmods-cert.sh \
   scripts/alive-timeout.sh \
   scripts/build-installer-iso.sh \
@@ -41,6 +40,7 @@ shellcheck \
   scripts/hooks/pre-push \
   scripts/check-scx-btf.sh \
   scripts/check.sh \
+  scripts/shellcheck-cli.sh \
   scripts/diff-chunk-metadata.sh \
   scripts/driver-check.sh \
   scripts/driver-check-inner.sh \
@@ -66,6 +66,8 @@ shellcheck \
   tests/theme-gate/run.sh \
   tests/theme-gate/session.sh \
   tests/theme-gate/bin/systemd-run
+# the CLI and its parts, as one program (see the script)
+scripts/shellcheck-cli.sh
 echo "shellcheck: clean"
 
 # The signer holds the Secure Boot key, so a syntax error in it is a nightly
