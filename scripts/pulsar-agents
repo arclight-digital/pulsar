@@ -2260,11 +2260,9 @@ class Preferences(Adw.PreferencesDialog):
 
         # your other Pulsar machines: this one found by them (off unless turned
         # on), and the ones announcing here, each a click from being added
-        mach = Adw.PreferencesGroup(title="Your Machines",
-                                    description="Sessions on your other Pulsar machines show here too, over SSH "
-                                                "with your own keys.")
-        self.announce = Adw.SwitchRow(title="Let Your Other Machines Find This One",
-                                      subtitle="Announces it on the local network, with your user name",
+        mach = Adw.PreferencesGroup(title="Your Machines")
+        self.announce = Adw.SwitchRow(title="Announce This Machine",
+                                      subtitle="Your other Pulsar machines on this network can add it",
                                       sensitive=False)
         self.announce.connect("notify::active", lambda *_: self._set(["machine", "announce",
                                                                       "on" if self.announce.get_active() else "off"]))
