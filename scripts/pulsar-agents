@@ -1397,8 +1397,11 @@ class StatusBar:
         self.ctx_pct = Gtk.Label(css_classes=["val", "pct"])
         self.ctx = seg(Gtk.Label(label="Context", css_classes=["key"]), self.ctx_bar, self.ctx_val, self.ctx_pct)
         self.limits = Gtk.Box(spacing=0)
-        self.lock = seg(Gtk.Image(icon_name="security-high-symbolic"), Gtk.Label(label="Sandboxed"), cls=("dim",))
+        # the lock alone, as in the sidebar; the word is its tooltip
+        self.lock = seg(Gtk.Image(icon_name="security-high-symbolic"), cls=("dim",))
+        self.lock.set_tooltip_text("Sandboxed")
         self.branch_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.MIDDLE, max_width_chars=28)
+        self.has_branch = False
         self.branch = seg(self.branch_label, cls=("dim",))
         self.branch.set_tooltip_text("Branch")
         self.changes_label = Gtk.Label(css_classes=["val"])
@@ -1416,6 +1419,10 @@ class StatusBar:
         self.outer = Gtk.ScrolledWindow(child=self.widget, hscrollbar_policy=Gtk.PolicyType.EXTERNAL,
                                         vscrollbar_policy=Gtk.PolicyType.NEVER, css_classes=["statusbar-outer"],
                                         visible=False)
+        # the branch shows whole or not at all: checked when the bar's width
+        # or what it holds changes (a frame's tick, compared, not measured each time)
+        self._fit_key = None
+        self.outer.add_tick_callback(self._fit)
 
     def update(self, s, now):
         self.s = s
@@ -1479,11 +1486,13 @@ class StatusBar:
             return
         if name != self.changes_for:
             self.branch.set_visible(False)
+            self.has_branch = False
             self.changes.set_visible(False)
         self.changes_for, self.changes_at = name, now
         if s.get("offline"):
             # its machine isn't answering: nothing to ask, nothing to show
             self.branch.set_visible(False)
+            self.has_branch = False
             self.changes.set_visible(False)
             return
         d = s.get("dir")
@@ -1497,7 +1506,27 @@ class StatusBar:
             return
         b = out.strip() if ok else ""
         self.branch_label.set_label(b)
+        self.has_branch = bool(b)
         self.branch.set_visible(bool(b))
+        self._fit_key = None
+
+    def _fit(self, *_):
+        """Hide the branch when the bar can't hold its whole name, rather than
+        show "…"; it comes back once there's room."""
+        w = self.outer.get_width()
+        key = (w, self.has_branch, self.branch_label.get_label(), self.state.get_label(),
+               self.ctx_val.get_label(), self.changes_label.get_label(), self.lock.get_visible(),
+               self.machine.get_visible(), self.changes.get_visible(), self.ctx.get_visible())
+        if not w or key == self._fit_key:
+            return GLib.SOURCE_CONTINUE
+        self._fit_key = key
+        if not self.has_branch:
+            return GLib.SOURCE_CONTINUE
+        nat = self.widget.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+        if not self.branch.get_visible():
+            nat += self.branch.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+        self.branch.set_visible(nat <= w)
+        return GLib.SOURCE_CONTINUE
 
     def _changes(self, ok, out, name):
         if (self.s or {}).get("name") != name:
