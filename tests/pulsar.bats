@@ -4221,7 +4221,14 @@ case "$cmd" in
         echo "$c" > "${TMUX_LIVE}/.clock"; echo "$c" > "${TMUX_LIVE}/.${t}.attached"
         echo "attached ${t}" ;;
     set-hook) ;;
-    set-option) t=$(target "$@"); t=${t%:}; [ -e "${TMUX_LIVE}/${t}" ] || exit 1; printf '%s\n' "${@: -2}" > "${TMUX_LIVE}/.${t}.opt" ;;
+    set-option)   # @pulsar-alert only (its screen, sizes: not kept here)
+        case "$*" in *@pulsar-alert-screen*|*window-size*) exit 0 ;; esac
+        t=$(target "$@"); t=${t%:}; [ -e "${TMUX_LIVE}/${t}" ] || exit 1; printf '%s\n' "${@: -2}" > "${TMUX_LIVE}/.${t}.opt" ;;
+    show-options)   # -v -t <session> @pulsar-alert: what set-option kept
+        t=$(target "$@"); t=${t#=}; t=${t%:}
+        [ "${*: -1}" = @pulsar-alert ] && [ "$(sed -n 1p "${TMUX_LIVE}/.${t}.opt" 2>/dev/null)" = @pulsar-alert ] \
+            && sed -n 2p "${TMUX_LIVE}/.${t}.opt"
+        true ;;
     list-clients)   # every client: its session (a view's group) and flags
         for f in "$TMUX_LIVE"/.*.clients; do
             [ -e "$f" ] || continue; n=${f##*/.}; n=${n%.clients}
@@ -4472,11 +4479,14 @@ agent_args() {
     "$cli" agent run claude --tmux work >/dev/null
     local hook; hook=$(grep -A1 -x alert-bell "$TMUX_CALLS" | tail -n 1)
     # tmux's parser, for what this quoting uses ('...' and "'"), reads it as sh does
-    local -a words; eval "words=(${hook})"
-    [ "${#words[@]}" -eq 3 ] || fail "${#words[@]} words: ${hook}"
+    # if-shell -F <only the real session, not the app's views> '<run-shell ...>'
+    local -a outer words; eval "outer=(${hook})"
+    [ "${#outer[@]}" -eq 4 ] && [ "${outer[0]}" = if-shell ] && [ "${outer[1]}" = -F ] || fail "${#outer[@]} words: ${hook}"
+    eval "words=(${outer[3]})"
+    [ "${#words[@]}" -eq 3 ] || fail "${#words[@]} words: ${outer[3]}"
     [ "${words[0]}" = run-shell ] && [ "${words[1]}" = -b ] || fail "$hook"
     # then run-shell expands its formats (## is #) and hands it to sh
-    local cmd=${words[2]//\#\{?session_grouped,\#\{session_group\},\#\{session_name\}\}/work}
+    local cmd=${words[2]//\#\{session_name\}/work}
     cmd=${cmd//\#\#/\#}
     mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
     sh -c "$cmd"
@@ -7148,35 +7158,6 @@ alert_of() { tmux -L "$PULSAR_AGENT_TMUX_SOCKET" show-options -v -t "=$1:" @puls
 # until the session's "waiting" is $2 ("" for cleared), at most 5 s
 alert_becomes() { local i; for i in $(seq 50); do [ "$(alert_of "$1")" = "$2" ] && return 0; sleep 0.1; done; return 1; }
 
-@test "waiting clears when you look: opening the session in the app's view, or its terminal gaining focus; not while you look away" {
-    msg_env
-    msg_session a
-    local S="$PULSAR_AGENT_TMUX_SOCKET"
-    tmux -L "$S" set-option -s focus-events on
-    "$PULSAR" agent hooks
-    # the app's view: a session of its own, grouped with the real one
-    tmux -L "$S" new-session -d -t a -s 'a~app1'
-    # the agent's turn ended while nobody looked
-    tmux -L "$S" set-option -t =a: @pulsar-alert Stop
-    local fifo="${BATS_TEST_TMPDIR}/ctl"; mkfifo "$fifo"
-    pty_client "$S" 'a~app1' "$fifo"
-    exec 7>"$fifo"
-    # opening it in the app clears it on the real session, not just the view
-    alert_becomes a "" || { echo quit >&7; msg_teardown; fail "still waiting after the app opened it: $(alert_of a)"; }
-    # the app's terminal loses focus (you looked at another session); the next turn ends
-    echo out >&7; sleep 0.3
-    tmux -L "$S" set-option -t =a: @pulsar-alert Stop
-    sleep 0.5
-    [ "$(alert_of a)" = Stop ] || { echo quit >&7; msg_teardown; fail "cleared with nobody looking"; }
-    # you come back to it: its terminal gains focus, which clears it
-    echo in >&7
-    alert_becomes a "" || { echo quit >&7; msg_teardown; fail "still waiting after its terminal got focus: $(alert_of a)"; }
-    # while you look at it, its turn's end doesn't mark it waiting at all
-    "$PULSAR" agent notify a
-    [ -z "$(alert_of a)" ] || { echo quit >&7; msg_teardown; fail "marked waiting while watched: $(alert_of a)"; }
-    echo quit >&7; exec 7>&-
-    msg_teardown
-}
 
 @test "agent seen: a session's waiting cleared by name, nothing else; names only" {
     msg_env
@@ -7190,4 +7171,225 @@ alert_becomes() { local i; for i in $(seq 50); do [ "$(alert_of "$1")" = "$2" ] 
     [ -z "$wa" ] && [ "$wb" = Stop ] || fail "a='$wa' b='$wb'"
     run "$PULSAR" agent seen '-t'; [ "$status" -ne 0 ]
     run "$PULSAR" agent seen 'a;b'; [ "$status" -ne 0 ]
+}
+
+
+@test "waiting means at its prompt: set at a turn's end even while you watch (no notification then); gone when a turn starts, not when you look" {
+    msg_env
+    msg_session a
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    # a Claude session's notification goes through systemd-run: logged here
+    printf '#!/bin/sh\necho "systemd-run $*" >> "%s"\n' "$NOTES" > "${STUB}/systemd-run"
+    tmux -L "$S" set-option -s focus-events on
+    "$PULSAR" agent hooks
+    tmux -L "$S" new-session -d -t a -s 'a~app1'
+    local fifo="${BATS_TEST_TMPDIR}/ctl"; mkfifo "$fifo"
+    pty_client "$S" 'a~app1' "$fifo"
+    exec 7>"$fifo"
+    sleep 0.5
+    # Claude's turn ends while you watch it in the app: waiting, and no notification
+    claude_said a Stop
+    "$PULSAR" agent notify a
+    [ "$(alert_of a)" = Stop ] || { echo quit >&7; msg_teardown; fail "not waiting at its prompt: '$(alert_of a)'"; }
+    [ ! -s "$NOTES" ] || { echo quit >&7; msg_teardown; fail "notified while watched: $(cat "$NOTES")"; }
+    # looking (focus coming and going, the view attached) changes nothing
+    echo out >&7; sleep 0.2; echo in >&7; sleep 0.5
+    [ "$(alert_of a)" = Stop ] || { echo quit >&7; msg_teardown; fail "looking cleared it"; }
+    # you send it a prompt: its turn starts
+    claude_said a UserPromptSubmit
+    "$PULSAR" agent notify a
+    [ -z "$(alert_of a)" ] || { echo quit >&7; msg_teardown; fail "still waiting after the prompt: $(alert_of a)"; }
+    # a permission question waits too, and goes once a tool runs after your answer
+    claude_said a Notification permission_prompt
+    "$PULSAR" agent notify a
+    [ "$(alert_of a)" = Notification ] || { echo quit >&7; msg_teardown; fail "$(alert_of a)"; }
+    claude_said a PostToolUse
+    "$PULSAR" agent notify a
+    [ -z "$(alert_of a)" ] || { echo quit >&7; msg_teardown; fail "still waiting after the answer: $(alert_of a)"; }
+    # nobody watching: waiting, and a notification
+    echo quit >&7; exec 7>&-
+    sleep 0.3
+    claude_said a Stop
+    "$PULSAR" agent notify a
+    local w; w=$(alert_of a)
+    msg_teardown
+    [ "$w" = Stop ] && [ -s "$NOTES" ] || fail "alert '$w', notes '$(cat "$NOTES" 2>/dev/null)'"
+}
+
+@test "Claude's hooks: its prompt ends waiting; after a tool, only when the last word was a permission question" {
+    local alerts="${BATS_TEST_TMPDIR}/home/.local/state/pulsar/agent-alerts" tty="${BATS_TEST_TMPDIR}/tty"
+    mkdir -p "$alerts"
+    local prompt after
+    prompt=$(HOME="${BATS_TEST_TMPDIR}/home" stop_hook sid-x UserPromptSubmit)
+    after=$(HOME="${BATS_TEST_TMPDIR}/home" stop_hook sid-x PostToolUse)
+    # the prompt: written and rung, as a Stop is
+    : > "$tty"
+    echo '{"hook_event_name":"UserPromptSubmit","prompt":"the secret plan"}' | HOME="${BATS_TEST_TMPDIR}/home" PULSAR_TTY="$tty" CLAUDE_PID=999999999 sh -c "$prompt"
+    [ "$(jq -r .hook_event_name "${alerts}/sid-x.json")" = UserPromptSubmit ] || fail "$(cat "${alerts}/sid-x.json")"
+    # only the event's name: the sandbox home, where this folder can be, is shared
+    ! grep -q secret "${alerts}/sid-x.json" || fail "the prompt was saved: $(cat "${alerts}/sid-x.json")"
+    # after a tool, with the last word a Stop: silent, the file as it was
+    echo '{"hook_event_name":"Stop"}' > "${alerts}/sid-x.json"
+    out=$(echo '{"hook_event_name":"PostToolUse"}' | HOME="${BATS_TEST_TMPDIR}/home" CLAUDE_PID=999999999 sh -c "$after")
+    [ -z "$out" ] && [ "$(jq -r .hook_event_name "${alerts}/sid-x.json")" = Stop ] || fail "after a Stop: $(cat "${alerts}/sid-x.json")"
+    # after a tool, with the last word a permission question: written
+    echo '{"hook_event_name":"Notification","notification_type":"permission_prompt"}' > "${alerts}/sid-x.json"
+    out=$(echo '{"hook_event_name":"PostToolUse","tool_response":"the secret file"}' | HOME="${BATS_TEST_TMPDIR}/home" CLAUDE_PID=999999999 sh -c "$after")
+    [ -z "$out" ] && [ "$(jq -r .hook_event_name "${alerts}/sid-x.json")" = PostToolUse ] || fail "after a question: $(cat "${alerts}/sid-x.json")"
+    ! grep -q secret "${alerts}/sid-x.json" || fail "the tool's output was saved: $(cat "${alerts}/sid-x.json")"
+}
+
+@test "a bell is handled once, however many of the app's views share the session" {
+    msg_env
+    msg_session a
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    # a session with no agent recorded notifies plainly: one line per handling
+    printf 'dir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/a.session"
+    tmux -L "$S" new-session -d -t a -s 'a~app1'
+    tmux -L "$S" new-session -d -t a -s 'a~app2'
+    tmux -L "$S" set -g monitor-bell on; tmux -L "$S" set -g bell-action any
+    "$PULSAR" agent hooks
+    tmux -L "$S" run-shell -t =a: 'printf "\a" > #{pane_tty}'
+    local i; for i in $(seq 30); do [ -s "$NOTES" ] && break; sleep 0.1; done
+    sleep 1
+    local n; n=$(grep -c 'wants your attention' "$NOTES")
+    msg_teardown
+    [ "$n" = 1 ] || fail "handled $n times: $(cat "$NOTES")"
+}
+
+@test "agent sizes: a window follows its smallest client while the app has a view on it, tmux's default otherwise" {
+    msg_env
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    tmux -L "$S" new-session -d -s a -x 80 -y 20 'sleep 60'
+    tmux -L "$S" new-session -d -s ba -x 80 -y 20 'sleep 60'
+    tmux -L "$S" new-session -d -t ba -s 'ba~app1'
+    "$PULSAR" agent sizes
+    local wa wba; wa=$(tmux -L "$S" show-options -wv -t =a: window-size 2>/dev/null); wba=$(tmux -L "$S" show-options -wv -t =ba: window-size 2>/dev/null)
+    [ "$wba" = smallest ] && [ -z "$wa" ] || { msg_teardown; fail "a='$wa' ba='$wba'"; }
+    # the last view goes: back to the default
+    tmux -L "$S" kill-session -t '=ba~app1'
+    "$PULSAR" agent sizes
+    wba=$(tmux -L "$S" show-options -wv -t =ba: window-size 2>/dev/null)
+    msg_teardown
+    [ -z "$wba" ] || fail "still '$wba'"
+}
+
+@test "the app's view seen from another machine: the wheel scrolls tmux's history, or goes to an agent that tracks the mouse; never arrow keys" {
+    msg_env
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    printf 'agent=codex\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/a.session"
+    tmux -L "$S" new-session -d -s a -x 80 -y 20 "seq 1 400; sleep 60"
+    sleep 0.3
+    # attach as `machine exec ... agent attach` does there: the view, mouse on
+    local fifo="${BATS_TEST_TMPDIR}/ctl"; mkfifo "$fifo"
+    python3 - "$PULSAR" "$fifo" <<'PY' &
+import os, pty, select, sys
+cli, fifo = sys.argv[1:3]
+pid, fd = pty.fork()
+if pid == 0:
+    os.environ.update(TERM="xterm-256color", PULSAR_AGENT_VIEW="1", PULSAR_AGENT_VIEW_MOUSE="on")
+    os.execvp(cli, [cli, "agent", "attach", "a"])
+ctl = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+buf = b""
+while True:
+    r, _, _ = select.select([fd, ctl], [], [], 0.2)
+    if fd in r:
+        try: os.read(fd, 65536)
+        except OSError: break
+    if ctl in r:
+        buf += os.read(ctl, 64)
+        while b"\n" in buf:
+            cmd, buf = buf.split(b"\n", 1)
+            if cmd == b"wheel": os.write(fd, b"\x1b[<64;10;5M")
+            elif cmd == b"quit": os.kill(pid, 9); sys.exit(0)
+PY
+    exec 7>"$fifo"
+    local i; for i in $(seq 30); do tmux -L "$S" list-sessions -F '#S' | grep -q '^a~app' && break; sleep 0.1; done
+    sleep 0.5
+    local keys; keys=$(tmux -L "$S" list-keys -T pulsar-app 2>/dev/null)
+    echo wheel >&7; sleep 0.3; echo wheel >&7; sleep 0.5
+    local mode; mode=$(tmux -L "$S" display -p -t =a: '#{pane_in_mode}')
+    echo quit >&7; exec 7>&-
+    msg_teardown
+    [[ "$keys" == *mouse_any_flag* ]] && [[ "$keys" != *" Up"* ]] || fail "$keys"
+    [ "$mode" = 1 ] || fail "the wheel didn't scroll back: pane_in_mode=$mode"
+}
+
+@test "agent sessions --title: a new title gives the session a new icon seed; the same title keeps it" {
+    tmux_env
+    cd "$PROJ"
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[0].icon' <<<"$output")" = null ] || fail "an icon before any rename: $output"
+    "$PULSAR" agent sessions --title work "Login fix" >/dev/null
+    local one two
+    one=$("$PULSAR" agent sessions --json | jq -r '.[0].icon')
+    [[ "$one" == work:* ]] || fail "seed '$one'"
+    "$PULSAR" agent sessions --title work "Login fix" >/dev/null
+    [ "$("$PULSAR" agent sessions --json | jq -r '.[0].icon')" = "$one" ] || fail "the same title rerolled it"
+    "$PULSAR" agent sessions --title work "Login page" >/dev/null
+    two=$("$PULSAR" agent sessions --json | jq -r '.[0].icon')
+    [[ "$two" == work:* ]] && [ "$two" != "$one" ] || fail "'$one' then '$two'"
+    # kept when the session starts again (Continue in the app)
+    "$PULSAR" agent sessions --kill work >/dev/null 2>&1 || true
+    [ ! -e "${TMUX_LIVE}/work" ] || fail "still running"
+    "$PULSAR" agent run claude --tmux work >/dev/null 2>&1
+    [ "$("$PULSAR" agent sessions --json | jq -r '.[0].icon')" = "$two" ] || fail "a start lost it: $(cat "${REC}/work.session")"
+    # a multi-line title, set twice: the same title as stored, the same icon
+    "$PULSAR" agent sessions --title work $'Two\nlines' >/dev/null
+    one=$("$PULSAR" agent sessions --json | jq -r '.[0].icon')
+    "$PULSAR" agent sessions --title work $'Two\nlines' >/dev/null
+    [ "$("$PULSAR" agent sessions --json | jq -r '.[0].icon')" = "$one" ] || fail "the same title rerolled it"
+}
+
+
+@test "Codex and agy: waiting lasts while the screen is the one the turn ended on; a resize keeps it, typing ends it, and a message waits" {
+    msg_env
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    printf 'agent=codex\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/c.session"
+    # an "agent" that draws its prompt once and echoes what is typed
+    "${T[@]}" new-session -d -s c -x 100 -y 20 "printf '> '; cat"
+    sleep 0.3
+    : > "${PULSAR_AGENT_SESSIONS}/c.turn"
+    "$PULSAR" agent notify c
+    alert_becomes c Waiting || { msg_teardown; fail "never waiting: $(alert_of c)"; }
+    local i k=""; for i in $(seq 30); do k=$("${T[@]}" show-options -v -t =c: @pulsar-alert-screen 2>/dev/null) && [ -n "$k" ] && break; sleep 0.1; done
+    [ -n "$k" ] || { msg_teardown; fail "no screen taken"; }
+    state() { "$PULSAR" agent sessions --json | jq -r '.[] | select(.name == "c") | .state'; }
+    [ "$(state)" = waiting ] || { msg_teardown; fail "not waiting: $(state)"; }
+    # a new size (the app, a terminal) moves the baseline, and it still waits
+    "${T[@]}" resize-window -t =c: -x 90 -y 20
+    sleep 0.3
+    [ "$(state)" = waiting ] || { msg_teardown; fail "a resize ended it"; }
+    [ "$(state)" = waiting ] || { msg_teardown; fail "a resize ended it, the second look"; }
+    # you type a reply (in a terminal: the app never saw it): its turn
+    "${T[@]}" send-keys -t =c: -l 'hello'
+    sleep 0.3
+    [ "$(state)" = running ] || { msg_teardown; fail "still waiting after typing: $(state)"; }
+    # and a message from another session waits for the turn's end
+    run "$PULSAR" agent send c "a note"
+    local screen; screen=$(pane_of c)
+    msg_teardown
+    [[ "$output" == *"queued"* || "$output" == *"next"* ]] || fail "$output"
+    [[ "$screen" != *"a note"* ]] || fail "typed in mid-turn: $screen"
+}
+
+@test "agent hooks: Pulsar's own at an index of their own; your hooks stay; an older Pulsar's 'agent seen' ones go" {
+    msg_env
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    "${T[@]}" new-session -d -s a 'sleep 60'
+    "${T[@]}" set-hook -g 'client-attached[3]' 'display mine'
+    "${T[@]}" set-hook -g 'session-closed[5]' "display 'mine too'"
+    "${T[@]}" set-hook -g 'client-focus-in[0]' "run-shell -b \"'/usr/bin/pulsar' agent seen #{session_name}\""
+    "${T[@]}" set-hook -g 'client-session-changed[0]' "display 'also mine'"
+    "$PULSAR" agent hooks
+    local h; h=$("${T[@]}" show-hooks -g)
+    msg_teardown
+    [[ "$h" == *"client-attached[3] display-message mine"* ]] || fail "$h"
+    [[ "$h" == *"session-closed[5] display-message \"mine too\""* ]] || fail "$h"
+    [[ "$h" == *"client-session-changed[0] display-message \"also mine\""* ]] || fail "$h"
+    [[ "$h" != *"agent seen"* ]] || fail "$h"
+    local x; for x in client-attached client-session-changed session-closed; do
+        [[ "$h" == *"${x}[41] run-shell -b "*"agent sizes"* ]] || fail "$x: $h"
+    done
 }

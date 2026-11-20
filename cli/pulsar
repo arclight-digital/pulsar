@@ -3675,11 +3675,15 @@ atmux_watched() {
 # the caller.
 atmux_view() {
     local v="${1}~app$$"
-    # the table has to exist to be chosen; the wheel is the app's, since
-    # mouse is off here, so this binding never fires
-    atmux bind -T pulsar-app WheelUpPane send -M 2>/dev/null || return 1
-    # looking at it is looking at the session: its "needs you" is seen
-    atmux set-option -u -t "=${1}:" @pulsar-alert 2>/dev/null || true
+    # The table has to exist to be chosen. Here the app drives the wheel
+    # itself (mouse off); seen from another machine (mouse on) this does: an
+    # agent that tracks the mouse gets it, else tmux's history scrolls (never
+    # arrow keys, which bring back an old prompt in an agent's input). Wheel
+    # down is left unbound, so it goes to the pane, or to copy mode's table.
+    atmux bind -T pulsar-app WheelUpPane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send -M' \
+        "if -F '#{!:#{alternate_on}}' 'copy-mode -e'" 2>/dev/null || return 1
+    # this server's hooks as this CLI sets them (one started by an older one)
+    agent_tmux_hooks "$(realpath "$SELF")"
     unset TMUX
     atmux_argv
     # created attached, so destroy-unattached never sees it without a client
@@ -3703,21 +3707,32 @@ tq() { local s=${1//\'/\'\"\'\"\'}; printf "'%s'" "$s"; }
 
 # The agents' server's hooks, set on every start (the CLI's path can move).
 agent_tmux_hooks() {
-    local cli=$1 hook seen h
+    local cli=$1 hook h
     # A bell in any agent's session is the agent asking for you; the notice
     # goes away once you look. Quoted twice: for the shell run-shell starts,
     # then for tmux, whose own parser reads this string; ## is a # its
     # formats leave alone.
+    # tmux runs alert-bell once for every session the window is in, the
+    # Agents app's views (<name>~app<pid>) included: only the real one acts,
+    # or one bell was handled as many times (a turn taken over by mail was
+    # marked waiting again by the second run).
     hook="$(sq "$cli") agent notify"
-    atmux set-hook -g alert-bell "run-shell -b $(tq "${hook//\#/\#\#} #{?session_grouped,#{session_group},#{session_name}}")"
-    # Looking at a session (attaching, switching to it, or its terminal
-    # gaining focus, as when the Agents app shows one already open) clears
-    # its "waiting". Through the CLI and by the group's name: a hook runs in
-    # the client's own session, which for the app is its view
-    # (<name>~app<pid>), and a plain set-option there missed the real one.
-    seen="$(sq "$cli") agent seen"
-    for h in client-session-changed client-attached client-focus-in; do
-        atmux set-hook -g "$h" "run-shell -b $(tq "${seen//\#/\#\#} #{?session_grouped,#{session_group},#{session_name}}")"
+    atmux set-hook -g alert-bell "if-shell -F '#{!:#{m:*~*,#{session_name}}}' $(tq "run-shell -b $(tq "${hook//\#/\#\#} #{session_name}")")"
+    # "Waiting" means at its prompt, and goes when a turn starts (Claude's
+    # UserPromptSubmit, a key into it from the app), not when someone looks:
+    # an older Pulsar's hooks that cleared it on attach and focus go (only
+    # those: hooks of your own stay).
+    for h in client-focus-in client-attached client-session-changed; do
+        case "$(atmux show-hooks -g "${h}[0]" 2>/dev/null)" in
+            *" agent seen "*) atmux set-hook -gu "${h}[0]" 2>/dev/null || true ;;
+        esac
+    done
+    # Window sizes while the app has a view on a session (agent sizes):
+    # checked whenever a client comes, moves or a session goes. At an index
+    # of their own: a plain set-hook replaces every hook of that name.
+    local sizes; sizes="$(sq "$cli") agent sizes"
+    for h in client-attached client-session-changed session-closed; do
+        atmux set-hook -g "${h}[41]" "run-shell -b $(tq "${sizes//\#/\#\#}")"
     done
 }
 
@@ -3746,6 +3761,8 @@ session_put() {
     [ -n "$title" ] || title=$(session_get "$1" title) || title=""
     title=${title//$'\n'/ }
     [ -z "$title" ] || printf 'title=%s\n' "$title" >> "$tmp"
+    local icon; icon=$(session_get "$1" icon) || icon=""
+    [ -z "$icon" ] || printf 'icon=%s\n' "$icon" >> "$tmp"
     mv "$tmp" "${AGENT_SESSIONS}/$1.session"
 }
 
@@ -4523,10 +4540,23 @@ agent_alert_settings() {
     # and an older one that finds another's there gives up. It also goes
     # when its Claude does (the session ended or was killed).
     wait_cmd='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; w="$m.waiter"; cat > /dev/null; mkdir -p "${m%/*}"; echo $$ > "$w"; i=0; while [ $i -lt '"${MAIL_WAIT_TICKS}"' ]; do [ "$(cat "$w" 2>/dev/null)" = "$$" ] || exit 0; [ -d "/proc/${CLAUDE_PID:-$PPID}" ] || { rm -f "$w"; exit 0; }; if [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null; then rm -f "$w"; tail -n +3 "$m.taken" >&2; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 2; fi; sleep 1; i=$((i + 1)); done; rm -f "$w"; exit 0'
-    jq -cn --arg c "$cmd" --arg s "$stop" --arg w "$wait_cmd" --argjson t "$((MAIL_WAIT_TICKS + 60))" '
+    # A turn starting clears "waiting": the prompt sent, or a tool run after
+    # a permission question was answered (only then: PostToolUse runs after
+    # every tool, and stays silent unless the last word was that question).
+    # shellcheck disable=SC2016  # expanded by the hook's sh
+    # Only the event's name is kept: these hooks' input is the prompt, or a
+    # tool's input and output, and a sandboxed session's alert folder is in
+    # the sandbox home every sandboxed session shares.
+    # shellcheck disable=SC2016  # expanded by the hook's sh
+    local prompt='d="$HOME/'"${AGENT_ALERTS_REL}"'"; cat > /dev/null; mkdir -p "$d" && echo "{\"hook_event_name\":\"UserPromptSubmit\"}" > "$d/'"${id}"'.json"; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 0'
+    # shellcheck disable=SC2016  # expanded by the hook's sh
+    local after='grep -Eq "\"hook_event_name\" *: *\"Notification\"" "$HOME/'"${AGENT_ALERTS_REL}/${id}"'.json" 2>/dev/null || { cat > /dev/null; exit 0; }; '"${prompt//UserPromptSubmit/PostToolUse}"
+    jq -cn --arg c "$cmd" --arg p "$prompt" --arg s "$stop" --arg w "$wait_cmd" --arg a "$after" --argjson t "$((MAIL_WAIT_TICKS + 60))" '
         {type: "command", command: $w, async: true, asyncRewake: true, timeout: $t} as $waiter
         | {hooks: {Stop: [{hooks: [{type: "command", command: $s}]}, {hooks: [$waiter]}],
                    SessionStart: [{hooks: [$waiter]}],
+                   UserPromptSubmit: [{hooks: [{type: "command", command: $p}]}],
+                   PostToolUse: [{hooks: [{type: "command", command: $a}]}],
                    Notification: [{hooks: [{type: "command", command: $c}]}]}}'
 }
 
@@ -4548,10 +4578,11 @@ agent_notify() {
     if agent_mail_taken "$tname"; then
         return 0
     fi
-    # looking at it already: a client on this session, in a focused terminal
-    if atmux_watched "$tname"; then
-        return 0
-    fi
+    # looking at it already (a client on it, in a focused terminal): it still
+    # waits for you, but needs no desktop notification, and nothing is typed
+    # in under your fingers
+    local watched=0
+    ! atmux_watched "$tname" || watched=1
     local agent dir id f="" c event="" msg="" title body
     agent=$(session_get "$tname" agent) || agent=""
     dir=$(session_get "$tname" dir) || dir=""
@@ -4568,9 +4599,16 @@ agent_notify() {
         [ ! -f "$c" ] || [ -L "$c" ] || f=$c
         if [ -n "$f" ] && [ $(( $(date +%s) - $(stat -c %Y "$f") )) -le 30 ]; then
             event=$(jq -r '.hook_event_name // empty' "$f" 2>/dev/null) || event=""
+            case "$event" in
+                UserPromptSubmit|PostToolUse)
+                    # a turn started (or went on after a permission answer)
+                    atmux set-option -u -t "=${tname}:" @pulsar-alert 2>/dev/null || true
+                    return 0 ;;
+            esac
             if [ "$(jq -r '.notification_type // empty' "$f" 2>/dev/null)" = idle_prompt ]; then
-                # still at its prompt, a while after its turn: messages can go in
-                agent_deliver "$tname" >/dev/null 2>&1 || true
+                # still at its prompt, a while after its turn: messages can go
+                # in, unless you're looking at it (and may be typing)
+                [ "$watched" = 1 ] || agent_deliver "$tname" >/dev/null 2>&1 || true
                 return 0
             fi
             msg=$(jq -r '.message // empty' "$f" 2>/dev/null) || msg=""
@@ -4592,7 +4630,7 @@ agent_notify() {
     # Messages from other sessions go in only at a turn's end, when the agent
     # sits at its own prompt: never on a Notification (a permission question,
     # where the Enter after the text would answer it) or a bare bell.
-    if at_prompt "$event" && agent_deliver "$tname" >/dev/null 2>&1; then
+    if [ "$watched" = 0 ] && at_prompt "$event" && agent_deliver "$tname" >/dev/null 2>&1; then
         return 0
     fi
     local who="The agent"
@@ -4605,6 +4643,19 @@ agent_notify() {
     esac
     [ -z "$dir" ] || body+=$'\n'"In ${dir/#"$HOME"/\~}"
     atmux set-option -t "=${tname}:" @pulsar-alert "${event:-bell}" 2>/dev/null || true
+    # Codex and agy say nothing when a turn starts, so their "waiting" holds
+    # while the screen stays the one the turn ended on (alert_now): taken a
+    # second on, once the agent has drawn it, and without the session's lock.
+    if [ "$event" = Waiting ]; then
+        ( exec {lockfd}>&-
+          sleep 1
+          [ "$(atmux show-options -v -t "=${tname}:" @pulsar-alert 2>/dev/null)" = Waiting ] || exit 0
+          k=$(screen_key "$tname") && atmux set-option -t "=${tname}:" @pulsar-alert-screen "$k"
+        ) >/dev/null 2>&1 &
+    else
+        atmux set-option -u -t "=${tname}:" @pulsar-alert-screen 2>/dev/null || true
+    fi
+    [ "$watched" = 0 ] || return 0
 
     have notify-send || return 0
     export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
@@ -4653,6 +4704,8 @@ agent_tmux_attach() {
     if [ "${PULSAR_AGENT_VIEW:-0}" = 1 ]; then
         atmux_view "$1" || die "tmux could not open ${1}"
     fi
+    # this server's hooks as this CLI sets them (one started by an older one)
+    agent_tmux_hooks "$(realpath "$SELF")" 2>/dev/null || true
     atmux_argv
     case "${TMUX:-}" in
         */"$AGENT_TMUX_SOCKET",*) exec "${ATMUX[@]}" switch-client -t "=$1" ;;
@@ -4770,7 +4823,13 @@ agent_sessions() {
         --title)
             [ -e "${AGENT_SESSIONS}/$2.session" ] || die "no session called $2"
             no_json "agent sessions --title"
+            # a new name is a new face: the app draws the session's icon from
+            # this seed when there is one (else from its name)
+            local was; was=$(session_get "$2" title) || was=""
             session_set "$2" title "$3"
+            if [ "$(session_get "$2" title || true)" != "$was" ]; then
+                session_set "$2" icon "${2}:$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')"
+            fi
             if [ -n "$3" ]; then printf '%s is titled: %s\n' "$2" "$(session_get "$2" title)"
             else printf '%s has no title\n' "$2"; fi
             return 0 ;;
@@ -4844,6 +4903,13 @@ agent_sessions() {
     local live="" names n f row
     ! have tmux || live=$(atmux list-sessions -F $'#{session_name}\t#{session_created}\t#{session_activity}\t#{?@pulsar-alert,#{@pulsar-alert},-}\t#{?@pulsar-exited,#{@pulsar-exited},-}' 2>/dev/null \
         | awk -F'\t' '$1 !~ /~/') || live=""
+    # a Codex or agy session's "waiting" as it stands (alert_now)
+    local ln lc la lal le
+    live=$(while IFS=$'\t' read -r ln lc la lal le; do
+               [ -n "$ln" ] || continue
+               if [ "$lal" != - ]; then lal=$(alert_now "$ln"); lal=${lal:--}; fi
+               printf '%s\t%s\t%s\t%s\t%s\n' "$ln" "$lc" "$la" "$lal" "$le"
+           done <<<"$live")
     names=$( { cut -f1 <<<"$live"
                for f in "$AGENT_SESSIONS"/*.session; do
                    [ ! -e "$f" ] || basename "$f" .session
@@ -5110,7 +5176,7 @@ agent_send() {
     fi
     # typed only at a turn's end: never into a permission question or a
     # pane mid-turn, --now or not; --now only goes ahead while you watch
-    if at_prompt "$(atmux show-options -v -t "=${to}:" @pulsar-alert 2>/dev/null)" && { [ "$now" = 1 ] || ! atmux_watched "$to"; }; then
+    if at_prompt "$(alert_now "$to")" && { [ "$now" = 1 ] || ! atmux_watched "$to"; }; then
         # typed instead: take the mail back first, so it can't go twice
         mail_cancel "$to"
         agent_deliver "$to" && { printf 'delivered to %s (%s)\n' "$to" "$id"; return 0; }
@@ -5278,6 +5344,33 @@ agent_inbox() {
 # A turn's end, with the agent at its own prompt: Claude's Stop, and the
 # turn-end hooks Pulsar gives the others (Waiting).
 at_prompt() { case "${1:-}" in Stop|Waiting) return 0 ;; *) return 1 ;; esac; }
+
+# A session's screen: its size, and a hash of what's on it.
+screen_key() {
+    local size
+    size=$(atmux display -p -t "=${1}:" '#{pane_width}x#{pane_height}' 2>/dev/null) || return 1
+    [ -n "$size" ] || return 1
+    printf '%s:%s\n' "$size" "$(atmux capture-pane -p -t "=${1}:" 2>/dev/null | md5sum | cut -c1-16)"
+}
+
+# The session's alert as it stands. A Codex or agy one (a turn's end has no
+# matching start there) lasts while the screen is the one the turn ended on:
+# an agent at its prompt redraws the same screen, and typing or working
+# changes it. A new size only moves that baseline.
+alert_now() {
+    local a k now
+    a=$(atmux show-options -v -t "=${1}:" @pulsar-alert 2>/dev/null) || a=""
+    [ -n "$a" ] || return 0
+    k=$(atmux show-options -v -t "=${1}:" @pulsar-alert-screen 2>/dev/null) || k=""
+    if [ -n "$k" ] && now=$(screen_key "$1"); then
+        if [ "${now%%:*}" != "${k%%:*}" ]; then
+            atmux set-option -t "=${1}:" @pulsar-alert-screen "$now" 2>/dev/null || true
+        elif [ "$now" != "$k" ]; then
+            return 0
+        fi
+    fi
+    printf '%s\n' "$a"
+}
 
 # 1536 -> 1.5 KB, 43459411968 -> 43 GB (decimal, as df -H and Files say)
 human_bytes() {
@@ -5486,7 +5579,7 @@ agent_session_json() {
         --arg live "$([ -n "$row" ] && echo 1)" --arg created "$created" --arg alert "$alert" \
         --arg archived "$(session_get "$n" archived || true)" --arg title "$(session_get "$n" title || true)" \
         --arg last "$last" --arg project "$project" --arg exited "$exited" \
-        --arg sandbox "$(session_get "$n" sandbox || true)" \
+        --arg sandbox "$(session_get "$n" sandbox || true)" --arg icon "$(session_get "$n" icon || true)" \
         --argjson snaps "$snaps" --argjson usage "$u" \
         'def num: if . == "" then null else tonumber end;
          def str: if . == "" then null else . end;
@@ -5501,7 +5594,7 @@ agent_session_json() {
           archived: ($archived | num), title: ($title | str),
           last_active: ($last | num), project: ($project | str),
           exited: (if $live == "" then null else ($exited | num) end),
-          sandbox: ($sandbox | str)}'
+          sandbox: ($sandbox | str), icon: ($icon | str)}'
 }
 
 # ---------------------------------------------------------------------------
@@ -5864,8 +5957,36 @@ cmd_agent() {
             need_user "agent hooks"
             { have tmux && atmux has-session 2>/dev/null; } || die "no agents' tmux server is running"
             agent_tmux_hooks "$(realpath "$SELF")" ;;
+        sizes)
+            # tmux's hooks. A session's window follows tmux's default (the
+            # latest client's size) unless the Agents app has a view on it:
+            # then the smallest client's, so the app and a terminal (or the
+            # app on two machines) stop resizing it back and forth, and each
+            # sees the whole agent. The app marks its hidden terminals
+            # ignore-size, so they don't count.
+            # One run at a time, each reading the sessions as they are once it
+            # has the lock: several hooks fire for one attach, and a run that
+            # read them before a view went must not finish after the one
+            # that saw it gone.
+            have tmux || return 0
+            mkdir -p "$AGENT_SESSIONS"
+            local lockfd all base w
+            exec {lockfd}>"${AGENT_SESSIONS}/.sizes.lock"
+            flock -w 10 "$lockfd" || return 0
+            all=$(atmux list-sessions -F '#{session_name}' 2>/dev/null) || return 0
+            while IFS= read -r base; do
+                case "$base" in ''|*~*) continue ;; esac
+                local opt=(-wu) val=()
+                if awk -v b="${base}~" 'index($0, b) == 1 { f = 1 } END { exit !f }' <<<"$all"; then
+                    opt=(-w) val=(smallest)
+                fi
+                # every window of it, should an agent's session have several
+                while IFS= read -r w; do
+                    [ -z "$w" ] || atmux set-option "${opt[@]}" -t "$w" window-size "${val[@]}" 2>/dev/null || true
+                done < <(atmux list-windows -t "=${base}:" -F '#{window_id}' 2>/dev/null)
+            done <<<"$all" ;;
         seen)
-            # tmux's hooks: someone is looking at it, so it isn't waiting
+            # its turn started (the app saw Enter go into it): not waiting
             local n=${1:-}
             case "$n" in ''|-*|*[!A-Za-z0-9_-]*) die "usage: pulsar agent seen <session> (tmux runs this)" ;; esac
             ! have tmux || atmux set-option -u -t "=${n}:" @pulsar-alert 2>/dev/null || true ;;

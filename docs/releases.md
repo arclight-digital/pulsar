@@ -25,9 +25,10 @@ CLI, and opencode moves to version 2.
   agent's own terminal, inside the window. Closing the window leaves them
   working.
 - With no session open, the window asks what the agent should do, in which
-  project. That text becomes the agent's first message and the session's
-  name. The agent, a worktree of its own and the sandbox sit beside it,
-  remembered per project.
+  project. That text becomes the agent's first message, and the session's
+  name unless you type one in Name. The agent, a worktree of its own and
+  the sandbox sit beside it, remembered per project. Renaming a session
+  gives it a new icon.
 - Opening a stopped session continues it, on the same conversation for
   Claude Code and opencode, and for Antigravity CLI once Pulsar has seen
   its conversation. Codex CLI picks up its latest conversation in that
@@ -38,8 +39,12 @@ CLI, and opencode moves to version 2.
   you to send.
 - In the app a session is only its agent: tmux's keys, menus and status
   line aren't there, and when the agent quits you get Continue, not a
-  shell. The mouse wheel scrolls back through the session. A terminal
-  attached to the same session keeps tmux as it was.
+  shell. The mouse wheel scrolls back through the session, or through
+  Claude Code's own transcript in its fullscreen mode, and typing goes
+  back to the prompt. A terminal attached to the same session keeps tmux
+  as it was. While the app shows a session, its window takes the smaller
+  of the app's and a terminal's sizes, so the two stop resizing it in
+  turn.
 - Each session in the list has a bar for how full its context is. A
   status bar under the open session shows the agent and model, what it is
   doing, the context used against the window, Codex CLI's 5-hour and
@@ -56,8 +61,9 @@ CLI, and opencode moves to version 2.
   Delete. `pulsar agent disk` lists the same, and
   `pulsar doctor suspend-room` says whether a suspend will fit.
 - Antigravity CLI and Codex CLI sessions now say when they finish a turn,
-  as Claude Code's do: the session shows as waiting in the app, and a
-  notification comes when you aren't looking at it. Pulsar adds a `pulsar`
+  as Claude Code's do: the session shows as waiting in the app until you
+  send it something, and a notification comes when you aren't looking at
+  it. Pulsar adds a `pulsar`
   Stop hook to agy's `~/.gemini/config/hooks.json`, and gives Codex a
   `notify` program on its command line unless you have one of your own.
   opencode doesn't yet.

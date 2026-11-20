@@ -96,6 +96,10 @@ CSS = """
 .pulsar-agents .chip { border-radius: 999px; padding: 4px 12px; min-height: 0; font-weight: 500; }
 .pulsar-agents button.chip:checked { background-color: alpha(@accent_color, .2); color: @accent_color;
                                            box-shadow: 0 0 10px alpha(@accent_color, .25); }
+.pulsar-agents entry.name-chip { border-radius: 999px; padding: 0 12px; min-height: 26px; background: none;
+    box-shadow: none; outline-offset: -2px; font-weight: 500; }
+.pulsar-agents entry.name-chip > image { margin-right: 6px; }
+.pulsar-agents entry.name-chip:focus-within { background-color: alpha(currentColor, .07); }
 .pulsar-agents dropdown.chip > button { border-radius: 999px; padding: 4px 12px; min-height: 0; }
 .pulsar-agents .rail-head { padding: 4px 10px; }
 .pulsar-agents .files row { padding: 4px 8px; border-radius: 8px; }
@@ -230,6 +234,34 @@ def dconf_string(key):
     except GLib.Error:
         return None
     return v.get_string() if v.get_type_string() == "s" else None
+
+
+def typing_key(keyval, state):
+    """A key that types into the prompt: a character (without Ctrl or Alt),
+    Enter, Backspace, Tab or Delete."""
+    if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+        return False
+    ch = Gdk.keyval_to_unicode(keyval)
+    # a printable one: Escape has a character too (0x1b)
+    return (ch >= 0x20 and ch != 0x7f) or keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_BackSpace,
+                                                     Gdk.KEY_Tab, Gdk.KEY_Delete)
+
+
+def wheel_command(pane, up, n, in_mode, sgr_mouse, alternate, cell):
+    """The tmux command for n lines of wheel over a pane: tmux's history
+    when scrolled back in it, or for a plain shell; the wheel itself, at the
+    pointer's cell, to an agent that asked for SGR mouse reports (Claude
+    Code's fullscreen scrolls its own transcript); nothing to any other
+    agent on the alternate screen. Never arrow keys: in an agent's prompt Up
+    brings back an old prompt, ready to send again."""
+    if in_mode:
+        return ["send", "-X", "-t", pane, "-N", str(n), "scroll-up" if up else "scroll-down"]
+    if sgr_mouse:
+        col, row = cell
+        return ["send", "-t", pane, "-l", f"\x1b[<{64 if up else 65};{col};{row}M" * n]
+    if up and not alternate:
+        return ["copy-mode", "-e", "-t", pane, ";", "send", "-X", "-t", pane, "-N", str(n), "scroll-up"]
+    return None
 
 
 def ptyxis_palette_file():
@@ -398,6 +430,7 @@ class Agents(Adw.ApplicationWindow):
         retry.connect("clicked", lambda *_: self.retry_machines())
         self.offline_page = Adw.StatusPage(icon_name="network-server-symbolic", child=retry)
         self.term_stack.add_named(self.offline_page, "offline")
+        self.term_stack.connect("notify::visible-child", self._sizes)
         self.launcher = Launcher(self)
         self.term_stack.add_named(self.launcher.widget, "none")
         self.term_stack.set_visible_child_name("none")
@@ -836,6 +869,11 @@ class Agents(Adw.ApplicationWindow):
         return False
 
     def _drew(self, t):
+        # its tmux client is there once something is drawn: if it attached
+        # after its terminal was hidden, it still mustn't size the window
+        if not getattr(t, "sized", False):
+            t.sized = True
+            self._sizes()
         if getattr(t, "resuming", False) and not getattr(t, "hide_pending", False):
             t.hide_pending = True
             GLib.timeout_add(1200, lambda: (setattr(t, "hide_pending", False), self._resumed(t)) and False)
@@ -852,6 +890,9 @@ class Agents(Adw.ApplicationWindow):
         t.connect("child-exited", self._exited)
         t.connect("bell", lambda term: None)
         t.connect("contents-changed", self._drew)
+        # Enter typed into a session that waits for you is its turn starting:
+        # Codex and agy have no hook that says so (Claude's prompt hook does)
+        t.connect("commit", self._committed)
         # a terminal's own copy and paste keys; every other key is the agent's
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._term_key, t)
@@ -862,15 +903,48 @@ class Agents(Adw.ApplicationWindow):
                                           propagation_phase=Gtk.PropagationPhase.CAPTURE)
         wheel.connect("scroll", self._term_scroll, t)
         t.add_controller(wheel)
+        # where the pointer is, for the wheel sent to an agent that tracks it
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", lambda _c, x, y: setattr(t, "pointer", (x, y)))
+        t.add_controller(motion)
         self._color(t)
         self.terms[name] = t
         self.term_stack.add_child(t)
         self.term_stack.set_visible_child(t)
         return t
 
+    def _cell(self, t):
+        """The pointer's cell, 1-based (column, row), as a mouse report gives it."""
+        x, y = getattr(t, "pointer", (0, 0))
+        cw, ch = max(1, t.get_char_width()), max(1, t.get_char_height())
+        return (min(t.get_column_count(), int(x // cw) + 1), min(t.get_row_count(), int(y // ch) + 1))
+
+    def _committed(self, t, text, _size):
+        if "\r" not in text:
+            return
+        s = self.sessions.get(getattr(t, "name", None)) or {}
+        if s.get("state") == "waiting":
+            s["state"] = "running"
+            run(self.agent_argv("seen", s["name"]), lambda *_: None)
+
     def _term_key(self, _c, keyval, _code, state, t):
         mods = state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.ALT_MASK)
         if mods != Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK:
+            # scrolled back into tmux's history: typing leaves it first, as a
+            # terminal's scroll-on-keystroke does (in copy mode tmux would
+            # take the key, and g, / or r even do something). Escape, Ctrl+C,
+            # arrows and Page Up stay tmux's, to move through it or leave it:
+            # passed on, Escape and Ctrl+C would interrupt the agent.
+            if getattr(t, "scrolled", False) and typing_key(keyval, state):
+                t.scrolled = False
+                pane = self._pane(t)
+                if pane:
+                    try:
+                        GLib.spawn_sync(None, ["tmux", "-L", TMUX_SOCKET, "if", "-F", "-t", pane, "#{pane_in_mode}",
+                                               f"send -X -t {pane} cancel"], None, GLib.SpawnFlags.SEARCH_PATH,
+                                        None, None)
+                    except GLib.Error:
+                        pass
             return False
         if keyval in (Gdk.KEY_C, Gdk.KEY_c):
             t.copy_clipboard_format(Vte.Format.TEXT)
@@ -879,6 +953,35 @@ class Agents(Adw.ApplicationWindow):
             t.paste_clipboard()
             return True
         return False
+
+    def _client_tty(self, t):
+        """/dev/pts/N: the tty of this terminal's tmux client."""
+        pty = t.get_pty()
+        if pty is None:
+            return None
+        try:
+            return f"/dev/pts/{struct.unpack('I', fcntl.ioctl(pty.get_fd(), 0x80045430, b'\0' * 4))[0]}"  # TIOCGPTN
+        except OSError:
+            return None
+
+    def _sizes(self, *_):
+        """Only the terminal on screen counts toward its window's size: the
+        hidden ones keep the size they last had, and with the app's views a
+        window follows its smallest client (agent sizes), so they're marked
+        ignore-size. Another machine's clients are that machine's."""
+        shown = self.term_stack.get_visible_child()
+        for name, t in list(self.terms.items()):
+            if t.dead or (self.sessions.get(name) or {}).get("machine"):
+                continue
+            tty = self._client_tty(t)
+            if not tty:
+                continue
+            flag = "!ignore-size" if t is shown else "ignore-size"
+            try:
+                GLib.spawn_async(["tmux", "-L", TMUX_SOCKET, "refresh-client", "-t", tty, "-f", flag],
+                                 flags=GLib.SpawnFlags.SEARCH_PATH)
+            except GLib.Error:
+                pass
 
     def _pane(self, t):
         """The tmux pane this terminal shows, found by its client's tty."""
@@ -912,15 +1015,21 @@ class Agents(Adw.ApplicationWindow):
         pane = self._pane(t)
         if not pane or not dy:
             return False
-        n = str(max(1, round(abs(dy) * 3)))
-        if dy < 0:
-            # an agent drawing on the alternate screen gets arrow keys, as a
-            # terminal gives it; otherwise tmux's history, a few lines a notch
-            cmd = ["if", "-F", "-t", pane, "#{alternate_on}", f"send -t {pane} Up",
-                   f"copy-mode -e -t {pane} ; send -X -t {pane} -N {n} scroll-up"]
-        else:
-            cmd = ["if", "-F", "-t", pane, "#{pane_in_mode}", f"send -X -t {pane} -N {n} scroll-down",
-                   f"if -F -t {pane} '#{{alternate_on}}' 'send -t {pane} Down'"]
+        n = max(1, round(abs(dy) * 3))
+        try:
+            _ok, out, _e, _st = GLib.spawn_sync(None, ["tmux", "-L", TMUX_SOCKET, "display", "-p", "-t", pane,
+                                                      "#{pane_in_mode} #{mouse_any_flag} #{mouse_sgr_flag} "
+                                                      "#{alternate_on}"], None, GLib.SpawnFlags.SEARCH_PATH,
+                                               None, None)
+            mode, mouse, sgr, alt = (out or b"").decode().split()
+        except (GLib.Error, ValueError):
+            return False
+        cmd = wheel_command(pane, dy < 0, n, mode == "1", mouse == "1" and sgr == "1", alt == "1",
+                            self._cell(t))
+        if not cmd:
+            return True
+        if dy < 0 and mode != "1" and cmd[0] == "copy-mode":
+            t.scrolled = True
         try:
             GLib.spawn_async(["tmux", "-L", TMUX_SOCKET, *cmd], flags=GLib.SpawnFlags.SEARCH_PATH)
         except GLib.Error:
@@ -1674,6 +1783,7 @@ class SessionRow(Gtk.ListBoxRow):
         agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "Started by hand")
         self.tile.set_tooltip_text(agent)
         self.label.set_label(session_title(s))
+        self.tile.set_glyph(s.get("icon") or self.name)
         self.sub.set_label(session_status(s, now))
         for c in ("unseen",):
             self.dot.remove_css_class(c)
@@ -2160,7 +2270,7 @@ class Help(Adw.Dialog):
 
     PRACTICES = (
         ("One task per session",
-         "A session is named from its first message. When the task is done, archive it (the × on the session, "
+         "A session is named from its first message, or from Name if you fill it in. When the task is done, archive it (the × on the session, "
          "or Ctrl+Shift+Delete); it is deleted after the time set in Preferences."),
         ("A worktree for work alongside other sessions",
          "Worktree gives a session its own branch and folder, <repository>/.worktrees/<session>, so two agents "
@@ -2485,13 +2595,20 @@ class Launcher:
         for c in ("chip", "flat"):
             self.sandbox.add_css_class(c)
         self.sandbox.connect("notify::selected", lambda *_: self._remember())
+        # optional: what the sidebar calls it (and the session's name, made
+        # from it); left empty, both come from the prompt
+        self.name = Gtk.Entry(placeholder_text="Name", width_chars=10, max_width_chars=24, max_length=48,
+                              primary_icon_name="document-edit-symbolic",
+                              tooltip_text="What the sidebar calls this session. Empty: taken from the prompt",
+                              css_classes=["chip", "name-chip"], valign=Gtk.Align.CENTER)
+        self.name.connect("activate", lambda *_: self._go())
         self.start = Gtk.Button(icon_name="go-up-symbolic", tooltip_text="Start (Enter)", sensitive=False,
                                 css_classes=["circular", "suggested-action"], valign=Gtk.Align.CENTER)
         self.start.connect("clicked", lambda *_: self._go())
         # the chips flow onto a second line in a narrow window, rather than
         # widening the box past it; Start stays at the end of the last line
         chips = Adw.WrapBox(child_spacing=4, line_spacing=4, hexpand=True)
-        for w in (self.project, self.agent, self.worktree, self.sandbox):
+        for w in (self.project, self.name, self.agent, self.worktree, self.sandbox):
             chips.append(w)
         bar = Gtk.Box(spacing=4)
         bar.append(chips)
@@ -2583,7 +2700,7 @@ class Launcher:
         for s in ss[:3]:
             agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "")
             box = Gtk.Box(spacing=10)
-            tile = SessionIcon(s["name"], 34)
+            tile = SessionIcon(s.get("icon") or s["name"], 34)
             tile.set_valign(Gtk.Align.CENTER)
             tile.set_tooltip_text(agent)
             if s.get("state") == "waiting":
@@ -2708,16 +2825,19 @@ class Launcher:
             return
         c = self._choices()
         prompt = self._text().strip()
+        given = " ".join(self.name.get_text().split())
         # not a session's name, nor a branch or worktree the repository has
         taken = set(self.win.sessions) | repo_names(self.folder)
-        name = slug_name(prompt, taken) or session_name_for(self.folder, taken)
-        title = title_from_prompt(prompt) or None
+        name = (slug_name(given, taken, words=6) or slug_name(prompt, taken)
+                or session_name_for(self.folder, taken))
+        title = given or title_from_prompt(prompt) or None
         st = self.win.state
         st["projects"][self.folder] = c
         st["recent"] = [self.folder] + [p for p in st.get("recent", []) if p != self.folder][:9]
         argv = run_argv(c["agent"], name, self.folder, c["worktree"], c["sandbox"], title=title,
                         prompt=prompt or None)
         self.buffer.set_text("")
+        self.name.set_text("")
         self.win.started(name, c["agent"], title, argv)
 
 

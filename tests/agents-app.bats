@@ -545,3 +545,142 @@ print(sorted(g.repo_names('${BATS_TEST_TMPDIR}')))"
     [ "${lines[2]}" = fix-the-login-2 ] || fail "$output"
     [ "${lines[3]}" = "[]" ] || fail "$output"
 }
+
+@test "the app: Enter into a waiting session starts its turn (agent seen); other keys and running sessions don't" {
+    need_gtk
+    run app '
+calls = []
+m.run = lambda argv, cb, *a: calls.append(argv[1:])
+class T: name = "a"
+class W:
+    sessions = {"a": {"name": "a", "state": "waiting"}, "b": {"name": "b", "state": "running"}}
+    def agent_argv(self, *a): return ["pulsar", "agent", *a]
+w = W()
+m.Agents._committed(w, T(), "hello", 5)
+print(calls, w.sessions["a"]["state"])
+m.Agents._committed(w, T(), "\r", 1)
+print(calls, w.sessions["a"]["state"])
+m.Agents._committed(w, T(), "\r", 1)
+class U: name = "b"
+m.Agents._committed(w, U(), "\r", 1)
+print(len(calls))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[] waiting" ] || fail "$output"
+    [ "${lines[1]}" = "[['agent', 'seen', 'a']] running" ] || fail "$output"
+    [ "${lines[2]}" = 1 ] || fail "$output"
+}
+
+@test "the app: typing while scrolled back leaves scrollback once; modifiers, Escape, Ctrl+C and arrows stay tmux's" {
+    need_gtk
+    run app '
+sent = []
+m.GLib.spawn_sync = lambda *a, **k: sent.append(a[1]) or (True, b"", b"", 0)
+class T: scrolled = True
+class W:
+    def _pane(self, t): return "%3"
+w, t = W(), T()
+m.Agents._term_key(w, None, m.Gdk.KEY_Shift_L, 0, m.Gdk.ModifierType(0), t)
+m.Agents._term_key(w, None, m.Gdk.KEY_Escape, 0, m.Gdk.ModifierType(0), t)
+m.Agents._term_key(w, None, m.Gdk.KEY_Up, 0, m.Gdk.ModifierType(0), t)
+m.Agents._term_key(w, None, m.Gdk.KEY_Page_Up, 0, m.Gdk.ModifierType(0), t)
+m.Agents._term_key(w, None, m.Gdk.KEY_c, 0, m.Gdk.ModifierType.CONTROL_MASK, t)
+print(len(sent), t.scrolled)
+m.Agents._term_key(w, None, m.Gdk.KEY_a, 0, m.Gdk.ModifierType(0), t)
+print(len(sent), t.scrolled, " ".join(sent[0][-3:]))
+m.Agents._term_key(w, None, m.Gdk.KEY_b, 0, m.Gdk.ModifierType(0), t)
+print(len(sent))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "0 True" ] || fail "$output"
+    [ "${lines[1]}" = "1 False %3 #{pane_in_mode} send -X -t %3 cancel" ] || fail "$output"
+    [ "${lines[2]}" = 1 ] || fail "$output"
+}
+
+@test "the launcher: a name typed before Start is the session's title, and its name is made from it" {
+    need_gtk
+    run app '
+import os
+m.Gtk.init()
+m.run = lambda *a, **k: None
+started = []
+class W:
+    sessions = {"login-fix": {}}
+    state = {"projects": {}, "recent": []}
+    def started(self, *a): started.append(a)
+L = m.Launcher(W())
+L.agents, L.default_agent = ["claude"], "claude"
+L.agent.set_model(m.Gtk.StringList.new(["Claude Code"]))
+L._set(os.environ["BATS_TEST_TMPDIR"])
+L.buffer.set_text("Fix the flaky login test")
+L.name.set_text("  Login   fix ")
+L._go()
+name, agent, title, argv = started[-1]
+print(name, "|", title, "|", L.name.get_text() == "")
+L.buffer.set_text("Fix the flaky login test")
+L._go()
+print(started[-1][0], "|", started[-1][2])'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "login-fix-2 | Login fix | True" ] || fail "$output"
+    [ "${lines[1]}" = "fix-the-flaky-login | Fix the flaky login test" ] || fail "$output"
+}
+
+@test "the app: a renamed session's icon comes from its icon seed, else its name" {
+    need_gtk
+    run app '
+m.Gtk.init()
+i = m.SessionIcon("work", 34); a = i.icon
+i.set_glyph("work:1a2b3c4d"); b = i.icon
+print(a == m.session_icon("work"), b == m.session_icon("work:1a2b3c4d"), a != b)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "True True True" ] || fail "$output"
+}
+
+
+@test "the app's wheel: tmux's history when scrolled back or in a shell; the wheel itself, at the pointer, to an agent that asked for SGR mouse; else nothing; never arrow keys" {
+    need_gtk
+    run app '
+w = m.wheel_command
+print(w("%1", True, 3, True, True, True, (5, 7)))
+print(w("%1", False, 2, True, False, False, (1, 1)))
+print(repr(w("%1", True, 2, False, True, True, (5, 7))))
+print(repr(w("%1", False, 1, False, True, True, (5, 7))))
+print(w("%1", True, 3, False, False, False, (1, 1)))
+print(w("%1", True, 3, False, False, True, (1, 1)), w("%1", False, 3, False, False, False, (1, 1)))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['send', '-X', '-t', '%1', '-N', '3', 'scroll-up']" ] || fail "$output"
+    [ "${lines[1]}" = "['send', '-X', '-t', '%1', '-N', '2', 'scroll-down']" ] || fail "$output"
+    [ "${lines[2]}" = "['send', '-t', '%1', '-l', '\x1b[<64;5;7M\x1b[<64;5;7M']" ] || fail "$output"
+    [ "${lines[3]}" = "['send', '-t', '%1', '-l', '\x1b[<65;5;7M']" ] || fail "$output"
+    [ "${lines[4]}" = "['copy-mode', '-e', '-t', '%1', ';', 'send', '-X', '-t', '%1', '-N', '3', 'scroll-up']" ] || fail "$output"
+    [ "${lines[5]}" = "None None" ] || fail "$output"
+}
+
+@test "the app's wheel, on real tmux: a shell's history scrolls; an agent tracking the mouse gets SGR wheel reports at the pointer" {
+    need_gtk
+    command -v tmux >/dev/null || skip "needs tmux"
+    export TMUX_TMPDIR="$BATS_TEST_TMPDIR"
+    local S="wheel-$$" got="${BATS_TEST_TMPDIR}/got"
+    tmux -L "$S" -f /dev/null new-session -d -s sh -x 80 -y 20 "seq 1 300; sleep 60"
+    # an agent that turns on mouse reports (1000 + SGR 1006) and keeps what it reads
+    tmux -L "$S" new-session -d -s ag -x 80 -y 20 "python3 -c 'import os,sys,tty; tty.setraw(0); os.write(1, b\"\x1b[?1000h\x1b[?1006h\"); f=open(\"$got\",\"wb\")
+while True:
+    b=os.read(0,64)
+    if not b: break
+    f.write(b); f.flush()'"
+    sleep 0.5
+    run app '
+import subprocess
+S = "'"$S"'"
+def tm(*a): return subprocess.run(["tmux", "-L", S, *a], capture_output=True, text=True).stdout.strip()
+for target in ("=sh:", "=ag:"):
+    pane = tm("display", "-p", "-t", target, "#{pane_id}")
+    mode, mouse, sgr, alt = tm("display", "-p", "-t", pane, "#{pane_in_mode} #{mouse_any_flag} #{mouse_sgr_flag} #{alternate_on}").split()
+    cmd = m.wheel_command(pane, True, 2, mode == "1", mouse == "1" and sgr == "1", alt == "1", (12, 4))
+    subprocess.run(["tmux", "-L", S, *cmd])
+import time; time.sleep(0.5)
+print(tm("display", "-p", "-t", "=sh:", "#{pane_in_mode} #{scroll_position}"))'
+    local got_bytes; got_bytes=$(cat -v "$got" 2>/dev/null)
+    tmux -L "$S" kill-server
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[-1]}" = "1 2" ] || fail "the shell didn't scroll: $output"
+    [ "$got_bytes" = '^[[<64;12;4M^[[<64;12;4M' ] || fail "the agent got '$got_bytes'"
+}
