@@ -8380,7 +8380,10 @@ main() {
             # you what the recipes were.
             -h|--help)
                 if [ "$seen_cmd" = 1 ]; then args+=("$a"); else usage; exit 0; fi ;;
-            -V|--version) printf 'pulsar %s\n' "$VERSION"; exit 0 ;;
+            # likewise --version: after a command it may be a prompt's or a
+            # title's text (`agent run --prompt --version`), not a question
+            -V|--version)
+                if [ "$seen_cmd" = 1 ]; then args+=("$a"); else printf 'pulsar %s\n' "$VERSION"; exit 0; fi ;;
             -*) args+=("$a") ;;
             *) seen_cmd=1; args+=("$a") ;;
         esac

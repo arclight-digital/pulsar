@@ -329,7 +329,8 @@ def newly_unseen(before, after, looking_at):
     out = set()
     for name, s in after.items():
         old = before.get(name)
-        if old is None or name == looking_at:
+        # nothing known before (new, or its machine wasn't answering): not news
+        if old is None or name == looking_at or old.get("state") == "offline":
             continue
         if s.get("state") != old.get("state") and s.get("state") in ("waiting", "ended"):
             out.add(name)
@@ -770,8 +771,13 @@ def agent_argv(sessions, *args):
     with that session's own name."""
     for i, a in enumerate(args):
         s = sessions.get(a) if isinstance(a, str) else None
-        if s and s.get("machine"):
-            rest = list(args)
-            rest[i] = s["real_name"]
-            return [PULSAR, "machine", "exec", s["machine"], "--", "agent", *rest]
+        if s is None:
+            continue
+        # the first session named decides; a title after it that happens to
+        # read like another session's name doesn't
+        if not s.get("machine"):
+            break
+        rest = list(args)
+        rest[i] = s["real_name"]
+        return [PULSAR, "machine", "exec", s["machine"], "--", "agent", *rest]
     return [PULSAR, "agent", *args]

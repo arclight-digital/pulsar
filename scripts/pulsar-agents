@@ -9,11 +9,12 @@ running in their tmux server; opening it again picks them up.
 
 What the CLI calls ending and forgetting, this calls stopping and
 archiving: a stopped session continues when opened (on its conversation
-where the agent can), and an archived one waits in Archived for 7 days
-(`pulsar agent sessions --tidy`) before its snapshots go. Under the
-terminal, a message box that sends to the agent, with comments from the
-diff. Beside it, what changed (`pulsar agent diff`) and the snapshots
-(`pulsar agent undo`).
+where the agent can), and an archived one waits in Archived (a week, or as
+Preferences says; `pulsar agent sessions --tidy`) before its snapshots go.
+The agent's own terminal is the one place to type; a comment on a diff
+line is pasted into its prompt. Beside it, what changed (`pulsar agent
+diff`), the snapshots (`pulsar agent undo`) and messages from other
+sessions (`pulsar agent inbox`).
 
 `pulsar-agents [<session> | --new]` opens on that session, or on a new one;
 a second launch raises the open window and turns to it. A notification's
@@ -23,6 +24,7 @@ import configparser
 import fcntl
 import json
 import os
+import weakref
 import pathlib
 import re
 import struct
@@ -42,7 +44,7 @@ sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
                         session_icon, hsl_rgb, human_bytes, disk_level, home, parse, split_project,
                         merge_machine_sessions, remember_machines, agent_argv as _agent_argv,  # noqa: E402,F401
-                        project_groups, project_label, resume_note, run, run_argv, session_doing,
+                        project_groups, project_label, resume_note, run, run_argv,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
 
@@ -51,7 +53,6 @@ BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
          HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
 TIDY_CHOICES = ((1, "1 day"), (7, "1 week"), (30, "30 days"), (0, "Never"))
 PUSH_CHOICES = (("on", "Any branch"), ("branches", "All but the default"), ("off", "Off"))
-SANDBOX_CHOICES = (("As set for this project", None), ("On", True), ("Off", False))
 STATE_FILE = pathlib.Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")) \
     / "pulsar" / "agents-app.json"
 
@@ -70,7 +71,7 @@ CSS = """
                        background-color: alpha(currentColor, .06); color: alpha(currentColor, .75);
                        transition: all 140ms ease-out; }
 .pulsar-agents .tile.glyph, .pulsar-agents .sessions row.session:selected .tile.glyph,
-.pulsar-agents .resume-card:hover .tile.glyph, .pulsar-agents .statusbar .tile.mini.glyph { background: none; }
+.pulsar-agents .resume-card:hover .tile.glyph { background: none; }
 .pulsar-agents .tile.glyph.needs { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 12px alpha(@accent_color, .45); }
 .pulsar-agents .sessions row.session:selected .tile.glyph { box-shadow: 0 0 0 1px alpha(currentColor, .25); }
 .pulsar-agents .tile.needs { background-color: alpha(@accent_color, .22); color: @accent_color;
@@ -91,10 +92,6 @@ CSS = """
 .pulsar-agents .footer-button { font-size: .85em; color: alpha(currentColor, .55); }
 .pulsar-agents vte-terminal { padding: 8px 14px; }
 .pulsar-agents .stage headerbar { background: none; box-shadow: none; }
-.pulsar-agents .launch-entry { font-size: 1.3em; min-height: 46px; background: none; box-shadow: none;
-                               outline: none; padding: 0 2px; caret-color: @accent_color; }
-.pulsar-agents .launch-icon { color: @accent_color; -gtk-icon-size: 22px; }
-.pulsar-agents .launch-label { font-size: .8em; font-weight: 700; color: alpha(currentColor, .45); margin-top: 8px; }
 .pulsar-agents .chip { border-radius: 999px; padding: 4px 12px; min-height: 0; font-weight: 500; }
 .pulsar-agents button.chip:checked { background-color: alpha(@accent_color, .2); color: @accent_color;
                                            box-shadow: 0 0 10px alpha(@accent_color, .25); }
@@ -139,7 +136,7 @@ CSS = """
 .pulsar-agents levelbar.meter block.empty { background: none; }
 .pulsar-agents .statusbar { padding: 5px 8px 6px 8px; font-size: .84em; min-height: 30px; }
 .pulsar-agents .statusbar .seg { padding: 0 12px; border-right: 1px solid alpha(currentColor, .09); }
-.pulsar-agents .statusbar .seg:last-child, .pulsar-agents .statusbar .seg.last { border-right: none; }
+.pulsar-agents .statusbar .seg:last-child { border-right: none; }
 .pulsar-agents .statusbar .dim { color: alpha(currentColor, .6); border-right: none; padding: 0 8px; }
 .pulsar-agents .statusbar .key { color: alpha(currentColor, .5); }
 .pulsar-agents .statusbar .strong { font-weight: 600; }
@@ -148,8 +145,6 @@ CSS = """
 .pulsar-agents .statusbar .pct.high { color: @warning_color; }
 .pulsar-agents .statusbar .pct.full { color: @error_color; }
 .pulsar-agents .statusbar label.needs { color: @accent_color; font-weight: 600; }
-.pulsar-agents .statusbar .tile.mini { min-width: 22px; min-height: 22px; border-radius: 7px; font-size: .78em;
-                                       background-color: alpha(@accent_color, .16); color: @accent_color; }
 .pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
 .pulsar-agents .home-text { font-size: 1.2em; }
 .pulsar-agents .rail row.message { background: none; min-height: 0; padding-top: 4px; }
@@ -180,7 +175,7 @@ CSS = """
 
 def stage_css(fg, bg):
     """The session area in the terminal's colors: its background under the
-    header and around the message box, which floats a shade lighter."""
+    header, the status bar, and the launcher's prompt box, which floats a shade lighter."""
     return f"""
 .pulsar-agents .stage {{ background-color: {bg}; color: {fg}; }}
 .pulsar-agents .stage .rail {{ background-color: mix({bg}, {fg}, .035); box-shadow: inset 1px 0 alpha({fg}, .07); }}
@@ -321,6 +316,8 @@ class Agents(Adw.ApplicationWindow):
         self.collapsed = set()  # projects folded shut
         self.machines = []      # pulsar machine list
         self.remote = None      # pulsar machine sessions --json
+        self.pending = None     # a session just started, not listed yet
+        self.asked_home = False  # --new: the launcher, not the last session
         self._local = []
         self.current = None
         self.want = None        # a session asked for before it was listed
@@ -372,7 +369,7 @@ class Agents(Adw.ApplicationWindow):
         side.add_top_bar(side_head)
         side.add_bottom_bar(foot)
 
-        # content: the session's terminal, the message box under it, the rail beside it
+        # content: the session's terminal, the status bar under it, the rail beside it
         self.title = Adw.WindowTitle(title="")
         self.title_dot = Gtk.Box(css_classes=["title-dot"], valign=Gtk.Align.CENTER, visible=False)
         title_box = Gtk.Box(spacing=8)
@@ -381,7 +378,7 @@ class Agents(Adw.ApplicationWindow):
         head = Adw.HeaderBar(title_widget=title_box)
         self.head_line = Gtk.Box(css_classes=["head-line"])
         self.rail_toggle = Gtk.ToggleButton(icon_name="sidebar-show-right-symbolic",
-                                            tooltip_text="Changes and History (Ctrl+Shift+D)")
+                                            tooltip_text="Changes, History and Messages (Ctrl+Shift+D)")
         self.menu_button = Gtk.MenuButton(icon_name="view-more-symbolic", tooltip_text="Session",
                                           menu_model=self._menu())
         head.pack_end(self.menu_button)
@@ -571,7 +568,11 @@ class Agents(Adw.ApplicationWindow):
             self.remote = d
             # what each machine had when it last answered, for when it doesn't
             seen = remember_machines(self.state.get("machines_seen"), d, self._now())
-            if seen != self.state.get("machines_seen"):
+            old = self.state.get("machines_seen") or {}
+            # written when what a machine has changes, and its time every few
+            # minutes (that's all "seen 2 h ago" needs), not on every poll
+            if any((v.get("sessions") != (old.get(m) or {}).get("sessions"))
+                   or v.get("at", 0) - (old.get(m) or {}).get("at", 0) >= 300 for m, v in seen.items()):
                 self.remember(machines_seen=seen)
             self._apply(self._local)
 
@@ -619,16 +620,23 @@ class Agents(Adw.ApplicationWindow):
             # this desktop, so the app does, while it runs
             for k, s in self.sessions.items():
                 if (s.get("machine") and s.get("state") == "waiting" and k != looking
-                        and before.get(k, {}).get("state") not in (None, "waiting")):
+                        and before.get(k, {}).get("state") not in (None, "waiting", "offline")):
                     self._notify(s)
         self.unseen &= set(self.sessions)
         if self.unseen != set(self.state["unseen"]):
             self.remember()
         self._rebuild()
-        archived = [s for s in found if s.get("archived")]
         self._archived_label()
         now = self._now()
-        if self.current in self.sessions and not self.sessions[self.current].get("archived"):
+        if self.current in self.sessions and self.sessions[self.current].get("offline"):
+            # its machine isn't answering (or not yet): the page says so, kept current
+            self._show_offline(self.current, self.sessions[self.current])
+        elif (self.current in self.sessions and not self.sessions[self.current].get("archived")
+                and self.term_stack.get_visible_child_name() == "offline"):
+            # its machine answers again: open it as any session
+            self.show_session(self.current, resume=False)
+        elif self.current in self.sessions and not self.sessions[self.current].get("archived"):
+            self.pending = None
             s = self.sessions[self.current]
             self.title.set_title(session_title(s))
             self.title.set_subtitle(header_subtitle(s, now))
@@ -641,14 +649,20 @@ class Agents(Adw.ApplicationWindow):
                 self.rail.reload()
             self.rail.session_changed(s, old)
             self.status.update(s, now)
-        elif self.current:
+        elif self.current and self.current != self.pending:
+            # gone (archived elsewhere, forgotten); one just started isn't listed
+            # until the CLI has made its worktree and tmux, so it is waited for
             self._clear_current()
         if self.term_stack.get_visible_child_name() == "none" and self.listed_once:
             self.launcher._cards()
         if self.want and self.want in self.sessions:
             w, self.want = self.want, None
             self.show_session(w)
-        elif not self.listed_once and not self.current and not self.want:
+        elif self.want and not self.listed_once and "@" not in self.want:
+            # asked for one this machine doesn't have: the launcher, not nothing
+            self.want = None
+            self.launcher.show()
+        elif not self.listed_once and not self.current and not self.want and not self.asked_home:
             last = self.state.get("last")
             if last in self.sessions and not self.sessions[last].get("archived"):
                 self.show_session(last, resume=False)
@@ -708,12 +722,12 @@ class Agents(Adw.ApplicationWindow):
         if not names:
             return
         i = names.index(self.current) + step if self.current in names else 0
-        self.show_session(names[i % len(names)])
+        self.show_session(names[i % len(names)], resume=False)
 
     def nth(self, i):
         names = self.visible_names()
         if i <= len(names):
-            self.show_session(names[i - 1])
+            self.show_session(names[i - 1], resume=False)
 
     def _clear_current(self):
         self.current = None
@@ -771,6 +785,9 @@ class Agents(Adw.ApplicationWindow):
         self.title.set_title(session_title(s))
         self.title.set_subtitle(header_subtitle(s, self._now()))
         self._actions_for(None)
+        self.banner.set_revealed(False)
+        self.overlay.set_show_sidebar(False)
+        self.rail.set_session(s)
         self.status.update(s, self._now())
         m = s.get("machine")
         if s.get("offline") == "checking":
@@ -926,7 +943,17 @@ class Agents(Adw.ApplicationWindow):
             self._listed(ok, out)
             if term.name != self.current or self.terms.get(term.name) is not term:
                 return
-            s = self.sessions.get(term.name, {})
+            s = self.sessions.get(term.name)
+            if s is None:
+                # it never started: what the CLI said stays on screen
+                self.pending = None
+                self.banner.set_title("The session didn't start")
+                self.banner.set_button_label(None)
+                self.banner.set_revealed(True)
+                return
+            if s.get("offline"):
+                self._show_offline(term.name, s)
+                return
             if s.get("state") in ("running", "waiting"):
                 self.banner.set_title("Detached")
                 self.banner.set_button_label("Attach")
@@ -937,7 +964,7 @@ class Agents(Adw.ApplicationWindow):
         run([PULSAR, "agent", "sessions", "--json"], then)
 
     def _banner_clicked(self):
-        if self.current:
+        if self.current and not (self.sessions.get(self.current) or {}).get("offline"):
             self.banner.set_revealed(False)
             self.attach(self.current)
 
@@ -963,7 +990,7 @@ class Agents(Adw.ApplicationWindow):
 
     def _stage(self):
         """The terminal's own background under the whole session area, so the
-        terminal, the header over it and the message box are one surface."""
+        terminal, the header over it and the status bar are one surface."""
         pal = terminal_palette(self.palette_file, Adw.StyleManager.get_default().get_dark()) if self.palette_file else None
         fg, bg = (pal[0], pal[1]) if pal else ("@view_fg_color", "@view_bg_color")
         self.stage_css.load_from_string(stage_css(fg, bg))
@@ -1042,16 +1069,23 @@ class Agents(Adw.ApplicationWindow):
             self.refresh()
         run(self.agent_argv(*args), done)
 
+    def _unreachable(self, s):
+        """Its machine isn't answering: say so, rather than wait out ssh."""
+        if s and s.get("offline"):
+            self.toast(f"{s.get('machine')} isn't answering")
+            return True
+        return False
+
     def stop_session(self):
         s = self.sessions.get(self.current)
-        if not s:
+        if not s or self._unreachable(s):
             return
         self._cmd("Could not stop the session", "sessions", "--kill", s["name"],
                   then=lambda ok, _o: ok and self.toast(f"Stopped {session_title(s)}"))
 
     def archive(self, name):
         s = self.sessions.get(name)
-        if not s:
+        if not s or self._unreachable(s):
             return
         title = session_title(s)
 
@@ -1084,7 +1118,7 @@ class Agents(Adw.ApplicationWindow):
     def rename(self, name=None):
         name = name or self.current
         s = self.sessions.get(name)
-        if not s:
+        if not s or self._unreachable(s):
             return
         d = Adw.AlertDialog(heading="Rename Session")
         entry = Gtk.Entry(text=session_title(s), activates_default=True)
@@ -1095,20 +1129,21 @@ class Agents(Adw.ApplicationWindow):
         d.set_default_response("rename")
         d.set_close_response("cancel")
         d.connect("response", lambda _d, r: r == "rename" and self._cmd(
-            "Could not rename the session", "sessions", "--title", name, entry.get_text().strip()))
+            "Could not rename the session", "sessions", "--title", name, entry.get_text().strip().lstrip("-").strip()))
         d.present(self)
 
-    def undo(self, to, stopped=False):
+    def undo(self, to, stopped=False, name=None):
         """What would change first, from the CLI itself; then do it, with a way
-        back. A working session stops first, so its agent can't write mid-undo."""
-        name = self.current
+        back. A working session stops first, so its agent can't write mid-undo.
+        The session is the one on screen when asked, even if you move on."""
+        name = name or self.current
         s = self.sessions.get(name)
         if not s:
             return
         if s.get("state") != "ended" and not stopped:
             self.confirm(f"Stop {session_title(s)} and go back?", "", "stop", "Stop and Go Back",
                          lambda: self._cmd("Could not stop the session", "sessions", "--kill", name,
-                                           then=lambda ok, _o: ok and self.undo(to, stopped=True)),
+                                           then=lambda ok, _o: ok and self.undo(to, stopped=True, name=name)),
                          destructive=False)
             return
         extra = ["--to", str(to)] if to else []
@@ -1159,7 +1194,10 @@ class Agents(Adw.ApplicationWindow):
         return True
 
     def new_session(self):
-        project = session_project(self.sessions.get(self.current) or {}) or None
+        # a project here: another machine's folder isn't one to start in
+        cur = self.sessions.get(self.current) or {}
+        project = (session_project(cur) or None) if not cur.get("machine") else None
+        self.asked_home = True
         self._clear_current()
         self.list.unselect_all()
         self.launcher.show(project)
@@ -1167,11 +1205,13 @@ class Agents(Adw.ApplicationWindow):
 
     def started(self, name, agent, title, argv):
         self.current = name
+        self.pending = name
         self.title.set_title(title or name)
         self.title.set_subtitle(AGENT_NAMES.get(agent, agent))
         stub = {"name": name, "agent": agent, "state": "running", "title": title}
         self._actions_for(stub)
         self.banner.set_revealed(False)
+        self.rail.set_session(stub)
         self.spawn(name, argv)
         self.remember(last=name)
         self.split.set_show_content(True)
@@ -1188,7 +1228,11 @@ class SessionIcon(Gtk.DrawingArea):
         super().__init__(content_width=size, content_height=size, css_classes=["tile", "glyph"])
         self.icon = None
         self.set_draw_func(self._draw)
-        Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self.queue_draw())
+        # held weakly, and let go when the icon is: the style manager lives as
+        # long as the app, and the launcher's cards come and go
+        sm, me = Adw.StyleManager.get_default(), weakref.ref(self)
+        hid = sm.connect("notify::dark", lambda *_: (i := me()) is not None and i.queue_draw())
+        weakref.finalize(self, lambda: sm.handler_is_connected(hid) and sm.disconnect(hid))
         self.set_glyph(name)
 
     def set_glyph(self, name):
@@ -1314,10 +1358,10 @@ SHORT_LIMITS = {"5-hour": "5h", "Weekly": "Week"}
 
 
 class StatusBar:
-    """Under the open session's terminal, in segments: who (the agent's
-    tile and model), what it is doing, how full its context is, the plan's
-    limits where the agent writes them down, then the sandbox, the branch,
-    and what changed since the session started (which opens Changes)."""
+    """Under the open session's terminal, in segments: the model, what it
+    is doing, how full its context is, the plan's limits where the agent
+    writes them down, then the machine it's on, the sandbox, the branch, and
+    what changed since the session started (which opens Changes)."""
 
     def __init__(self, win):
         self.win = win
@@ -1509,7 +1553,7 @@ class ProjectRow(Gtk.ListBoxRow):
 
 
 class SessionRow(Gtk.ListBoxRow):
-    """A session: the agent's initial, its title, what it is doing, a dot
+    """A session: its icon, its title, what it is doing, a dot
     when it needs you or changed while you weren't looking, Archive on hover."""
 
     def __init__(self, win, name):
@@ -1584,7 +1628,7 @@ class SessionRow(Gtk.ListBoxRow):
         self.tile.set_tooltip_text(agent)
         self.label.set_label(session_title(s))
         self.sub.set_label(session_status(s, now))
-        for c in ("waiting", "running", "unseen"):
+        for c in ("unseen",):
             self.dot.remove_css_class(c)
         for c in ("needs", "working"):
             self.tile.remove_css_class(c)
@@ -1901,7 +1945,10 @@ class Rail:
 
     def _comment(self):
         if getattr(self, "ref", None) and self.comment_entry.get_text().strip():
-            self.win.add_comment(self.ref[0], self.ref[1], self.comment_entry.get_text())
+            if not self.win.add_comment(self.ref[0], self.ref[1], self.comment_entry.get_text()):
+                # no agent's prompt to put it in (stopped, or not attached): keep it
+                self.win.toast("Open the session to comment: the comment goes into its agent's prompt")
+                return
             self.comment_entry.set_text("")
             self.comment_pop.popdown()
 
@@ -2367,7 +2414,10 @@ class Launcher:
     def _listed(self, ok, out):
         found = parse(out) if ok else None
         self.agents = [a["name"] for a in (found or []) if a.get("state") in ("installed", "native")]
+        # a new model moves the selection, which isn't the user choosing an agent
+        self._applying = True
         self.agent.set_model(Gtk.StringList.new([AGENT_NAMES.get(a, a) for a in self.agents]))
+        self._applying = False
         run([PULSAR, "agent", "default"], self._default)
 
     def _default(self, ok, out):
@@ -2404,13 +2454,18 @@ class Launcher:
             self.mark.set_visible(False)
 
     def _cards(self):
-        """The three sessions most recently at work, one click from here."""
-        while (c := self.cards.get_first_child()) is not None:
-            self.cards.remove(c)
+        """The three sessions most recently at work, one click from here.
+        Rebuilt only when what they say changes, not on every poll."""
         now = self.win._now()
         ss = [s for s in self.win.sessions.values() if not s.get("archived")]
         ss.sort(key=lambda s: ({"waiting": 0, "running": 1}.get(s.get("state"), 2),
                                -(s.get("last_active") or s.get("started") or 0)))
+        key = tuple((s["name"], s.get("state"), session_title(s), session_status(s, now)) for s in ss[:3])
+        if key == getattr(self, "_cards_key", None):
+            return
+        self._cards_key = key
+        while (c := self.cards.get_first_child()) is not None:
+            self.cards.remove(c)
         for s in ss[:3]:
             agent = AGENT_NAMES.get(s.get("agent"), s.get("agent") or "")
             box = Gtk.Box(spacing=10)
@@ -2461,6 +2516,7 @@ class Launcher:
         other.path = None
         other.set_child(Gtk.Label(label="Other Folder…", xalign=0, margin_top=6, margin_bottom=6, margin_start=4))
         self.project_list.append(other)
+        project = project if project and os.path.isdir(project) else None
         self._set(project or (self.folder if self.folder in recent else None) or (recent[0] if recent else None))
         if not self.agents:
             self._load_agents()

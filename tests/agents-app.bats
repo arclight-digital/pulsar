@@ -508,3 +508,22 @@ print(g.session_status(dict(out[0], offline="unreachable"), 50 + 7200 + 10))'
     [ "${lines[5]}" = "Checking mag…" ] || fail "${lines[5]}"
     [ "${lines[6]}" = "mag isn't answering · seen 2 h ago" ] || fail "${lines[6]}"
 }
+
+@test "a machine answering again isn't news: no unseen dot for what its sessions were doing meanwhile" {
+    run gui '
+before = {"a@m": {"state": "offline"}, "b": {"state": "running"}}
+after = {"a@m": {"state": "waiting"}, "b": {"state": "waiting"}}
+print(sorted(g.newly_unseen(before, after, None)))'
+    [ "$output" = "['b']" ] || fail "$output"
+}
+
+@test "agent_argv: the first session named decides where a command runs; a title after it can't move it" {
+    run gui '
+ss = {"here": {"name": "here"}, "bar@m": {"name": "bar@m", "machine": "m", "real_name": "bar"}}
+print(g.agent_argv(ss, "sessions", "--title", "here", "bar@m")[1:])
+print(g.agent_argv(ss, "sessions", "--title", "bar@m", "here")[1:])
+print(g.agent_argv(ss, "diff", "nobody")[1:])'
+    [ "${lines[0]}" = "['agent', 'sessions', '--title', 'here', 'bar@m']" ] || fail "$output"
+    [ "${lines[1]}" = "['machine', 'exec', 'm', '--', 'agent', 'sessions', '--title', 'bar', 'here']" ] || fail "$output"
+    [ "${lines[2]}" = "['agent', 'diff', 'nobody']" ] || fail "$output"
+}

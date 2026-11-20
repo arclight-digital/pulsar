@@ -6820,3 +6820,13 @@ SH
     [ "$status" -ne 0 ] && [[ "$output" == *"no branch nope"* ]] || fail "$output"
     run "$PULSAR" machine receive fresh/one --checkout '-b'; [ "$status" -ne 0 ]
 }
+
+
+@test "--version answers only before a command: after one it's an argument (a prompt's or a title's text)" {
+    run "$PULSAR" --version
+    [[ "$output" == "pulsar "* ]] || fail "$output"
+    run "$PULSAR" -V
+    [[ "$output" == "pulsar "* ]] || fail "$output"
+    run "$PULSAR" agent send --version
+    [[ "$output" != "pulsar "[0-9]* ]] || fail "printed the version: $output"
+}
