@@ -169,6 +169,8 @@ reply() {
     grep -q 'pulsar window-glass: off' "$css"
     grep -q -- '--window-bg-color: #[0-9a-f]*;' "$css"
     if grep -q 'alpha(#[0-9a-f]*, 0.8);' "$css"; then false; fi
+    # solid windows need nothing put back
+    ! grep -q 'floating-bar' "$css" || false
     # loaded again: the extension's own check puts the glass back
     reply 1.0
     python3 "$ENGINE" window-glass --if-stale >/dev/null
@@ -1247,6 +1249,14 @@ print("" if d is None else d)' "$1" "$2"; }
     grep -q '^toast { background-color: #[0-9a-f]*; color: #[0-9a-f]*; }$' "$css"
     # fullscreen has no blur behind it: its grounds solid
     grep -A1 '^window.fullscreen {$' "$css" | grep -q -- '^  --window-bg-color: #[0-9a-f]*;$'
+    # what sits over a page or inside a control is solid, in the theme's own
+    # colors, so stock paints it as GNOME does (Files' floating bar showed
+    # the list through it)
+    local fl='^\.floating-bar, \.overlay-pane, switch > slider, scale > trough > slider, magnifier, editablelabel > stack > text, treeview entry {$'
+    grep -A3 "$fl" "$css" | grep -q -- '^  --view-bg-color: #ffffff;$'      # Pulsar light's view, solid
+    grep -A3 "$fl" "$css" | grep -q -- '^  --window-bg-color: #f1f3fa;$'    # and its window
+    grep -A7 "$fl" "$css" | grep -q -- '^  --sidebar-bg-color: #e9ecf6;$'   # and its sidebar
+    grep -A1 '^\.floating-bar, \.floating-bar:backdrop {$' "$css" | grep -q '^  background-color: #ffffff;$'
     # GTK 4.22: glass, in top-level blocks only a GTK that knows reduced motion keeps
     [ "$(grep -c '^@media (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: no-preference), (prefers-color-scheme: \(light\|dark\)) and (prefers-reduced-motion: reduce) {$' "$css")" -eq 2 ]
     # each the palette glass of the popover's color in its scheme, painting the whole sheet

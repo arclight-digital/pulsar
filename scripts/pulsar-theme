@@ -546,9 +546,22 @@ class Variant:
         full = "".join(f"  --{v}-color: {self.p[k].hex};\n" for v, k in (
             ("window-bg", "window"), ("view-bg", "view"), ("headerbar-bg", "headerbar"),
             ("headerbar-backdrop", "window"), ("sidebar-bg", "sidebar"), ("sidebar-backdrop", "window")))
+        # What sits over a page, or inside a control, paints in the colors
+        # glass empties, and showed the page through it (Nick 2026-11-20:
+        # Files' "selected" bar over the list): solid, as stock draws it. The
+        # colors go back to the theme's own on just those, so their stock
+        # rules (Files', libadwaita's) paint as GNOME has them: Files' floating
+        # bar; a narrow window's sidebar over its page; a switch's knob and a
+        # slider's handle (white 80% mixed with the view's color: see-through
+        # by a fifth); the magnifier; a label or a list cell being edited.
+        floating = (".floating-bar, .overlay-pane, switch > slider, scale > trough > slider, magnifier, "
+                    "editablelabel > stack > text, treeview entry")
         if g:
             # in the popover's color, as the floating dialogs' glass is
             c["glass_sheets"] = (f"{sheet} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
+                                 f"{floating} {{\n{full}}}\n"
+                                 # Files' bar names the color, not the variable, out of focus
+                                 f".floating-bar, .floating-bar:backdrop {{\n  background-color: {self.p['view'].hex};\n}}\n"
                                  f"{alert} {{\n  background-color: {self.p['popover'].hex};\n}}\n"
                                  f"window.fullscreen {{\n{full}}}\n"
                                  # A window styled .view (Files) paints the view's
