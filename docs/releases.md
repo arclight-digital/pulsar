@@ -46,6 +46,10 @@ CLI, and opencode moves to version 2.
   of the app's and a terminal's sizes, so the two stop resizing it in
   turn. A session the app has open but isn't showing doesn't count,
   on this machine or on another one.
+- Sessions stay where they are in the list: newest started on top in each
+  project, and the project with the newest session first. One whose turn
+  it is pulses. Right-clicking a terminal gives Copy and Paste, and Select
+  All in a shell.
 - Ctrl+\` (or the terminal button in the header) opens a shell under the
   agent, in the session's folder (its worktree, when it has one), with a
   divider to drag. Ctrl+Shift+\` or + opens another in a new tab; each tab

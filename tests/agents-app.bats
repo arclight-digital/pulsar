@@ -151,23 +151,31 @@ print(m.session_title({"name": "n", "title": None}), m.session_title({"name": "n
     [ "${lines[5]}" = "n T" ]
 }
 
-@test "the sidebar groups sessions by project, needs-you first, archived ones left out" {
+@test "the sidebar groups sessions by project, newest started first, archived ones left out; a turn moves nothing" {
     need_gtk
     run app '
 now = 1_000_000
 ss = [{"name": "b", "project": "/p/two", "state": "running", "started": now - 100, "last_active": now - 5},
       {"name": "a", "project": "/p/one", "state": "ended", "last_active": now - 50},
-      {"name": "c", "project": "/p/one", "state": "waiting", "last_active": now - 300},
+      {"name": "c", "project": "/p/one", "state": "waiting", "started": now - 300, "last_active": now - 2},
       {"name": "d", "worktree_of": "/p/two", "dir": "/p/two/.worktrees/d", "state": "ended", "last_active": now - 9},
       {"name": "e", "project": "/p/three", "state": "ended", "archived": now - 10, "last_active": now}]
-for p, g in m.project_groups(ss):
-    print(p, ",".join(s["name"] for s in g))
+def show():
+    return " | ".join(p + " " + ",".join(s["name"] for s in g) for p, g in m.project_groups(ss))
+print(show())
+# turns end and start, activity ticks: the same order
+before = show()
+ss[0].update(state="waiting", last_active=now + 50); ss[2].update(state="running", last_active=now + 60)
+print(show() == before)
+# a session started again goes to the top of its project, and takes its project up
+ss[2]["started"] = now + 70
+print(show())
 print(m.project_label("/a/x/app", ["/a/x/app", "/b/y/app"]), m.project_label("/a/x/web", ["/a/x/web"]))'
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "/p/one c,a" ]
-    [ "${lines[1]}" = "/p/two b,d" ]
-    [ "${#lines[@]}" -eq 3 ]
-    [ "${lines[2]}" = "app (x) web" ]
+    [ "${lines[0]}" = "/p/two d,b | /p/one a,c" ] || fail "$output"
+    [ "${lines[1]}" = "True" ] || fail "$output"
+    [ "${lines[2]}" = "/p/one c,a | /p/two d,b" ] || fail "$output"
+    [ "${lines[3]}" = "app (x) web" ] || fail "$output"
 }
 
 @test "a row says what a session is doing and since when; a stopped one says so only when it may come back on another conversation" {
@@ -838,4 +846,50 @@ c = m.VIEW_TAG; print(c != "" and all(ch.isalnum() for ch in c))'
     [ "${lines[3]}" = "['hidden', 'shown']" ] || fail "$output"
     [ "${lines[4]}" = "True True" ] || fail "$output"
     [ "${lines[5]}" = "True" ] || fail "$output"
+}
+
+@test "a terminal's right-click menu: Copy once something is selected, Paste; Select All only in a shell, which keeps its own scrollback" {
+    need_gtk
+    run app '
+m.Gtk.init()
+ctx = m.GLib.MainContext.default()
+def items(t):
+    mm = t.get_context_menu_model()
+    return [mm.get_item_attribute_value(i, "action").get_string() for i in range(mm.get_n_items())]
+agent, shell = m.Vte.Terminal(), m.Vte.Terminal()
+m.term_menu(agent); m.term_menu(shell, select_all=True)
+win = m.Gtk.Window(child=shell); win.present()
+while ctx.pending(): ctx.iteration(False)
+print(items(agent), items(shell))
+copy = shell.menu_actions.lookup_action("copy")
+print(copy.get_enabled())
+shell.feed(b"hello there\r\n")
+while ctx.pending(): ctx.iteration(False)
+shell.select_all()
+while ctx.pending(): ctx.iteration(False)
+print(copy.get_enabled())
+seen = []
+shell.copy_clipboard_format = lambda f: seen.append(f)
+shell.paste_clipboard = lambda: seen.append("paste")
+copy.activate(None); shell.menu_actions.lookup_action("paste").activate(None)
+print(seen == [m.Vte.Format.TEXT, "paste"])
+shell.unselect_all()
+while ctx.pending(): ctx.iteration(False)
+print(copy.get_enabled())
+# the app'"'"'s own terminals have it: an agent'"'"'s, and a shell tab'"'"'s
+W = type("W", (), {"_terminal": m.Agents._terminal, "_shell_start": m.Agents._shell_start, "_shell_view": m.Agents._shell_view})
+w = W()
+w.term_stack, w.terms, w.shells, w.shell_stack = m.Gtk.Stack(), {}, {}, m.Gtk.Stack()
+for n in ("_now", "_color", "_exited", "_drew", "_term_key", "_term_scroll", "_shell_exited", "_shell_prop", "_shell_attention",
+          "_shell_selected", "_shell_closing", "_shell_emptied", "_shell_moved"):
+    setattr(w, n, lambda *a: None)
+m.Vte.Terminal.spawn_async = lambda *a: None
+print(items(w._terminal("a")), items(w._shell_start({"name": "a", "dir": "/"})))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['term.copy', 'term.paste'] ['term.copy', 'term.paste', 'term.select-all']" ] || fail "$output"
+    [ "${lines[1]}" = "False" ] || fail "$output"
+    [ "${lines[2]}" = "True" ] || fail "$output"
+    [ "${lines[3]}" = "True" ] || fail "$output"
+    [ "${lines[4]}" = "False" ] || fail "$output"
+    [ "${lines[5]}" = "['term.copy', 'term.paste'] ['term.copy', 'term.paste', 'term.select-all']" ] || fail "$output"
 }

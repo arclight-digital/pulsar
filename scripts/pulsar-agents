@@ -76,10 +76,22 @@ CSS = """
                        transition: all 140ms ease-out; }
 .pulsar-agents .tile.glyph, .pulsar-agents .sessions row.session:selected .tile.glyph,
 .pulsar-agents .resume-card:hover .tile.glyph { background: none; }
-.pulsar-agents .tile.glyph.needs { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 12px alpha(@accent_color, .45); }
+/* your turn: the ring stays, its glow breathes, a little brighter and
+   quicker than working's; not on the session you're on, which is right
+   there */
+@keyframes needs {
+    0%, 100% { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 6px 0 alpha(@accent_color, .3); }
+    50% { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 16px 3px alpha(@accent_color, .7); } }
+@keyframes needs-glow {
+    0%, 100% { box-shadow: 0 0 6px 0 alpha(@accent_color, .25); }
+    50% { box-shadow: 0 0 16px 3px alpha(@accent_color, .6); } }
+.pulsar-agents .tile.glyph.needs { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 12px alpha(@accent_color, .45);
+                                   animation: needs 1.8s ease-in-out infinite; }
 .pulsar-agents .sessions row.session:selected .tile.glyph { box-shadow: 0 0 0 1px alpha(currentColor, .25); }
+.pulsar-agents .sessions row.session:selected .tile.glyph.needs
+    { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 12px alpha(@accent_color, .45); animation: none; }
 .pulsar-agents .tile.needs { background-color: alpha(@accent_color, .22); color: @accent_color;
-                             box-shadow: 0 0 12px alpha(@accent_color, .35); }
+                             box-shadow: 0 0 12px alpha(@accent_color, .35); animation: needs-glow 1.8s ease-in-out infinite; }
 @keyframes working {
     0% { box-shadow: 0 0 0 0 alpha(@accent_color, 0); }
     50% { box-shadow: 0 0 10px 1px alpha(@accent_color, .4); }
@@ -264,6 +276,32 @@ def shell_tab_title(title, cwd):
     if m:
         return folder(m.group(1))
     return title or folder(cwd or "")
+
+
+def term_menu(t, select_all=False):
+    """The right-click menu of a terminal: Copy (with a selection), Paste,
+    and, where the terminal keeps its own scrollback (a shell), Select All.
+    An agent's terminal shows only the screen of tmux's view, so selecting
+    all of it would look like the whole conversation and isn't."""
+    group = Gio.SimpleActionGroup()
+    copy = Gio.SimpleAction(name="copy", enabled=False)
+    copy.connect("activate", lambda *_: t.copy_clipboard_format(Vte.Format.TEXT))
+    t.connect("selection-changed", lambda term: copy.set_enabled(term.get_has_selection()))
+    paste = Gio.SimpleAction(name="paste")
+    paste.connect("activate", lambda *_: t.paste_clipboard())
+    group.add_action(copy)
+    group.add_action(paste)
+    menu = Gio.Menu()
+    menu.append("Copy", "term.copy")
+    menu.append("Paste", "term.paste")
+    if select_all:
+        every = Gio.SimpleAction(name="select-all")
+        every.connect("activate", lambda *_: t.select_all())
+        group.add_action(every)
+        menu.append("Select All", "term.select-all")
+    t.insert_action_group("term", group)
+    t.set_context_menu_model(menu)
+    t.menu_actions = group
 
 
 def typing_key(keyval, state):
@@ -952,6 +990,7 @@ class Agents(Adw.ApplicationWindow):
         t.connect("child-exited", self._exited)
         t.connect("bell", lambda term: None)
         t.connect("contents-changed", self._drew)
+        term_menu(t)
         # a terminal's own copy and paste keys; every other key is the agent's
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._term_key, t)
@@ -1352,6 +1391,7 @@ class Agents(Adw.ApplicationWindow):
         t.cwd = s.get("dir") or ""
         t.integrated = False
         t.add_css_class("shell")
+        term_menu(t, select_all=True)
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._term_key, t)
         t.add_controller(keys)

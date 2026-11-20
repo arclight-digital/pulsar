@@ -305,27 +305,27 @@ def split_project(project):
     return None, project
 
 
-def _rank(s):
-    return {"waiting": 0, "running": 1, "offline": 3}.get(s.get("state"), 2)
-
-
 def project_groups(sessions):
-    """[(project, [sessions])] for the sidebar: archived ones left out; the
-    project with the latest activity first; in each, the ones that need you,
-    then the working ones, then the rest by recent activity."""
+    """[(project, [sessions])] for the sidebar: archived ones left out; in
+    each, the newest started first; the project with the newest session
+    first. Only a start (or a Continue) moves a row: a session's state and
+    activity change every turn, and a list sorted by them jumps under the
+    pointer. Who needs you shows on the row itself."""
     groups = {}
     for s in sessions:
         if s.get("archived"):
             continue
         groups.setdefault(session_project(s), []).append(s)
 
-    def latest(s):
-        return s.get("last_active") or s.get("started") or 0
+    def began(s):
+        # a live session's tmux start; a stopped one's record, last written
+        # when it ran
+        return s.get("started") or s.get("last_active") or 0
     out = []
     for p, ss in groups.items():
-        ss.sort(key=lambda s: (_rank(s), -latest(s), s.get("name", "")))
+        ss.sort(key=lambda s: (-began(s), s.get("name", "")))
         out.append((p, ss))
-    out.sort(key=lambda g: (min(_rank(s) for s in g[1]), -max(latest(s) for s in g[1]), g[0]))
+    out.sort(key=lambda g: (-max(began(s) for s in g[1]), g[0]))
     return out
 
 
