@@ -2258,10 +2258,14 @@ class Launcher:
         self.start = Gtk.Button(icon_name="go-up-symbolic", tooltip_text="Start (Enter)", sensitive=False,
                                 css_classes=["circular", "suggested-action"], valign=Gtk.Align.CENTER)
         self.start.connect("clicked", lambda *_: self._go())
-        bar = Gtk.Box(spacing=4)
+        # the chips flow onto a second line in a narrow window, rather than
+        # widening the box past it; Start stays at the end of the last line
+        chips = Adw.WrapBox(child_spacing=4, line_spacing=4, hexpand=True)
         for w in (self.project, self.agent, self.worktree, self.sandbox):
-            bar.append(w)
-        bar.append(Gtk.Box(hexpand=True))
+            chips.append(w)
+        bar = Gtk.Box(spacing=4)
+        bar.append(chips)
+        self.start.set_valign(Gtk.Align.END)
         bar.append(self.start)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, css_classes=["composer-box", "home-box"])
         box.append(over)
