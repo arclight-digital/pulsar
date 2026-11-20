@@ -8,6 +8,7 @@ can import it without a display.
 import datetime
 import json
 import os
+import subprocess
 import pathlib
 import re
 
@@ -166,6 +167,29 @@ def session_name_for(folder, taken):
     while name in taken:
         name, n = f"{base}-{n}", n + 1
     return name
+
+
+def repo_names(folder):
+    """Names a new session there mustn't take: the repository's branches and
+    its .worktrees/ folders. `agent run --worktree` reuses a branch or a
+    worktree of the session's name, so a forgotten session's (or your own
+    branch called the same) would start the agent on old work."""
+    try:
+        common = subprocess.run(["git", "-C", folder, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=5)
+        if common.returncode != 0:
+            return set()
+        heads = subprocess.run(["git", "-C", folder, "for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"],
+                               capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    names = set(heads.stdout.split()) if heads.returncode == 0 else set()
+    wt = os.path.join(os.path.dirname(common.stdout.strip()), ".worktrees")
+    try:
+        names |= set(os.listdir(wt))
+    except OSError:
+        pass
+    return names
 
 
 def run_argv(agent, name, folder, worktree=False, sandbox=None, title=None, prompt=None):

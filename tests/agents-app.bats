@@ -527,3 +527,21 @@ print(g.agent_argv(ss, "diff", "nobody")[1:])'
     [ "${lines[1]}" = "['machine', 'exec', 'm', '--', 'agent', 'sessions', '--title', 'bar', 'here']" ] || fail "$output"
     [ "${lines[2]}" = "['agent', 'diff', 'nobody']" ] || fail "$output"
 }
+
+@test "a new session's name avoids the repository's branches and worktrees, which --worktree would reuse" {
+    local r="${BATS_TEST_TMPDIR}/repo"
+    mkdir -p "$r" && git -C "$r" init -q && git -C "$r" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
+    git -C "$r" branch fix-the-login; git -C "$r" branch other; mkdir -p "$r/.worktrees/old-one"
+    mkdir -p "$r/sub"
+    run gui "
+r = '$r'
+print(sorted(g.repo_names(r)))
+print(sorted(g.repo_names(r + '/sub')))
+print(g.slug_name('Fix the login', g.repo_names(r)))
+print(sorted(g.repo_names('${BATS_TEST_TMPDIR}')))"
+    [ "$status" -eq 0 ] || fail "$output"
+    [[ "${lines[0]}" == "['fix-the-login', "*"'old-one', 'other']" ]] || fail "$output"
+    [ "${lines[1]}" = "${lines[0]}" ] || fail "$output"
+    [ "${lines[2]}" = fix-the-login-2 ] || fail "$output"
+    [ "${lines[3]}" = "[]" ] || fail "$output"
+}

@@ -29,6 +29,7 @@ import pathlib
 import re
 import struct
 import sys
+import time
 
 import gi
 
@@ -44,7 +45,7 @@ sys.path.insert(0, str(HERE))
 from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line, resets_in, session_meter,
                         session_icon, hsl_rgb, human_bytes, disk_level, home, parse, split_project,
                         merge_machine_sessions, remember_machines, agent_argv as _agent_argv,  # noqa: E402,F401
-                        project_groups, project_label, resume_note, run, run_argv,
+                        project_groups, project_label, repo_names, resume_note, run, run_argv,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
 
@@ -883,6 +884,12 @@ class Agents(Adw.ApplicationWindow):
         """The tmux pane this terminal shows, found by its client's tty."""
         if getattr(t, "pane", None):
             return t.pane
+        # a failed lookup (the client not attached yet) is tried again, but
+        # not on every wheel event: each is a blocking tmux call
+        now = time.monotonic()
+        if now - getattr(t, "pane_tried", 0) < 2:
+            return None
+        t.pane_tried = now
         pty = t.get_pty()
         if pty is None:
             return None
@@ -898,6 +905,10 @@ class Agents(Adw.ApplicationWindow):
         return t.pane
 
     def _term_scroll(self, _c, _dx, dy, t):
+        # another machine's session: its view has tmux's mouse on, there, so
+        # the wheel goes through the terminal to it; no pane here to drive
+        if (self.sessions.get(getattr(t, "name", None)) or {}).get("machine"):
+            return False
         pane = self._pane(t)
         if not pane or not dy:
             return False
@@ -2594,7 +2605,8 @@ class Launcher:
             return
         c = self._choices()
         prompt = self._text().strip()
-        taken = set(self.win.sessions)
+        # not a session's name, nor a branch or worktree the repository has
+        taken = set(self.win.sessions) | repo_names(self.folder)
         name = slug_name(prompt, taken) or session_name_for(self.folder, taken)
         title = title_from_prompt(prompt) or None
         st = self.win.state
