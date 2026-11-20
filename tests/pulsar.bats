@@ -4988,7 +4988,9 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
 # arguments and the token it was started with.
 notify_stub() {
     local d="${BATS_TEST_TMPDIR}"
-    printf '#!/bin/sh\nprintf "%%s\\0" "$@" > "%s/notify.args"\nprintf "%%s\\n" "%s" "%s"\n[ -n "%s" ] && printf "%%s" "%s" >&3\nexit 0\n' \
+    # the token comes a moment after the action's name, as it can from the
+    # real one: the script must not read it before notify-send is done
+    printf '#!/bin/sh\nprintf "%%s\\0" "$@" > "%s/notify.args"\nprintf "%%s\\n" "%s" "%s"\nsleep 0.3\n[ -n "%s" ] && printf "%%s" "%s" >&3\nexit 0\n' \
         "$d" "$1" "$2" "$3" "$3" > "${STUB}/notify-send"
     printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/ptyxis.args"\nprintf "%%s" "$XDG_ACTIVATION_TOKEN" > "%s/ptyxis.token"\n' \
         "$d" "$d" > "${STUB}/ptyxis"

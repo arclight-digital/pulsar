@@ -4683,6 +4683,8 @@ notify-send --app-name=Pulsar --icon=digital.arclight.Pulsar.Agents --print-id $
     --action=attach=Open --activation-token-fd=3 "$1" "$2" 3>"$tok" | {
     read -r id && printf "%s\n" "$id" > "$6"
     read -r a
+    # the token is written once notify-send is done: read it after its end
+    cat > /dev/null
     t=$(cat "$tok"); rm -f "$tok"
     [ "$a" = attach ] || exit 0
     rm -f "$6"
