@@ -5735,6 +5735,9 @@ usage: pulsar agent                  the guide, installed agents, guard state
                                      how many from one to another in 10 minutes
        pulsar agent whoami           the session this runs in
        pulsar agent settings         the default agent, sandbox, push and messages
+       pulsar agent disk [--delete <path>]
+                                     free space on /var, and the big things agents
+                                     leave in /var/tmp, ~/.cache and scratch folders
        pulsar agent attach [<session>]
                                      back onto a session, or the running one you
                                      were on last; an ended one starts again with
@@ -8536,8 +8539,9 @@ Desktop
 Agents
   pulsar agent             the guide, installed agents, guard state:
                            guide | list | add | remove | default | run |
-                           attach | sessions | undo | usage |
-                           sandbox [on|off] | guard [on|off]
+                           attach | sessions | diff | undo | usage | disk |
+                           read | send | inbox | messages | whoami |
+                           settings | sandbox [on|off] | guard [on|off]
   pulsar agent model on    a local model server for agents, on the GPU
                            when there is one
   pulsar agent ask         start your agent on a redacted report of this
@@ -8546,9 +8550,10 @@ Agents
                            (agent add registers it)
   pulsar job               long commands (a training run, a build) in their own
                            tmux, with a log and a notification when they end:
-                           run | list | log | stop | rm | attach
+                           run | list | log | wait | stop | rm | attach
   pulsar machine           your other Pulsar machines, over SSH: add | remove |
-                           list | check | sessions | exec <machine> -- agent ...
+                           list | check | sessions | run | job | fetch |
+                           discover | announce [on|off] | exec
 
 Options
   --json                   JSON output, anywhere on the line. A command
