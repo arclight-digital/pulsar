@@ -546,30 +546,6 @@ print(sorted(g.repo_names('${BATS_TEST_TMPDIR}')))"
     [ "${lines[3]}" = "[]" ] || fail "$output"
 }
 
-@test "the app: Enter into a waiting session starts its turn (agent seen); other keys and running sessions don't" {
-    need_gtk
-    run app '
-calls = []
-m.run = lambda argv, cb, *a: calls.append(argv[1:])
-class T: name = "a"
-class W:
-    sessions = {"a": {"name": "a", "state": "waiting"}, "b": {"name": "b", "state": "running"}}
-    def agent_argv(self, *a): return ["pulsar", "agent", *a]
-w = W()
-m.Agents._committed(w, T(), "hello", 5)
-print(calls, w.sessions["a"]["state"])
-m.Agents._committed(w, T(), "\r", 1)
-print(calls, w.sessions["a"]["state"])
-m.Agents._committed(w, T(), "\r", 1)
-class U: name = "b"
-m.Agents._committed(w, U(), "\r", 1)
-print(len(calls))'
-    [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "[] waiting" ] || fail "$output"
-    [ "${lines[1]}" = "[['agent', 'seen', 'a']] running" ] || fail "$output"
-    [ "${lines[2]}" = 1 ] || fail "$output"
-}
-
 @test "the app: typing while scrolled back leaves scrollback once; modifiers, Escape, Ctrl+C and arrows stay tmux's" {
     need_gtk
     run app '

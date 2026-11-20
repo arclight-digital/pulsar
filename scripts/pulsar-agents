@@ -890,9 +890,6 @@ class Agents(Adw.ApplicationWindow):
         t.connect("child-exited", self._exited)
         t.connect("bell", lambda term: None)
         t.connect("contents-changed", self._drew)
-        # Enter typed into a session that waits for you is its turn starting:
-        # Codex and agy have no hook that says so (Claude's prompt hook does)
-        t.connect("commit", self._committed)
         # a terminal's own copy and paste keys; every other key is the agent's
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._term_key, t)
@@ -918,14 +915,6 @@ class Agents(Adw.ApplicationWindow):
         x, y = getattr(t, "pointer", (0, 0))
         cw, ch = max(1, t.get_char_width()), max(1, t.get_char_height())
         return (min(t.get_column_count(), int(x // cw) + 1), min(t.get_row_count(), int(y // ch) + 1))
-
-    def _committed(self, t, text, _size):
-        if "\r" not in text:
-            return
-        s = self.sessions.get(getattr(t, "name", None)) or {}
-        if s.get("state") == "waiting":
-            s["state"] = "running"
-            run(self.agent_argv("seen", s["name"]), lambda *_: None)
 
     def _term_key(self, _c, keyval, _code, state, t):
         mods = state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.ALT_MASK)

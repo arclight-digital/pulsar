@@ -5986,7 +5986,7 @@ cmd_agent() {
                 done < <(atmux list-windows -t "=${base}:" -F '#{window_id}' 2>/dev/null)
             done <<<"$all" ;;
         seen)
-            # its turn started (the app saw Enter go into it): not waiting
+            # clears a session's waiting by hand; an older Pulsar's tmux hooks call it
             local n=${1:-}
             case "$n" in ''|-*|*[!A-Za-z0-9_-]*) die "usage: pulsar agent seen <session> (tmux runs this)" ;; esac
             ! have tmux || atmux set-option -u -t "=${n}:" @pulsar-alert 2>/dev/null || true ;;
