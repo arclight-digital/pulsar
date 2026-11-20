@@ -53,7 +53,7 @@ POLL_S = 3
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
          HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
 TIDY_CHOICES = ((1, "1 day"), (7, "1 week"), (30, "30 days"), (0, "Never"))
-PUSH_CHOICES = (("on", "Any branch"), ("branches", "All but the default"), ("off", "Off"))
+PUSH_CHOICES = (("on", "Any branch"), ("branches", "Not the default branch"), ("off", "Blocked"))
 STATE_FILE = pathlib.Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")) \
     / "pulsar" / "agents-app.json"
 
@@ -2224,34 +2224,31 @@ class Preferences(Adw.PreferencesDialog):
         self._busy = True
         page = Adw.PreferencesPage()
 
-        new = Adw.PreferencesGroup(title="New Sessions",
-                                   description="A project can set its own sandbox and pushes, in the box where you start a session.")
+        new = Adw.PreferencesGroup(title="New Sessions")
         self.agents = []
         self.agent = Adw.ComboRow(title="Agent", sensitive=False)
         self.agent.connect("notify::selected", lambda *_: self._set_agent())
         new.add(self.agent)
-        self.sandbox = Adw.SwitchRow(title="Sandbox", subtitle="The agent sees its project, not your home folder",
+        self.sandbox = Adw.SwitchRow(title="Sandbox", subtitle="The agent sees only its project folder",
                                      sensitive=False)
         self.sandbox.connect("notify::active", lambda *_: self._set(["agent", "sandbox",
                                                                      "on" if self.sandbox.get_active() else "off"]))
         new.add(self.sandbox)
-        self.push = Adw.ComboRow(title="Pushes from the Sandbox", subtitle="To which branches",
+        self.push = Adw.ComboRow(title="Sandbox Pushes",
                                  model=Gtk.StringList.new([t for _, t in PUSH_CHOICES]), sensitive=False)
         self.push.connect("notify::selected", lambda *_: self._set(["agent", "sandbox", "push",
                                                                     PUSH_CHOICES[self.push.get_selected()][0]]))
         new.add(self.push)
         page.add(new)
 
-        talk = Adw.PreferencesGroup(title="Session Communication",
-                                    description="Messages go into the other agent's prompt between its turns, "
-                                                "labelled with the session they came from.")
-        self.messages = Adw.SwitchRow(title="Sessions Can Message Each Other", sensitive=False)
+        talk = Adw.PreferencesGroup(title="Messages Between Sessions")
+        self.messages = Adw.SwitchRow(title="Allow Messages", sensitive=False)
         self.messages.connect("notify::active", lambda *_: self._set(["agent", "messages",
                                                                       "on" if self.messages.get_active() else "off"]))
         talk.add(self.messages)
         self.cap = Adw.SpinRow.new_with_range(1, 60, 1)
-        self.cap.set_title("Messages per 10 Minutes")
-        self.cap.set_subtitle("From one session to another")
+        self.cap.set_title("Limit")
+        self.cap.set_subtitle("Messages one session can send another in 10 minutes")
         self.cap.set_sensitive(False)
         self.cap.connect("notify::value", lambda *_: self._cap_changed())
         self.messages.bind_property("active", self.cap, "visible", GObject.BindingFlags.SYNC_CREATE)
@@ -2273,10 +2270,9 @@ class Preferences(Adw.PreferencesDialog):
         self.found_rows = []
         page.add(mach)
 
-        keep = Adw.PreferencesGroup(title="Archive",
-                                    description="An archived session is deleted with its snapshots and scratch folder. "
-                                                "Branches, and worktrees with uncommitted changes, stay.")
-        self.tidy = Adw.ComboRow(title="Delete Archived Sessions After",
+        keep = Adw.PreferencesGroup(title="Archived Sessions")
+        self.tidy = Adw.ComboRow(title="Delete After",
+                                 subtitle="With their snapshots and scratch folders; branches stay",
                                  model=Gtk.StringList.new([t for _, t in TIDY_CHOICES]))
         self.tidy.set_selected([d for d, _ in TIDY_CHOICES].index(win.tidy_days()))
         self.tidy.connect("notify::selected", lambda *_: self._set_tidy())
