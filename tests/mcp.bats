@@ -182,3 +182,13 @@ PY
     [ "$(grep -c '^machine ' "$CLI_LOG")" -eq 3 ] || fail "$(cat "$CLI_LOG")"
     [ "$(echo "$output" | jq -s -r '[.[4,5,6,7,8,9].result.isError] | all')" = true ] || fail "$output"
 }
+
+
+@test "session_message reaches a session on another machine by <session>@<machine>, and only that shape" {
+    WHOAMI=me run rpc \
+        '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"train@desk","text":"done?"}}}' \
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"train@-o","text":"x"}}}' \
+        '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"a@b@c","text":"x"}}}'
+    grep -qx -- "agent send train@desk --from me -- done?" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    [ "$(grep -c '^agent send' "$CLI_LOG")" -eq 1 ] || fail "$(cat "$CLI_LOG")"
+}

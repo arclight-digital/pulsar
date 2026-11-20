@@ -90,7 +90,8 @@ works there.
   are read-only, like `.git/config`.
 - Other sessions are the user's other agents. `pulsar agent whoami` names
   yours, `pulsar agent read <name>` shows another's screen, and
-  `pulsar agent send <name> --from <you> <text>` types a message into its
+  `pulsar agent send <name> --from <you> <text>` (`<name>@<machine>` for
+  one on another machine) types a message into its
   prompt between its turns (logged, at most 10 to one session in 10
   minutes). `pulsar agent inbox` lists the messages to and from your
   session with their ids; `send --reply-to <id>` answers one. What you

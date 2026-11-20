@@ -4960,8 +4960,34 @@ agent_send() {
         esac
         shift
     done
+    # <session>@<machine>: to a session on another of your machines, through
+    # that machine's own `agent send` (its inbox, its rules, its cap); from
+    # <you>@<this machine's name>, so it says where it came from
+    if [[ "$to" == *@* ]]; then
+        local rname=${to%@*} rm=${to##*@}
+        case "$rname" in ''|*[!A-Za-z0-9_-]*) die "$usage" ;; esac
+        case "$rm" in ''|*[!a-z0-9-]*) die "$usage" ;; esac
+        case "$from" in *[!A-Za-z0-9_-]*) die "--from is a session's name here" ;; esac
+        [ -n "${text//[[:space:]]/}" ] || die "$usage"
+        if [ -n "$from" ] && [ "$(agent_conf_get messages || true)" = off ]; then
+            die "messages between sessions are off (Agents > Preferences, or pulsar agent messages on)"
+        fi
+        local here; here=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-\n' '-') || here=""
+        local -a fwd=(agent send "$rname")
+        [ -z "$from" ] || fwd+=(--from "${from}@${here:-here}")
+        [ "$now" = 0 ] || fwd+=(--now)
+        [ -z "$re" ] || fwd+=(--reply-to "$re")
+        need jq
+        mkdir -p "$AGENT_SESSIONS"
+        jq -n -c --arg f "$from" --arg t "$to" --arg x "$text" --argjson a "$(date +%s)" \
+            '{at: $a, from: $f, to: $t, text: $x}' >> "$MSG_LOG"
+        cmd_machine exec "$rm" -- "${fwd[@]}" -- "$text"
+        return
+    fi
     case "$to" in ''|*[!A-Za-z0-9_-]*) die "$usage" ;; esac
-    case "$from" in *[!A-Za-z0-9_-]*) die "--from is a session's name" ;; esac
+    # from another machine's session it reads <session>@<machine>
+    case "$from" in *@*@*|@*|*@) die "--from is a session's name" ;; esac
+    case "$from" in *[!A-Za-z0-9_@-]*) die "--from is a session's name" ;; esac
     [ -n "${text//[[:space:]]/}" ] || die "$usage"
     [ "$from" != "$to" ] || die "a session can't message itself"
     { have tmux && atmux_running "$to"; } || die "$to is not running (pulsar agent sessions)"

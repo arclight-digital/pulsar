@@ -94,7 +94,8 @@ TOOLS = [
                                    "description": "how many lines back (default 80)"}}, ["name"]),
      "readOnly": True},
     {"name": "session_message",
-     "description": "Send another agent session a message: it goes into that agent's prompt, labelled as from your "
+     "description": "Send another agent session a message (<session>@<machine> for one on another of the user's "
+                    "machines): it goes into that agent's prompt, labelled as from your "
                     "session, between its turns (queued while it works or while the user is looking at it). Use it to "
                     "hand over a finding or ask for something the user wants done there; keep it short. Logged, and "
                     "capped at 10 per 10 minutes to each session.",
@@ -252,7 +253,10 @@ def call(name, a):
             return "session_read needs a session's name (see sessions)", True
         return run(["--json", "agent", "read", n, "--lines", str(int(a.get("lines") or 80))])
     if name == "session_message":
-        n, text = session_name(a.get("name")), str(a.get("text") or "")
+        raw = str(a.get("name") or "")
+        # <session>@<machine>: a session on another of the user's machines
+        n = raw if re.fullmatch(r"[A-Za-z0-9_-]+@[a-z0-9][a-z0-9-]*", raw) else session_name(raw)
+        text = str(a.get("text") or "")
         if not n or not text.strip():
             return "session_message needs a session's name and some text", True
         me = whoami()

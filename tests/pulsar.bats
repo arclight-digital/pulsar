@@ -6122,7 +6122,7 @@ while [ $# -gt 0 ]; do
 done
 printf '%s|tty=%s|%s\n' "$t" "$tty" "$*" >> "$SSH_LOG"
 [ "$t" != down ] || { echo "ssh: connect to host down port 22: No route to host" >&2; exit 255; }
-export HOME="${REMOTES}/${t}" PULSAR_AGENT_SESSIONS="${REMOTES}/${t}/sessions" PULSAR_AGENT_TMUX_SOCKET="none-$$"
+export HOME="${REMOTES}/${t}" PULSAR_AGENT_SESSIONS="${REMOTES}/${t}/sessions" PULSAR_AGENT_TMUX_SOCKET="${FAR_TMUX:-none-$$}"
 export PULSAR_JOBS="${REMOTES}/${t}/jobs" PULSAR_JOB_TMUX_SOCKET="jobs-${t}"
 mkdir -p "$PULSAR_AGENT_SESSIONS"
 exec bash -c "$*"
@@ -6829,4 +6829,28 @@ SH
     [[ "$output" == "pulsar "* ]] || fail "$output"
     run "$PULSAR" agent send --version
     [[ "$output" != "pulsar "[0-9]* ]] || fail "printed the version: $output"
+}
+
+
+@test "agent send <session>@<machine>: through that machine's own agent send, from <you>@<this machine>, logged here too" {
+    machine_env
+    command -v tmux >/dev/null || skip "needs tmux"
+    export FAR_TMUX="far-$$" PULSAR_MAIL_WAIT=0 PULSAR_AGENT_SESSIONS="${BATS_TEST_TMPDIR}/here"
+    mkdir -p "$PULSAR_AGENT_SESSIONS" "${REMOTES}/box/sessions"
+    "$PULSAR" machine add box box >/dev/null
+    printf 'agent=codex\ndir=%s\n' "${REMOTES}/box" > "${REMOTES}/box/sessions/a.session"
+    tmux -L "far-$$" new-session -d -s a -x 100 -y 20 'cat > /dev/null'
+    run "$PULSAR" agent send a@box --from me "the run finished"
+    tmux -L "far-$$" kill-server 2>/dev/null || true
+    [ "$status" -eq 0 ] && [[ "$output" == "queued for a "* ]] || fail "$output"
+    local here; here=$(hostname -s | tr '[:upper:]' '[:lower:]')
+    [ "$(jq -r '"\(.from)|\(.text)"' "${REMOTES}/box/sessions/a.inbox")" = "me@${here}|the run finished" ] \
+        || fail "$(cat "${REMOTES}/box/sessions/a.inbox")"
+    [ "$(jq -r '"\(.from)>\(.to)"' "${PULSAR_AGENT_SESSIONS}/messages.log")" = "me>a@box" ] || fail "$(cat "${PULSAR_AGENT_SESSIONS}/messages.log")"
+    grep -q '^box|tty=0|.* agent send a --from me@' "$SSH_LOG" || fail "$(cat "$SSH_LOG")"
+    for bad in "a@Box" "a b@box" "@box" "a@" "a@-o"; do
+        run "$PULSAR" agent send "$bad" --from me x; [ "$status" -ne 0 ] || fail "took $bad"
+    done
+    run "$PULSAR" agent send a@box --from "m;e" x; [ "$status" -ne 0 ] || fail "took a bad --from"
+    run "$PULSAR" agent send a@nowhere --from me x; [ "$status" -ne 0 ] && [[ "$output" == *"no machine called nowhere"* ]] || fail "$output"
 }

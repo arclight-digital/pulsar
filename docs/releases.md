@@ -76,7 +76,8 @@ CLI, and opencode moves to version 2.
   all open the session in the app.
 - Sessions can see each other. `pulsar agent read <name>` shows a
   session's screen, and `pulsar agent send <name> <text>` types a message
-  into its prompt, labelled as from another session. It goes in when that
+  into its prompt, labelled as from another session (`<name>@<machine>`
+  for a session on another of your machines). It goes in when that
   agent finishes a turn and you aren't looking at the session (or at once
   with `--now`), never into a permission question. Messages are logged in
   `~/.local/state/pulsar/agents/messages.log`, and one session can send
