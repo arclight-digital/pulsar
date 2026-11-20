@@ -62,6 +62,7 @@ CSS = """
 .pulsar-agents .sessions row.project { margin: 14px 8px 2px 8px; border-radius: 8px; min-height: 0; padding: 6px 0; }
 .pulsar-agents .project-label { font-size: .8em; font-weight: 700; color: alpha(currentColor, .5); }
 .pulsar-agents .project-machine { color: alpha(currentColor, .5); }
+.help-row .subtitle { line-height: 1.35; }
 .pulsar-agents .sessions row.session.offline { opacity: .55; }
 .pulsar-agents row.project .fold { opacity: 0; transition: opacity 120ms; }
 .pulsar-agents row.project:hover .fold, .pulsar-agents row.project.collapsed .fold { opacity: .5; }
@@ -338,6 +339,7 @@ class Agents(Adw.ApplicationWindow):
         side_head.pack_end(self.fold)
         primary = Gio.Menu()
         primary.append("Preferences", "win.preferences")
+        primary.append("Help", "win.help")
         self.primary_menu = Gtk.MenuButton(icon_name="open-menu-symbolic", tooltip_text="Main Menu",
                                            menu_model=primary, primary=True)
         side_head.pack_end(self.primary_menu)
@@ -444,7 +446,8 @@ class Agents(Adw.ApplicationWindow):
                          ("rail", lambda: self.rail_toggle.set_active(not self.rail_toggle.get_active())),
                          ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1)),
                          ("fold", lambda: self.set_compact(not self.compact)),
-                         ("preferences", lambda: Preferences(self).present(self))):
+                         ("preferences", lambda: Preferences(self).present(self)),
+                         ("help", lambda: Help().present(self))):
             a = Gio.SimpleAction.new(name, None)
             a.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(a)
@@ -453,7 +456,7 @@ class Agents(Adw.ApplicationWindow):
             a = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             a.connect("activate", lambda _a, p, cb=cb: cb(p.get_string()))
             self.add_action(a)
-        for action, keys in (("win.preferences", ["<Ctrl>comma"]), ("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
+        for action, keys in (("win.help", ["F1"]), ("win.preferences", ["<Ctrl>comma"]), ("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
                              ("win.rail", ["<Ctrl><Shift>d"]), ("win.fold", ["<Ctrl><Shift>b"]),
                              ("win.next", ["<Ctrl>Page_Down"]), ("win.previous", ["<Ctrl>Page_Up"])):
             app.set_accels_for_action(action, keys)
@@ -2054,6 +2057,72 @@ class DiskButton:
         d.connect("response", lambda _d, r: r == "delete" and run([PULSAR, "agent", "disk", "--delete", path], done))
         self.pop.popdown()
         d.present(self.win)
+
+
+class Help(Adw.Dialog):
+    """How to work with agents here, each point tied to the part of Pulsar
+    that does it, and the keyboard shortcuts."""
+
+    PRACTICES = (
+        ("One task per session",
+         "A session is named from its first message. When the task is done, archive it (the × on the session, "
+         "or Ctrl+Shift+Delete); it is deleted after the time set in Preferences."),
+        ("A worktree for work alongside other sessions",
+         "Worktree gives a session its own branch and folder, <repository>/.worktrees/<session>, so two agents "
+         "never edit the same checkout."),
+        ("The sandbox for code you didn't write",
+         "A sandboxed agent sees its project and not the rest of your home folder, and pushes through Pulsar's "
+         "gate without holding your credentials. Set it per project where you start a session, or for all in "
+         "Preferences."),
+        ("Review before you commit",
+         "Changes lists every file the agent touched since the session started. A comment on a diff line goes "
+         "into the agent's prompt; Revert File puts one file back. Pulsar never commits to your branches."),
+        ("Go back when a session goes wrong",
+         "History has a snapshot from each time the session started. Go Back puts the files back as they were "
+         "then, and Undo takes that back."),
+        ("Long commands as jobs",
+         "pulsar job run --notify <session> -- <command> runs a build or a training run in a tmux of its own, "
+         "keeps its output, and tells the session how it ended. pulsar machine job <machine> does the same on "
+         "another machine."),
+        ("Big files in the scratch folder",
+         "An agent should put VM disks, builds and downloads in $PULSAR_SCRATCH, which is deleted with its "
+         "session. The footer shows the free space on /var; on the NVIDIA image a full /var stops the machine "
+         "from suspending."),
+        ("Messages between sessions are another agent's words",
+         "A message arrives labelled with the session that says it sent it, and Pulsar tells agents to treat it "
+         "as data, not as your instructions. Turn messages off, or change how many, in Preferences."),
+    )
+    SHORTCUTS = (
+        ("New session", "<Ctrl><Shift>n"),
+        ("Next or previous session", "<Ctrl>Page_Down <Ctrl>Page_Up"),
+        ("Session 1 to 9 in the list", "<Alt>1...<Alt>9"),
+        ("Archive the session", "<Ctrl><Shift>Delete"),
+        ("Changes, History and Messages", "<Ctrl><Shift>d"),
+        ("Narrow or widen the list", "<Ctrl><Shift>b"),
+        ("Copy and paste in the terminal", "<Ctrl><Shift>c <Ctrl><Shift>v"),
+        ("Preferences", "<Ctrl>comma"),
+        ("Help", "F1"),
+    )
+
+    def __init__(self):
+        super().__init__(title="Help", content_width=600, content_height=720)
+        page = Adw.PreferencesPage()
+        work = Adw.PreferencesGroup(title="Working with Agents")
+        for title, body in self.PRACTICES:
+            row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(body),
+                                activatable=False, subtitle_selectable=True)
+            row.add_css_class("help-row")
+            work.add(row)
+        page.add(work)
+        keys = Adw.PreferencesGroup(title="Keyboard Shortcuts")
+        for title, accel in self.SHORTCUTS:
+            row = Adw.ActionRow(title=title, activatable=False)
+            row.add_suffix(Adw.ShortcutLabel(accelerator=accel, valign=Gtk.Align.CENTER))
+            keys.add(row)
+        page.add(keys)
+        tv = Adw.ToolbarView(content=page)
+        tv.add_top_bar(Adw.HeaderBar())
+        self.set_child(tv)
 
 
 class Preferences(Adw.PreferencesDialog):
