@@ -496,7 +496,7 @@ print([p for p, _ in g.project_groups([a, b])])'
 import json
 remote = {"machines": [{"name": "talos", "ok": True}, {"name": "mag", "ok": False, "error": "No route to host"}],
           "sessions": [{"name": "train", "machine": "talos", "agent": "claude", "state": "running", "dir": "/h/rl",
-                        "usage": {"context": 5}}, {"name": "old", "machine": "talos", "archived": 7}]}
+                        "usage": {"context": 5}, "account": "n@work.example"}, {"name": "old", "machine": "talos", "archived": 7}]}
 seen = g.remember_machines({"mag": {"at": 50, "sessions": [{"name": "fix", "agent": "codex", "dir": "/h/p"}]}}, remote, 100)
 print(json.dumps(seen, sort_keys=True))
 # talos answers again without its session: what it says now is what is kept
@@ -511,7 +511,7 @@ print(json.dumps([[s["name"], s.get("offline")] for s in out]))
 print(g.session_status(out[0], 50 + 7200 + 10))
 print(g.session_status(dict(out[0], offline="unreachable"), 50 + 7200 + 10))'
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = '{"mag": {"at": 50, "sessions": [{"agent": "codex", "dir": "/h/p", "name": "fix"}]}, "talos": {"at": 100, "sessions": [{"agent": "claude", "dir": "/h/rl", "last_active": null, "name": "train", "project": null, "sandbox": null, "started": null, "title": null, "usage": {"context": 5}, "worktree_of": null}]}}' ] || fail "${lines[0]}"
+    [ "${lines[0]}" = '{"mag": {"at": 50, "sessions": [{"agent": "codex", "dir": "/h/p", "name": "fix"}]}, "talos": {"at": 100, "sessions": [{"account": "n@work.example", "agent": "claude", "dir": "/h/rl", "last_active": null, "name": "train", "project": null, "sandbox": null, "started": null, "title": null, "usage": {"context": 5}, "worktree_of": null}]}}' ] || fail "${lines[0]}"
     [ "${lines[1]}" = '{"at": 200, "sessions": []}' ] || fail "${lines[1]}"
     [ "${lines[2]}" = True ]
     [ "${lines[3]}" = '[["here", null, null, null], ["train@talos", "running", null, null], ["old@talos", null, null, null], ["fix@mag", "offline", "unreachable", 50]]' ] || fail "${lines[3]}"
@@ -892,4 +892,94 @@ print(items(w._terminal("a")), items(w._shell_start({"name": "a", "dir": "/"})))
     [ "${lines[3]}" = "True" ] || fail "$output"
     [ "${lines[4]}" = "False" ] || fail "$output"
     [ "${lines[5]}" = "['term.copy', 'term.paste'] ['term.copy', 'term.paste', 'term.select-all']" ] || fail "$output"
+}
+
+@test "ports: the servers working in a folder, by their socket's port; not the agents' own, not elsewhere, not a worktree's in the project's" {
+    local P="${BATS_TEST_TMPDIR}/proc"
+    mkdir -p "${P}/net"
+    # listening (0A) on 5173 (v4) and 4321 (v6), a connection (01) on 9999
+    printf '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n' > "${P}/net/tcp"
+    printf '   0: 0100007F:1435 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 111 1\n' >> "${P}/net/tcp"
+    printf '   1: 0100007F:270F 0100007F:9999 01 00000000:00000000 00:00000000 00000000  1000        0 333 1\n' >> "${P}/net/tcp"
+    printf '   2: 0100007F:A7B3 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 444 1\n' >> "${P}/net/tcp"
+    printf '   3: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 555 1\n' >> "${P}/net/tcp"
+    printf '   4: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 666 1\n' >> "${P}/net/tcp"
+    printf '  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n' > "${P}/net/tcp6"
+    printf '   0: 00000000000000000000000001000000:10E1 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 222 1\n' >> "${P}/net/tcp6"
+    local F="${BATS_TEST_TMPDIR}/proj"
+    mkdir -p "${F}/web" "${F}/.worktrees/fix" "${BATS_TEST_TMPDIR}/elsewhere"
+    # proc <pid> <comm> <cwd> <socket inode>...
+    proc() {
+        local d="${P}/$1"; mkdir -p "${d}/fd"; printf '%s\n' "$2" > "${d}/comm"; ln -s "$3" "${d}/cwd"
+        local i=3 n; shift 3
+        for n in "$@"; do ln -s "socket:[${n}]" "${d}/fd/${i}"; i=$((i + 1)); done
+        ln -s /dev/null "${d}/fd/0"
+    }
+    proc 10 node "${F}/web" 111 333             # a dev server below the folder, and a connection
+    proc 11 MainThread "$F" 222                 # another, in the folder itself, on v6
+    proc 12 agy "$F" 444                        # the agent's own port
+    proc 13 python3 "${F}/.worktrees/fix" 555   # a worktree session's server
+    proc 14 node "${BATS_TEST_TMPDIR}/elsewhere" 555
+    mkdir -p "${F}-two"
+    proc 15 node "${F}-two" 666                 # a folder whose name only starts the same
+    run gui "
+P, F = '${P}', '${F}'
+print(g.folder_ports(F, skip=[F + '/.worktrees'], proc=P))
+print([p for p, _, _ in g.folder_ports(F, proc=P)])
+print([p for p, _, _ in g.folder_ports(F + '/.worktrees/fix', proc=P)])
+print(g.folder_ports(F + '-other', proc=P), g.folder_ports('', proc=P))"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[(4321, 11, 'MainThread'), (5173, 10, 'node')]" ] || fail "$output"
+    [ "${lines[1]}" = "[80, 4321, 5173]" ] || fail "$output"
+    [ "${lines[2]}" = "[80]" ] || fail "$output"
+    [ "${lines[3]}" = "[] []" ] || fail "$output"
+}
+
+@test "the status bar: the account the agent signs in with, the folder's ports, and the scratch folder once it holds something or the disk is tight" {
+    need_gtk
+    run app '
+import types
+m.Gtk.init()
+m.run = lambda *a, **k: None
+asked = []
+m.folder_ports = lambda d, skip=(), proc="/proc": asked.append((d, list(skip))) or [(5173, 42, "node"), (4321, 43, "MainThread"), (8000, 44, "python3"), (9000, 45, "x")]
+disk = types.SimpleNamespace(data={"free": 80_000_000_000, "suspend_need": 17_000_000_000},
+                             session_bytes=lambda n: {"big": 3_100_000_000, "small": 5_000_000}.get(n, 0),
+                             widget=m.Gtk.MenuButton())
+win = types.SimpleNamespace(disk=disk, rail_toggle=m.Gtk.ToggleButton(), agent_argv=lambda *a: ["true"])
+sb = m.StatusBar(win)
+def kids(box):
+    out, c = [], box.get_first_child()
+    while c is not None:
+        out.append(c); c = c.get_next_sibling()
+    return out
+now = 1_000_000
+base = {"agent": "claude", "state": "running", "started": now - 60, "dir": "/p/app"}
+sb.update(dict(base, name="big", account="me@work.example"), now)
+print(sb.account.get_visible(), sb.account_label.get_label(), sb.account.get_tooltip_text())
+print([b.get_label() if isinstance(b, m.Gtk.Button) else b.get_label() for b in kids(sb.port_btns)], asked)
+print(sb.scratch.get_visible(), sb.scratch_label.get_label(), sb.scratch.has_css_class("low"))
+# a little scratch, no account, a worktree session: hidden, and its own folder only
+asked.clear()
+sb.update(dict(base, name="small", worktree_of="/p/app", dir="/p/app/.worktrees/w"), now + 10)
+print(sb.account.get_visible(), sb.scratch.get_visible(), asked)
+# the disk gets tight: shown anyway, with what is free, in the warning color
+disk.data = {"free": 12_000_000_000, "suspend_need": 17_000_000_000}
+sb.update(dict(base, name="small"), now + 20)
+print(sb.scratch.get_visible(), sb.scratch_label.get_label(), sb.scratch.has_css_class("critical"))
+# another machine: its account, said where; no ports or scratch from here
+asked.clear(); disk.data = {"free": 80_000_000_000, "suspend_need": 0}
+sb.update(dict(base, name="t@talos", machine="talos", account="n@work.example"), now + 30)
+print(sb.account.get_tooltip_text(), sb.ports.get_visible(), sb.scratch.get_visible(), asked)
+# sandboxed: its network is its own
+sb.update(dict(base, name="sb", sandbox="on"), now + 40)
+print(sb.ports.get_visible(), asked)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "True me@work.example Claude Code is signed in as me@work.example" ] || fail "$output"
+    [ "${lines[1]}" = "[':5173', ':4321', ':8000', '+1'] [('/p/app', ['/p/app/.worktrees'])]" ] || fail "$output"
+    [ "${lines[2]}" = "True Scratch 3.1 GB False" ] || fail "$output"
+    [ "${lines[3]}" = "False False [('/p/app/.worktrees/w', [])]" ] || fail "$output"
+    [ "${lines[4]}" = "True 12 GB free · scratch 5.0 MB True" ] || fail "$output"
+    [ "${lines[5]}" = "Claude Code is signed in as n@work.example on talos False False []" ] || fail "$output"
+    [ "${lines[6]}" = "False []" ] || fail "$output"
 }

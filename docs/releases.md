@@ -63,7 +63,11 @@ CLI, and opencode moves to version 2.
   status bar under the open session shows the agent and model, what it is
   doing, the context used against the window, Codex CLI's 5-hour and
   weekly limits, whether it is sandboxed, its branch, and how many files
-  it changed (click for Changes).
+  it changed (click for Changes). It also shows the account the agent is
+  signed in with on the session's machine, the ports that servers in the
+  session's folder listen on (click one to open it in the browser), and
+  the session's scratch folder once it holds 100 MB, with the free space
+  in a warning color when the disk gets tight.
   The numbers come from each agent's own files. Claude Code and
   Antigravity CLI don't write their plan limits to disk, so those two
   show context only.

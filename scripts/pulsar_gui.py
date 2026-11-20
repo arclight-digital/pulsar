@@ -724,6 +724,81 @@ def human_bytes(b):
 DISK_LOW = 20_000_000_000
 
 
+# the agents themselves listen on ports of their own (Claude Code's and
+# agy's local servers): never a session's
+AGENT_COMMS = frozenset({"claude", "agy", "codex", "opencode", "aider", "gemini"})
+
+
+def listening_ports(proc="/proc"):
+    """{socket inode: port} of the TCP sockets listening in this network
+    namespace (a sandbox's are in its own, and out of reach here anyway)."""
+    out = {}
+    for f in ("net/tcp", "net/tcp6"):
+        try:
+            with open(f"{proc}/{f}") as fh:
+                lines = fh.read().splitlines()[1:]
+        except OSError:
+            continue
+        for ln in lines:
+            p = ln.split()
+            if len(p) > 9 and p[3] == "0A":
+                try:
+                    out[p[9]] = int(p[1].rsplit(":", 1)[1], 16)
+                except ValueError:
+                    pass
+    return out
+
+
+def folder_ports(folder, skip=(), proc="/proc"):
+    """[(port, pid, name)], by port: TCP ports listened on by this user's
+    processes working in folder or below it (not below any of skip), the
+    agents themselves left out. By folder, not by process tree: a dev server
+    an agent starts in the background outlives the shell that started it,
+    and the agents' box runs its processes outside the session's tree."""
+    if not folder:
+        return []
+    inodes = listening_ports(proc)
+    if not inodes:
+        return []
+    folder = folder.rstrip("/") or "/"
+    skip = [d.rstrip("/") for d in skip if d]
+    uid = os.getuid()
+    found = {}
+    try:
+        pids = [p for p in os.listdir(proc) if p.isdigit()]
+    except OSError:
+        return []
+    for pid in pids:
+        base = f"{proc}/{pid}"
+        try:
+            if os.stat(base).st_uid != uid:
+                continue
+            cwd = os.readlink(f"{base}/cwd")
+        except OSError:
+            continue
+        if not (cwd == folder or cwd.startswith(folder + "/")):
+            continue
+        if any(cwd == d or cwd.startswith(d + "/") for d in skip):
+            continue
+        try:
+            with open(f"{base}/comm") as fh:
+                name = fh.read().strip()
+            fds = os.listdir(f"{base}/fd")
+        except OSError:
+            continue
+        if name in AGENT_COMMS:
+            continue
+        for fd in fds:
+            try:
+                link = os.readlink(f"{base}/fd/{fd}")
+            except OSError:
+                continue
+            if link.startswith("socket:[") and link[8:-1] in inodes:
+                port = inodes[link[8:-1]]
+                found.setdefault(port, (port, int(pid), name))
+    return [found[p] for p in sorted(found)]
+
+
 def disk_level(free, need):
     """How worried to be about the disk agents write to: "critical" when
     suspend won't have room (less free than the GPU's memory), or under
@@ -739,7 +814,8 @@ def disk_level(free, need):
 
 # ---------------------------------------------------------------- machines --
 # what the app keeps of another machine's session while it can't be asked
-SEEN_FIELDS = ("name", "title", "agent", "dir", "project", "worktree_of", "started", "last_active", "sandbox", "usage")
+SEEN_FIELDS = ("name", "title", "agent", "dir", "project", "worktree_of", "started", "last_active", "sandbox", "usage",
+               "account")
 
 
 def remember_machines(seen, remote, now):

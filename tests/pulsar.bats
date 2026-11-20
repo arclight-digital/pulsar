@@ -4652,6 +4652,46 @@ agent_args() {
     [ "$(jq -r '.[] | select(.name == "fresh") | .conversation' <<<"$output")" = "$old" ] || fail "$output"
 }
 
+@test "agent sessions --json: the account each agent signs in with, from the home it runs with; never a token" {
+    tmux_env
+    local a
+    for a in codex agy; do printf '#!/bin/sh\nexit 0\n' > "${STUB}/${a}"; chmod +x "${STUB}/${a}"; done
+    cd "$PROJ"
+    printf '{"oauthAccount":{"emailAddress":"me@home.example","organizationName":"x"},"secretish":"sk-ant-SECRET"}\n' > "${HOME}/.claude.json"
+    mkdir -p "${HOME}/.codex" "${HOME}/.gemini"
+    # Codex: the email in its id token's claims (base64url, no padding)
+    local claims; claims=$(printf '{"email":"cx@work.example","sub":"u1"}' | base64 -w0 | tr '+/' '-_' | tr -d '=')
+    printf '{"tokens":{"id_token":"h.%s.sig","access_token":"SECRET-ACCESS","refresh_token":"SECRET-REFRESH"}}\n' "$claims" > "${HOME}/.codex/auth.json"
+    printf '{"active":"g@gmail.example","old":[]}\n' > "${HOME}/.gemini/google_accounts.json"
+    "$PULSAR" agent run claude --tmux c1 >/dev/null 2>&1
+    "$PULSAR" agent run codex --tmux x1 >/dev/null 2>&1
+    "$PULSAR" agent run agy --tmux g1 >/dev/null 2>&1
+    "$PULSAR" agent run claude --tmux c2 >/dev/null 2>&1
+    run "$PULSAR" agent sessions --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -r '[.[] | [.name, .account] | join("=")] | sort | join(" ")' <<<"$output")" = "c1=me@home.example c2=me@home.example g1=g@gmail.example x1=cx@work.example" ] \
+        || fail "$output"
+    [[ "$output" != *SECRET* ]] || fail "a token: $output"
+    # sandboxed: the sandbox's own login, not yours; none there, none said
+    local sb="${HOME}/.local/share/pulsar/sandbox/claude"
+    mkdir -p "$sb"; printf '{"oauthAccount":{"emailAddress":"box@sandbox.example"}}\n' > "${sb}/.claude.json"
+    sed -i 's/^sandbox=.*/sandbox=on/' "${REC}/c1.session"
+    sed -i 's/^sandbox=.*/sandbox=on/' "${REC}/g1.session"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "c1") | .account' <<<"$output")" = "box@sandbox.example" ] || fail "$output"
+    # in the same listing, the same agent outside the sandbox is still you
+    [ "$(jq -r '.[] | select(.name == "c2") | .account' <<<"$output")" = "me@home.example" ] || fail "$output"
+    [ "$(jq -r '.[] | select(.name == "g1") | .account' <<<"$output")" = null ] || fail "$output"
+    # not signed in, an API key, or something that isn't one line of text: nothing
+    printf '{"primaryApiKey":"sk-x"}\n' > "${sb}/.claude.json"
+    printf '{"OPENAI_API_KEY":"sk-y","tokens":null}\n' > "${HOME}/.codex/auth.json"
+    printf '{"active":"a\\u0007b"}\n' > "${HOME}/.gemini/google_accounts.json"
+    sed -i 's/^sandbox=.*/sandbox=off/' "${REC}/g1.session"
+    rm -f "${HOME}/.claude.json"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -c '[.[] | .account]' <<<"$output")" = '[null,null,null,null]' ] || fail "$output"
+}
+
 @test "agent run --tmux --prompt: a new session starts on that message, in each agent's own way; a restart does not send it again" {
     tmux_env
     local a

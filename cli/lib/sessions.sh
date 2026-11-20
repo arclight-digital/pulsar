@@ -246,6 +246,32 @@ agent_tmux_refuse() {
     done
 }
 
+# agent_account <agent> <sandbox on|off>: the account the agent signs in
+# with, from its own files in the home it runs with (the sandbox's, when
+# sandboxed), on this machine: an email, or nothing (an API key, not signed
+# in, an agent that doesn't say). Only who; no token is read out.
+agent_account() {
+    local h=$HOME a="" f
+    [ "$2" != on ] || h="${SANDBOX_HOMES}/$1"
+    if have jq; then
+        case "$1" in
+            claude) a=$(jq -r '.oauthAccount.emailAddress // empty | strings' "${h}/.claude.json" 2>/dev/null) ;;
+            codex)
+                f="${h}/.codex/auth.json"
+                [ "$2" = on ] || f="${CODEX_HOME:-${h}/.codex}/auth.json"
+                # the email in the id token's claims (base64url, unpadded)
+                a=$(jq -r '.tokens.id_token // empty | strings | split(".")[1] // empty | gsub("-";"+") | gsub("_";"/")
+                           | . as $s | $s + ("===" | .[0:((4 - ($s | length) % 4) % 4)])
+                           | @base64d | fromjson | .email // empty | strings' "$f" 2>/dev/null) ;;
+            agy) a=$(jq -r '.active // empty | strings' "${h}/.gemini/google_accounts.json" 2>/dev/null) ;;
+        esac
+    fi
+    # one line of plain text, or nothing
+    case "$a" in *[![:print:]]*) a="" ;; esac
+    [ "${#a}" -le 120 ] || a=""
+    printf '%s' "$a"
+}
+
 # agy_conversation <sandbox on|off> <folder>: the conversation agy had last
 # in that folder, from its own cache (the sandbox's home when sandboxed)
 agy_conversation() {
@@ -813,6 +839,7 @@ agent_session_json() {
         --arg archived "$(session_get "$n" archived || true)" --arg title "$(session_get "$n" title || true)" \
         --arg last "$last" --arg project "$project" --arg exited "$exited" \
         --arg sandbox "$(session_get "$n" sandbox || true)" --arg icon "$(session_get "$n" icon || true)" \
+        --arg account "$(agent_account "$agent" "$(session_get "$n" sandbox || echo off)")" \
         --argjson snaps "$snaps" --argjson usage "$u" \
         'def num: if . == "" then null else tonumber end;
          def str: if . == "" then null else . end;
@@ -827,5 +854,5 @@ agent_session_json() {
           archived: ($archived | num), title: ($title | str),
           last_active: ($last | num), project: ($project | str),
           exited: (if $live == "" then null else ($exited | num) end),
-          sandbox: ($sandbox | str), icon: ($icon | str)}'
+          sandbox: ($sandbox | str), icon: ($icon | str), account: ($account | str)}'
 }

@@ -47,7 +47,11 @@ from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line,
                         merge_machine_sessions, remember_machines, agent_argv as _agent_argv,  # noqa: E402,F401
                         project_groups, project_label, repo_names, resume_note, run, run_argv,
                         session_name_for, session_project, session_status, session_title, slug_name,
-                        title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
+                        title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left,
+                        folder_ports)
+
+# a session's scratch folder shows in its status bar from this size
+SCRATCH_SHOWN = 100_000_000
 
 # this app's part of the tags on its views of other machines' sessions
 VIEW_TAG = "a" + os.urandom(4).hex()
@@ -175,6 +179,10 @@ CSS = """
 .pulsar-agents .statusbar .pct.full { color: @error_color; }
 .pulsar-agents .statusbar label.needs { color: @accent_color; font-weight: 600; }
 .pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
+.pulsar-agents .statusbar .port-btn { padding: 2px 6px; margin-left: 0; font-feature-settings: "tnum"; }
+.pulsar-agents .statusbar .scratch-btn { color: alpha(currentColor, .6); }
+.pulsar-agents .statusbar .scratch-btn.low { color: @warning_color; }
+.pulsar-agents .statusbar .scratch-btn.critical { color: @error_color; font-weight: 600; }
 .pulsar-agents .home-text { font-size: 1.2em; }
 .pulsar-agents .rail row.message { background: none; min-height: 0; padding-top: 4px; }
 .pulsar-agents .rail .outbound { opacity: .7; }
@@ -1823,8 +1831,10 @@ SHORT_LIMITS = {"5-hour": "5h", "Weekly": "Week"}
 class StatusBar:
     """Under the open session's terminal, in segments: the model, what it
     is doing, how full its context is, the plan's limits where the agent
-    writes them down, then the machine it's on, the sandbox, the branch, and
-    what changed since the session started (which opens Changes)."""
+    writes them down, the ports its folder's servers listen on; then the
+    account its agent signs in with, the machine it's on, its scratch folder
+    (and the disk, when it gets tight), the sandbox, the branch, and what
+    changed since the session started (which opens Changes)."""
 
     def __init__(self, win):
         self.win = win
@@ -1860,12 +1870,29 @@ class StatusBar:
         self.changes = Gtk.Button(child=self.changes_label, css_classes=["flat", "changes-btn"],
                                   tooltip_text="Changes (Ctrl+Shift+D)", valign=Gtk.Align.CENTER)
         self.changes.connect("clicked", lambda *_: win.rail_toggle.set_active(not win.rail_toggle.get_active()))
-        for w in (self.who, self.doing, self.ctx, self.limits):
+        # the servers working in the session's folder: a click opens one
+        self.port_btns = Gtk.Box(spacing=2)
+        self.ports = seg(Gtk.Image(icon_name="web-browser-symbolic", css_classes=["key"]), self.port_btns)
+        self.ports.set_visible(False)
+        self.ports_key = None
+        self.ports_at = 0
+        for w in (self.who, self.doing, self.ctx, self.limits, self.ports):
             self.widget.append(w)
         self.widget.append(Gtk.Box(hexpand=True))
+        self.account_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.MIDDLE, max_width_chars=26)
+        self.account = seg(Gtk.Image(icon_name="avatar-default-symbolic"), self.account_label, cls=("dim",))
         self.machine_label = Gtk.Label()
         self.machine = seg(Gtk.Image(icon_name="network-server-symbolic"), self.machine_label, cls=("dim",))
-        for w in (self.machine, self.lock, self.branch, self.changes):
+        # its scratch folder, once there's something in it; with the disk's
+        # free space too, in its warning color, once that gets tight
+        self.scratch_label = Gtk.Label(css_classes=["val"])
+        sbox = Gtk.Box(spacing=7)
+        sbox.append(Gtk.Image(icon_name="drive-harddisk-symbolic"))
+        sbox.append(self.scratch_label)
+        self.scratch = Gtk.Button(child=sbox, css_classes=["flat", "changes-btn", "scratch-btn"], valign=Gtk.Align.CENTER)
+        self.scratch.connect("clicked", lambda *_: win.disk.widget.popup())
+        self.scratch.set_visible(False)
+        for w in (self.account, self.machine, self.scratch, self.lock, self.branch, self.changes):
             self.widget.append(w)
         # clipped at the window's width rather than widening it
         self.outer = Gtk.ScrolledWindow(child=self.widget, hscrollbar_policy=Gtk.PolicyType.EXTERNAL,
@@ -1924,7 +1951,66 @@ class StatusBar:
         self.lock.set_visible(s.get("sandbox") == "on")
         self.machine.set_visible(bool(s.get("machine")))
         self.machine_label.set_label(s.get("machine") or "")
+        acct = s.get("account") or ""
+        self.account.set_visible(bool(acct))
+        self.account_label.set_label(acct)
+        self.account.set_tooltip_text((f"{AGENT_NAMES.get(s.get('agent'), s.get('agent'))} is signed in as {acct}"
+                                       + (f" on {s['machine']}" if s.get("machine") else "")) if acct else None)
+        self._ports(s, now)
+        self._scratch(s)
         self._git(s, now)
+
+    def _ports(self, s, now):
+        """The ports this session's folder listens on, looked up every few
+        seconds: here only (another machine's aren't), and not a sandbox's,
+        which has a network of its own."""
+        name = s["name"]
+        if name == getattr(self, "ports_for", None) and now - self.ports_at < 3:
+            return
+        self.ports_for, self.ports_at = name, now
+        d = s.get("dir")
+        found = []
+        if d and not s.get("machine") and s.get("sandbox") != "on":
+            # a project's own session leaves its worktrees' to theirs
+            found = folder_ports(d, skip=[] if s.get("worktree_of") else [d.rstrip("/") + "/.worktrees"])
+        key = (name, tuple(found))
+        if key == self.ports_key:
+            return
+        self.ports_key = key
+        while (c := self.port_btns.get_first_child()) is not None:
+            self.port_btns.remove(c)
+        for port, pid, proc in found[:3]:
+            b = Gtk.Button(label=f":{port}", css_classes=["flat", "changes-btn", "port-btn"], valign=Gtk.Align.CENTER,
+                           tooltip_text=f"{proc} (process {pid}) listens on port {port}. Open http://localhost:{port}")
+            b.connect("clicked", lambda _b, u=f"http://localhost:{port}": Gtk.UriLauncher(uri=u).launch(
+                self.win, None, None, None))
+            self.port_btns.append(b)
+        if len(found) > 3:
+            self.port_btns.append(Gtk.Label(label=f"+{len(found) - 3}", css_classes=["key"],
+                                            tooltip_text=", ".join(str(p) for p, _, _ in found[3:])))
+        self.ports.set_visible(bool(found))
+
+    def _scratch(self, s):
+        """This session's scratch folder, from the disk panel's last look:
+        shown from 100 MB, and always, with the disk's free space, when that
+        is low (disk_level)."""
+        d = getattr(self.win.disk, "data", None) or {}
+        used = self.win.disk.session_bytes(s["name"]) if not s.get("machine") else 0
+        free, need = d.get("free"), d.get("suspend_need")
+        level = disk_level(free, need) if d else "ok"
+        for c in ("low", "critical"):
+            self.scratch.remove_css_class(c)
+        if level != "ok":
+            self.scratch.add_css_class(level)
+            self.scratch_label.set_label(f"{human_bytes(free)} free" + (f" · scratch {human_bytes(used)}" if used else ""))
+        else:
+            self.scratch_label.set_label(f"Scratch {human_bytes(used)}")
+        self.scratch.set_visible(level != "ok" or used >= SCRATCH_SHOWN)
+        tip = [f"This session's scratch folder holds {human_bytes(used)}."] if used else []
+        if free is not None:
+            tip.append(f"{human_bytes(free)} free on the disk agents write to"
+                       + (", less than suspend needs" if need and free < need else "") + ".")
+        self.scratch.set_tooltip_text(" ".join(tip + ["Click for what's taking space."]) if tip else None)
 
     def _git(self, s, now):
         """The branch, and what changed since the session started: read
