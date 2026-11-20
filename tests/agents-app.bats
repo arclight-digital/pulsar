@@ -249,11 +249,14 @@ print(m.files_summary([], True))'
 d = m.load_state(); print(sorted(d))
 d[\"unseen\"] = [\"x\"]; d[\"last\"] = \"x\"; m.save_state(d)
 print(m.load_state()[\"last\"], m.load_state()[\"unseen\"])
-open(m.STATE_FILE, \"w\").write(\"[1]\"); print(sorted(m.load_state()))'"
+open(m.STATE_FILE, \"w\").write(\"[1]\"); print(sorted(m.load_state()))
+open(m.STATE_FILE, \"w\").write(\"{\\\"shell_open\\\": 5}\"); print(m.load_state()[\"shell_open\"])'"
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "['projects', 'recent', 'unseen']" ]
+    [ "${lines[0]}" = "['projects', 'recent', 'shell_open', 'unseen']" ]
     [ "${lines[1]}" = "x ['x']" ]
-    [ "${lines[2]}" = "['projects', 'recent', 'unseen']" ]
+    [ "${lines[2]}" = "['projects', 'recent', 'shell_open', 'unseen']" ]
+    # which sessions had their shell panel open: a list, or none
+    [ "${lines[3]}" = "[]" ] || fail "$output"
     [ -f "${BATS_TEST_TMPDIR}/st/pulsar/agents-app.json" ]
 }
 
@@ -667,10 +670,10 @@ import os
 m.Gtk.init()
 spawned = []
 m.Vte.Terminal.spawn_async = lambda self, flags, cwd, argv, env, *a: spawned.append((cwd, argv, env))
-names = [n for n in vars(m.Agents) if n.startswith("_shell") or n in ("new_shell", "_all_shells", "_term_key")]
+names = [n for n in vars(m.Agents) if n.startswith("_shell") or n in ("new_shell", "_all_shells", "_term_key", "_show_shell")]
 W = type("W", (), {n: vars(m.Agents)[n] for n in names})
 w = W()
-w.shells, w.current = {}, "a"
+w.shells, w.current, w.state, w.terms = {}, "a", {}, {}
 w.shell_stack, w.shell_box, w.shell_dot = m.Gtk.Stack(), m.Gtk.Box(visible=False), m.Gtk.Box(visible=False)
 w.shell_tabs = m.Adw.TabBar()
 w.shell_toggle = m.Gtk.ToggleButton()
@@ -765,4 +768,32 @@ for title, cwd in (("proto@cherenkov:~/projects/arclight/pulsar", ""), ("proto@c
 '~'
 '~'
 'vim notes.md'" ] || fail "$output"
+}
+
+@test "the shell panel is shown or hidden per session, as you left it there; the session's own focus stands on switching" {
+    need_gtk
+    run app "$shell_win"'
+w.sessions = {"a": {"name": "a", "dir": d}, "b": {"name": "b", "dir": d}}
+w.shell_toggle.connect("toggled", lambda b: w._show_shell(b.get_active()))
+# open in a
+w.current = "a"; w._shell_sync(w.sessions["a"]); w.shell_toggle.set_active(True)
+print(w.state["shell_open"], w.shell_box.get_visible())
+# to b: hidden there
+w.current = "b"; w._shell_sync(w.sessions["b"])
+print(w.shell_toggle.get_active(), w.shell_box.get_visible(), w.state["shell_open"])
+# back to a: shown again, its shell as it was
+w.current = "a"; w._shell_sync(w.sessions["a"])
+print(w.shell_toggle.get_active(), w.shell_box.get_visible(), w.shells["a"].get_n_pages())
+# hidden in a: remembered
+w.shell_toggle.set_active(False)
+print(w.state["shell_open"])
+# archiving forgets it
+w.shell_toggle.set_active(True); w._shell_close("a")
+print(w.state["shell_open"])'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['a'] True" ] || fail "$output"
+    [ "${lines[1]}" = "False False ['a']" ] || fail "$output"
+    [ "${lines[2]}" = "True True 1" ] || fail "$output"
+    [ "${lines[3]}" = "[]" ] || fail "$output"
+    [ "${lines[4]}" = "[]" ] || fail "$output"
 }
