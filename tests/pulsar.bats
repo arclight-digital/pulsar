@@ -4953,6 +4953,11 @@ notify_env() {
     ALERTS="${HOME}/.local/state/pulsar/agent-alerts"
     # no agents app unless a test puts one there
     export PULSAR_AGENTS_APP="${BATS_TEST_TMPDIR}/pulsar-agents"
+    # the session bus: the app is running only when a test says so
+    # (APP_RUNNING=1); never the desktop's own bus, where a real app is
+    printf '#!/bin/sh\ncase "$*" in\n*NameHasOwner*) [ "${APP_RUNNING:-0}" = 1 ] && echo "(true,)" || echo "(false,)" ;;\n*org.gtk.Actions.Activate*) [ "${APP_RUNNING:-0}" = 1 ] || exit 1; printf "%%s\\n" "$@" > "%s/gdbus.activate" ;;\nesac\n' \
+        "$BATS_TEST_TMPDIR" > "${STUB}/gdbus"
+    chmod +x "${STUB}/gdbus"
 }
 # what systemd-run was asked to run: title, body, cli, agent, session
 sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[@]}"; do [ "${a[$i]}" = sh ] && [ "${a[$((i - 1))]}" != -- ] && { printf '%s' "${a[$((i + $1))]}"; return; }; done; }
@@ -4999,11 +5004,13 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     [ "$(sd_arg 4)" = claude ]
     [ "$(sd_arg 5)" = work ]
     [ "$(sed -n 2p "${TMUX_LIVE}/.work.opt")" = Stop ]
-    # the button: a terminal on that session, there being no agents app
-    [ -z "$(sd_arg 7)" ]
+    # the button: a terminal on that session, there being no agents app;
+    # no second button, since there is nowhere else
+    [ -z "$(sd_arg 7)" ] && [ "$(sd_arg 8)" = 0 ] || fail "app='$(sd_arg 7)' reach='$(sd_arg 8)'"
     notify_stub 7 attach tok-1
-    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)"
+    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)" "$(sd_arg 8)"
     [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+    if notify_args | grep -q -- '--action=terminal'; then fail "$(notify_args)"; fi
 }
 
 # notify-send as GNOME answers it: the id, then the action clicked (empty:
@@ -5054,12 +5061,50 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
     run "$PULSAR" agent notify work
     [ "$status" -eq 0 ] || fail "$output"
-    [ "$(sd_arg 7)" = "$PULSAR_AGENTS_APP" ]
+    [ "$(sd_arg 7)" = "$PULSAR_AGENTS_APP" ] && [ "$(sd_arg 8)" = 1 ]
     notify_stub 7 attach tok-9
-    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)"
+    sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)" "$(sd_arg 8)"
+    notify_args | grep -qx -- '--action=terminal=Open in Terminal' || fail "$(notify_args)"
     [ "$(cat "${BATS_TEST_TMPDIR}/app.args")" = work ]
     [ "$(cat "${BATS_TEST_TMPDIR}/app.token")" = tok-9 ]
     [ ! -e "${BATS_TEST_TMPDIR}/ptyxis.args" ]
+}
+
+@test "agent notify: with the agents app running from anywhere, Open goes to it on the session bus, and Open in Terminal is the other button" {
+    notify_env
+    export APP_RUNNING=1
+    mkdir -p "$ALERTS"; printf '{"hook_event_name":"Stop"}' > "${ALERTS}/${ID}.json"
+    run "$PULSAR" agent notify work
+    [ "$status" -eq 0 ] || fail "$output"
+    # not installed, but answering on the bus
+    [ -z "$(sd_arg 7)" ] && [ "$(sd_arg 8)" = 1 ] || fail "app='$(sd_arg 7)' reach='$(sd_arg 8)'"
+    local -a args=("$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)" "$(sd_arg 8)")
+    notify_stub 7 attach "gnome-shell//1-2-host_TIME3"
+    sh -c "$(sd_arg -1)" sh "${args[@]}"
+    notify_args | grep -qx -- '--action=attach=Open' || fail "$(notify_args)"
+    notify_args | grep -qx -- '--action=terminal=Open in Terminal' || fail "$(notify_args)"
+    # Open: the running app's open-session action, with the session and the click's token
+    local act; act=$(paste -sd' ' "${BATS_TEST_TMPDIR}/gdbus.activate")
+    [ "$act" = "call --session --dest digital.arclight.Pulsar.Agents --object-path /digital/arclight/Pulsar/Agents --method org.gtk.Actions.Activate open-session [<\"work\">] {\"activation-token\": <\"gnome-shell//1-2-host_TIME3\">}" ] || fail "$act"
+    [ ! -e "${BATS_TEST_TMPDIR}/ptyxis.args" ] || fail "a terminal too"
+    # Open in Terminal: a terminal, and the app isn't asked
+    rm -f "${BATS_TEST_TMPDIR}/gdbus.activate"
+    notify_stub 7 terminal tok-5
+    sh -c "$(sd_arg -1)" sh "${args[@]}"
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+    [ "$(cat "${BATS_TEST_TMPDIR}/ptyxis.token")" = tok-5 ]
+    [ ! -e "${BATS_TEST_TMPDIR}/gdbus.activate" ] || fail "asked the app"
+    # a token that would break the call's quoting is left out, not passed on
+    rm -f "${BATS_TEST_TMPDIR}/ptyxis.args"
+    printf '%s' 'x">, <"y' > "${BATS_TEST_TMPDIR}/badtok"
+    printf '#!/bin/sh\nprintf "%%s\\n" 7 attach\ncat "%s/badtok" >&3\n' "$BATS_TEST_TMPDIR" > "${STUB}/notify-send"
+    sh -c "$(sd_arg -1)" sh "${args[@]}"
+    grep -qxF '{"activation-token": <"">}' "${BATS_TEST_TMPDIR}/gdbus.activate" || fail "$(cat "${BATS_TEST_TMPDIR}/gdbus.activate")"
+    # the app gone by the time of the click: a terminal after all
+    rm -f "${BATS_TEST_TMPDIR}/gdbus.activate"
+    APP_RUNNING=0 notify_stub 7 attach tok-6
+    APP_RUNNING=0 sh -c "$(sd_arg -1)" sh "${args[@]}"
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
 }
 
 @test "agent notify: a permission prompt says what Claude asked; its 60-second 'still waiting' does not repeat Stop" {

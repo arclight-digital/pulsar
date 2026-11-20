@@ -182,24 +182,45 @@ agent_notify() {
     local idf="${XDG_RUNTIME_DIR}/pulsar-agent-${tname}.notification"
     self=$(realpath "$SELF")
     [ ! -x "$AGENTS_APP" ] || app=$AGENTS_APP
+    # the agents app can take it: installed, or running from anywhere (a
+    # copy started by hand answers on the session bus as well). Then Open
+    # goes there, and the notification offers a terminal as well.
+    local reach=0
+    if [ -n "$app" ]; then reach=1
+    elif have gdbus && gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+            --method org.freedesktop.DBus.NameHasOwner digital.arclight.Pulsar.Agents 2>/dev/null | grep -q true; then
+        reach=1
+    fi
     systemctl --user stop "${unit}.service" 2>/dev/null || true
     # shellcheck disable=SC2016  # expanded by the transient unit's sh
     script='rid=$(cat "$6" 2>/dev/null)
 tok=$(mktemp) || exit 0
+term=""
+[ "$8" != 1 ] || term="--action=terminal=Open in Terminal"
 notify-send --app-name=Pulsar --icon=digital.arclight.Pulsar.Agents --print-id ${rid:+--replace-id="$rid"} \
-    --action=attach=Open --activation-token-fd=3 "$1" "$2" 3>"$tok" | {
+    --action=attach=Open ${term:+"$term"} --activation-token-fd=3 "$1" "$2" 3>"$tok" | {
     read -r id && printf "%s\n" "$id" > "$6"
     read -r a
     # the token is written once notify-send is done: read it after its end
     cat > /dev/null
     t=$(cat "$tok"); rm -f "$tok"
-    [ "$a" = attach ] || exit 0
+    case "$a" in attach|terminal) ;; *) exit 0 ;; esac
     rm -f "$6"
-    [ -z "$7" ] || XDG_ACTIVATION_TOKEN=$t exec "$7" "$5"
+    if [ "$a" = attach ]; then
+        # the agents app running now, wherever it was started from; else
+        # the installed one; else a terminal after all
+        case "$t" in *[\"\\]*) t="" ;; esac
+        if gdbus call --session --dest digital.arclight.Pulsar.Agents --object-path /digital/arclight/Pulsar/Agents \
+            --method org.gtk.Actions.Activate open-session "[<\"$5\">]" "{\"activation-token\": <\"$t\">}" \
+            >/dev/null 2>&1; then
+            exit 0
+        fi
+        [ -z "$7" ] || XDG_ACTIVATION_TOKEN=$t exec "$7" "$5"
+    fi
     XDG_ACTIVATION_TOKEN=$t exec ptyxis --new-window -- "$3" agent run "$4" --tmux "$5"
 }'
     systemd-run --user --collect --quiet --unit="$unit" \
-        -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" "$idf" "$app" 2>/dev/null || true
+        -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" "$idf" "$app" "$reach" 2>/dev/null || true
 }
 
 # A turn's end, with the agent at its own prompt: Claude's Stop, and the

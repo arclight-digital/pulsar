@@ -93,7 +93,10 @@ CLI, and opencode moves to version 2.
   branches stay. `pulsar agent sessions --archive`, `--unarchive` and
   `--tidy` do the same from a terminal.
 - A notification's Open, Pulsar Commands and Pulsar Settings' Agents page
-  all open the session in the app.
+  all open the session in the app. Open finds the app when it's running,
+  wherever it was started from. The notification also has Open in
+  Terminal, for a terminal on the session instead. Without the app, Open
+  opens a terminal.
 - Sessions can see each other. `pulsar agent read <name>` shows a
   session's screen, and `pulsar agent send <name> <text>` types a message
   into its prompt, labelled as from another session (`<name>@<machine>`
