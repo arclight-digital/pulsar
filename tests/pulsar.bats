@@ -6220,6 +6220,13 @@ SH
     [ "$(jq -r '.[0].name' <<<"$output")" = w ] || fail "$output"
     PULSAR_AGENT_VIEW=1 run "$PULSAR" machine exec a -- agent sessions --json
     grep -q 'env PULSAR_AGENT_VIEW=1 PULSAR_AGENT_VIEW_MOUSE=on ' "$SSH_LOG" || fail "$(cat "$SSH_LOG")"
+    # the view's tag goes along; one that isn't a plain word doesn't
+    : > "$SSH_LOG"
+    PULSAR_AGENT_VIEW=1 PULSAR_AGENT_VIEW_TAG=a1b2v3 run "$PULSAR" machine exec a -- agent sessions --json
+    grep -q 'PULSAR_AGENT_VIEW_MOUSE=on PULSAR_AGENT_VIEW_TAG=a1b2v3 ' "$SSH_LOG" || fail "$(cat "$SSH_LOG")"
+    : > "$SSH_LOG"
+    PULSAR_AGENT_VIEW=1 PULSAR_AGENT_VIEW_TAG='x;id' run "$PULSAR" machine exec a -- agent sessions --json
+    if grep -q VIEW_TAG "$SSH_LOG"; then fail "$(cat "$SSH_LOG")"; fi
     for bad in "-- sh -c id" "-- doctor" "agent sessions" "--"; do
         # shellcheck disable=SC2086
         run "$PULSAR" machine exec a $bad; [ "$status" -ne 0 ] || fail "ran: $bad"
@@ -7278,6 +7285,63 @@ alert_becomes() { local i; for i in $(seq 50); do [ "$(alert_of "$1")" = "$2" ] 
     wba=$(tmux -L "$S" show-options -wv -t =ba: window-size 2>/dev/null)
     msg_teardown
     [ -z "$wba" ] || fail "still '$wba'"
+}
+
+@test "agent sizes --view: another machine's app marks its hidden view, found by its tag, ignore-size there, and shown again" {
+    msg_env
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    printf 'agent=codex\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/a.session"
+    tmux -L "$S" new-session -d -s a -x 80 -y 20 "sleep 60"
+    # two views, as two machines' apps attach them (machine exec ... agent attach)
+    local fifo="${BATS_TEST_TMPDIR}/ctl"; mkfifo "$fifo"
+    python3 - "$PULSAR" "$fifo" <<'PY' &
+import os, pty, select, sys
+cli, fifo = sys.argv[1:3]
+kids = []
+for tag in ("t1", "t2"):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ.update(TERM="xterm-256color", PULSAR_AGENT_VIEW="1", PULSAR_AGENT_VIEW_MOUSE="on", PULSAR_AGENT_VIEW_TAG=tag)
+        os.execvp(cli, [cli, "agent", "attach", "a"])
+    kids.append((pid, fd))
+ctl = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+while True:
+    r, _, _ = select.select([fd for _, fd in kids] + [ctl], [], [], 0.2)
+    for _, fd in kids:
+        if fd in r:
+            try: os.read(fd, 65536)
+            except OSError: pass
+    if ctl in r and b"quit" in os.read(ctl, 64):
+        for pid, _ in kids: os.kill(pid, 9)
+        sys.exit(0)
+PY
+    exec 7>"$fifo"
+    local i; for i in $(seq 50); do [ "$(tmux -L "$S" list-clients | wc -l)" = 2 ] && break; sleep 0.1; done
+    sleep 0.3
+    flags() {
+        tmux -L "$S" list-clients -F '#{session_name} #{client_flags}' | while read -r s f; do
+            printf '%s %s\n' "$(tmux -L "$S" show-options -qv -t "=${s}:" @pulsar-view)" \
+                "$(case ",$f," in *,ignore-size,*) echo ignored ;; *) echo counted ;; esac)"
+        done | sort
+    }
+    local before hidden shown
+    before=$(flags)
+    "$PULSAR" agent sizes --view t1 hidden
+    hidden=$(flags)
+    "$PULSAR" agent sizes --view t1 shown
+    shown=$(flags)
+    local bad=""
+    refused() { "$PULSAR" agent sizes "$@" 2>&1 | grep -q "usage: pulsar agent sizes" || bad+=" [$*]"; }
+    refused --view t1
+    refused --view t1 gone
+    refused --view 'x;y' hidden
+    refused --view '' hidden
+    echo quit >&7; exec 7>&-
+    msg_teardown
+    [ "$before" = $'t1 counted\nt2 counted' ] || fail "before: $before"
+    [ "$hidden" = $'t1 ignored\nt2 counted' ] || fail "hidden: $hidden"
+    [ "$shown" = $'t1 counted\nt2 counted' ] || fail "shown: $shown"
+    [ -z "$bad" ] || fail "taken:$bad"
 }
 
 @test "the app's view seen from another machine: the wheel scrolls tmux's history, or goes to an agent that tracks the mouse; never arrow keys" {

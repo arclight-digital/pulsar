@@ -49,6 +49,9 @@ from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left)
 
+# this app's part of the tags on its views of other machines' sessions
+VIEW_TAG = "a" + os.urandom(4).hex()
+
 POLL_S = 3
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
          HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
@@ -1025,10 +1028,25 @@ class Agents(Adw.ApplicationWindow):
         """Only the terminal on screen counts toward its window's size: the
         hidden ones keep the size they last had, and with the app's views a
         window follows its smallest client (agent sizes), so they're marked
-        ignore-size. Another machine's clients are that machine's."""
+        ignore-size. On another machine, its CLI marks them, found by the
+        view's tag, and only when that changes (each is a call over ssh)."""
         shown = self.term_stack.get_visible_child()
         for name, t in list(self.terms.items()):
-            if t.dead or (self.sessions.get(name) or {}).get("machine"):
+            if t.dead:
+                continue
+            machine = (self.sessions.get(name) or {}).get("machine")
+            if machine:
+                tag = getattr(t, "view_tag", None)
+                want = "shown" if t is shown else "hidden"
+                if tag and getattr(t, "sized", False) and getattr(t, "view_sent", "shown") != want:
+                    t.view_sent = want
+                    try:
+                        GLib.spawn_async([PULSAR, "machine", "exec", machine, "--", "agent", "sizes",
+                                          "--view", tag, want],
+                                         flags=GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.STDOUT_TO_DEV_NULL
+                                         | GLib.SpawnFlags.STDERR_TO_DEV_NULL)
+                    except GLib.Error:
+                        pass
                 continue
             tty = self._client_tty(t)
             if not tty:
@@ -1099,6 +1117,12 @@ class Agents(Adw.ApplicationWindow):
         # (agent attach: no tmux keys, menus or status line here; a terminal
         # attached elsewhere keeps them)
         env = ["TMUX=", "TERM_PROGRAM=pulsar-agents", "PULSAR_AGENT_VIEW=1"]
+        if (self.sessions.get(name) or {}).get("machine"):
+            # the view there is tagged, so this app can mark it hidden there
+            # (another app there may share this one's pid: a random part too)
+            self.view_count = getattr(self, "view_count", 0) + 1
+            t.view_tag = f"{VIEW_TAG}v{self.view_count}"
+            env.append(f"PULSAR_AGENT_VIEW_TAG={t.view_tag}")
         t.spawn_async(Vte.PtyFlags.DEFAULT, os.path.expanduser("~"), argv, env, GLib.SpawnFlags.DEFAULT,
                       None, None, -1, None, self._spawned, name)
         t.grab_focus()

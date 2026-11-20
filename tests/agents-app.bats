@@ -797,3 +797,45 @@ print(w.state["shell_open"])'
     [ "${lines[3]}" = "[]" ] || fail "$output"
     [ "${lines[4]}" = "[]" ] || fail "$output"
 }
+
+@test "a hidden view of another machine's session stops counting toward its size there, marked once per change by its tag" {
+    need_gtk
+    run app '
+m.Gtk.init()
+calls = []
+m.GLib.spawn_async = lambda argv, **k: calls.append(list(argv))
+W = type("W", (), {"_sizes": m.Agents._sizes, "spawn": m.Agents.spawn, "_spawned": None})
+w = W()
+w.sessions = {"a": {"name": "a"}, "b@talos": {"name": "b@talos", "machine": "talos"}}
+w.term_stack, w.terms = m.Gtk.Stack(), {}
+w._client_tty = lambda t: "/dev/pts/9"
+envs = {}
+def term(name):
+    t = m.Gtk.Box(); t.dead = False; t.name = name
+    t.spawn_async = lambda flags, cwd, argv, env, *a: envs.__setitem__(name, env)
+    t.grab_focus = lambda: None
+    w.terms[name] = t; w.term_stack.add_child(t); w.term_stack.set_visible_child(t)
+    return t
+w._terminal = term
+a = w.spawn("a", ["x"]); b = w.spawn("b@talos", ["y"])
+print([e for e in envs["a"] if "TAG" in e], [e.split("=")[0] for e in envs["b@talos"] if "TAG" in e])
+tag = b.view_tag
+b.sized = True
+w._sizes()                       # b on screen, as it started: nothing to say
+print(len([c for c in calls if c[0] != "tmux"]))
+w.term_stack.set_visible_child(a); w._sizes(); w._sizes()
+remote = [c for c in calls if c[0] != "tmux"]
+print(remote == [[m.PULSAR, "machine", "exec", "talos", "--", "agent", "sizes", "--view", tag, "hidden"]])
+w.term_stack.set_visible_child(b); w._sizes()
+print([c[-1] for c in calls if c[0] != "tmux"])
+# the local one is still marked here, by its tty, never through a machine
+print(all(c[:3] == ["tmux", "-L", m.TMUX_SOCKET] for c in calls if c[0] == "tmux"), len([c for c in calls if c[0] == "tmux"]) > 0)
+c = m.VIEW_TAG; print(c != "" and all(ch.isalnum() for ch in c))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[] ['PULSAR_AGENT_VIEW_TAG']" ] || fail "$output"
+    [ "${lines[1]}" = "0" ] || fail "$output"
+    [ "${lines[2]}" = "True" ] || fail "$output"
+    [ "${lines[3]}" = "['hidden', 'shown']" ] || fail "$output"
+    [ "${lines[4]}" = "True True" ] || fail "$output"
+    [ "${lines[5]}" = "True" ] || fail "$output"
+}

@@ -44,7 +44,8 @@ CLI, and opencode moves to version 2.
   back to the prompt. A terminal attached to the same session keeps tmux
   as it was. While the app shows a session, its window takes the smaller
   of the app's and a terminal's sizes, so the two stop resizing it in
-  turn.
+  turn. A session the app has open but isn't showing doesn't count,
+  on this machine or on another one.
 - Ctrl+\` (or the terminal button in the header) opens a shell under the
   agent, in the session's folder (its worktree, when it has one), with a
   divider to drag. Ctrl+Shift+\` or + opens another in a new tab; each tab

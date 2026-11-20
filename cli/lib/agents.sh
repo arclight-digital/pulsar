@@ -1132,6 +1132,20 @@ cmd_agent() {
             # read them before a view went must not finish after the one
             # that saw it gone.
             have tmux || return 0
+            if [ "${1:-}" = --view ]; then
+                # --view <tag> shown|hidden: another machine's app showed or
+                # hid its terminal on a view here (its tag, from atmux_view);
+                # a hidden one stops counting toward the window's size
+                local tag=${2:-} flag
+                case "${3:-}" in shown) flag='!ignore-size' ;; hidden) flag=ignore-size ;; *) tag="" ;; esac
+                case "$tag" in ''|*[!A-Za-z0-9_-]*) die "usage: pulsar agent sizes [--view <tag> shown|hidden]" ;; esac
+                local sess tty
+                while IFS=$'\t' read -r sess tty; do
+                    [ "$(atmux show-options -qv -t "=${sess}:" @pulsar-view 2>/dev/null)" = "$tag" ] || continue
+                    atmux refresh-client -t "$tty" -f "$flag" 2>/dev/null || true
+                done < <(atmux list-clients -F $'#{session_name}\t#{client_tty}' 2>/dev/null)
+                return 0
+            fi
             mkdir -p "$AGENT_SESSIONS"
             local lockfd all base w
             exec {lockfd}>"${AGENT_SESSIONS}/.sizes.lock"

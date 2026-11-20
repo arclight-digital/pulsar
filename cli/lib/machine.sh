@@ -417,9 +417,17 @@ cmd_machine() {
             shift 2
             local t; t=$(machine_target "$n") || die "no machine called $n (pulsar machine list)"
             # the app's own view of a session, there as here; with the mouse
-            # on, since the app can't drive that machine's tmux to scroll
+            # on, since the app can't drive that machine's tmux to scroll; and
+            # the view's tag, by which the app later marks it hidden there
+            # (agent sizes --view)
             local -a pre=()
-            [ "${PULSAR_AGENT_VIEW:-0}" != 1 ] || pre=(env PULSAR_AGENT_VIEW=1 PULSAR_AGENT_VIEW_MOUSE=on)
+            if [ "${PULSAR_AGENT_VIEW:-0}" = 1 ]; then
+                pre=(env PULSAR_AGENT_VIEW=1 PULSAR_AGENT_VIEW_MOUSE=on)
+                case "${PULSAR_AGENT_VIEW_TAG:-}" in
+                    ''|*[!A-Za-z0-9_-]*) ;;
+                    *) pre+=("PULSAR_AGENT_VIEW_TAG=$PULSAR_AGENT_VIEW_TAG") ;;
+                esac
+            fi
             local -a tt=()
             [ ! -t 0 ] || [ ! -t 1 ] || tt=(-t)
             [ "${JSON:-0}" != 1 ] || set -- --json "$@"

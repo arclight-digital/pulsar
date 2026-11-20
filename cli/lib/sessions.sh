@@ -83,10 +83,18 @@ atmux_view() {
     agent_tmux_hooks "$(realpath "$SELF")"
     unset TMUX
     atmux_argv
+    # the app's tag for this view, when it is another machine's app: it
+    # marks the view hidden by it (agent sizes --view)
+    local -a tag=()
+    case "${PULSAR_AGENT_VIEW_TAG:-}" in
+        ''|*[!A-Za-z0-9_-]*) ;;
+        *) tag=(\; set -t "=$v:" @pulsar-view "$PULSAR_AGENT_VIEW_TAG") ;;
+    esac
     # created attached, so destroy-unattached never sees it without a client
     exec "${ATMUX[@]}" new-session -t "=$1" -s "$v" \; \
         set -t "=$v:" destroy-unattached on \; set -t "=$v:" prefix None \; set -t "=$v:" prefix2 None \; \
-        set -t "=$v:" key-table pulsar-app \; set -t "=$v:" status off \; set -t "=$v:" mouse "${PULSAR_AGENT_VIEW_MOUSE:-off}"
+        set -t "=$v:" key-table pulsar-app \; set -t "=$v:" status off \; set -t "=$v:" mouse "${PULSAR_AGENT_VIEW_MOUSE:-off}" \
+        "${tag[@]}"
 }
 
 # A session and every view of it: a view left behind would keep its windows,
