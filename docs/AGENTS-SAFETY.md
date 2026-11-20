@@ -288,20 +288,30 @@ Stop hook answers "keep going" with the messages, and while it sits idle a
 background hook (`asyncRewake`) waits up to an hour for mail and wakes it
 with the messages. That can happen while you're looking at the session; it
 doesn't touch what you're typing. Antigravity CLI gets it from its Stop hook
-the same way at the end of a turn ("continue", in agy's words), unless it is
-sandboxed. Codex CLI, and an idle or sandboxed Antigravity CLI, get it typed
-into the prompt with Enter, so for them it waits until the agent sits at its
-own prompt (the turn-end hooks Pulsar gives them) and nobody is looking at
-the session. It never goes in on a permission question, where
-that Enter would answer for you.
+the same way at the end of a turn ("continue", in agy's words). Codex CLI,
+and an idle Antigravity CLI, get it typed into the prompt with Enter, only
+when Pulsar's own turn-end hook has marked the turn's end (a file beside the
+session's record; a bell in the agent's output doesn't count) and nobody is
+looking at the session. Nothing is typed into a permission question, where
+that Enter would answer for you, or into the shell left in a pane after its
+agent exits. Other agents (opencode) take no messages: Pulsar can't tell
+when their turns end.
+
+Sandboxed sessions take no messages yet. Every sandboxed Claude session
+shares one home, which each of them can write, so nothing there can say
+when a particular one has ended its turn; Pulsar never writes mail into it
+and never reads an unsandboxed session's turn ends from it.
 
 Every message is logged in `~/.local/state/pulsar/agents/messages.log`. One
 session can send another at most 10 in 10 minutes, and Agents > Preferences
-(or `pulsar agent messages off|on --cap N`) turns messages between sessions
-off or changes the cap. The sender's name is what the sending session said
-it was: Pulsar fills it in for an agent using `session_message`, but an agent
-with a shell can run `pulsar agent send --from` with any name. A message with
-no sender is labelled "A message via Pulsar", never as from you.
+(or `pulsar agent messages off|on --cap N`) turns messages off or changes
+the cap; both apply to every sender, named or not. The sender's name is what
+the sending session said it was: Pulsar fills it in for an agent using
+`session_message` (which refuses when it can't tell), but an agent with a
+shell can run `pulsar agent send --from` with any name, or change the cap
+the same way. A message with no sender is labelled as from a sender that
+gave no name, never as from you, and a line of a message that starts with
+`[` is shifted by a space, so a message can't pass one off as a header.
 
 A job started with `job_start` runs as you, outside any sandbox, so a
 sandboxed agent can't start one: it has no `pulsar mcp`.

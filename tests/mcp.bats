@@ -137,11 +137,12 @@ PY
     ! grep -q -- "read --now" "$CLI_LOG"
     [ "$(grep -c '^job run' "$CLI_LOG")" -eq 1 ]
     [ "$(echo "$output" | jq -s -r '.[2].result.isError, .[4].result.isError' | paste -sd' ')" = "true true" ]
-    # outside a session: no --from, no --notify
+    # outside a session: a message can't say who sent it, so it isn't sent; a job just isn't watched for you
     : > "$CLI_LOG"
     run rpc '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"a","text":"x"}}}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"job_start","arguments":{"command":["make"],"notify_me":true}}}'
-    grep -qx -- "agent send a -- x" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    ! grep -q -- "agent send" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    [ "$(echo "$output" | jq -s -r '.[0].result.isError')" = true ] || fail "$output"
     grep -qx -- "job run -- make" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
 }
 

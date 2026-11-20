@@ -260,10 +260,13 @@ def call(name, a):
         if not n or not text.strip():
             return "session_message needs a session's name and some text", True
         me = whoami()
+        if not me:
+            # every message says which session sent it; one that can't is refused
+            return "session_message works from inside an agent session (pulsar agent run --tmux)", True
         re_ = str(a.get("reply_to") or "")
         if re_ and not re.fullmatch(r"m[0-9]+-[0-9a-f]+", re_):
             return "reply_to is a message id from inbox", True
-        return run(["agent", "send", n, *(["--from", me] if me else []), *(["--reply-to", re_] if re_ else []), "--", text])
+        return run(["agent", "send", n, "--from", me, *(["--reply-to", re_] if re_ else []), "--", text])
     if name == "inbox":
         me = whoami()
         if not me:

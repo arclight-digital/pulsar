@@ -384,7 +384,7 @@ class Agents(Adw.ApplicationWindow):
                                           menu_model=self._menu())
         head.pack_end(self.menu_button)
         head.pack_end(self.rail_toggle)
-        self.banner = Adw.Banner()
+        self.banner = Adw.Banner(use_markup=False)
         self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
         # sized by the page showing: the home's minimum must not widen a session
         self.term_stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE,
@@ -1049,7 +1049,8 @@ class Agents(Adw.ApplicationWindow):
             self.alert("Could not open a terminal", e.message)
 
     def toast(self, title, undo=None):
-        t = Adw.Toast(title=title, timeout=5)
+        # titles and errors come from agents and other machines: text, not markup
+        t = Adw.Toast(title=GLib.markup_escape_text(title), timeout=5)
         if undo:
             t.set_button_label("Undo")
             t.connect("button-clicked", lambda *_: undo())
@@ -1880,7 +1881,8 @@ class Rail:
                 sub.append(f"answering “{short[r['re']]}”")
             elif r.get("re"):
                 sub.append("answering an earlier message")
-            row = Adw.ActionRow(title=head, subtitle=" · ".join(x for x in sub if x), css_classes=["message"])
+            row = Adw.ActionRow(title=GLib.markup_escape_text(head),
+                                subtitle=GLib.markup_escape_text(" · ".join(x for x in sub if x)), css_classes=["message"])
             if not inbound:
                 row.add_css_class("outbound")
             if inbound and not r.get("read"):
@@ -2013,7 +2015,7 @@ class Rail:
         self.snap_note.set_visible(False)
         for snap in snaps:
             when_ = GLib.DateTime.new_from_unix_local(int(snap.get("time", 0))).format("%b %-d, %H:%M")
-            row = Adw.ActionRow(title=snapshot_title(snap), subtitle=when_)
+            row = Adw.ActionRow(title=GLib.markup_escape_text(snapshot_title(snap)), subtitle=when_)
             b = Gtk.Button(label="Go Back…", valign=Gtk.Align.CENTER)
             b.connect("clicked", lambda _b, n=snap.get("n"): self.win.undo(n))
             row.add_suffix(b)
@@ -2321,7 +2323,7 @@ class Preferences(Adw.PreferencesDialog):
 
         def done(ok, out):
             if ok:
-                self.add_toast(Adw.Toast(title=f"Added {m['name']}: its sessions show in the list"))
+                self.add_toast(Adw.Toast(title=GLib.markup_escape_text(f"Added {m['name']}: its sessions show in the list")))
                 self.win.refresh()
                 run([PULSAR, "machine", "list", "--json"], self.win._machines)
                 run([PULSAR, "--json", "machine", "discover"], self._discovered)
@@ -2360,7 +2362,7 @@ class Preferences(Adw.PreferencesDialog):
         if self._busy:
             return
         run([PULSAR, *args], lambda ok, out: ok or self.add_toast(
-            Adw.Toast(title=(out.strip().splitlines() or ["Could not save that"])[-1][:120])))
+            Adw.Toast(title=GLib.markup_escape_text((out.strip().splitlines() or ["Could not save that"])[-1][:120]))))
 
     def _set_agent(self):
         i = self.agent.get_selected()
@@ -2399,9 +2401,9 @@ class ArchivedDialog(Adw.Dialog):
         now = win._now()
         arch = sorted((s for s in win.sessions.values() if s.get("archived")), key=lambda s: -(s["archived"] or 0))
         for s in arch:
-            row = Adw.ActionRow(title=session_title(s),
-                                subtitle=" · ".join(x for x in (home(session_project(s)),
-                                                                deleted_in(s["archived"], now, win.tidy_days())) if x))
+            row = Adw.ActionRow(title=GLib.markup_escape_text(session_title(s)),
+                                subtitle=GLib.markup_escape_text(" · ".join(x for x in (
+                                    home(session_project(s)), deleted_in(s["archived"], now, win.tidy_days())) if x)))
             back = Gtk.Button(label="Restore", valign=Gtk.Align.CENTER)
             back.connect("clicked", lambda _b, n=s["name"], r=row: self._restore(n, r))
             gone = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Delete Now", valign=Gtk.Align.CENTER,

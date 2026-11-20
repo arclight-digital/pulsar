@@ -81,7 +81,8 @@ CLI, and opencode moves to version 2.
   agent finishes a turn and you aren't looking at the session (or at once
   with `--now`), never into a permission question. Messages are logged in
   `~/.local/state/pulsar/agents/messages.log`, and one session can send
-  another at most 10 in 10 minutes.
+  another at most 10 in 10 minutes. Claude Code, Codex CLI and Antigravity
+  CLI sessions take messages; sandboxed sessions don't yet.
 - Preferences (Ctrl+, or the main menu) sets the agent, sandbox and pushes
   new sessions start with, whether sessions can message each other and how
   many, and how long archived sessions are kept (a day, a week, 30 days or
