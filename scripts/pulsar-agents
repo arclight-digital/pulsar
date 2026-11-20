@@ -92,6 +92,13 @@ CSS = """
 .pulsar-agents row.session:hover .archive { opacity: .6; }
 .pulsar-agents .footer-button { font-size: .85em; color: alpha(currentColor, .55); }
 .pulsar-agents vte-terminal { padding: 8px 14px; }
+.pulsar-agents tabbar.shell-tabs tabbox { min-height: 0; padding-top: 3px; padding-bottom: 3px; }
+.pulsar-agents tabbar.shell-tabs tabbox > separator { margin-top: 2px; margin-bottom: 2px; }
+.pulsar-agents tabbar.shell-tabs tab { min-height: 20px; padding: 1px 4px; border-radius: 7px; }
+.pulsar-agents tabbar.shell-tabs tab button.image-button { min-width: 18px; min-height: 18px; }
+.pulsar-agents tabbar.shell-tabs tab indicator { transform: translateY(2px); }
+.pulsar-agents tabbar.shell-tabs .end-action { padding: 3px 4px; }
+.pulsar-agents tabbar.shell-tabs .end-action button { min-width: 22px; min-height: 22px; padding: 0; }
 .pulsar-agents .shell-dot { min-width: 7px; min-height: 7px; margin: 4px; border-radius: 99px;
     background-color: @accent_color; }
 .pulsar-agents .stage headerbar { background: none; box-shadow: none; }
