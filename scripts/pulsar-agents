@@ -92,6 +92,8 @@ CSS = """
 .pulsar-agents row.session:hover .archive { opacity: .6; }
 .pulsar-agents .footer-button { font-size: .85em; color: alpha(currentColor, .55); }
 .pulsar-agents vte-terminal { padding: 8px 14px; }
+.pulsar-agents .shell-dot { min-width: 7px; min-height: 7px; margin: 4px; border-radius: 99px;
+    background-color: @accent_color; }
 .pulsar-agents .stage headerbar { background: none; box-shadow: none; }
 .pulsar-agents .chip { border-radius: 999px; padding: 4px 12px; min-height: 0; font-weight: 500; }
 .pulsar-agents button.chip:checked { background-color: alpha(@accent_color, .2); color: @accent_color;
@@ -192,6 +194,8 @@ def stage_css(fg, bg):
     inset 0 0 0 1px alpha(@accent_color, .55), 0 0 14px alpha(@accent_color, .18); }}
 .pulsar-agents .stage banner > revealer > widget {{ background-color: mix({bg}, @accent_color, .14); }}
 .pulsar-agents .stage paned.shell-split > separator {{ background-color: alpha({fg}, .14); min-height: 1px; }}
+.pulsar-agents .stage tabbar.shell-tabs, .pulsar-agents .stage tabbar.shell-tabs > .box {{
+    background-color: mix({bg}, {fg}, .035); box-shadow: none; }}
 """
 
 
@@ -235,6 +239,21 @@ def dconf_string(key):
     except GLib.Error:
         return None
     return v.get_string() if v.get_type_string() == "s" else None
+
+
+def shell_tab_title(title, cwd):
+    """A shell's tab: its folder's name. The shell's own title when it says
+    where it is (bash's user@host:~/path) gives the folder; a title a
+    program sets (an editor's, say) is kept as it is."""
+    home = os.path.expanduser("~")
+
+    def folder(path):
+        path = os.path.expanduser(path.strip()).rstrip("/")
+        return "~" if path in ("", home, "~") else os.path.basename(path)
+    m = re.match(r"^[^@\s]+@[^:\s]+:(.+)$", title or "")
+    if m:
+        return folder(m.group(1))
+    return title or folder(cwd or "")
 
 
 def typing_key(keyval, state):
@@ -420,7 +439,12 @@ class Agents(Adw.ApplicationWindow):
                                           menu_model=self._menu())
         head.pack_end(self.menu_button)
         head.pack_end(self.rail_toggle)
-        head.pack_end(self.shell_toggle)
+        # a dot on it: a hidden shell finished a command or rang its bell
+        self.shell_dot = Gtk.Box(css_classes=["shell-dot"], halign=Gtk.Align.END, valign=Gtk.Align.START,
+                                 can_target=False, visible=False)
+        shell_over = Gtk.Overlay(child=self.shell_toggle)
+        shell_over.add_overlay(self.shell_dot)
+        head.pack_end(shell_over)
         self.banner = Adw.Banner(use_markup=False)
         self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
         # sized by the page showing: the home's minimum must not widen a session
@@ -441,9 +465,15 @@ class Agents(Adw.ApplicationWindow):
         self.term_stack.set_visible_child_name("none")
         # A shell of your own under the agent, in the session's folder (one
         # per session, kept while the app runs), as an editor's terminal panel
+        # (a tab view of shells per session: tabs, as an editor's panel has)
         self.shells = {}
         self.shell_stack = Gtk.Stack(vexpand=True, hhomogeneous=False, vhomogeneous=False)
+        new_tab = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="New Shell (Ctrl+Shift+`)",
+                             css_classes=["flat"])
+        new_tab.connect("clicked", lambda *_: self.new_shell())
+        self.shell_tabs = Adw.TabBar(autohide=False, end_action_widget=new_tab, css_classes=["shell-tabs"])
         self.shell_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["shell-panel"], visible=False)
+        self.shell_box.append(self.shell_tabs)
         self.shell_box.append(self.shell_stack)
         self.paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, start_child=self.term_stack,
                                end_child=self.shell_box, resize_start_child=True, shrink_start_child=False,
@@ -493,6 +523,7 @@ class Agents(Adw.ApplicationWindow):
                          ("rail", lambda: self.rail_toggle.set_active(not self.rail_toggle.get_active())),
                          ("shell", lambda: self.shell_toggle.get_sensitive()
                           and self.shell_toggle.set_active(not self.shell_toggle.get_active())),
+                         ("shell-new", lambda: self.new_shell()),
                          ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1)),
                          ("fold", lambda: self.set_compact(not self.compact)),
                          ("preferences", lambda: Preferences(self).present(self)),
@@ -507,7 +538,7 @@ class Agents(Adw.ApplicationWindow):
             self.add_action(a)
         for action, keys in (("win.help", ["F1"]), ("win.preferences", ["<Ctrl>comma"]), ("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
                              ("win.rail", ["<Ctrl><Shift>d"]), ("win.fold", ["<Ctrl><Shift>b"]),
-                             ("win.shell", ["<Ctrl>grave"]),
+                             ("win.shell", ["<Ctrl>grave"]), ("win.shell-new", ["<Ctrl><Shift>asciitilde"]),
                              ("win.next", ["<Ctrl>Page_Down"]), ("win.previous", ["<Ctrl>Page_Up"])):
             app.set_accels_for_action(action, keys)
         for i in range(1, 10):
@@ -942,6 +973,10 @@ class Agents(Adw.ApplicationWindow):
         if mods == Gdk.ModifierType.CONTROL_MASK and keyval == Gdk.KEY_grave:
             self.activate_action("win.shell", None)
             return True
+        if mods == Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK \
+                and keyval in (Gdk.KEY_grave, Gdk.KEY_asciitilde):
+            self.activate_action("win.shell-new", None)
+            return True
         if mods != Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK:
             # scrolled back into tmux's history: typing leaves it first, as a
             # terminal's scroll-on-keystroke does (in copy mode tmux would
@@ -1117,7 +1152,7 @@ class Agents(Adw.ApplicationWindow):
             t.set_color_cursor(rgba(cursor))
 
     def _recolor(self):
-        for t in [*self.terms.values(), *self.shells.values()]:
+        for t in [*self.terms.values(), *self._all_shells()]:
             self._color(t)
         self._stage()
 
@@ -1163,6 +1198,11 @@ class Agents(Adw.ApplicationWindow):
         self._shell_follow(s)
 
     # ---- the shell panel ----
+    def _all_shells(self):
+        for view in self.shells.values():
+            for k in range(view.get_n_pages()):
+                yield view.get_nth_page(k).get_child()
+
     def _show_shell(self, on):
         s = self.sessions.get(self.current)
         if on and not s:
@@ -1170,31 +1210,63 @@ class Agents(Adw.ApplicationWindow):
             return
         self._shell_follow(s)
         if on:
-            t = self.shells.get(self.current)
-            if t is not None:
-                t.grab_focus()
+            view = self.shells.get(self.current)
+            page = view and view.get_selected_page()
+            if page is not None:
+                page.get_child().grab_focus()
         else:
             t = self.terms.get(self.current)
             if t is not None:
                 t.grab_focus()
 
     def _shell_follow(self, s):
-        """The panel shows the current session's shell (started the first
-        time it's asked for), or nothing without a session."""
+        """The panel shows the current session's shells (the first started
+        the first time it's asked for), or nothing without a session."""
         on = self.shell_toggle.get_active() and bool(s)
         self.shell_box.set_visible(on)
         if not on:
+            self._shell_dot()
             return
-        t = self.shells.get(s["name"])
-        if t is None or t.dead:
-            t = self._shell_start(s)
-            if t is None:
-                return
-        self.shell_stack.set_visible_child(t)
+        view = self._shell_view(s)
+        if view.get_n_pages() == 0:
+            self._shell_start(s)
+        self.shell_stack.set_visible_child(view)
+        self.shell_tabs.set_view(view)
+        page = view.get_selected_page()
+        if page is not None:
+            page.set_needs_attention(False)
+        self._shell_dot()
         # its height, as you last dragged it; until it's placed, a position
         # GTK picks on showing it isn't one you chose
         self.shell_placed = False
         GLib.idle_add(self._shell_place)
+
+    def _shell_view(self, s):
+        view = self.shells.get(s["name"])
+        if view is None:
+            view = Adw.TabView(vexpand=True)
+            view.name = s["name"]
+            view.connect("close-page", self._shell_closing)
+            view.connect("notify::selected-page", lambda v, _p: self._shell_selected(v))
+            view.connect("page-detached", lambda v, _p, _i: self._shell_emptied(v))
+            self.shells[s["name"]] = view
+            self.shell_stack.add_child(view)
+        return view
+
+    def new_shell(self):
+        """Another shell for the session, in its own tab; the panel opens."""
+        s = self.sessions.get(self.current)
+        if not s or not self.shell_toggle.get_sensitive():
+            return
+        if not self.shell_toggle.get_active():
+            # opening the panel starts one when there's none: that's the new shell
+            before = self._shell_view(s).get_n_pages()
+            self.shell_toggle.set_active(True)
+            if self._shell_view(s).get_n_pages() > before:
+                return
+        t = self._shell_start(s)
+        if t is not None:
+            t.grab_focus()
 
     def _shell_place(self):
         h = self.paned.get_height()
@@ -1211,10 +1283,9 @@ class Agents(Adw.ApplicationWindow):
             self.state["shell_height"] = max(80, h - self.paned.get_position())
 
     def _shell_start(self, s):
-        name = s["name"]
-        old = self.shells.pop(name, None)
-        if old is not None:
-            self.shell_stack.remove(old)
+        """A new shell in the session's tab view, selected: a login shell in
+        the session's folder, or on its machine, there."""
+        view = self._shell_view(s)
         if s.get("machine"):
             # on that machine, in the session's folder there
             argv = [PULSAR, "machine", "shell", s["machine"], *(["--dir", s["dir"]] if s.get("dir") else [])]
@@ -1225,35 +1296,103 @@ class Agents(Adw.ApplicationWindow):
         t = Vte.Terminal(hexpand=True, vexpand=True, scroll_on_output=False, scroll_on_keystroke=True,
                          audible_bell=False)
         t.dead = False
-        t.name = name
+        t.name = s["name"]
+        t.cwd = s.get("dir") or ""
+        t.integrated = False
         t.add_css_class("shell")
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._term_key, t)
         t.add_controller(keys)
         t.connect("child-exited", lambda term, _st: self._shell_exited(term))
+        t.connect("termprop-changed", self._shell_prop)
+        t.connect("bell", lambda term: self._shell_attention(term))
+        t.connect("contents-changed", lambda term: term.integrated or self._shell_attention(term))
         self._color(t)
-        self.shells[name] = t
-        self.shell_stack.add_child(t)
+        page = view.append(t)
+        t.page = page
+        page.set_title(os.path.basename(t.cwd.rstrip("/")) or "~")
+        view.set_selected_page(page)
         # not inside the agents' tmux, and not taken for an agent's pane
         env = ["TMUX=", "PULSAR_TTY=", "PULSAR_SESSION_RECORD=", "PULSAR_PANE_ARGV="]
         t.spawn_async(Vte.PtyFlags.DEFAULT, cwd, argv, env, GLib.SpawnFlags.SEARCH_PATH,
                       None, None, -1, None, None, None)
         return t
 
-    def _shell_exited(self, term):
-        """exit in the shell closes the panel; the next open starts a new one."""
-        term.dead = True
-        if self.shells.get(self.current) is term and self.shell_toggle.get_active():
-            self.shell_toggle.set_active(False)
-
-    def _shell_close(self, name):
-        t = self.shells.pop(name, None)
-        if t is None:
+    def _shell_prop(self, t, prop):
+        """The tab says where the shell is (or the title it sets); a command
+        that finishes while you can't see it marks the tab and the button."""
+        if prop == Vte.TERMPROP_CURRENT_DIRECTORY_URI:
+            uri = t.ref_termprop_uri(prop)
+            path = GLib.filename_from_uri(uri.to_string())[0] if uri else ""
+            if path:
+                t.cwd = path
+        elif prop in (Vte.TERMPROP_SHELL_PREEXEC, Vte.TERMPROP_SHELL_PRECMD):
+            # the shell says when commands start and end: only an end counts
+            t.integrated = True
             return
+        elif prop == Vte.TERMPROP_SHELL_POSTEXEC:
+            t.integrated = True
+            self._shell_attention(t)
+            return
+        title = t.get_termprop_string(Vte.TERMPROP_XTERM_TITLE)
+        title = (title[0] if isinstance(title, tuple) else title) or ""
+        t.page.set_title(shell_tab_title(title, t.cwd))
+        t.page.set_tooltip(title or t.cwd.replace(os.path.expanduser("~"), "~", 1))
+
+    def _shell_attention(self, t):
+        """A shell you can't see did something worth a look: its tab, and the
+        header's button while the panel is hidden."""
+        view = self.shells.get(t.name)
+        shown = self.shell_box.get_visible() and t.name == self.current and view is not None \
+            and view.get_selected_page() is t.page
+        if shown or t.dead:
+            return
+        t.page.set_needs_attention(True)
+        self._shell_dot()
+
+    def _shell_dot(self):
+        view = self.shells.get(self.current)
+        hidden = view is not None and not self.shell_box.get_visible()
+        self.shell_dot.set_visible(hidden and any(view.get_nth_page(k).get_needs_attention()
+                                                  for k in range(view.get_n_pages())))
+
+    def _shell_selected(self, view):
+        page = view.get_selected_page()
+        if page is not None:
+            page.set_needs_attention(False)
+        self._shell_dot()
+
+    def _shell_closing(self, view, page):
+        """A tab closed: its shell ends with it."""
+        t = page.get_child()
+        t.dead = True
         pty = t.get_pty()
         if pty is not None:
             pty.close()
-        self.shell_stack.remove(t)
+        view.close_page_finish(page, True)
+        return True
+
+    def _shell_emptied(self, view):
+        """The last tab gone: the panel hides; the next open starts a shell."""
+        if view.get_n_pages() == 0 and view.name == self.current and self.shell_toggle.get_active():
+            self.shell_toggle.set_active(False)
+
+    def _shell_exited(self, term):
+        """exit in a shell closes its tab."""
+        term.dead = True
+        view = self.shells.get(term.name)
+        page = getattr(term, "page", None)
+        if view is not None and page is not None and view.get_page(term) is page:
+            view.close_page(page)
+
+    def _shell_close(self, name):
+        """Archiving a session ends its shells."""
+        view = self.shells.pop(name, None)
+        if view is None:
+            return
+        for k in reversed(range(view.get_n_pages())):
+            view.close_page(view.get_nth_page(k))
+        self.shell_stack.remove(view)
 
     def open_in_terminal(self):
         s = self.sessions.get(self.current)
@@ -2413,6 +2552,7 @@ class Help(Adw.Dialog):
         ("Archive the session", "<Ctrl><Shift>Delete"),
         ("Changes, History and Messages", "<Ctrl><Shift>d"),
         ("A shell in the session's folder", "<Ctrl>grave"),
+        ("Another shell, in a new tab", "<Ctrl><Shift>asciitilde"),
         ("Narrow or widen the list", "<Ctrl><Shift>b"),
         ("Copy and paste in the terminal", "<Ctrl><Shift>c <Ctrl><Shift>v"),
         ("Preferences", "<Ctrl>comma"),

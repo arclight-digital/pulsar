@@ -661,78 +661,108 @@ print(tm("display", "-p", "-t", "=sh:", "#{pane_in_mode} #{scroll_position}"))'
     [ "$got_bytes" = '^[[<64;12;4M^[[<64;12;4M' ] || fail "the agent got '$got_bytes'"
 }
 
-@test "the shell panel: a login shell in the session's folder, or on its machine through pulsar machine shell; outside the agents' tmux" {
-    need_gtk
-    run app '
+# a stand-in window with the app's own shell panel methods
+shell_win='
 import os
 m.Gtk.init()
 spawned = []
 m.Vte.Terminal.spawn_async = lambda self, flags, cwd, argv, env, *a: spawned.append((cwd, argv, env))
-class W:
-    shells = {}
-    shell_stack = m.Gtk.Stack()
-    def _term_key(self, *a): return False
-    def _color(self, t): pass
-    def _shell_exited(self, t): pass
+names = [n for n in vars(m.Agents) if n.startswith("_shell") or n in ("new_shell", "_all_shells", "_term_key")]
+W = type("W", (), {n: vars(m.Agents)[n] for n in names})
 w = W()
+w.shells, w.current = {}, "a"
+w.shell_stack, w.shell_box, w.shell_dot = m.Gtk.Stack(), m.Gtk.Box(visible=False), m.Gtk.Box(visible=False)
+w.shell_tabs = m.Adw.TabBar()
+w.shell_toggle = m.Gtk.ToggleButton()
+w._color = lambda t: None
 d = os.environ["BATS_TEST_TMPDIR"]
 os.environ["SHELL"] = "/bin/zsh"
-m.Agents._shell_start(w, {"name": "a", "dir": d})
-m.Agents._shell_start(w, {"name": "b@talos", "machine": "talos", "dir": "/home/n/proj"})
-m.Agents._shell_start(w, {"name": "c", "dir": "/no/such/dir"})
+'
+
+@test "the shell panel: a login shell in the session's folder, or on its machine through pulsar machine shell, in tabs; outside the agents' tmux" {
+    need_gtk
+    run app "$shell_win"'
+a = w._shell_start({"name": "a", "dir": d})
+w._shell_start({"name": "a", "dir": d})
+w._shell_start({"name": "b@talos", "machine": "talos", "dir": "/home/n/proj"})
+w._shell_start({"name": "c", "dir": "/no/such/dir"})
 for cwd, argv, env in spawned:
     print(cwd == d, cwd == os.path.expanduser("~"), argv[1:] if argv[0] == m.PULSAR else argv, "TMUX=" in env)
-print(sorted(w.shells))'
+print({k: v.get_n_pages() for k, v in sorted(w.shells.items())}, a.page.get_title() == os.path.basename(d))'
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "True False ['/bin/zsh', '-l'] True" ] || fail "$output"
-    [ "${lines[1]}" = "False True ['machine', 'shell', 'talos', '--dir', '/home/n/proj'] True" ] || fail "$output"
-    [ "${lines[2]}" = "False True ['/bin/zsh', '-l'] True" ] || fail "$output"
-    [ "${lines[3]}" = "['a', 'b@talos', 'c']" ] || fail "$output"
+    [ "${lines[1]}" = "True False ['/bin/zsh', '-l'] True" ] || fail "$output"
+    [ "${lines[2]}" = "False True ['machine', 'shell', 'talos', '--dir', '/home/n/proj'] True" ] || fail "$output"
+    [ "${lines[3]}" = "False True ['/bin/zsh', '-l'] True" ] || fail "$output"
+    [ "${lines[4]}" = "{'a': 2, 'b@talos': 1, 'c': 1} True" ] || fail "$output"
 }
 
-@test "the shell panel: Ctrl+\` from a terminal opens it; exit in the shell closes the panel; archiving a session ends its shell" {
+@test "the shell panel: a hidden shell that finishes a command or rings marks its tab and the button; looking clears it" {
+    need_gtk
+    run app "$shell_win"'
+one = w._shell_start({"name": "a", "dir": d})
+two = w._shell_start({"name": "a", "dir": d})
+# panel hidden: a command finished in the first
+w._shell_attention(one)
+print(one.page.get_needs_attention(), w.shell_dot.get_visible())
+# the panel shown, on the second tab: the first still marked, no dot on the button
+w.shell_box.set_visible(True); w._shell_dot()
+print(one.page.get_needs_attention(), w.shell_dot.get_visible())
+# the tab you are looking at is never marked
+w._shell_attention(two)
+print(two.page.get_needs_attention())
+# selecting the first clears it
+w.shells["a"].set_selected_page(one.page)
+print(one.page.get_needs_attention())'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "True True" ] || fail "$output"
+    [ "${lines[1]}" = "True False" ] || fail "$output"
+    [ "${lines[2]}" = "False" ] || fail "$output"
+    [ "${lines[3]}" = "False" ] || fail "$output"
+}
+
+@test "the shell panel: exit closes its tab; the last one gone hides the panel; archiving ends a session's shells; Ctrl+\` and Ctrl+Shift+\`" {
+    need_gtk
+    run app "$shell_win"'
+one = w._shell_start({"name": "a", "dir": d})
+two = w._shell_start({"name": "a", "dir": d})
+w.shell_toggle.set_active(True)
+w._shell_exited(two)
+print(w.shells["a"].get_n_pages(), two.dead, w.shell_toggle.get_active())
+w._shell_exited(one)
+print(w.shells["a"].get_n_pages(), w.shell_toggle.get_active())
+w._shell_start({"name": "b", "dir": d})
+w._shell_close("b"); w._shell_close("nope")
+print(sorted(w.shells))
+acts = []
+w.activate_action = lambda name, p: acts.append(name)
+class T: scrolled = False
+for key, mods in ((m.Gdk.KEY_grave, m.Gdk.ModifierType.CONTROL_MASK),
+                  (m.Gdk.KEY_asciitilde, m.Gdk.ModifierType.CONTROL_MASK | m.Gdk.ModifierType.SHIFT_MASK)):
+    print(w._term_key(None, key, 0, mods, T()))
+print(acts)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "1 True True" ] || fail "$output"
+    [ "${lines[1]}" = "0 False" ] || fail "$output"
+    [ "${lines[2]}" = "['a']" ] || fail "$output"
+    [ "${lines[3]}" = "True" ] && [ "${lines[4]}" = "True" ] || fail "$output"
+    [ "${lines[5]}" = "['win.shell', 'win.shell-new']" ] || fail "$output"
+}
+
+@test "a shell's tab is named for its folder: from bash's user@host:path title, else its folder; a program's own title as it is" {
     need_gtk
     run app '
-m.Gtk.init()
-acts = []
-class T:
-    dead = False
-    scrolled = False
-class W:
-    def activate_action(self, name, param): acts.append(name)
-w = W()
-r = m.Agents._term_key(w, None, m.Gdk.KEY_grave, 0, m.Gdk.ModifierType.CONTROL_MASK, T())
-print(r, acts)
-# exit in the current session'"'"'s shell: the toggle goes off
-class Tog:
-    on = True
-    def get_active(self): return self.on
-    def set_active(self, v): self.on = v
-t = T()
-class W2:
-    current = "a"
-    shells = {"a": t}
-    shell_toggle = Tog()
-w2 = W2()
-m.Agents._shell_exited(w2, t)
-print(t.dead, w2.shell_toggle.on)
-# archive: the shell goes from the panel
-class Pty:
-    closed = False
-    def close(self): Pty.closed = True
-class T3:
-    def get_pty(self): return Pty()
-class Stack:
-    removed = []
-    def remove(self, x): self.removed.append(x)
-class W3:
-    shells = {"a": T3()}
-    shell_stack = Stack()
-w3 = W3()
-m.Agents._shell_close(w3, "a"); m.Agents._shell_close(w3, "nope")
-print(w3.shells, len(w3.shell_stack.removed), Pty.closed)'
+import os
+h = os.path.expanduser("~")
+for title, cwd in (("proto@cherenkov:~/projects/arclight/pulsar", ""), ("proto@cherenkov:~", ""),
+                   ("me@box:/tmp/x y/", ""), ("", h + "/code/site"), ("", h), ("", ""), ("vim notes.md", h + "/a")):
+    print(repr(m.shell_tab_title(title, cwd)))'
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "True ['win.shell']" ] || fail "$output"
-    [ "${lines[1]}" = "True False" ] || fail "$output"
-    [ "${lines[2]}" = "{} 1 True" ] || fail "$output"
+    [ "$output" = "'pulsar'
+'~'
+'x y'
+'site'
+'~'
+'~'
+'vim notes.md'" ] || fail "$output"
 }

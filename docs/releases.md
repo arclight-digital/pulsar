@@ -47,10 +47,13 @@ CLI, and opencode moves to version 2.
   turn.
 - Ctrl+\` (or the terminal button in the header) opens a shell under the
   agent, in the session's folder (its worktree, when it has one), with a
-  divider to drag. Each session keeps its own shell while the app is open,
-  and `exit` closes the panel. A session on another machine gets its shell
-  on that machine (`pulsar machine shell`). A sandboxed session's shell runs
-  on your machine, outside the sandbox.
+  divider to drag. Ctrl+Shift+\` or + opens another in a new tab; each tab
+  is named for the folder its shell is in. Hiding the panel leaves the
+  shells running, and when one finishes a command or rings its bell while
+  you can't see it, its tab and the terminal button get a dot. `exit`
+  closes a tab. A session on another machine gets its shells on that
+  machine (`pulsar machine shell`). A sandboxed session's shells run on
+  your machine, outside the sandbox.
 - Each session in the list has a bar for how full its context is. A
   status bar under the open session shows the agent and model, what it is
   doing, the context used against the window, Codex CLI's 5-hour and
