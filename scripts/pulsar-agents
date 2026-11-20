@@ -191,6 +191,7 @@ def stage_css(fg, bg):
 .pulsar-agents .stage .composer-box:focus-within {{ box-shadow: 0 8px 22px alpha(black, .22),
     inset 0 0 0 1px alpha(@accent_color, .55), 0 0 14px alpha(@accent_color, .18); }}
 .pulsar-agents .stage banner > revealer > widget {{ background-color: mix({bg}, @accent_color, .14); }}
+.pulsar-agents .stage paned.shell-split > separator {{ background-color: alpha({fg}, .14); min-height: 1px; }}
 """
 
 
@@ -412,10 +413,14 @@ class Agents(Adw.ApplicationWindow):
         self.head_line = Gtk.Box(css_classes=["head-line"])
         self.rail_toggle = Gtk.ToggleButton(icon_name="sidebar-show-right-symbolic",
                                             tooltip_text="Changes, History and Messages (Ctrl+Shift+D)")
+        self.shell_toggle = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic",
+                                             tooltip_text="Shell in the Session's Folder (Ctrl+`)")
+        self.shell_toggle.connect("toggled", lambda b: self._show_shell(b.get_active()))
         self.menu_button = Gtk.MenuButton(icon_name="view-more-symbolic", tooltip_text="Session",
                                           menu_model=self._menu())
         head.pack_end(self.menu_button)
         head.pack_end(self.rail_toggle)
+        head.pack_end(self.shell_toggle)
         self.banner = Adw.Banner(use_markup=False)
         self.banner.connect("button-clicked", lambda *_: self._banner_clicked())
         # sized by the page showing: the home's minimum must not widen a session
@@ -434,8 +439,19 @@ class Agents(Adw.ApplicationWindow):
         self.launcher = Launcher(self)
         self.term_stack.add_named(self.launcher.widget, "none")
         self.term_stack.set_visible_child_name("none")
+        # A shell of your own under the agent, in the session's folder (one
+        # per session, kept while the app runs), as an editor's terminal panel
+        self.shells = {}
+        self.shell_stack = Gtk.Stack(vexpand=True, hhomogeneous=False, vhomogeneous=False)
+        self.shell_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["shell-panel"], visible=False)
+        self.shell_box.append(self.shell_stack)
+        self.paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, start_child=self.term_stack,
+                               end_child=self.shell_box, resize_start_child=True, shrink_start_child=False,
+                               resize_end_child=False, shrink_end_child=False, vexpand=True,
+                               css_classes=["shell-split"])
+        self.paned.connect("notify::position", lambda *_: self._shell_moved())
         center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        center.append(self.term_stack)
+        center.append(self.paned)
         self.status = StatusBar(self)
         center.append(self.status.outer)
         self.rail = Rail(self)
@@ -475,6 +491,8 @@ class Agents(Adw.ApplicationWindow):
                          ("terminal", lambda: self.open_in_terminal()), ("new", lambda: self.new_session()),
                          ("archive-current", lambda: self.current and self.archive(self.current)),
                          ("rail", lambda: self.rail_toggle.set_active(not self.rail_toggle.get_active())),
+                         ("shell", lambda: self.shell_toggle.get_sensitive()
+                          and self.shell_toggle.set_active(not self.shell_toggle.get_active())),
                          ("next", lambda: self.cycle(1)), ("previous", lambda: self.cycle(-1)),
                          ("fold", lambda: self.set_compact(not self.compact)),
                          ("preferences", lambda: Preferences(self).present(self)),
@@ -489,6 +507,7 @@ class Agents(Adw.ApplicationWindow):
             self.add_action(a)
         for action, keys in (("win.help", ["F1"]), ("win.preferences", ["<Ctrl>comma"]), ("win.new", ["<Ctrl><Shift>n"]), ("win.archive-current", ["<Ctrl><Shift>Delete"]),
                              ("win.rail", ["<Ctrl><Shift>d"]), ("win.fold", ["<Ctrl><Shift>b"]),
+                             ("win.shell", ["<Ctrl>grave"]),
                              ("win.next", ["<Ctrl>Page_Down"]), ("win.previous", ["<Ctrl>Page_Up"])):
             app.set_accels_for_action(action, keys)
         for i in range(1, 10):
@@ -918,6 +937,11 @@ class Agents(Adw.ApplicationWindow):
 
     def _term_key(self, _c, keyval, _code, state, t):
         mods = state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.ALT_MASK)
+        # the shell panel, from the agent or the shell: Ctrl+` (a terminal
+        # would send it on as NUL)
+        if mods == Gdk.ModifierType.CONTROL_MASK and keyval == Gdk.KEY_grave:
+            self.activate_action("win.shell", None)
+            return True
         if mods != Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK:
             # scrolled back into tmux's history: typing leaves it first, as a
             # terminal's scroll-on-keystroke does (in copy mode tmux would
@@ -1093,7 +1117,7 @@ class Agents(Adw.ApplicationWindow):
             t.set_color_cursor(rgba(cursor))
 
     def _recolor(self):
-        for t in self.terms.values():
+        for t in [*self.terms.values(), *self.shells.values()]:
             self._color(t)
         self._stage()
 
@@ -1135,6 +1159,101 @@ class Agents(Adw.ApplicationWindow):
             self.lookup_action(name).set_enabled(on)
         self.menu_button.set_sensitive(bool(s))
         self.rail_toggle.set_sensitive(bool(s))
+        self.shell_toggle.set_sensitive(bool(s) and bool(s.get("dir") or s.get("machine")))
+        self._shell_follow(s)
+
+    # ---- the shell panel ----
+    def _show_shell(self, on):
+        s = self.sessions.get(self.current)
+        if on and not s:
+            self.shell_toggle.set_active(False)
+            return
+        self._shell_follow(s)
+        if on:
+            t = self.shells.get(self.current)
+            if t is not None:
+                t.grab_focus()
+        else:
+            t = self.terms.get(self.current)
+            if t is not None:
+                t.grab_focus()
+
+    def _shell_follow(self, s):
+        """The panel shows the current session's shell (started the first
+        time it's asked for), or nothing without a session."""
+        on = self.shell_toggle.get_active() and bool(s)
+        self.shell_box.set_visible(on)
+        if not on:
+            return
+        t = self.shells.get(s["name"])
+        if t is None or t.dead:
+            t = self._shell_start(s)
+            if t is None:
+                return
+        self.shell_stack.set_visible_child(t)
+        # its height, as you last dragged it; until it's placed, a position
+        # GTK picks on showing it isn't one you chose
+        self.shell_placed = False
+        GLib.idle_add(self._shell_place)
+
+    def _shell_place(self):
+        h = self.paned.get_height()
+        if h > 0:
+            want = int(self.state.get("shell_height") or 220)
+            self.paned.set_position(max(120, h - min(want, h - 120)))
+        self.shell_placed = True
+        return False
+
+    def _shell_moved(self):
+        h = self.paned.get_height()
+        if getattr(self, "shell_placed", False) and self.shell_box.get_visible() and h > 0 \
+                and self.paned.get_position() > 0:
+            self.state["shell_height"] = max(80, h - self.paned.get_position())
+
+    def _shell_start(self, s):
+        name = s["name"]
+        old = self.shells.pop(name, None)
+        if old is not None:
+            self.shell_stack.remove(old)
+        if s.get("machine"):
+            # on that machine, in the session's folder there
+            argv = [PULSAR, "machine", "shell", s["machine"], *(["--dir", s["dir"]] if s.get("dir") else [])]
+            cwd = os.path.expanduser("~")
+        else:
+            argv = [os.environ.get("SHELL") or "/bin/bash", "-l"]
+            cwd = s.get("dir") if s.get("dir") and os.path.isdir(s["dir"]) else os.path.expanduser("~")
+        t = Vte.Terminal(hexpand=True, vexpand=True, scroll_on_output=False, scroll_on_keystroke=True,
+                         audible_bell=False)
+        t.dead = False
+        t.name = name
+        t.add_css_class("shell")
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._term_key, t)
+        t.add_controller(keys)
+        t.connect("child-exited", lambda term, _st: self._shell_exited(term))
+        self._color(t)
+        self.shells[name] = t
+        self.shell_stack.add_child(t)
+        # not inside the agents' tmux, and not taken for an agent's pane
+        env = ["TMUX=", "PULSAR_TTY=", "PULSAR_SESSION_RECORD=", "PULSAR_PANE_ARGV="]
+        t.spawn_async(Vte.PtyFlags.DEFAULT, cwd, argv, env, GLib.SpawnFlags.SEARCH_PATH,
+                      None, None, -1, None, None, None)
+        return t
+
+    def _shell_exited(self, term):
+        """exit in the shell closes the panel; the next open starts a new one."""
+        term.dead = True
+        if self.shells.get(self.current) is term and self.shell_toggle.get_active():
+            self.shell_toggle.set_active(False)
+
+    def _shell_close(self, name):
+        t = self.shells.pop(name, None)
+        if t is None:
+            return
+        pty = t.get_pty()
+        if pty is not None:
+            pty.close()
+        self.shell_stack.remove(t)
 
     def open_in_terminal(self):
         s = self.sessions.get(self.current)
@@ -1205,6 +1324,7 @@ class Agents(Adw.ApplicationWindow):
             t = self.terms.pop(name, None)
             if t is not None:
                 self.term_stack.remove(t)
+            self._shell_close(name)
             if name == self.current:
                 self._clear_current()
             self.unseen.discard(name)
@@ -2292,6 +2412,7 @@ class Help(Adw.Dialog):
         ("Session 1 to 9 in the list", "<Alt>1...<Alt>9"),
         ("Archive the session", "<Ctrl><Shift>Delete"),
         ("Changes, History and Messages", "<Ctrl><Shift>d"),
+        ("A shell in the session's folder", "<Ctrl>grave"),
         ("Narrow or widen the list", "<Ctrl><Shift>b"),
         ("Copy and paste in the terminal", "<Ctrl><Shift>c <Ctrl><Shift>v"),
         ("Preferences", "<Ctrl>comma"),

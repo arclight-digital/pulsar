@@ -45,6 +45,12 @@ CLI, and opencode moves to version 2.
   as it was. While the app shows a session, its window takes the smaller
   of the app's and a terminal's sizes, so the two stop resizing it in
   turn.
+- Ctrl+\` (or the terminal button in the header) opens a shell under the
+  agent, in the session's folder (its worktree, when it has one), with a
+  divider to drag. Each session keeps its own shell while the app is open,
+  and `exit` closes the panel. A session on another machine gets its shell
+  on that machine (`pulsar machine shell`). A sandboxed session's shell runs
+  on your machine, outside the sandbox.
 - Each session in the list has a bar for how full its context is. A
   status bar under the open session shows the agent and model, what it is
   doing, the context used against the window, Codex CLI's 5-hour and

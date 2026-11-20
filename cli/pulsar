@@ -8320,6 +8320,7 @@ cmd_machine() {
        pulsar machine job <name> [--name <job>] [--dir <folder>] [--notify <session>] -- <command>...
        pulsar machine fetch <name> <session> [--dir <folder>]
        pulsar machine exec <name> -- agent <args> | job wait|log|list|stop <args>
+       pulsar machine shell <name> [--dir <folder>]
        pulsar machine discover | announce [on|off]"
     local sub=${1:-list}; shift || true
     case "$sub" in
@@ -8593,6 +8594,22 @@ cmd_machine() {
                 tries=$((tries + 1)); [ "$tries" -lt 2880 ] || die "lost ${n} for a day; the job may still be running there (pulsar machine exec ${n} -- job list)"
                 sleep "${PULSAR_MACHINE_RETRY:-30}"
             done ;;
+        shell)
+            # a login shell there, in a folder: the Agents app's shell panel
+            # under a session on that machine
+            local n=${1:-} dir=""; shift || true
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --dir) [ $# -ge 2 ] || die "$usage"; dir=$2; shift ;;
+                    *) die "$usage" ;;
+                esac
+                shift
+            done
+            local t; t=$(machine_target "$n") || die "no machine called $n (pulsar machine list)"
+            local -a tt=()
+            [ ! -t 0 ] || [ ! -t 1 ] || tt=(-t)
+            # shellcheck disable=SC2016  # expanded there
+            mssh "${tt[@]}" "$t" sh -c '{ [ -n "$1" ] && cd "$1" 2>/dev/null; } || cd; exec "${SHELL:-/bin/bash}" -l' sh "$dir" ;;
         exec)
             local n=${1:-}; shift || true
             if [ "${1:-}" = -- ] && [ "${2:-}" = job ]; then
@@ -8676,7 +8693,7 @@ Agents
                            run | list | log | wait | stop | rm | attach
   pulsar machine           your other Pulsar machines, over SSH: add | remove |
                            list | check | sessions | run | job | fetch |
-                           discover | announce [on|off] | exec
+                           shell | discover | announce [on|off] | exec
 
 Options
   --json                   JSON output, anywhere on the line. A command

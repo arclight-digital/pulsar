@@ -660,3 +660,79 @@ print(tm("display", "-p", "-t", "=sh:", "#{pane_in_mode} #{scroll_position}"))'
     [ "${lines[-1]}" = "1 2" ] || fail "the shell didn't scroll: $output"
     [ "$got_bytes" = '^[[<64;12;4M^[[<64;12;4M' ] || fail "the agent got '$got_bytes'"
 }
+
+@test "the shell panel: a login shell in the session's folder, or on its machine through pulsar machine shell; outside the agents' tmux" {
+    need_gtk
+    run app '
+import os
+m.Gtk.init()
+spawned = []
+m.Vte.Terminal.spawn_async = lambda self, flags, cwd, argv, env, *a: spawned.append((cwd, argv, env))
+class W:
+    shells = {}
+    shell_stack = m.Gtk.Stack()
+    def _term_key(self, *a): return False
+    def _color(self, t): pass
+    def _shell_exited(self, t): pass
+w = W()
+d = os.environ["BATS_TEST_TMPDIR"]
+os.environ["SHELL"] = "/bin/zsh"
+m.Agents._shell_start(w, {"name": "a", "dir": d})
+m.Agents._shell_start(w, {"name": "b@talos", "machine": "talos", "dir": "/home/n/proj"})
+m.Agents._shell_start(w, {"name": "c", "dir": "/no/such/dir"})
+for cwd, argv, env in spawned:
+    print(cwd == d, cwd == os.path.expanduser("~"), argv[1:] if argv[0] == m.PULSAR else argv, "TMUX=" in env)
+print(sorted(w.shells))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "True False ['/bin/zsh', '-l'] True" ] || fail "$output"
+    [ "${lines[1]}" = "False True ['machine', 'shell', 'talos', '--dir', '/home/n/proj'] True" ] || fail "$output"
+    [ "${lines[2]}" = "False True ['/bin/zsh', '-l'] True" ] || fail "$output"
+    [ "${lines[3]}" = "['a', 'b@talos', 'c']" ] || fail "$output"
+}
+
+@test "the shell panel: Ctrl+\` from a terminal opens it; exit in the shell closes the panel; archiving a session ends its shell" {
+    need_gtk
+    run app '
+m.Gtk.init()
+acts = []
+class T:
+    dead = False
+    scrolled = False
+class W:
+    def activate_action(self, name, param): acts.append(name)
+w = W()
+r = m.Agents._term_key(w, None, m.Gdk.KEY_grave, 0, m.Gdk.ModifierType.CONTROL_MASK, T())
+print(r, acts)
+# exit in the current session'"'"'s shell: the toggle goes off
+class Tog:
+    on = True
+    def get_active(self): return self.on
+    def set_active(self, v): self.on = v
+t = T()
+class W2:
+    current = "a"
+    shells = {"a": t}
+    shell_toggle = Tog()
+w2 = W2()
+m.Agents._shell_exited(w2, t)
+print(t.dead, w2.shell_toggle.on)
+# archive: the shell goes from the panel
+class Pty:
+    closed = False
+    def close(self): Pty.closed = True
+class T3:
+    def get_pty(self): return Pty()
+class Stack:
+    removed = []
+    def remove(self, x): self.removed.append(x)
+class W3:
+    shells = {"a": T3()}
+    shell_stack = Stack()
+w3 = W3()
+m.Agents._shell_close(w3, "a"); m.Agents._shell_close(w3, "nope")
+print(w3.shells, len(w3.shell_stack.removed), Pty.closed)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "True ['win.shell']" ] || fail "$output"
+    [ "${lines[1]}" = "True False" ] || fail "$output"
+    [ "${lines[2]}" = "{} 1 True" ] || fail "$output"
+}

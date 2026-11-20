@@ -7395,3 +7395,24 @@ PY
         [[ "$h" == *"${x}[41] run-shell -b "*"agent sizes"* ]] || fail "$x: $h"
     done
 }
+
+@test "machine shell: a login shell there, in the folder asked for (spaces and quotes too), else its home" {
+    machine_env
+    "$PULSAR" machine add box box >/dev/null
+    printf '#!/bin/sh\nprintf "shell in %%s with %%s\\n" "$PWD" "$*"\n' > "${BATS_TEST_TMPDIR}/fakeshell"
+    chmod +x "${BATS_TEST_TMPDIR}/fakeshell"
+    local d="${REMOTES}/box/it's a dir"
+    mkdir -p "$d"
+    run env SHELL="${BATS_TEST_TMPDIR}/fakeshell" "$PULSAR" machine shell box --dir "$d"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$output" = "shell in ${d} with -l" ] || fail "$output"
+    # no folder, or one that isn't there: its home
+    run env SHELL="${BATS_TEST_TMPDIR}/fakeshell" "$PULSAR" machine shell box --dir /no/such/dir
+    [ "$output" = "shell in ${REMOTES}/box with -l" ] || fail "$output"
+    run env SHELL="${BATS_TEST_TMPDIR}/fakeshell" "$PULSAR" machine shell box
+    [ "$output" = "shell in ${REMOTES}/box with -l" ] || fail "$output"
+    run "$PULSAR" machine shell nope
+    [ "$status" -ne 0 ] && [[ "$output" == *"no machine called nope"* ]] || fail "$output"
+    run "$PULSAR" machine shell box --bogus
+    [ "$status" -ne 0 ] || fail "$output"
+}
