@@ -77,10 +77,11 @@ CLI, and opencode moves to version 2.
 - Antigravity CLI and Codex CLI sessions now say when they finish a turn,
   as Claude Code's do: the session shows as waiting in the app until you
   send it something, and a notification comes when you aren't looking at
-  it. Pulsar adds a `pulsar`
-  Stop hook to agy's `~/.gemini/config/hooks.json`, and gives Codex a
-  `notify` program on its command line unless you have one of your own.
-  opencode doesn't yet.
+  it. Pulsar adds a `pulsar` entry to agy's `~/.gemini/config/hooks.json`
+  (a Stop hook for the end of a turn, and a PreInvocation hook that says
+  when the next one starts, so typing a draft or opening `/context`
+  leaves it waiting), and gives Codex a `notify` program on its command
+  line unless you have one of your own. opencode doesn't yet.
 - Each session started with `--tmux` gets a scratch folder,
   `$PULSAR_SCRATCH`, for VM disks, builds and downloads, mounted into the
   sandbox too. It's deleted with the session.

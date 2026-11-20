@@ -449,16 +449,28 @@ agy_turn_hook() {
     # agy's own "keep going", {"decision": "continue", "reason": ...},
     # taken by renaming it as Claude's is; then the bell, for Pulsar.
     cmd='p=$(cat); case "$p" in *"\"fullyIdle\":false"*|*"\"fullyIdle\": false"*) exit 0 ;; esac; [ -n "${PULSAR_TTY}${PULSAR_SANDBOX}" ] || exit 0; m="${PULSAR_SESSION_RECORD%.session}.mail"; [ -n "${PULSAR_SESSION_RECORD:-}" ] && [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null && head -n 1 "$m.taken"; '"${AGENT_TURN}${AGENT_BELL}"
+    # Before each model call (agy's PreInvocation; its hooks.json has no
+    # prompt-submit event): a turn is under way, so the session no longer
+    # waits for you. Pulsar can't tell that from agy's screen, which changes
+    # as much when you open /context or type a draft. Straight to the
+    # session's own option on the agents' server (the pane's $TMUX), with
+    # no bell: one per model call would ring a plain terminal over and over.
+    # Not in a sandbox, which has no tmux.
+    local start
+    # shellcheck disable=SC2016
+    start='cat > /dev/null; [ -n "${TMUX:-}" ] && [ -n "${PULSAR_SESSION_RECORD:-}" ] || exit 0; n=${PULSAR_SESSION_RECORD##*/}; tmux set-option -u -t "=${n%.session}:" @pulsar-alert 2>/dev/null; exit 0'
     mkdir -p "$(dirname "$f")"
     [ -s "$f" ] || printf '{}\n' > "$f"
     jq -e 'type == "object"' "$f" >/dev/null 2>&1 || { printf '%s is not JSON; left alone\n' "$f"; return 0; }
     # ours as this version writes it: nothing to do. An older one of ours
     # (it rings $PULSAR_TTY) is replaced; a "pulsar" entry the user wrote stays.
-    local have; have=$(jq -r '.pulsar.Stop[0].command // empty' "$f" 2>/dev/null) || have=""
-    [ "$have" != "$cmd" ] || return 0
+    local have had; have=$(jq -r '.pulsar.Stop[0].command // empty' "$f" 2>/dev/null) || have=""
+    had=$(jq -r '.pulsar.PreInvocation[0].command // empty' "$f" 2>/dev/null) || had=""
+    [ "$have" != "$cmd" ] || [ "$had" != "$start" ] || return 0
     if jq -e '.pulsar' "$f" >/dev/null 2>&1 && [[ "$have" != *PULSAR_TTY* ]]; then return 0; fi
     tmp=$(mktemp "${f}.XXXXXX")
-    jq --arg c "$cmd" '.pulsar = {Stop: [{type: "command", command: $c, timeout: 5}]}' "$f" > "$tmp" \
+    jq --arg c "$cmd" --arg s "$start" '.pulsar = {Stop: [{type: "command", command: $c, timeout: 5}],
+            PreInvocation: [{type: "command", command: $s, timeout: 5}]}' "$f" > "$tmp" \
         && chmod --reference="$f" "$tmp" && mv "$tmp" "$f"
     printf 'added the pulsar turn-end hook to %s\n' "$f"
 }

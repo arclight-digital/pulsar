@@ -150,10 +150,12 @@ agent_notify() {
     esac
     [ -z "$dir" ] || body+=$'\n'"In ${dir/#"$HOME"/\~}"
     atmux set-option -t "=${tname}:" @pulsar-alert "${event:-bell}" 2>/dev/null || true
-    # Codex and agy say nothing when a turn starts, so their "waiting" holds
-    # while the screen stays the one the turn ended on (alert_now): taken a
-    # second on, once the agent has drawn it, and without the session's lock.
-    if [ "$event" = Waiting ]; then
+    # Codex says nothing when a turn starts (nor agy in a sandbox, which has
+    # no tmux for its PreInvocation hook), so their "waiting" holds while the
+    # screen stays the one the turn ended on (alert_now): taken a second on,
+    # once the agent has drawn it, and without the session's lock. agy
+    # outside one clears it itself (agy_turn_hook): until then it waits.
+    if [ "$event" = Waiting ] && { [ "$agent" != agy ] || [ "$(session_get "$tname" sandbox || true)" = on ]; }; then
         ( exec {lockfd}>&-
           sleep 1
           [ "$(atmux show-options -v -t "=${tname}:" @pulsar-alert 2>/dev/null)" = Waiting ] || exit 0

@@ -437,6 +437,12 @@ agent_tmux() {
     # Only now that it runs: a start that failed leaves the record, and the
     # conversation it points to, as they were.
     session_put "$tname" "$name" "$dir" "$id" "$mode" "$repo" "$UNDO_SNAP_BASE"
+    # a new agy conversation: agy names it, and until its cache says so the
+    # cache still names the folder's last one, which isn't this session's
+    # (agent_session_json waits for the cache to move past it)
+    if [ "$name" = agy ] && [ -z "$id" ]; then
+        session_set "$tname" agy_before "$(agy_conversation "$mode" "$dir" || echo none)"
+    fi
     # A bell in any agent's session is the agent asking for you; the notice
     # goes away once you look. Set on every start: the CLI's path can move.
     # Quoted twice: for the shell run-shell starts, then for tmux, whose own
@@ -786,10 +792,17 @@ agent_session_json() {
     # the project it belongs to: a worktree's repository, else its checkout
     project=${repo:-${top:-$dir}}
     # agy names its conversation itself; while this session runs it is the
-    # last one in its folder, so that is the one to resume
+    # last one in its folder, so that is the one to resume. Not while the
+    # folder's cache still names the one it had before a fresh start: agy
+    # hasn't written its new one there yet.
     if [ "$agent" = agy ] && [ -z "$conv" ] && [ -n "$row" ] && [ -n "$dir" ] \
         && conv=$(agy_conversation "$(session_get "$n" sandbox || echo off)" "$dir"); then
-        session_set "$n" id "$conv"
+        if [ "$conv" = "$(session_get "$n" agy_before || true)" ]; then
+            conv=""
+        else
+            session_set "$n" id "$conv"
+            session_set "$n" agy_before ""
+        fi
     fi
     if [ -n "$row" ]; then last=${activity:-$created}
     elif [ -e "${AGENT_SESSIONS}/${n}.session" ]; then last=$(stat -c %Y "${AGENT_SESSIONS}/${n}.session"); fi

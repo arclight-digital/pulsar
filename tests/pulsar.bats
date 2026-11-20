@@ -4618,6 +4618,40 @@ agent_args() {
     done
 }
 
+@test "agent sessions: a fresh agy session doesn't take the folder's previous conversation for its own while agy's cache still names it" {
+    tmux_env
+    printf '#!/bin/sh\nexit 0\n' > "${STUB}/agy"; chmod +x "${STUB}/agy"
+    cd "$PROJ"
+    local cache="${HOME}/.gemini/antigravity-cli/cache" old=11111111-2222-3333-4444-555555555555 new=22222222-2222-3333-4444-555555555555
+    mkdir -p "$cache"
+    # the folder had a conversation before
+    jq -n --arg d "$(pwd -P)" --arg c "$old" '{($d): $c}' > "${cache}/last_conversations.json"
+    "$PULSAR" agent run agy --tmux fresh >/dev/null 2>&1
+    [ -z "$(agent_args fresh)" ] || fail "$(agent_args fresh)"
+    # agy hasn't written its new one yet: the old one isn't this session's
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "fresh") | .conversation // "none"' <<<"$output")" = none ] || fail "$output"
+    [ -z "$(rec_id fresh)" ] || fail "recorded $(rec_id fresh)"
+    # now it has: that one, kept
+    jq -n --arg d "$(pwd -P)" --arg c "$new" '{($d): $c}' > "${cache}/last_conversations.json"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "fresh") | .conversation' <<<"$output")" = "$new" ] || fail "$output"
+    [ "$(rec_id fresh)" = "$new" ]
+    if grep -q '^agy_before=' "${REC}/fresh.session"; then fail "$(cat "${REC}/fresh.session")"; fi
+    # --new on a session that had one: the same wait
+    rm "${TMUX_LIVE}/fresh"
+    "$PULSAR" agent run agy --tmux fresh --new >/dev/null 2>&1
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "fresh") | .conversation // "none"' <<<"$output")" = none ] || fail "after --new: $output"
+    # a folder agy never had a conversation in: the first one it names
+    rm "${TMUX_LIVE}/fresh"; rm "${cache}/last_conversations.json"
+    "$PULSAR" agent run agy --tmux fresh --new >/dev/null 2>&1
+    grep -qx 'agy_before=none' "${REC}/fresh.session" || fail "$(cat "${REC}/fresh.session")"
+    jq -n --arg d "$(pwd -P)" --arg c "$old" '{($d): $c}' > "${cache}/last_conversations.json"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "fresh") | .conversation' <<<"$output")" = "$old" ] || fail "$output"
+}
+
 @test "agent run --tmux --prompt: a new session starts on that message, in each agent's own way; a restart does not send it again" {
     tmux_env
     local a
@@ -6335,6 +6369,13 @@ SH
     [ "$(jq -r 'keys | join(",")' "$h")" = "mine,pulsar" ] || fail "$(cat "$h")"
     [ "$(stat -c %i "$h")" = "$inode" ] || fail "rewrote a current hooks.json"
     [ "$(jq -r '.pulsar.Stop | length' "$h")" = 1 ]
+    [ "$(jq -r '.pulsar | keys | join(",")' "$h")" = "PreInvocation,Stop" ] || fail "$(cat "$h")"
+    # one an earlier Pulsar wrote (its Stop only) gets the PreInvocation too
+    local upd; upd=$(mktemp); jq 'del(.pulsar.PreInvocation)' "$h" > "$upd" && mv "$upd" "$h"
+    rm "${TMUX_LIVE}/ag"
+    "$PULSAR" agent run agy --tmux ag >/dev/null 2>&1
+    [ "$(jq -r '.pulsar | keys | join(",")' "$h")" = "PreInvocation,Stop" ] || fail "not updated: $(cat "$h")"
+    [ "$(jq -r '.mine.Stop[0].command' "$h")" = x ] || fail "$(cat "$h")"
     # what it runs: rings when agy is fully idle and only in a Pulsar session
     local cmd bell="${BATS_TEST_TMPDIR}/tty"; cmd=$(jq -r '.pulsar.Stop[0].command' "$h")
     : > "$bell"; printf '{"fullyIdle":true}' | PULSAR_TTY="$bell" sh -c "$cmd"
@@ -6771,10 +6812,11 @@ stop_hook() {
 }
 
 
-# agy's Stop hook command, as Pulsar installs it in ~/.gemini/config/hooks.json
+# agy's Stop hook command (or another event's: agy_hook PreInvocation), as
+# Pulsar installs it in ~/.gemini/config/hooks.json
 agy_hook() {
     bash -c "have() { command -v \"\$1\" >/dev/null; }; source <(sed -n '/^AGENT_BELL=/p;/^agy_turn_hook() {/,/^}/p' '$PULSAR_TEXT'); agy_turn_hook" >/dev/null
-    jq -r '.pulsar.Stop[0].command' "${HOME}/.gemini/config/hooks.json"
+    jq -r --arg e "${1:-Stop}" '.pulsar[$e][0].command' "${HOME}/.gemini/config/hooks.json"
 }
 
 @test "inbox: agy's mail goes in through its Stop hook at a real turn end, as agy's own continue; not in its sandbox" {
@@ -7506,6 +7548,49 @@ PY
     msg_teardown
     [[ "$output" == *"queued"* || "$output" == *"next"* ]] || fail "$output"
     [[ "$screen" != *"a note"* ]] || fail "typed in mid-turn: $screen"
+}
+
+@test "agy: waiting lasts until its PreInvocation hook says a turn started; a draft or a panel doesn't end it; sandboxed, the screen does" {
+    msg_env
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    printf 'agent=agy\ndir=%s\nsandbox=off\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/g.session"
+    "${T[@]}" new-session -d -s g -x 100 -y 20 "printf '> '; cat"
+    sleep 0.3
+    : > "${PULSAR_AGENT_SESSIONS}/g.turn"
+    "$PULSAR" agent notify g
+    alert_becomes g Waiting || { msg_teardown; fail "never waiting: $(alert_of g)"; }
+    sleep 1.5
+    state() { "$PULSAR" agent sessions --json | jq -r --arg n "$1" '.[] | select(.name == $n) | .state'; }
+    local k; k=$("${T[@]}" show-options -qv -t =g: @pulsar-alert-screen)
+    [ -z "$k" ] || { msg_teardown; fail "took a screen: $k"; }
+    # you type a draft, or open a panel: still your turn
+    "${T[@]}" send-keys -t =g: -l '/context'
+    sleep 0.3
+    [ "$(state g)" = waiting ] || { msg_teardown; fail "a draft ended it: $(state g)"; }
+    # agy calls its model: the hook, as agy runs it in the pane, ends it
+    local cmd sock; cmd=$(agy_hook PreInvocation)
+    sock=$("${T[@]}" display -p '#{socket_path}')
+    # outside a Pulsar session (no record, or no tmux) it does nothing, quietly
+    local out; out=$(echo '{}' | env -u PULSAR_SESSION_RECORD TMUX="${sock},1,0" sh -c "$cmd" 2>&1)
+    [ -z "$out" ] && [ "$(state g)" = waiting ] || { msg_teardown; fail "outside a session: '$out' $(state g)"; }
+    out=$(echo '{}' | env -u TMUX PULSAR_SESSION_RECORD="${PULSAR_AGENT_SESSIONS}/g.session" sh -c "$cmd" 2>&1)
+    [ -z "$out" ] && [ "$(state g)" = waiting ] || { msg_teardown; fail "no tmux: '$out' $(state g)"; }
+    out=$(echo '{}' | TMUX="${sock},1,0" PULSAR_SESSION_RECORD="${PULSAR_AGENT_SESSIONS}/g.session" sh -c "$cmd" 2>&1)
+    [ -z "$out" ] || { msg_teardown; fail "said: $out"; }
+    [ "$(state g)" = running ] || { msg_teardown; fail "still waiting after the hook: $(state g)"; }
+    # sandboxed agy has no tmux for the hook: the screen tells, as for Codex
+    printf 'agent=agy\ndir=%s\nsandbox=on\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/s.session"
+    "${T[@]}" new-session -d -s s -x 100 -y 20 "printf '> '; cat"
+    sleep 0.3
+    "$PULSAR" agent notify s
+    alert_becomes s Waiting || { msg_teardown; fail "sandboxed never waiting: $(alert_of s)"; }
+    local i; k=""; for i in $(seq 30); do k=$("${T[@]}" show-options -qv -t =s: @pulsar-alert-screen) && [ -n "$k" ] && break; sleep 0.1; done
+    [ -n "$k" ] || { msg_teardown; fail "sandboxed: no screen taken"; }
+    "${T[@]}" send-keys -t =s: -l 'hello'
+    sleep 0.3
+    local sb; sb=$(state s)
+    msg_teardown
+    [ "$sb" = running ] || fail "sandboxed, typing didn't end it: $sb"
 }
 
 @test "agent hooks: Pulsar's own at an index of their own; your hooks stay; an older Pulsar's 'agent seen' ones go" {
