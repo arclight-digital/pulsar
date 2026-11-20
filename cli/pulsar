@@ -3701,6 +3701,26 @@ atmux_end() {
 # One word for tmux's command parser: single-quoted, and a ' inside as "'".
 tq() { local s=${1//\'/\'\"\'\"\'}; printf "'%s'" "$s"; }
 
+# The agents' server's hooks, set on every start (the CLI's path can move).
+agent_tmux_hooks() {
+    local cli=$1 hook seen h
+    # A bell in any agent's session is the agent asking for you; the notice
+    # goes away once you look. Quoted twice: for the shell run-shell starts,
+    # then for tmux, whose own parser reads this string; ## is a # its
+    # formats leave alone.
+    hook="$(sq "$cli") agent notify"
+    atmux set-hook -g alert-bell "run-shell -b $(tq "${hook//\#/\#\#} #{?session_grouped,#{session_group},#{session_name}}")"
+    # Looking at a session (attaching, switching to it, or its terminal
+    # gaining focus, as when the Agents app shows one already open) clears
+    # its "waiting". Through the CLI and by the group's name: a hook runs in
+    # the client's own session, which for the app is its view
+    # (<name>~app<pid>), and a plain set-option there missed the real one.
+    seen="$(sq "$cli") agent seen"
+    for h in client-session-changed client-attached client-focus-in; do
+        atmux set-hook -g "$h" "run-shell -b $(tq "${seen//\#/\#\#} #{?session_grouped,#{session_group},#{session_name}}")"
+    done
+}
+
 # session_get <session> <key>: agent, dir or id, from its record.
 session_get() {
     local f="${AGENT_SESSIONS}/$1.session" k v
@@ -4002,11 +4022,7 @@ agent_tmux() {
     # goes away once you look. Set on every start: the CLI's path can move.
     # Quoted twice: for the shell run-shell starts, then for tmux, whose own
     # parser reads this string; ## is a # its formats leave alone.
-    local hook
-    hook="$(sq "$cli") agent notify"
-    atmux set-hook -g alert-bell "run-shell -b $(tq "${hook//\#/\#\#} #{?session_grouped,#{session_group},#{session_name}}")"
-    atmux set-hook -g client-session-changed "set-option -u @pulsar-alert"
-    atmux set-hook -g client-attached "set-option -u @pulsar-alert"
+    agent_tmux_hooks "$cli"
     exec {lk}>&-
     agent_tmux_attach "$tname"
 }
@@ -5840,6 +5856,16 @@ cmd_agent() {
         whoami)
             need_user "agent whoami"
             agent_whoami "$@" ;;
+        hooks)
+            # the agents' server's hooks, as `agent run` sets them (tests, repair)
+            need_user "agent hooks"
+            { have tmux && atmux has-session 2>/dev/null; } || die "no agents' tmux server is running"
+            agent_tmux_hooks "$(realpath "$SELF")" ;;
+        seen)
+            # tmux's hooks: someone is looking at it, so it isn't waiting
+            local n=${1:-}
+            case "$n" in ''|-*|*[!A-Za-z0-9_-]*) die "usage: pulsar agent seen <session> (tmux runs this)" ;; esac
+            ! have tmux || atmux set-option -u -t "=${n}:" @pulsar-alert 2>/dev/null || true ;;
         messages)
             need_user "agent messages"
             agent_messages "$@" ;;

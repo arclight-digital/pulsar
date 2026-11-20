@@ -7114,3 +7114,80 @@ SH
     msg_teardown
     [ "$status" -ne 0 ] && [[ "$output" == *"messages are busy"* ]] || fail "$status $output"
 }
+
+# A real tmux client in a pseudo-terminal, as the app's terminal is: attaches
+# to $2 on server $1, then takes "in" / "out" (focus) and "quit" from fifo $3.
+pty_client() {
+    python3 - "$1" "$2" "$3" <<'PY' &
+import os, pty, select, sys, time
+sock, target, fifo = sys.argv[1:4]
+pid, fd = pty.fork()
+if pid == 0:
+    os.environ["TERM"] = "xterm-256color"
+    os.execvp("tmux", ["tmux", "-L", sock, "attach-session", "-t", "=" + target])
+ctl = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+buf = b""
+while True:
+    r, _, _ = select.select([fd, ctl], [], [], 0.2)
+    if fd in r:
+        try:
+            os.read(fd, 65536)
+        except OSError:
+            break
+    if ctl in r:
+        buf += os.read(ctl, 64)
+        while b"\n" in buf:
+            cmd, buf = buf.split(b"\n", 1)
+            if cmd == b"in": os.write(fd, b"\x1b[I")
+            elif cmd == b"out": os.write(fd, b"\x1b[O")
+            elif cmd == b"quit":
+                os.kill(pid, 9); sys.exit(0)
+PY
+}
+alert_of() { tmux -L "$PULSAR_AGENT_TMUX_SOCKET" show-options -v -t "=$1:" @pulsar-alert 2>/dev/null || true; }
+# until the session's "waiting" is $2 ("" for cleared), at most 5 s
+alert_becomes() { local i; for i in $(seq 50); do [ "$(alert_of "$1")" = "$2" ] && return 0; sleep 0.1; done; return 1; }
+
+@test "waiting clears when you look: opening the session in the app's view, or its terminal gaining focus; not while you look away" {
+    msg_env
+    msg_session a
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    tmux -L "$S" set-option -s focus-events on
+    "$PULSAR" agent hooks
+    # the app's view: a session of its own, grouped with the real one
+    tmux -L "$S" new-session -d -t a -s 'a~app1'
+    # the agent's turn ended while nobody looked
+    tmux -L "$S" set-option -t =a: @pulsar-alert Stop
+    local fifo="${BATS_TEST_TMPDIR}/ctl"; mkfifo "$fifo"
+    pty_client "$S" 'a~app1' "$fifo"
+    exec 7>"$fifo"
+    # opening it in the app clears it on the real session, not just the view
+    alert_becomes a "" || { echo quit >&7; msg_teardown; fail "still waiting after the app opened it: $(alert_of a)"; }
+    # the app's terminal loses focus (you looked at another session); the next turn ends
+    echo out >&7; sleep 0.3
+    tmux -L "$S" set-option -t =a: @pulsar-alert Stop
+    sleep 0.5
+    [ "$(alert_of a)" = Stop ] || { echo quit >&7; msg_teardown; fail "cleared with nobody looking"; }
+    # you come back to it: its terminal gains focus, which clears it
+    echo in >&7
+    alert_becomes a "" || { echo quit >&7; msg_teardown; fail "still waiting after its terminal got focus: $(alert_of a)"; }
+    # while you look at it, its turn's end doesn't mark it waiting at all
+    "$PULSAR" agent notify a
+    [ -z "$(alert_of a)" ] || { echo quit >&7; msg_teardown; fail "marked waiting while watched: $(alert_of a)"; }
+    echo quit >&7; exec 7>&-
+    msg_teardown
+}
+
+@test "agent seen: a session's waiting cleared by name, nothing else; names only" {
+    msg_env
+    msg_session a
+    msg_session b
+    "${T[@]}" set-option -t =a: @pulsar-alert Stop
+    "${T[@]}" set-option -t =b: @pulsar-alert Stop
+    "$PULSAR" agent seen a
+    local wa wb; wa=$(alert_of a); wb=$(alert_of b)
+    msg_teardown
+    [ -z "$wa" ] && [ "$wb" = Stop ] || fail "a='$wa' b='$wb'"
+    run "$PULSAR" agent seen '-t'; [ "$status" -ne 0 ]
+    run "$PULSAR" agent seen 'a;b'; [ "$status" -ne 0 ]
+}
