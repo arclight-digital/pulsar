@@ -77,12 +77,15 @@ CLI, and opencode moves to version 2.
 - Sessions can see each other. `pulsar agent read <name>` shows a
   session's screen, and `pulsar agent send <name> <text>` types a message
   into its prompt, labelled as from another session (`<name>@<machine>`
-  for a session on another of your machines). It goes in when that
-  agent finishes a turn and you aren't looking at the session (or at once
-  with `--now`), never into a permission question. Messages are logged in
+  for a session on another of your machines). It goes in only at the end
+  of that agent's turn, never into a permission question, and while you
+  watch the session only with `--now`. Messages are logged in
   `~/.local/state/pulsar/agents/messages.log`, and one session can send
   another at most 10 in 10 minutes. Claude Code, Codex CLI and Antigravity
   CLI sessions take messages; sandboxed sessions don't yet.
+- Help (F1, or the main menu) has the practices that keep agents out of
+  each other's way, each tied to the feature that does it, and the keyboard
+  shortcuts.
 - Preferences (Ctrl+, or the main menu) sets the agent, sandbox and pushes
   new sessions start with, whether sessions can message each other and how
   many, and how long archived sessions are kept (a day, a week, 30 days or
@@ -94,7 +97,7 @@ CLI, and opencode moves to version 2.
   session gets its mail through its own hooks, at the end of a turn or as
   it arrives while the session sits idle, so nothing is typed into it.
   Antigravity CLI gets it the same way at the end of a turn. Codex CLI, and
-  an idle or sandboxed Antigravity CLI, still get it typed into their prompt.
+  an idle Antigravity CLI, get it typed into their prompt.
 - `pulsar job run -- <command>` runs a long command in a tmux of its own,
   keeps its output (`pulsar job log`), and notifies you when it ends.
   `--notify <session>` also tells that agent session how it ended.

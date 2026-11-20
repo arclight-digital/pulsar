@@ -1523,10 +1523,16 @@ class StatusBar:
         self._fit_key = key
         if not self.has_branch:
             return GLib.SOURCE_CONTINUE
+        # the room inside the bar: its width less its own padding and the
+        # segments' margins (learned while the segments fit; 16 px at first)
+        box = self.widget.get_width()
+        if box and box <= w:
+            self._slack = w - box
+        room = w - getattr(self, "_slack", 16)
         nat = self.widget.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
         if not self.branch.get_visible():
             nat += self.branch.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
-        self.branch.set_visible(nat <= w)
+        self.branch.set_visible(nat <= room)
         return GLib.SOURCE_CONTINUE
 
     def _changes(self, ok, out, name):
