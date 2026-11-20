@@ -2258,6 +2258,23 @@ class Preferences(Adw.PreferencesDialog):
         talk.add(self.cap)
         page.add(talk)
 
+        # your other Pulsar machines: this one found by them (off unless turned
+        # on), and the ones announcing here, each a click from being added
+        mach = Adw.PreferencesGroup(title="Your Machines",
+                                    description="Sessions on your other Pulsar machines show here too, over SSH "
+                                                "with your own keys.")
+        self.announce = Adw.SwitchRow(title="Let Your Other Machines Find This One",
+                                      subtitle="Announces it on the local network, with your user name",
+                                      sensitive=False)
+        self.announce.connect("notify::active", lambda *_: self._set(["machine", "announce",
+                                                                      "on" if self.announce.get_active() else "off"]))
+        mach.add(self.announce)
+        self.found = Adw.ActionRow(title="Looking for Pulsar machines…", activatable=False)
+        mach.add(self.found)
+        self.machines_group = mach
+        self.found_rows = []
+        page.add(mach)
+
         keep = Adw.PreferencesGroup(title="Archive",
                                     description="An archived session is deleted with its snapshots and scratch folder. "
                                                 "Branches, and worktrees with uncommitted changes, stay.")
@@ -2270,6 +2287,61 @@ class Preferences(Adw.PreferencesDialog):
         self.add(page)
         self._cap_timer = 0
         run([PULSAR, "--json", "agent", "settings"], self._loaded)
+        run([PULSAR, "--json", "machine", "announce"], self._announced)
+        run([PULSAR, "--json", "machine", "discover"], self._discovered)
+
+    def _announced(self, ok, out):
+        d = parse(out) if ok else None
+        busy, self._busy = self._busy, True
+        self.announce.set_active(isinstance(d, dict) and d.get("announce") == "on")
+        self._busy = busy
+        self.announce.set_sensitive(True)
+
+    def _discovered(self, ok, out):
+        found = parse(out) if ok else None
+        for r in self.found_rows:
+            self.machines_group.remove(r)
+        self.found_rows = []
+        others = [m for m in (found or []) if isinstance(m, dict) and not m.get("self")]
+        self.found.set_visible(not others)
+        self.found.set_title("No other Pulsar machines are announcing on this network" if found is not None
+                             else "Could not look for Pulsar machines")
+        self.found.set_subtitle("Turn this on in their Preferences too" if found is not None else "")
+        for m in others:
+            row = Adw.ActionRow(title=GLib.markup_escape_text(m.get("name") or "?"),
+                                subtitle=GLib.markup_escape_text(" · ".join(x for x in (
+                                    m.get("target"), f"Pulsar {m['release']}" if m.get("release") else None,
+                                    None if m.get("ssh") else "SSH is off there") if x)))
+            row.add_prefix(Gtk.Image(icon_name="network-server-symbolic"))
+            if m.get("added"):
+                row.add_suffix(Gtk.Label(label="Added", css_classes=["dim-label"]))
+            else:
+                add = Gtk.Button(label="Add", valign=Gtk.Align.CENTER)
+                add.connect("clicked", lambda b, m=m: self._add_machine(b, m))
+                row.add_suffix(add)
+            self.machines_group.add(row)
+            self.found_rows.append(row)
+
+    def _add_machine(self, button, m):
+        button.set_sensitive(False)
+
+        def done(ok, out):
+            if ok:
+                self.add_toast(Adw.Toast(title=f"Added {m['name']}: its sessions show in the list"))
+                self.win.refresh()
+                run([PULSAR, "machine", "list", "--json"], self.win._machines)
+                run([PULSAR, "--json", "machine", "discover"], self._discovered)
+                return
+            button.set_sensitive(True)
+            # almost always: this machine's key isn't on that one yet
+            d = Adw.AlertDialog(heading=f"Could not reach {m['name']}",
+                                body=f"Put your SSH key there first, from a terminal (it asks for your password "
+                                     f"on {m['name']} once):\n\nssh-copy-id {m['target']}\n\nThen Add again.\n\n"
+                                     + (out.strip().splitlines() or [""])[-1][:300])
+            d.set_body_use_markup(False)
+            d.add_response("ok", "OK")
+            d.present(self)
+        run([PULSAR, "machine", "add", m["name"], m["target"]], done)
 
     def _loaded(self, ok, out):
         d = parse(out) if ok else None

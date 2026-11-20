@@ -1,0 +1,12 @@
+[Unit]
+Description=Let other Pulsar machines on this network find this one (pulsar machine announce)
+Documentation=man:avahi-publish(1)
+After=default.target
+
+[Service]
+ExecStart=/usr/bin/pulsar machine announce --run
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

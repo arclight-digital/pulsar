@@ -8061,7 +8061,8 @@ cmd_machine() {
        pulsar machine run <name> <agent> [--name <session>] [--dir <folder>] [--prompt <text>] [--sandbox]
        pulsar machine job <name> [--name <job>] [--dir <folder>] [--notify <session>] -- <command>...
        pulsar machine fetch <name> <session> [--dir <folder>]
-       pulsar machine exec <name> -- agent <args> | job wait|log|list|stop <args>"
+       pulsar machine exec <name> -- agent <args> | job wait|log|list|stop <args>
+       pulsar machine discover | announce [on|off]"
     local sub=${1:-list}; shift || true
     case "$sub" in
         -h|--help) printf '%s\n' "$usage"; return 0 ;;
@@ -8222,6 +8223,57 @@ cmd_machine() {
             local ahead; ahead=$(git -C "$main" rev-list --count "HEAD..refs/remotes/${n}/${sname}" 2>/dev/null) || ahead="?"
             printf 'fetched %s/%s: %s commit(s) your HEAD does not have\n' "$n" "$sname" "$ahead"
             printf 'see them: git log HEAD..%s/%s   the change: git diff HEAD...%s/%s\n' "$n" "$sname" "$n" "$sname" ;;
+        announce)
+            # Off unless you turn it on: a user service that publishes this
+            # machine on the local network over mDNS (_pulsar._tcp), with
+            # your user name and release, so `machine discover` on your
+            # other machines lists it. Nothing is published as root.
+            local unit=pulsar-announce.service
+            case "${1:-status}" in
+                on)
+                    systemctl --user enable --now "$unit" >/dev/null 2>&1 || die "could not start ${unit} (systemctl --user status ${unit})"
+                    printf 'other Pulsar machines on this network can find this one now (pulsar machine announce off stops it)\n' ;;
+                off)
+                    systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+                    printf 'this machine is no longer announced\n' ;;
+                status)
+                    local st="off"; systemctl --user is-active --quiet "$unit" 2>/dev/null && st=on
+                    if [ "${JSON:-0}" = 1 ]; then jq -n -c --arg s "$st" '{announce: $s}'; else printf 'announce %s\n' "$st"; fi ;;
+                --run)
+                    # the service's own: publish until stopped
+                    need avahi-publish
+                    local host ssh=off
+                    host=$(hostname -s 2>/dev/null) || host=pulsar
+                    ! systemctl is-active --quiet sshd 2>/dev/null || ssh=on
+                    exec avahi-publish -s "Pulsar on ${host}" _pulsar._tcp 22 \
+                        "user=$(id -un)" "host=${host}" "release=${VERSION}" "ssh=${ssh}" ;;
+                *) die "usage: pulsar machine announce [on|off|status]" ;;
+            esac ;;
+        discover)
+            # Pulsar machines announcing themselves on this network: name,
+            # where, whose, and whether it's added here already
+            need jq
+            command -v avahi-browse >/dev/null || die "avahi-browse is missing"
+            local me; me=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
+            local raw; raw=$(timeout "${PULSAR_DISCOVER_SECONDS:-4}" avahi-browse -rtp _pulsar._tcp 2>/dev/null) || true
+            local added; added=$({ [ ! -r "$MACHINES" ] || cut -f2 "$MACHINES"; } | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            local rows
+            rows=$(printf '%s\n' "$raw" | awk -F';' '$1 == "=" { print }' | jq -R -s -c --arg me "$me" --argjson added "$added" '
+                split("\n") | map(select(length > 0) | split(";")
+                  | {proto: .[2], address: .[7], mdns: .[6], txt: ((.[9] // "") | reduce (scan("\"([^\"]*)\"")[0] | capture("(?<k>[^=]+)=(?<v>.*)")) as $kv ({}; .[$kv.k] = $kv.v))})
+                | group_by(.txt.host // .mdns)
+                | map((map(select(.proto == "IPv4")) + .)[0])
+                | map({name: ((.txt.host // (.mdns | sub("\\.local$"; ""))) | ascii_downcase),
+                       mdns: .mdns, address: .address, user: (.txt.user // null),
+                       release: (.txt.release // null), ssh: (.txt.ssh == "on")}
+                      | . + {target: ((if .user then .user + "@" else "" end) + .mdns),
+                             self: (.name == $me)}
+                      | . + {added: (([.target, .mdns, .address, .name, ((.user // "") + "@" + .address)] - ([.target, .mdns, .address, .name, ((.user // "") + "@" + .address)] - $added)) | length > 0)})
+                | sort_by(.name)')
+            if [ "${JSON:-0}" = 1 ]; then printf '%s\n' "$rows"; return 0; fi
+            [ "$(jq length <<<"$rows")" -gt 0 ] || { printf 'no Pulsar machines announcing on this network (pulsar machine announce on, on each)\n'; return 0; }
+            jq -r '.[] | "\(.name)\t\(.target)\tPulsar \(.release // "?")\(if .self then "\t(this machine)" elif .added then "\tadded" else "\tpulsar machine add \(.name) \(.target)" end)"' <<<"$rows" \
+                | column -t -s $'\t' ;;
         receive)
             # the other side of run, job and fetch: this machine's end
             case "${1:-}" in

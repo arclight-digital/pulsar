@@ -323,6 +323,13 @@ logins. `machine fetch` brings a session's branch back under
 `refs/remotes/<machine>/`, so nothing changes in your checkout until you
 merge it yourself.
 
+Announcing (`pulsar machine announce on`, or the switch in Agents >
+Preferences) is off by default. On, a user service publishes this machine
+on the local network over mDNS as `_pulsar._tcp`, with your user name, its
+host name, its Pulsar release and whether SSH is on: anyone on that network
+can see those. It opens nothing; reaching the machine still takes your SSH
+key.
+
 A Claude Code session started this way in a project new to that machine
 stops at Claude's question about trusting the folder; open it in the app to
 answer.

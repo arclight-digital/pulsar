@@ -6854,3 +6854,41 @@ SH
     run "$PULSAR" agent send a@box --from "m;e" x; [ "$status" -ne 0 ] || fail "took a bad --from"
     run "$PULSAR" agent send a@nowhere --from me x; [ "$status" -ne 0 ] && [[ "$output" == *"no machine called nowhere"* ]] || fail "$output"
 }
+
+@test "machine announce: off unless turned on, a user service; what it publishes; discover lists who's announcing" {
+    [ "$(id -u)" -eq 0 ] && skip "a user's service"
+    local stub="${BATS_TEST_TMPDIR}/stub"; mkdir -p "$stub"
+    export LOG="${BATS_TEST_TMPDIR}/calls" PATH="${stub}:${PATH}" PULSAR_MACHINES="${BATS_TEST_TMPDIR}/machines"
+    cat > "${stub}/systemctl" <<'SH'
+#!/bin/sh
+echo "systemctl $*" >> "$LOG"
+case "$*" in *is-active*pulsar-announce*) [ -f "$LOG.on" ] ;; *enable*) touch "$LOG.on" ;; *disable*) rm -f "$LOG.on" ;; *is-active*sshd*) exit 0 ;; esac
+SH
+    printf '#!/bin/sh\necho "avahi-publish $*" >> "$LOG"\n' > "${stub}/avahi-publish"
+    cat > "${stub}/avahi-browse" <<'SH'
+#!/bin/sh
+echo '=;e1;IPv6;Pulsar on desk;_pulsar._tcp;local;desk.local;fe80::1;22;"user=nick" "host=desk" "release=26.11.2" "ssh=on"'
+echo '=;e1;IPv4;Pulsar on desk;_pulsar._tcp;local;desk.local;10.0.0.5;22;"user=nick" "host=desk" "release=26.11.2" "ssh=on"'
+echo '=;e1;IPv4;Pulsar on lap;_pulsar._tcp;local;lap.local;10.0.0.6;22;"user=n" "host=lap" "release=26.11.1" "ssh=off"'
+SH
+    chmod +x "$stub"/*
+    run "$PULSAR" --json machine announce
+    [ "$output" = '{"announce":"off"}' ] || fail "$output"
+    "$PULSAR" machine announce on >/dev/null
+    grep -qx "systemctl --user enable --now pulsar-announce.service" "$LOG" || fail "$(cat "$LOG")"
+    run "$PULSAR" --json machine announce; [ "$output" = '{"announce":"on"}' ] || fail "$output"
+    "$PULSAR" machine announce off >/dev/null
+    grep -qx "systemctl --user disable --now pulsar-announce.service" "$LOG" || fail "$(cat "$LOG")"
+    run "$PULSAR" machine announce maybe; [ "$status" -ne 0 ]
+    # what the service publishes: who, which machine, its release, whether SSH is on
+    "$PULSAR" machine announce --run
+    grep -q "^avahi-publish -s Pulsar on .* _pulsar._tcp 22 user=$(id -un) host=.* release=.* ssh=on$" "$LOG" || fail "$(cat "$LOG")"
+    # discover: one per machine, IPv4 first; added or not
+    printf 'desk\tnick@desk.local\n' > "$PULSAR_MACHINES"
+    run "$PULSAR" --json machine discover
+    [ "$(jq -c 'map([.name, .target, .address, .release, .ssh, .added])' <<<"$output")" = '[["desk","nick@desk.local","10.0.0.5","26.11.2",true,true],["lap","n@lap.local","10.0.0.6","26.11.1",false,false]]' ] || fail "$output"
+    run "$PULSAR" machine discover
+    [[ "$output" == *"lap "*"pulsar machine add lap n@lap.local"* ]] || fail "$output"
+    # the image ships the service, not enabled
+    grep -q '^ExecStart=/usr/bin/pulsar machine announce --run$' "${BATS_TEST_DIRNAME}/../system_files/usr/lib/systemd/user/pulsar-announce.service"
+}

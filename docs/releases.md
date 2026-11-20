@@ -109,6 +109,12 @@ CLI, and opencode moves to version 2.
   target>`, then their sessions show in the app as `name@machine`, and open
   there as here. Each machine keeps one SSH connection open for two
   minutes, and nothing prompts (a key that needs a passphrase prompt fails).
+- Your machines can find each other, if you let them: Agents >
+  Preferences > Your Machines (or `pulsar machine announce on`) announces
+  this machine on the local network over mDNS, with your user name and
+  release. It's off until you turn it on. That page, and `pulsar machine
+  discover`, list the Pulsar machines announcing, each with Add; if your
+  SSH key isn't on one yet, it says the `ssh-copy-id` line to run.
 - Work can move to another machine. `pulsar machine run <machine> <agent>
   --prompt <text>` sends your branch there, with what isn't committed as one
   commit on top, to the same project under your home there, and starts the
