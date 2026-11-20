@@ -121,6 +121,46 @@ TOOLS = [
                          "notify_me": {"type": "boolean", "description": "message this session when it ends (default true)"}},
                         ["command"]),
      "readOnly": False},
+    {"name": "machines",
+     "description": "The user's other Pulsar machines (pulsar machine): name, ssh target, whether it answers, its "
+                    "Pulsar release, GPU, and the agents installed there. Work can go to one with machine_job or "
+                    "machine_run, only when the user asked for it to go there.",
+     "inputSchema": obj(), "readOnly": True},
+    {"name": "machine_job",
+     "description": "Run a command on another Pulsar machine with the work here as it stands: your branch, plus what "
+                    "isn't committed as one commit, goes by git (over the user's SSH) to the same project under the "
+                    "user's home there, checked out in a worktree, and the command runs there as a job. With notify_me, "
+                    "how it ended comes into this session. Use it for what the user asked to run there (a training "
+                    "run on the desktop's GPU). Data files aren't moved, only what git tracks or would.",
+     "inputSchema": obj({"machine": {"type": "string"},
+                         "command": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                                     "description": "the command and its arguments, not a shell line"},
+                         "name": {"type": "string", "description": "the job's name: letters, digits, - and _"},
+                         "dir": {"type": "string", "description": "the project folder here (default: the session's)"},
+                         "notify_me": {"type": "boolean", "description": "message this session when it ends (default true)"}},
+                        ["machine", "command"]),
+     "readOnly": False},
+    {"name": "machine_run",
+     "description": "Start an agent session on another Pulsar machine with the work here as it stands (sent as for "
+                    "machine_job), on a branch named for the session, in a worktree there. It runs as the user there "
+                    "with that machine's own logins and sandbox setting. The user sees it in the Agents app as "
+                    "<session>@<machine>; machine_fetch brings its branch back.",
+     "inputSchema": obj({"machine": {"type": "string"},
+                         "agent": {"type": "string", "description": "claude, codex, agy, opencode (installed there)"},
+                         "prompt": {"type": "string", "description": "its first message"},
+                         "name": {"type": "string", "description": "the session's name: letters, digits, - and _"},
+                         "dir": {"type": "string", "description": "the project folder here (default: the session's)"},
+                         "sandbox": {"type": "boolean", "description": "on or off there (default: that machine's setting)"}},
+                        ["machine", "agent", "prompt"]),
+     "readOnly": False},
+    {"name": "machine_fetch",
+     "description": "Bring a session's branch back from another machine as <machine>/<session> here, its uncommitted "
+                    "work as one commit on top. Nothing in the checkout here changes: compare with git log/diff "
+                    "HEAD...<machine>/<session>; merging is the user's.",
+     "inputSchema": obj({"machine": {"type": "string"}, "session": {"type": "string"},
+                         "dir": {"type": "string", "description": "the project folder here (default: the session's)"}},
+                        ["machine", "session"]),
+     "readOnly": False},
     {"name": "jobs",
      "description": "Pulsar jobs: name, state (running, done, stopped), exit status, command, folder.",
      "inputSchema": obj(), "readOnly": True},
@@ -238,6 +278,37 @@ def call(name, a):
         if a.get("notify_me", True) and me:
             args += ["--notify", me]
         return run([*args, "--", *cmd])
+    if name == "machines":
+        return run(["--json", "machine", "check"])
+    if name in ("machine_job", "machine_run", "machine_fetch"):
+        m = str(a.get("machine") or "")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", m):
+            return f"{name} needs a machine's name (see machines)", True
+        d = str(a.get("dir") or "")
+        if d.startswith("-"):
+            return "dir is a folder", True
+        opt_dir = ["--dir", d] if d else []
+        nm = a.get("name")
+        if nm is not None and not session_name(nm):
+            return "name is letters, digits, - and _", True
+        opt_name = ["--name", nm] if nm else []
+        if name == "machine_job":
+            cmd = a.get("command")
+            if not isinstance(cmd, list) or not cmd or not all(isinstance(c, str) for c in cmd):
+                return "machine_job needs command: a list of strings", True
+            me = whoami()
+            notify = ["--notify", me] if a.get("notify_me", True) and me else []
+            return run(["machine", "job", m, *opt_name, *opt_dir, *notify, "--", *cmd])
+        if name == "machine_run":
+            agent, prompt = str(a.get("agent") or ""), str(a.get("prompt") or "")
+            if not re.fullmatch(r"[a-z][a-z0-9-]*", agent) or not prompt.strip():
+                return "machine_run needs an agent's name and a prompt", True
+            sb = [] if a.get("sandbox") is None else (["--sandbox"] if a.get("sandbox") else ["--no-sandbox"])
+            return run(["machine", "run", m, agent, *opt_name, *opt_dir, *sb, "--prompt", prompt])
+        sess = session_name(a.get("session"))
+        if not sess:
+            return "machine_fetch needs a session's name (see sessions)", True
+        return run(["machine", "fetch", m, sess, *opt_dir])
     if name == "jobs":
         return run(["--json", "job", "list"])
     if name == "job_log":

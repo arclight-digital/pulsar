@@ -102,7 +102,9 @@ works there.
   on one with the work as it stands (a training run on the desktop's GPU),
   and `pulsar machine run <machine> <agent> --prompt <text>` starts an agent
   there; `pulsar machine fetch <machine> <session>` brings its branch back.
-  Only when the user asked for work to go to that machine.
+  Only when the user asked for work to go to that machine. Through
+  `pulsar mcp` these are the `machines`, `machine_job`, `machine_run` and
+  `machine_fetch` tools.
 - `pulsar job run [--notify <you>] -- <command>` runs a long command (a
   training run, a long build) in a tmux of its own with its output kept;
   `pulsar job list`, `log`, `stop`. With `--notify`, how it ended is sent

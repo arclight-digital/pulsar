@@ -98,7 +98,10 @@ CLI, and opencode moves to version 2.
   `--notify <session>` also tells that agent session how it ended.
 - `pulsar mcp` gives agents the same: `sessions`, `session_read`,
   `session_message` (with `reply_to`), `inbox`, `job_start`, `jobs`,
-  `job_log` and `job_stop`. The
+  `job_log` and `job_stop`, and for your other machines `machines`,
+  `machine_job`, `machine_run` and `machine_fetch`: ask Claude on the laptop
+  to train it on the desktop, and it sends the work there, starts the job,
+  and hears how it ended. The
   ones that change something are marked as writes, so the agent asks you
   first. A sandboxed agent doesn't have `pulsar mcp`.
 - Your other Pulsar machines, over SSH: `pulsar machine add <name> <ssh

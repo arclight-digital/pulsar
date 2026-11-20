@@ -270,7 +270,8 @@ CLI (`~/.gemini/config/mcp_config.json`), Gemini CLI and opencode. Tools are the
 `theme_list`, `theme_current`, plus the guide as a resource.
 
 Its writes are `theme_set` (the user's desktop theme, undone by
-`pulsar theme revert`), `session_message`, `job_start` and `job_stop`, each
+`pulsar theme revert`), `session_message`, `job_start`, `job_stop`,
+`machine_job`, `machine_run` and `machine_fetch`, each
 marked as a write so the agent's own permission prompt asks you. Nothing
 needs root and no root command is exposed: update, rollback, checkpoint,
 guard and pin stay yours. The sandbox doesn't include it (it reads the

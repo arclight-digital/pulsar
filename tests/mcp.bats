@@ -42,7 +42,7 @@ init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 @test "the tools that change things are marked so (the agent's own prompt asks), and none of them is a root command" {
     run rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-    echo "$output" | jq -e '[.result.tools[] | select(.annotations.readOnlyHint | not) | .name] == ["session_message","job_start","job_stop","theme_set"]'
+    echo "$output" | jq -e '[.result.tools[] | select(.annotations.readOnlyHint | not) | .name] == ["session_message","job_start","machine_job","machine_run","machine_fetch","job_stop","theme_set"]'
     for n in update rollback checkpoint guard pin pin_on; do
         echo "$output" | jq -e --arg n "$n" '[.result.tools[].name] | index($n) == null'
     done
@@ -160,4 +160,25 @@ PY
     run rpc '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inbox","arguments":{}}}'
     [ "$(echo "$output" | jq -r '.result.isError')" = true ] || fail "$output"
     ! grep -q 'agent inbox' "$CLI_LOG"
+}
+
+
+@test "machine tools: work to another machine only with names that can't be options, and how it ends to this session" {
+    WHOAMI=me run rpc \
+        '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"machines","arguments":{}}}' \
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"machine_job","arguments":{"machine":"desk","command":["python3","train.py"],"name":"train"}}}' \
+        '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"machine_run","arguments":{"machine":"desk","agent":"claude","prompt":"--version please","sandbox":false}}}' \
+        '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"machine_fetch","arguments":{"machine":"desk","session":"s1","dir":"/p"}}}' \
+        '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"machine_job","arguments":{"machine":"-oProxyCommand=x","command":["true"]}}}' \
+        '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"machine_job","arguments":{"machine":"desk","command":"rm -rf ~"}}}' \
+        '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"machine_run","arguments":{"machine":"desk","agent":"--x","prompt":"p"}}}' \
+        '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"machine_fetch","arguments":{"machine":"desk","session":"-s"}}}' \
+        '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"machine_job","arguments":{"machine":"desk","command":["true"],"dir":"-x"}}}' \
+        '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"machine_run","arguments":{"machine":"desk","agent":"claude","prompt":"p","name":"a b"}}}'
+    grep -qx -- "--json machine check" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "machine job desk --name train --notify me -- python3 train.py" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "machine run desk claude --no-sandbox --prompt --version please" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    grep -qx -- "machine fetch desk s1 --dir /p" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
+    [ "$(grep -c '^machine ' "$CLI_LOG")" -eq 3 ] || fail "$(cat "$CLI_LOG")"
+    [ "$(echo "$output" | jq -s -r '[.[4,5,6,7,8,9].result.isError] | all')" = true ] || fail "$output"
 }
