@@ -2445,6 +2445,25 @@ EOF
     fi
 }
 
+@test "an agent run in the box gets its session's variables, which toolbox doesn't forward: the turn mark and the scratch folder; not the pane's tty, which isn't in the box" {
+    [ ! -e /run/.containerenv ] || skip "inside a container the shim runs the agent directly"
+    agent_env
+    "$PULSAR" agent add codex >/dev/null
+    : > "$TOOLBOX_LOG"
+    PULSAR_SESSION_RECORD="${HOME}/s/w x.session" PULSAR_TTY=/dev/pts/7 PULSAR_SCRATCH="${HOME}/scratch/w" \
+        run "$PULSAR" agent run codex --no-sandbox -- --version
+    [ "$status" -eq 0 ] || fail "$output"
+    local line; line=$(grep 'toolbox run -c agents env ' "$TOOLBOX_LOG")
+    [[ "$line" == *"PULSAR_SESSION_RECORD=${HOME}/s/w x.session "* ]] || fail "$line"
+    if [[ "$line" == *PULSAR_TTY* ]]; then fail "$line"; fi
+    [[ "$line" == *"PULSAR_SCRATCH=${HOME}/scratch/w "* ]] || fail "$line"
+    # outside a session, nothing extra
+    : > "$TOOLBOX_LOG"
+    run env -u PULSAR_SESSION_RECORD -u PULSAR_TTY -u PULSAR_SCRATCH "$PULSAR" agent run codex --no-sandbox -- --version
+    [ "$status" -eq 0 ] || fail "$output"
+    if grep -q 'PULSAR_' "$TOOLBOX_LOG"; then fail "$(cat "$TOOLBOX_LOG")"; fi
+}
+
 @test "a second agent reuses the box and the runtime" {
     agent_env
     "$PULSAR" agent add claude >/dev/null

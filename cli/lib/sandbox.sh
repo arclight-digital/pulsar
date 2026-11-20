@@ -804,7 +804,18 @@ agent_run() {
     # rather than in the shim: decided at each start, it follows the image.
     [ "$name" != aider ] || [ ! -r "$AGENTS_MD" ] || set -- --read "$AGENTS_MD" "$@"
     if is_our_shim "$cmd"; then
-        exec toolbox run -c "$AGENT_BOX" env NPM_CONFIG_PREFIX="$AGENT_PREFIX" "${AGENT_PREFIX}/bin/${A_BIN}" "$@"
+        # toolbox forwards only a fixed set of variables: a session's own go
+        # along by hand, or Codex's and agy's turn-end hooks can't mark the
+        # turn (PULSAR_SESSION_RECORD), and the agent never hears of its
+        # scratch folder. Not PULSAR_TTY: the box has /dev/pts of its own,
+        # where the pane's tty isn't; its hooks ring /dev/tty, which toolbox
+        # carries to the pane.
+        local -a pass=()
+        local v
+        for v in PULSAR_SESSION_RECORD PULSAR_SCRATCH; do
+            [ -z "${!v:-}" ] || pass+=("${v}=${!v}")
+        done
+        exec toolbox run -c "$AGENT_BOX" env NPM_CONFIG_PREFIX="$AGENT_PREFIX" "${pass[@]}" "${AGENT_PREFIX}/bin/${A_BIN}" "$@"
     fi
     exec "$cmd" "$@"
 }
