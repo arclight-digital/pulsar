@@ -258,13 +258,16 @@ d = m.load_state(); print(sorted(d))
 d[\"unseen\"] = [\"x\"]; d[\"last\"] = \"x\"; m.save_state(d)
 print(m.load_state()[\"last\"], m.load_state()[\"unseen\"])
 open(m.STATE_FILE, \"w\").write(\"[1]\"); print(sorted(m.load_state()))
-open(m.STATE_FILE, \"w\").write(\"{\\\"shell_open\\\": 5}\"); print(m.load_state()[\"shell_open\"])'"
+open(m.STATE_FILE, \"w\").write(\"{\\\"shell_open\\\": 5}\"); print(m.load_state()[\"shell_open\"])
+open(m.STATE_FILE, \"w\").write(\"{\\\"order\\\": [1]}\"); print(m.load_state()[\"order\"])'"
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "['projects', 'recent', 'shell_open', 'unseen']" ]
+    [ "${lines[0]}" = "['order', 'projects', 'recent', 'shell_open', 'unseen']" ] || fail "$output"
     [ "${lines[1]}" = "x ['x']" ]
-    [ "${lines[2]}" = "['projects', 'recent', 'shell_open', 'unseen']" ]
+    [ "${lines[2]}" = "['order', 'projects', 'recent', 'shell_open', 'unseen']" ] || fail "$output"
     # which sessions had their shell panel open: a list, or none
     [ "${lines[3]}" = "[]" ] || fail "$output"
+    # the sidebar's order: a mapping, or none
+    [ "${lines[4]}" = "{}" ] || fail "$output"
     [ -f "${BATS_TEST_TMPDIR}/st/pulsar/agents-app.json" ]
 }
 
@@ -1027,4 +1030,79 @@ print(sb.mode.get_visible())'
     [ "${lines[5]}" = "Never asks True" ] || fail "$output"
     [ "${lines[6]}" = "False" ] || fail "$output"
     [ "${lines[7]}" = "False" ] || fail "$output"
+}
+
+@test "the sidebar's order: groups and sessions where you put them; new ones on top; a session stays in its own group" {
+    run gui '
+now = 1000
+ss = [{"name": "a1", "project": "/a", "started": now - 1}, {"name": "a2", "project": "/a", "started": now - 2},
+      {"name": "a3", "project": "/a", "started": now - 3}, {"name": "b1", "project": "/b", "started": now - 10},
+      {"name": "c1", "project": "/c", "started": now - 20}]
+show = lambda order=None: " | ".join(p + " " + ",".join(s["name"] for s in g) for p, g in g.project_groups([dict(x) for x in ss], order))
+print(show())
+order = {"projects": ["/c", "/a", "/gone"], "sessions": {"/a": ["a3", "a1", "a2"]}}
+print(show(order))
+# a new session and a new project, not in the order yet: on top
+ss.append({"name": "a4", "project": "/a", "started": now}); ss.append({"name": "d1", "project": "/d", "started": now})
+print(show(order))
+print(show({"projects": "junk", "sessions": ["junk"]}) == show())
+print(g.moved(["x", "y", "z"], "z", step=-1), g.moved(["x", "y", "z"], "x", step=-1), g.moved(["x", "y", "z"], "x", step=9),
+      g.moved(["x", "y", "z"], "z", before="x"), g.moved(["x", "y", "z"], "x", after="z"), g.moved(["x", "y"], "q", step=1))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "/a a1,a2,a3 | /b b1 | /c c1" ] || fail "$output"
+    [ "${lines[1]}" = "/b b1 | /c c1 | /a a3,a1,a2" ] || fail "$output"
+    [ "${lines[2]}" = "/d d1 | /b b1 | /c c1 | /a a4,a3,a1,a2" ] || fail "$output"
+    [ "${lines[3]}" = "True" ] || fail "$output"
+    [ "${lines[4]}" = "['x', 'z', 'y'] ['x', 'y', 'z'] ['y', 'z', 'x'] ['z', 'x', 'y'] ['y', 'z', 'x'] ['x', 'y']" ] || fail "$output"
+}
+
+@test "moving in the sidebar: a drop lands next to its own kind, a session only in its group; Alt+arrows in the list move it; the order is kept" {
+    need_gtk
+    run app '
+import types
+m.Gtk.init()
+proj = {"a1": "/a", "a2": "/a", "a3": "/a", "b1": "/b"}
+place = lambda *a: m.drop_place(*a, project_of=proj.get)
+print(place("session", "a3", "session", "a1", True), place("session", "a3", "session", "a2", False))
+print(place("session", "a3", "session", "b1", True), place("session", "a3", "session", "a3", True),
+      place("session", "a3", "project", "/a", True), place("session", "a3", "project", "/b", True))
+print(place("project", "/b", "project", "/a", True), place("project", "/b", "session", "a2", False),
+      place("project", "/a", "session", "a2", True), place("bogus", "x", "project", "/a", True))
+W = type("W", (), {n: vars(m.Agents)[n] for n in ("move_session", "move_group", "_groups", "_list_key")})
+w = W()
+w.sessions = {n: {"name": n, "project": p, "started": 100 - i} for i, (n, p) in enumerate(proj.items())}
+w.state = {"order": {}}
+saved = []
+w._order_changed = lambda name=None, project=None: saved.append((name, project))
+m.save_state = lambda d: None
+w.move_session("a3", before="a1")
+w.move_group("/b", step=-1)
+w.move_session("b1", step=-1)                      # alone in its group: nothing to do
+print(w.state["order"], saved)
+print([(p, [s["name"] for s in g]) for p, g in w._groups()])
+# the keys, on the row the keyboard is on
+class S:
+    def __init__(self, n): self.name = n
+class P:
+    def __init__(self, p): self.project = p
+m.SessionRow, m.ProjectRow = S, P
+focus = [S("a1")]
+w.list = types.SimpleNamespace(get_focus_child=lambda: focus[0])
+A, SH = m.Gdk.ModifierType.ALT_MASK, m.Gdk.ModifierType.SHIFT_MASK
+print(w._list_key(None, m.Gdk.KEY_Up, 0, A), w._list_key(None, m.Gdk.KEY_Up, 0, 0), w._list_key(None, m.Gdk.KEY_Left, 0, A))
+print([s["name"] for s in dict(w._groups())["/a"]])
+w._list_key(None, m.Gdk.KEY_Up, 0, A | SH)             # its group, up
+print(w.state["order"]["projects"], [s["name"] for s in dict(w._groups())["/a"]])
+focus[0] = P("/a"); w._list_key(None, m.Gdk.KEY_Down, 0, A)  # a heading: its group, down again
+print(w.state["order"]["projects"])'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "('session', 'a3', {'before': 'a1'}) ('session', 'a3', {'after': 'a2'})" ] || fail "$output"
+    [ "${lines[1]}" = "None None ('session', 'a3', {'step': -10000}) None" ] || fail "$output"
+    [ "${lines[2]}" = "('project', '/b', {'before': '/a'}) ('project', '/b', {'after': '/a'}) None None" ] || fail "$output"
+    [ "${lines[3]}" = "{'sessions': {'/a': ['a3', 'a1', 'a2']}, 'projects': ['/b', '/a']} [('a3', None), (None, '/b')]" ] || fail "$output"
+    [ "${lines[4]}" = "[('/b', ['b1']), ('/a', ['a3', 'a1', 'a2'])]" ] || fail "$output"
+    [ "${lines[5]}" = "True False False" ] || fail "$output"
+    [ "${lines[6]}" = "['a1', 'a3', 'a2']" ] || fail "$output"
+    [ "${lines[7]}" = "['/a', '/b'] ['a1', 'a3', 'a2']" ] || fail "$output"
+    [ "${lines[8]}" = "['/b', '/a']" ] || fail "$output"
 }

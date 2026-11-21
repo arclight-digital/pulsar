@@ -305,12 +305,39 @@ def split_project(project):
     return None, project
 
 
-def project_groups(sessions):
+def ordered(items, saved, key=lambda x: x):
+    """items in the saved order (a list of keys); the ones it doesn't name
+    go first, in the order they came (new ones: newest first)."""
+    pos = {k: i for i, k in enumerate(saved or []) if isinstance(k, str)}
+    return ([x for x in items if key(x) not in pos]
+            + sorted((x for x in items if key(x) in pos), key=lambda x: pos[key(x)]))
+
+
+def moved(keys, key, step=None, before=None, after=None):
+    """keys with key moved: step places (-1 up, 1 down, kept in bounds), or
+    to just before or after another key; unchanged when it can't move."""
+    if key not in keys:
+        return list(keys)
+    rest = [k for k in keys if k != key]
+    if step is not None:
+        i = max(0, min(len(rest), keys.index(key) + step))
+    elif before is not None and before in rest:
+        i = rest.index(before)
+    elif after is not None and after in rest:
+        i = rest.index(after) + 1
+    else:
+        return list(keys)
+    return rest[:i] + [key] + rest[i:]
+
+
+def project_groups(sessions, order=None):
     """[(project, [sessions])] for the sidebar: archived ones left out; in
     each, the newest started first; the project with the newest session
     first. Only a start (or a Continue) moves a row: a session's state and
     activity change every turn, and a list sorted by them jumps under the
-    pointer. Who needs you shows on the row itself."""
+    pointer. Who needs you shows on the row itself. An order the user set
+    ({"projects": [...], "sessions": {project: [...]}}) comes before that;
+    what it doesn't name goes at the top."""
     groups = {}
     for s in sessions:
         if s.get("archived"):
@@ -326,6 +353,10 @@ def project_groups(sessions):
         ss.sort(key=lambda s: (-began(s), s.get("name", "")))
         out.append((p, ss))
     out.sort(key=lambda g: (-max(began(s) for s in g[1]), g[0]))
+    if isinstance(order, dict):
+        by = order.get("sessions") if isinstance(order.get("sessions"), dict) else {}
+        out = [(p, ordered(ss, by.get(p), key=lambda s: s.get("name")))
+               for p, ss in ordered(out, order.get("projects"), key=lambda g: g[0])]
     return out
 
 

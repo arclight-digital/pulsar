@@ -48,7 +48,7 @@ from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line,
                         project_groups, project_label, repo_names, resume_note, run, run_argv,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left,
-                        folder_ports, mode_label)
+                        folder_ports, mode_label, moved)
 
 # a session's scratch folder shows in its status bar from this size
 SCRATCH_SHOWN = 100_000_000
@@ -180,6 +180,8 @@ CSS = """
 .pulsar-agents .statusbar label.needs { color: @accent_color; font-weight: 600; }
 .pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
 .pulsar-agents .statusbar .seg.warn { color: @warning_color; }
+.pulsar-agents .sessions row.drop-before { box-shadow: inset 0 2px @accent_color; }
+.pulsar-agents .sessions row.drop-after { box-shadow: inset 0 -2px @accent_color; }
 .pulsar-agents .statusbar .port-btn { padding: 2px 6px; margin-left: 0; font-feature-settings: "tnum"; }
 .pulsar-agents .statusbar .scratch-btn { color: alpha(currentColor, .6); }
 .pulsar-agents .statusbar .scratch-btn.low { color: @warning_color; }
@@ -393,6 +395,9 @@ def load_state():
     d.setdefault("projects", {})
     if not isinstance(d.get("shell_open"), list):
         d["shell_open"] = []
+    # the sidebar's order, where you set one: {"projects": [...], "sessions": {project: [...]}}
+    if not isinstance(d.get("order"), dict):
+        d["order"] = {}
     return d
 
 
@@ -455,6 +460,9 @@ class Agents(Adw.ApplicationWindow):
         self.side_head = side_head
         self.list = Gtk.ListBox(css_classes=["navigation-sidebar", "sessions"])
         self.list.connect("row-activated", self._activated)
+        lkeys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        lkeys.connect("key-pressed", self._list_key)
+        self.list.add_controller(lkeys)
         self.empty = Gtk.Label(label="No sessions", valign=Gtk.Align.START, margin_top=18,
                                css_classes=["dim-label"])
         self.side_stack = Gtk.Stack()
@@ -591,7 +599,11 @@ class Agents(Adw.ApplicationWindow):
             a.connect("activate", lambda _a, _p, cb=cb: cb())
             self.add_action(a)
         for name, cb in (("archive", self.archive), ("rename-session", lambda n: self.rename(n)),
-                         ("goto", lambda n: self.show_session(n))):
+                         ("goto", lambda n: self.show_session(n)),
+                         ("session-up", lambda n: self.move_session(n, -1)),
+                         ("session-down", lambda n: self.move_session(n, 1)),
+                         ("group-up", lambda p: self.move_group(p, -1)),
+                         ("group-down", lambda p: self.move_group(p, 1))):
             a = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             a.connect("activate", lambda _a, p, cb=cb: cb(p.get_string()))
             self.add_action(a)
@@ -816,7 +828,7 @@ class Agents(Adw.ApplicationWindow):
     def _rebuild(self):
         """The sidebar: a heading per project, its sessions under it. Rows are
         kept and updated; the list is rebuilt only when what is in it moves."""
-        groups = project_groups(self.sessions.values())
+        groups = self._groups()
         projects = [p for p, _ss in groups]
         shape = tuple((p, p in self.collapsed, tuple(s["name"] for s in ss)) for p, ss in groups)
         now = self._now()
@@ -827,7 +839,7 @@ class Agents(Adw.ApplicationWindow):
             rows = {}
             for p, ss in groups:
                 # folded stays folded, narrowed or not
-                self.list.append(ProjectRow(p, project_label(p, projects), p in self.collapsed, self.compact))
+                self.list.append(ProjectRow(p, project_label(p, projects), p in self.collapsed, self.compact, self))
                 if p in self.collapsed:
                     continue
                 for s in ss:
@@ -858,7 +870,65 @@ class Agents(Adw.ApplicationWindow):
             self.show_session(row.name)
 
     def visible_names(self):
-        return [s["name"] for p, ss in project_groups(self.sessions.values()) if p not in self.collapsed for s in ss]
+        return [s["name"] for p, ss in self._groups() if p not in self.collapsed for s in ss]
+
+    def _groups(self):
+        return project_groups(self.sessions.values(), self.state.get("order"))
+
+    def move_session(self, name, step=None, before=None, after=None):
+        """A session up or down its project's group (step), or next to
+        another of its sessions (a drop): that group's order is kept."""
+        s = self.sessions.get(name)
+        if not s:
+            return
+        p = session_project(s)
+        names = [x["name"] for x in dict(self._groups()).get(p, [])]
+        new = moved(names, name, step, before, after)
+        if new != names:
+            self.state.setdefault("order", {}).setdefault("sessions", {})[p] = new
+            self._order_changed(name)
+
+    def move_group(self, project, step=None, before=None, after=None):
+        """A project's group up or down the sidebar, or next to another."""
+        projects = [p for p, _ss in self._groups()]
+        new = moved(projects, project, step, before, after)
+        if new != projects:
+            self.state.setdefault("order", {})["projects"] = new
+            self._order_changed(None, project)
+
+    def _order_changed(self, name=None, project=None):
+        save_state(self.state)
+        self._shape = None
+        self._rebuild()
+        # the keyboard stays on what moved
+        r = self.list.get_first_child()
+        while r is not None:
+            if (name and getattr(r, "name", None) == name) or (project and getattr(r, "project", None) == project
+                                                               and isinstance(r, ProjectRow)):
+                r.grab_focus()
+                break
+            r = r.get_next_sibling()
+
+    def _list_key(self, _c, keyval, _code, state):
+        """Alt+Up and Alt+Down move the row the keyboard is on (a session in
+        its group, or a group); with Shift, a session's whole group. Only in
+        the list: in the terminal those keys are the agent's."""
+        if not state & Gdk.ModifierType.ALT_MASK or keyval not in (Gdk.KEY_Up, Gdk.KEY_Down):
+            return False
+        step = -1 if keyval == Gdk.KEY_Up else 1
+        row = self.list.get_focus_child()
+        if isinstance(row, ProjectRow):
+            self.move_group(row.project, step)
+        elif isinstance(row, SessionRow):
+            if state & Gdk.ModifierType.SHIFT_MASK:
+                s = self.sessions.get(row.name)
+                if s:
+                    self.move_group(session_project(s), step)
+            else:
+                self.move_session(row.name, step)
+        else:
+            return False
+        return True
 
     def cycle(self, step):
         names = self.visible_names()
@@ -2103,13 +2173,98 @@ class StatusBar:
         self.changes.set_visible(True)
 
 
+def _point(x, y):
+    r = Gdk.Rectangle()
+    r.x, r.y, r.width, r.height = int(x), int(y), 1, 1
+    return r
+
+
+def drop_place(kind, key, target_kind, target_key, upper, project_of):
+    """What a drop in the sidebar does: (kind, key, {"before"/"after": ...}),
+    or None. A session goes next to another of its own group (a group is
+    its project's folder; it can't change that), or to the top of its group
+    on its heading; a group goes next to another group, dropped on its
+    heading or on any of its sessions."""
+    side = "before" if upper else "after"
+    if kind == "session":
+        if target_kind == "session" and target_key != key and project_of(target_key) == project_of(key):
+            return "session", key, {side: target_key}
+        if target_kind == "project" and target_key == project_of(key):
+            return "session", key, {"step": -10_000}
+        return None
+    if kind == "project":
+        tp = target_key if target_kind == "project" else project_of(target_key)
+        if tp and tp != key:
+            return "project", key, {side: tp}
+    return None
+
+
+def reorder_dnd(row, win, kind, key):
+    """Drag a sidebar row (a session, or a group by its heading) and drop it
+    on another: a line shows where it lands."""
+    src = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+    src.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(f"{kind}\t{key}"))
+    src.connect("drag-begin", lambda s, _d: s.set_icon(Gtk.WidgetPaintable.new(row), 20, 12))
+    row.add_controller(src)
+    dst = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+    dst.set_preload(True)
+
+    def project_of(name):
+        x = win.sessions.get(name)
+        return session_project(x) if x else None
+
+    def place(y, value):
+        k, _, v = (value or "").partition("\t")
+        return drop_place(k, v, kind, key, y < row.get_height() / 2, project_of)
+
+    def clear(*_):
+        row.remove_css_class("drop-before")
+        row.remove_css_class("drop-after")
+
+    def motion(t, _x, y):
+        clear()
+        got = place(y, t.get_value())
+        if not got:
+            return 0
+        row.add_css_class("drop-before" if "before" in got[2] or "step" in got[2] else "drop-after")
+        return Gdk.DragAction.MOVE
+
+    def drop(_t, value, _x, y):
+        clear()
+        got = place(y, value)
+        if not got:
+            return False
+        k, v, where = got
+        (win.move_session if k == "session" else win.move_group)(v, **where)
+        return True
+    dst.connect("motion", motion)
+    dst.connect("leave", clear)
+    dst.connect("drop", drop)
+    row.add_controller(dst)
+
+
 class ProjectRow(Gtk.ListBoxRow):
     """A project's heading in the sidebar; activating it folds it."""
 
-    def __init__(self, project, label, collapsed, compact=False):
+    def __init__(self, project, label, collapsed, compact=False, win=None):
         super().__init__(selectable=False, css_classes=["project"] + (["collapsed"] if collapsed else []),
                          tooltip_text=home(project) or None, activatable=True)
         self.project = project
+        if win is not None:
+            # drag the heading, or right-click it, to move the group
+            reorder_dnd(self, win, "project", project)
+            menu = Gio.Menu()
+            for text, action in (("Move Group Up", "win.group-up"), ("Move Group Down", "win.group-down")):
+                item = Gio.MenuItem.new(text, None)
+                item.set_action_and_target_value(action, GLib.Variant.new_string(project))
+                menu.append_item(item)
+            self.popover = Gtk.PopoverMenu.new_from_model(menu)
+            self.popover.set_parent(self)
+            self.popover.set_has_arrow(False)
+            click = Gtk.GestureClick(button=3)
+            click.connect("pressed", lambda _g, _n, x, y: (self.popover.set_pointing_to(_point(x, y)),
+                                                           self.popover.popup()))
+            self.add_controller(click)
         # a project on another machine: the machine icon the status bar uses, before its name
         machine = split_project(project)[0]
         box = Gtk.Box(spacing=6, margin_start=10, margin_end=8)
@@ -2191,7 +2346,8 @@ class SessionRow(Gtk.ListBoxRow):
         box.append(arch)
         self.set_child(box)
         menu = Gio.Menu()
-        for label, action in (("Rename…", "win.rename-session"), ("Archive", "win.archive")):
+        for label, action in (("Rename…", "win.rename-session"), ("Move Up", "win.session-up"),
+                              ("Move Down", "win.session-down"), ("Archive", "win.archive")):
             item = Gio.MenuItem.new(label, None)
             item.set_action_and_target_value(action, GLib.Variant.new_string(name))
             menu.append_item(item)
@@ -2201,6 +2357,7 @@ class SessionRow(Gtk.ListBoxRow):
         click = Gtk.GestureClick(button=3)
         click.connect("pressed", self._menu)
         self.add_controller(click)
+        reorder_dnd(self, win, "session", name)
 
     def set_compact(self, on):
         """Narrowed list: the tile alone, a dot on its corner when it changed
@@ -2741,6 +2898,8 @@ class Help(Adw.Dialog):
         ("New session", "<Ctrl><Shift>n"),
         ("Next or previous session", "<Ctrl>Page_Down <Ctrl>Page_Up"),
         ("Session 1 to 9 in the list", "<Alt>1...<Alt>9"),
+        ("Move a session (or a group's heading) in the list", "<Alt>Up <Alt>Down"),
+        ("Move a session's group in the list", "<Alt><Shift>Up <Alt><Shift>Down"),
         ("Archive the session", "<Ctrl><Shift>Delete"),
         ("Changes, History and Messages", "<Ctrl><Shift>d"),
         ("A shell in the session's folder", "<Ctrl>grave"),
