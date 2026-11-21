@@ -5774,6 +5774,57 @@ usage_env() {
     [ "$(jq -r 'has("mode")' <<<"$output")" = false ] || fail "$output"
 }
 
+@test "agent usage: Claude carried on in another transcript (resumed from inside it): the session follows it, its meter and its Continue too" {
+    usage_env
+    local d="${HOME}/.claude/projects/-code-proj" new=99999999-8888-7777-6666-555555555555 other=11111111-0000-0000-0000-000000000000
+    # a newer transcript in the folder that came from elsewhere: not this session's
+    { printf '{"type":"derived-from","v":1,"sessionId":"%s","sessions":[{"type":"claude_code_session","id":"%s","via":"resume"}]}\n' "$other" "$other"
+      printf '{"type":"assistant","timestamp":"2026-11-05T11:00:00Z","message":{"id":"o1","model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}\n'; } \
+        > "${d}/${other}.jsonl"
+    touch -d '+1 minute' "${d}/${other}.jsonl"
+    # an older one that came from this id (a fork from before): not where it went on
+    local old=22222222-0000-0000-0000-000000000000
+    printf '{"type":"derived-from","v":1,"sessionId":"%s","sessions":[{"type":"claude_code_session","id":"%s","via":"resume"}]}\n' "$old" "$ID" \
+        > "${d}/${old}.jsonl"
+    touch -d '-1 day' "${d}/${old}.jsonl"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r .context <<<"$output")" = 272502 ] || fail "followed a stranger: $output"
+    [ "$(rec_id work)" = "$ID" ] || fail "id moved to $(rec_id work)"
+    grep -q '^follow_seen=' "${REC}/work.session" || fail "the look wasn't noted"
+    # the one this session went on in: it says it came from this id
+    { printf '{"type":"user","message":{"content":"x"}}\n'
+      printf '{"type":"derived-from","v":1,"sessionId":"%s","sessions":[{"type":"claude_code_session","id":"%s","via":"resume"},{"type":"claude_code_session","id":"%s","via":"resume"}]}\n' "$new" "$new" "$ID"
+      printf '{"type":"assistant","timestamp":"2026-11-05T12:00:00Z","message":{"id":"n1","model":"claude-opus-5-5","usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":40000,"output_tokens":9}}}\n'; } \
+        > "${d}/${new}.jsonl"
+    touch -d '+2 minutes' "${d}/${new}.jsonl"
+    # the old one unchanged since the last look: not looked at again
+    run "$PULSAR" agent usage work --json
+    [ "$(rec_id work)" = "$ID" ] || fail "looked again at an unchanged transcript"
+    # once it changes, the look finds where it went on
+    printf '{"type":"summary","summary":"y"}\n' >> "${d}/${ID}.jsonl"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r .context <<<"$output")" = 40005 ] || fail "$output"
+    [ "$(rec_id work)" = "$new" ] || fail "id is $(rec_id work)"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "work") | .conversation' <<<"$output")" = "$new" ] || fail "$output"
+}
+
+@test "agent usage: counted once and kept while the transcript doesn't change; counted again when it does" {
+    usage_env
+    local f="${HOME}/.claude/projects/-code-proj/${ID}.jsonl"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r .requests <<<"$output")" = 2 ] || fail "$output"
+    # unchanged: the kept count, without reading it (it can't be read now)
+    chmod 000 "$f"
+    run "$PULSAR" agent usage work --json
+    chmod 644 "$f"
+    [ "$(jq -r .requests <<<"$output")" = 2 ] || fail "not kept: $output"
+    # changed: counted again
+    printf '{"type":"assistant","timestamp":"2026-11-05T10:09:00Z","message":{"id":"m3","model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":5,"output_tokens":2}}}\n' >> "$f"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r '[.requests, .context] | join(" ")' <<<"$output")" = "3 6" ] || fail "$output"
+}
+
 @test "agent usage: an API error's stand-in message is no request, no model and no context" {
     usage_env
     # how Claude Code writes an API error: an assistant message of its own

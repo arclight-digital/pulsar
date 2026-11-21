@@ -765,8 +765,55 @@ session_usage() {
         done
     done
     [ -n "$f" ] || return 1
+    # Claude can carry on in another transcript (resumed from inside it, or
+    # continued after running out of context): a newer one in the same
+    # folder whose derived-from names this id. Looked for once per state
+    # of this file (follow_seen: its size and time), and remembered as the
+    # session's id, so its meter and its Continue follow.
+    local seen mt t2 next=""
+    mt=$(stat -c %s:%Y "$f")
+    seen=$(session_get "$s" follow_seen) || seen=""
+    if [ "$seen" != "$mt" ]; then
+        for t2 in "${f%/*}"/*.jsonl; do
+            [ "$t2" -nt "$f" ] || continue
+            if grep -q -F "\"id\":\"${id}\",\"via\":" "$t2" 2>/dev/null \
+               && grep -q -F '"type":"derived-from"' "$t2" 2>/dev/null; then
+                if [ -z "$next" ] || [ "$t2" -nt "$next" ]; then next=$t2; fi
+            fi
+        done
+        if [ -n "$next" ]; then
+            t2=$(basename "$next" .jsonl)
+            case "$t2" in *[!0-9a-f-]*) next="" ;; *) session_set "$s" id "$t2"; session_set "$s" follow_seen ""; f=$next ;; esac
+        fi
+        [ -n "$next" ] || session_set "$s" follow_seen "$mt"
+    fi
     local -a files=("$f")
     for t in "${f%.jsonl}"/subagents/*.jsonl; do [ ! -f "$t" ] || files+=("$t"); done
+    # The count reads every line of the transcript; a long conversation's
+    # runs to tens of MB. Kept in a cache, keyed by the files' sizes and
+    # times: a session at rest costs nothing, and one over 16 MB is counted
+    # again at most every 15 seconds while it grows.
+    local cache="${XDG_CACHE_HOME:-$HOME/.cache}/pulsar/usage" cf sig line
+    cf="${cache}/${s}.json"
+    sig="${f} $(stat -c '%s:%Y' "${files[@]}" | tr '\n' ' ')"
+    if [ -f "$cf" ] && IFS= read -r line < "$cf"; then
+        if [ "$line" = "$sig" ] || { [ "$(stat -c %s "$f")" -gt 16000000 ] && [ "${line%% *}" = "$f" ] \
+                && [ $(( $(date +%s) - $(stat -c %Y "$cf") )) -lt 15 ]; }; then
+            tail -n +2 "$cf" | grep . && return 0
+            return 1
+        fi
+    fi
+    local out
+    out=$(session_usage_count "$f" "${files[@]}") || out=""
+    mkdir -p "$cache" && { printf '%s\n%s\n' "$sig" "$out" > "${cf}.$$" && mv -f "${cf}.$$" "$cf"; } 2>/dev/null || true
+    [ -n "$out" ] || return 1
+    printf '%s\n' "$out"
+}
+
+# session_usage_count <main transcript> <all transcripts>...: the numbers
+session_usage_count() {
+    local f=$1; shift
+    local -a files=("$@")
     # its permission mode as it stands: Claude writes it down when it changes
     local mode
     mode=$(jq -r 'select(.type == "permission-mode") | .permissionMode | strings' "$f" 2>/dev/null | tail -n 1) || mode=""
