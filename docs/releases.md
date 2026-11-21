@@ -64,7 +64,9 @@ CLI, and opencode moves to version 2.
   doing, the context used against the window, Codex CLI's 5-hour and
   weekly limits, whether it is sandboxed, its branch, and how many files
   it changed (click for Changes). It also shows the account the agent is
-  signed in with on the session's machine, the ports that servers in the
+  signed in with on the session's machine, what it may do without asking
+  (Claude Code's permission mode, Codex CLI's approvals and sandbox, in
+  the warning color when it never asks), the ports that servers in the
   session's folder listen on (click one to open it in the browser), and
   the session's scratch folder once it holds 100 MB, with the free space
   in a warning color when the disk gets tight.

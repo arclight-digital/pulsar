@@ -324,11 +324,16 @@ print(g.session_meter({"agent": "claude", "usage": None}), g.session_meter({"age
     local h="${BATS_TEST_TMPDIR}/h" d="${BATS_TEST_TMPDIR}/proj"
     mkdir -p "${h}/.codex/sessions/2026/11/18" "${h}/.codex/sessions/2026/11/17" "$d"
     { printf '{"type":"session_meta","payload":{"cwd":"%s"}}\n' "$d"
+      printf '{"type":"turn_context","payload":{"approval_policy":"untrusted","sandbox_policy":{"type":"read-only"}}}\n'
       printf '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":10},"model_context_window":100},"rate_limits":null}}\n'
+      printf '{"type":"turn_context","payload":{"approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}\n'
       printf '{"type":"event_msg","payload":{"type":"agent_message"}}\n'
       printf '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":96000},"model_context_window":272000},"rate_limits":{"primary":{"used_percent":23.5,"window_minutes":300,"resets_at":5},"secondary":{"used_percent":41,"window_minutes":10080,"resets_at":9}}}}\n'
       printf '{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":null}}\n'
-      printf '{"type":"event_msg","payload":{"type":"agent_message","message":"token_count","info":{"last_token_usage":{"total_tokens":1}}}}\n'; } \
+      printf '{"type":"event_msg","payload":{"type":"agent_message","message":"token_count","info":{"last_token_usage":{"total_tokens":1}}}}\n'
+      # a new turn under way, its settings changed twice, nothing counted yet: the newest settings
+      printf '{"type":"turn_context","payload":{"approval_policy":"untrusted","sandbox_policy":{"type":"read-only"}}}\n'
+      printf '{"type":"turn_context","payload":{"approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}\n'; } \
         > "${h}/.codex/sessions/2026/11/18/rollout-a.jsonl"
     mkdir -p "${h}/zero/.codex/sessions/2026/11/18"
     { printf '{"type":"session_meta","payload":{"cwd":"%s"}}\n' "$d"
@@ -337,18 +342,24 @@ print(g.session_meter({"agent": "claude", "usage": None}), g.session_meter({"age
     printf '{"type":"session_meta","payload":{"cwd":"/elsewhere"}}\n{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":1},"model_context_window":2}}}\n' \
         > "${h}/.codex/sessions/2026/11/17/rollout-b.jsonl"
     touch "${h}/.codex/sessions/2026/11/17/rollout-b.jsonl"
+    # the usual order: a turn's settings, then its count
+    local d2="${BATS_TEST_TMPDIR}/proj2"; mkdir -p "$d2"
+    { printf '{"type":"session_meta","payload":{"cwd":"%s"}}\n' "$d2"
+      printf '{"type":"turn_context","payload":{"approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}\n'
+      printf '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":7},"model_context_window":70},"rate_limits":null}}\n'; } \
+        > "${h}/.codex/sessions/2026/11/17/rollout-c.jsonl"
     run env HOME="$h" bash -c "$(declare -f gui); REPO='$REPO' gui '
 m = g.session_meter({\"agent\": \"codex\", \"dir\": \"$d\", \"sandbox\": \"off\"})
 print(m[\"context\"], m[\"window\"], round(m[\"percent\"]))
-print([(l[\"label\"], l[\"percent\"], l[\"resets_at\"]) for l in m[\"limits\"]])
-print(g._window_label(60), g._window_label(2880))
+print([(l[\"label\"], l[\"percent\"], l[\"resets_at\"]) for l in m[\"limits\"]], m[\"mode\"])
+print(g._window_label(60), g._window_label(2880), g.session_meter({\"agent\": \"codex\", \"dir\": \"$d2\", \"sandbox\": \"off\"})[\"mode\"])
 print(g.session_meter({\"agent\": \"codex\", \"dir\": \"/nowhere\", \"sandbox\": \"off\"}))
 import os; os.environ[\"CODEX_HOME\"] = \"$h/zero/.codex\"
 print(g.session_meter({\"agent\": \"codex\", \"dir\": \"$d\", \"sandbox\": \"off\"}))'"
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "96000 272000 35" ]
-    [ "${lines[1]}" = "[('5-hour', 23.5, 5), ('Weekly', 41.0, 9)]" ]
-    [ "${lines[2]}" = "1-hour 2-day" ]
+    [ "${lines[1]}" = "[('5-hour', 23.5, 5), ('Weekly', 41.0, 9)] {'approval': 'on-request', 'sandbox': 'workspace-write'}" ] || fail "$output"
+    [ "${lines[2]}" = "1-hour 2-day {'approval': 'never', 'sandbox': 'danger-full-access'}" ] || fail "$output"
     [ "${lines[3]}" = None ]
     [ "${lines[4]}" = None ]
 }
@@ -982,4 +993,38 @@ print(sb.ports.get_visible(), asked)'
     [ "${lines[4]}" = "True 12 GB free · scratch 5.0 MB True" ] || fail "$output"
     [ "${lines[5]}" = "Claude Code is signed in as n@work.example on talos False False []" ] || fail "$output"
     [ "${lines[6]}" = "False []" ] || fail "$output"
+}
+
+@test "the status bar: what the agent may do without asking, in a few words; the warning color when it never asks" {
+    need_gtk
+    run app '
+import types
+m.Gtk.init()
+m.run = lambda *a, **k: None
+m.folder_ports = lambda *a, **k: []
+print(m.mode_label("claude", "default")[:2], m.mode_label("claude", "bypassPermissions")[:2], m.mode_label("claude", "newMode")[:2])
+print(m.mode_label("codex", {"approval": "on-request", "sandbox": "workspace-write"})[:2],
+      m.mode_label("codex", {"approval": None, "sandbox": "danger-full-access"})[:2])
+print(m.mode_label("agy", "auto"), m.mode_label("claude", None), m.mode_label("codex", {"approval": None, "sandbox": None}))
+print(m.session_meter({"agent": "claude", "usage": {"context": 5, "model": "claude-opus-5-5", "mode": "plan"}})["mode"])
+disk = types.SimpleNamespace(data={}, session_bytes=lambda n: 0, widget=m.Gtk.MenuButton())
+sb = m.StatusBar(types.SimpleNamespace(disk=disk, rail_toggle=m.Gtk.ToggleButton(), agent_argv=lambda *a: ["true"]))
+base = {"name": "a", "agent": "claude", "state": "running", "started": 1, "dir": "/p"}
+sb.update(dict(base, meter={"context": 5, "window": 10, "mode": "acceptEdits"}), 100)
+print(sb.mode.get_visible(), sb.mode_label.get_label(), sb.mode.has_css_class("warn"), sb.mode.get_tooltip_text())
+sb.update(dict(base, meter={"context": 5, "window": 10, "mode": "bypassPermissions"}), 200)
+print(sb.mode_label.get_label(), sb.mode.has_css_class("warn"))
+sb.update(dict(base, meter={"context": 5, "window": 10, "mode": "plan"}), 300)
+print(sb.mode.has_css_class("warn"))
+sb.update(dict(base, agent="agy", meter={"context": 5, "window": 10}), 400)
+print(sb.mode.get_visible())'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "('Asks first', False) ('Never asks', True) ('newMode', False)" ] || fail "$output"
+    [ "${lines[1]}" = "('Asks if needed · project only', False) ('full access', True)" ] || fail "$output"
+    [ "${lines[2]}" = "None None None" ] || fail "$output"
+    [ "${lines[3]}" = "plan" ] || fail "$output"
+    [ "${lines[4]}" = "True Edits without asking False Claude Code's permission mode: acceptEdits" ] || fail "$output"
+    [ "${lines[5]}" = "Never asks True" ] || fail "$output"
+    [ "${lines[6]}" = "False" ] || fail "$output"
+    [ "${lines[7]}" = "False" ] || fail "$output"
 }

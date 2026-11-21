@@ -767,6 +767,10 @@ session_usage() {
     [ -n "$f" ] || return 1
     local -a files=("$f")
     for t in "${f%.jsonl}"/subagents/*.jsonl; do [ ! -f "$t" ] || files+=("$t"); done
+    # its permission mode as it stands: Claude writes it down when it changes
+    local mode
+    mode=$(jq -r 'select(.type == "permission-mode") | .permissionMode | strings' "$f" 2>/dev/null | tail -n 1) || mode=""
+    case "$mode" in *[!A-Za-z]*) mode="" ;; esac
     # An API error is written as an assistant message of the model
     # "<synthetic>", with no usage: no request, no model, no context.
     jq -c 'select(.type == "assistant" and .message.usage != null and .message.id != null
@@ -775,7 +779,7 @@ session_usage() {
            | [.message.id, (.isSidechain // false), (.message.model // ""), (.timestamp // ""),
               ($u.input_tokens // 0), ($u.cache_creation_input_tokens // 0),
               ($u.cache_read_input_tokens // 0), ($u.output_tokens // 0)]' "${files[@]}" 2>/dev/null \
-    | jq -s -c 'reduce .[] as $r ({}; .[$r[0]] = (if .[$r[0]] == null or $r[7] > .[$r[0]][7] then $r else .[$r[0]] end))
+    | jq -s -c --arg mode "$mode" 'reduce .[] as $r ({}; .[$r[0]] = (if .[$r[0]] == null or $r[7] > .[$r[0]][7] then $r else .[$r[0]] end))
         | [.[]] as $m
         | if ($m | length) == 0 then null else
           ([$m[] | select(.[1] | not)] | max_by(.[3])) as $last
@@ -786,6 +790,7 @@ session_usage() {
              read: ([$m[] | .[4] + .[5] + .[6]] | add),
              read_cached: ([$m[] | .[6]] | add),
              written: ([$m[] | .[7]] | add)}
+            + (if $mode == "" then {} else {mode: $mode} end)
           end' | grep -v '^null$'
 }
 

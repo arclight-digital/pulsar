@@ -48,7 +48,7 @@ from pulsar_gui import (AGENT_NAMES, NAME_OK, PULSAR, TMUX_SOCKET, comment_line,
                         project_groups, project_label, repo_names, resume_note, run, run_argv,
                         session_name_for, session_project, session_status, session_title, slug_name,
                         title_from_prompt, tokens, when, deleted_in, diff_line_ref, newly_unseen, forget_body, forget_left,
-                        folder_ports)
+                        folder_ports, mode_label)
 
 # a session's scratch folder shows in its status bar from this size
 SCRATCH_SHOWN = 100_000_000
@@ -179,6 +179,7 @@ CSS = """
 .pulsar-agents .statusbar .pct.full { color: @error_color; }
 .pulsar-agents .statusbar label.needs { color: @accent_color; font-weight: 600; }
 .pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
+.pulsar-agents .statusbar .seg.warn { color: @warning_color; }
 .pulsar-agents .statusbar .port-btn { padding: 2px 6px; margin-left: 0; font-feature-settings: "tnum"; }
 .pulsar-agents .statusbar .scratch-btn { color: alpha(currentColor, .6); }
 .pulsar-agents .statusbar .scratch-btn.low { color: @warning_color; }
@@ -1892,7 +1893,12 @@ class StatusBar:
         self.scratch = Gtk.Button(child=sbox, css_classes=["flat", "changes-btn", "scratch-btn"], valign=Gtk.Align.CENTER)
         self.scratch.connect("clicked", lambda *_: win.disk.widget.popup())
         self.scratch.set_visible(False)
-        for w in (self.account, self.machine, self.scratch, self.lock, self.branch, self.changes):
+        # what the agent may do without asking you: its own words for it
+        # in the tooltip, the warning color when it never asks
+        self.mode_label = Gtk.Label()
+        self.mode = seg(Gtk.Image(icon_name="security-medium-symbolic"), self.mode_label, cls=("dim",))
+        self.mode.set_visible(False)
+        for w in (self.account, self.machine, self.scratch, self.mode, self.lock, self.branch, self.changes):
             self.widget.append(w)
         # clipped at the window's width rather than widening it
         self.outer = Gtk.ScrolledWindow(child=self.widget, hscrollbar_policy=Gtk.PolicyType.EXTERNAL,
@@ -1956,6 +1962,12 @@ class StatusBar:
         self.account_label.set_label(acct)
         self.account.set_tooltip_text((f"{AGENT_NAMES.get(s.get('agent'), s.get('agent'))} is signed in as {acct}"
                                        + (f" on {s['machine']}" if s.get("machine") else "")) if acct else None)
+        ml = mode_label(s.get("agent"), m.get("mode"))
+        self.mode.set_visible(bool(ml))
+        if ml:
+            self.mode_label.set_label(ml[0])
+            self.mode.set_tooltip_text(ml[2])
+            (self.mode.add_css_class if ml[1] else self.mode.remove_css_class)("warn")
         self._ports(s, now)
         self._scratch(s)
         self._git(s, now)

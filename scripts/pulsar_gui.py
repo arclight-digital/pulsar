@@ -583,6 +583,48 @@ def codex_token_count(line):
     return {"context": last, "window": info.get("model_context_window"), "limits": limits}
 
 
+def codex_mode(line):
+    """A Codex rollout's turn_context as {"approval", "sandbox"}, or None."""
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return None
+    if ev.get("type") != "turn_context":
+        return None
+    p = ev.get("payload") or {}
+    sb = p.get("sandbox_policy")
+    sb = sb.get("type") if isinstance(sb, dict) else sb
+    a = p.get("approval_policy")
+    if not isinstance(a, str) and not isinstance(sb, str):
+        return None
+    return {"approval": a if isinstance(a, str) else None, "sandbox": sb if isinstance(sb, str) else None}
+
+
+# an agent's permission mode in a few words, and whether it acts without
+# asking: (label, never asks)
+CLAUDE_MODES = {"default": ("Asks first", False), "acceptEdits": ("Edits without asking", False),
+                "plan": ("Plan only", False), "auto": ("Auto", False),
+                "bypassPermissions": ("Never asks", True), "dontAsk": ("Never asks", True)}
+CODEX_APPROVALS = {"untrusted": "Asks first", "on-request": "Asks if needed", "on-failure": "Asks on failure",
+                   "never": "Never asks"}
+CODEX_SANDBOXES = {"read-only": "read-only", "workspace-write": "project only", "danger-full-access": "full access"}
+
+
+def mode_label(agent, mode):
+    """(label, warn, tooltip) for a session's permission mode, or None."""
+    if agent == "claude" and isinstance(mode, str) and mode:
+        label, warn = CLAUDE_MODES.get(mode, (mode, False))
+        return label, warn, f"Claude Code's permission mode: {mode}"
+    if agent == "codex" and isinstance(mode, dict):
+        a, sb = mode.get("approval"), mode.get("sandbox")
+        words = [w for w in (CODEX_APPROVALS.get(a, a), CODEX_SANDBOXES.get(sb, sb)) if w]
+        if not words:
+            return None
+        return (" · ".join(words), a == "never" or sb == "danger-full-access",
+                f"Codex CLI: approvals {a or 'unknown'}, sandbox {sb or 'unknown'}")
+    return None
+
+
 def codex_meter(s):
     d = s.get("dir")
     if not d:
@@ -605,10 +647,16 @@ def codex_meter(s):
                 fh.seek(0, 2)
                 fh.seek(max(0, fh.tell() - 262144))
                 tail = fh.read().decode("utf-8", "replace").splitlines()
+            # the last count, and the last turn's settings (written at its start)
+            m = mode = None
             for line in reversed(tail):
-                if '"token_count"' in line and (m := codex_token_count(line)):
-                    return m
-            return None
+                if m is None and '"token_count"' in line:
+                    m = codex_token_count(line)
+                if mode is None and '"turn_context"' in line:
+                    mode = codex_mode(line)
+                if m is not None and mode is not None:
+                    break
+            return dict(m, mode=mode) if m else None
         return _cached(("codex", str(f)), f, read)
     return None
 
@@ -651,7 +699,7 @@ def session_meter(s):
         u = s.get("usage") or {}
         if u.get("context"):
             m = {"context": u["context"], "window": context_window(u.get("model")), "limits": [],
-                 "model": u.get("model")}
+                 "model": u.get("model"), "mode": u.get("mode")}
     elif agent == "codex":
         m = codex_meter(s)
     elif agent == "agy":

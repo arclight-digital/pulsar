@@ -5759,6 +5759,21 @@ usage_env() {
     [[ "$output" == *"written      2k tokens"* ]]
 }
 
+@test "agent usage: Claude's permission mode as it last wrote it down; none when it wrote none, or nonsense" {
+    usage_env
+    local f="${HOME}/.claude/projects/-code-proj/${ID}.jsonl"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r 'has("mode")' <<<"$output")" = false ] || fail "$output"
+    printf '{"type":"permission-mode","permissionMode":"auto"}\n{"type":"mode","mode":"normal"}\n{"type":"permission-mode","permissionMode":"plan"}\n' >> "$f"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r .mode <<<"$output")" = plan ] || fail "$output"
+    run "$PULSAR" agent sessions --json
+    [ "$(jq -r '.[] | select(.name == "work") | .usage.mode' <<<"$output")" = plan ] || fail "$output"
+    printf '{"type":"permission-mode","permissionMode":"rm -rf; x"}\n' >> "$f"
+    run "$PULSAR" agent usage work --json
+    [ "$(jq -r 'has("mode")' <<<"$output")" = false ] || fail "$output"
+}
+
 @test "agent usage: an API error's stand-in message is no request, no model and no context" {
     usage_env
     # how Claude Code writes an API error: an assistant message of its own
