@@ -1106,3 +1106,44 @@ print(w.state["order"]["projects"])'
     [ "${lines[7]}" = "['/a', '/b'] ['a1', 'a3', 'a2']" ] || fail "$output"
     [ "${lines[8]}" = "['/b', '/a']" ] || fail "$output"
 }
+
+@test "a dragged row opens a gap where it would land: next to a session, atop its group, or past a whole group; the drop goes there" {
+    need_gtk
+    run app '
+m.Gtk.init()
+class S(m.Gtk.ListBoxRow):
+    def __init__(self, n): super().__init__(); self.name = n
+m.SessionRow = S
+names = vars(m.Agents)
+W = type("W", (), {n: names[n] for n in ("_gap_index", "_rows_in_list", "_drop_gap", "_drop_done", "_project_of",
+                                         "move_session", "move_group", "_groups")})
+w = W()
+proj = {"a1": "/a", "a2": "/a", "b1": "/b", "b2": "/b"}
+w.sessions = {n: {"name": n, "project": p, "started": 100 - i} for i, (n, p) in enumerate(proj.items())}
+w.state = {"order": {}}
+w.list, w.gap, w._drop = m.Gtk.ListBox(), None, None
+for r in (m.ProjectRow("/a", "a", False), S("a1"), S("a2"), m.ProjectRow("/b", "b", False), S("b1"), S("b2")):
+    w.list.append(r)
+moved = []
+w._order_changed = lambda name=None, project=None: moved.append((name, project))
+m.save_state = lambda d: None
+show = lambda: " ".join("|" if isinstance(r, m.DropGap) else getattr(r, "name", None) or "#" + r.project[1:] for r in w._rows_in_list())
+for place in (("session", "a2", {"before": "a1"}), ("session", "a1", {"after": "a2"}), ("session", "b2", {"step": -10000}),
+              ("project", "/b", {"before": "/a"}), ("project", "/a", {"after": "/b"}), ("project", "/a", {"after": "/a"})):
+    print(w._gap_index(place), end=",")
+print()
+w._drop = ("session", "a2", {"before": "a1"}); w._drop_gap(w._gap_index(w._drop)); print(show())
+w._drop_gap(w._gap_index(("project", "/a", {"after": "/b"}))); print(show())
+w._drop_gap(1); w._drop_gap(w._gap_index(("session", "b2", {"step": -10000}))); print(show())
+w._drop_gap(None); print(show(), w._drop)
+# the drop: where the gap said
+w._drop = ("session", "a2", {"before": "a1"}); w._drop_gap(1)
+print(w._drop_done("session\ta2", 0), show(), w.state["order"], moved)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "1,3,4,0,6,3," ] || fail "$output"
+    [ "${lines[1]}" = "#a | a1 a2 #b b1 b2" ] || fail "$output"
+    [ "${lines[2]}" = "#a a1 a2 #b b1 b2 |" ] || fail "$output"
+    [ "${lines[3]}" = "#a a1 a2 #b | b1 b2" ] || fail "$output"
+    [ "${lines[4]}" = "#a a1 a2 #b b1 b2 None" ] || fail "$output"
+    [ "${lines[5]}" = "True #a a1 a2 #b b1 b2 {'sessions': {'/a': ['a2', 'a1']}} [('a2', None)]" ] || fail "$output"
+}

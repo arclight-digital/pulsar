@@ -180,8 +180,14 @@ CSS = """
 .pulsar-agents .statusbar label.needs { color: @accent_color; font-weight: 600; }
 .pulsar-agents .statusbar .changes-btn { padding: 2px 10px; min-height: 0; border-radius: 8px; margin-left: 4px; }
 .pulsar-agents .statusbar .seg.warn { color: @warning_color; }
-.pulsar-agents .sessions row.drop-before { box-shadow: inset 0 2px @accent_color; }
-.pulsar-agents .sessions row.drop-after { box-shadow: inset 0 -2px @accent_color; }
+.pulsar-agents .sessions row.drop-gap { min-height: 0; padding: 0; margin: 0; background: none; box-shadow: none; }
+.pulsar-agents .sessions row.drop-gap .drop-gap-line { min-height: 2px; margin: 3px 12px; border-radius: 2px;
+    background-color: @accent_color; box-shadow: 0 0 6px alpha(@accent_color, .6); }
+.pulsar-agents .sessions row.dragging { opacity: .35; }
+.drag-card { padding: 6px 12px 6px 8px; border-radius: 10px; background-color: @card_bg_color; color: @card_fg_color;
+             box-shadow: 0 6px 18px rgba(0, 0, 0, .35), 0 0 0 1px alpha(@accent_color, .45); }
+@keyframes settle { from { background-color: alpha(@accent_color, .30); } to { background-color: transparent; } }
+.pulsar-agents .sessions row.just-moved { animation: settle 900ms ease-out; }
 .pulsar-agents .statusbar .port-btn { padding: 2px 6px; margin-left: 0; font-feature-settings: "tnum"; }
 .pulsar-agents .statusbar .scratch-btn { color: alpha(currentColor, .6); }
 .pulsar-agents .statusbar .scratch-btn.low { color: @warning_color; }
@@ -463,6 +469,14 @@ class Agents(Adw.ApplicationWindow):
         lkeys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         lkeys.connect("key-pressed", self._list_key)
         self.list.add_controller(lkeys)
+        # one drop target for the list: it opens a gap where a dragged row lands
+        self.gap, self._drop = None, None
+        dst = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        dst.set_preload(True)
+        dst.connect("motion", lambda t, _x, y: self._drop_at(t.get_value(), y))
+        dst.connect("leave", lambda *_: self._drop_gap(None))
+        dst.connect("drop", lambda _t, value, _x, y: self._drop_done(value, y))
+        self.list.add_controller(dst)
         self.empty = Gtk.Label(label="No sessions", valign=Gtk.Align.START, margin_top=18,
                                css_classes=["dim-label"])
         self.side_stack = Gtk.Stack()
@@ -836,6 +850,7 @@ class Agents(Adw.ApplicationWindow):
             self._shape = shape
             while (r := self.list.get_first_child()) is not None:
                 self.list.remove(r)
+            self.gap = None
             rows = {}
             for p, ss in groups:
                 # folded stays folded, narrowed or not
@@ -900,14 +915,107 @@ class Agents(Adw.ApplicationWindow):
         save_state(self.state)
         self._shape = None
         self._rebuild()
-        # the keyboard stays on what moved
+        # the keyboard stays on what moved, and it glows a moment where it
+        # landed, for the eye to follow
         r = self.list.get_first_child()
         while r is not None:
-            if (name and getattr(r, "name", None) == name) or (project and getattr(r, "project", None) == project
-                                                               and isinstance(r, ProjectRow)):
+            if (name and isinstance(r, SessionRow) and r.name == name) or (
+                    project and isinstance(r, ProjectRow) and r.project == project):
                 r.grab_focus()
+                r.add_css_class("just-moved")
+                GLib.timeout_add(900, lambda r=r: r.remove_css_class("just-moved") and False)
                 break
             r = r.get_next_sibling()
+
+    def _project_of(self, name):
+        s = self.sessions.get(name)
+        return session_project(s) if s else None
+
+    def _drop_at(self, value, y):
+        """While a row is dragged over the list: where it would land (the
+        row under the pointer, above or below its middle), a gap there, and
+        whether it may land at all. Over the gap itself, nothing changes."""
+        kind, _, key = (value or "").partition("\t")
+        row = self.list.get_row_at_y(int(y))
+        if isinstance(row, DropGap):
+            return Gdk.DragAction.MOVE if self._drop else 0
+        if row is None:
+            # below the last row: after it
+            row, upper = self.list.get_last_child(), False
+            while isinstance(row, DropGap):
+                row = row.get_prev_sibling()
+            if row is None:
+                return 0
+        else:
+            ok, b = row.compute_bounds(self.list)
+            upper = not ok or y < b.get_y() + b.get_height() / 2
+        target = ("project", row.project) if isinstance(row, ProjectRow) else ("session", getattr(row, "name", None))
+        self._drop = drop_place(kind, key, *target, upper, self._project_of)
+        self._drop_gap(self._gap_index(self._drop) if self._drop else None)
+        return Gdk.DragAction.MOVE if self._drop else 0
+
+    def _gap_index(self, place):
+        """The position among the list's rows (the gap left out) where a
+        drop would put the row: before or after a session, at the top of a
+        group, or before or after a whole group."""
+        kind, key, where = place
+        rows = [r for r in self._rows_in_list() if not isinstance(r, DropGap)]
+        def at(pred):
+            return next((i for i, r in enumerate(rows) if pred(r)), None)
+        def heading(p):
+            return at(lambda r: isinstance(r, ProjectRow) and r.project == p)
+        if kind == "session":
+            if "before" in where:
+                return at(lambda r: isinstance(r, SessionRow) and r.name == where["before"])
+            if "after" in where:
+                i = at(lambda r: isinstance(r, SessionRow) and r.name == where["after"])
+                return None if i is None else i + 1
+            i = heading(self._project_of(key))
+            return None if i is None else i + 1
+        if "before" in where:
+            return heading(where["before"])
+        i = heading(where.get("after"))
+        if i is None:
+            return None
+        i += 1
+        while i < len(rows) and not isinstance(rows[i], ProjectRow):
+            i += 1
+        return i
+
+    def _rows_in_list(self):
+        out, r = [], self.list.get_first_child()
+        while r is not None:
+            out.append(r)
+            r = r.get_next_sibling()
+        return out
+
+    def _drop_gap(self, index):
+        """The gap at that position (None: no gap)."""
+        if index is None:
+            if self.gap is not None and self.gap.get_parent() is not None:
+                self.list.remove(self.gap)
+            self.gap = None
+            self._drop = None
+            return
+        if self.gap is not None and self.gap.get_parent() is not None:
+            if self.gap.get_index() == index:
+                return
+            self.list.remove(self.gap)
+        self.gap = self.gap or DropGap()
+        self.list.insert(self.gap, index)
+
+    def _drop_done(self, value, y):
+        """The drop: where the gap was, or (no motion seen) where it is now."""
+        place = self._drop
+        if place is None:
+            self._drop_at(value, y)
+            place = self._drop
+        self._drop_gap(None)
+        if not place:
+            return False
+        kind, key, where = place
+        (self.move_session if kind == "session" else self.move_group)(key, **where)
+        return True
 
     def _list_key(self, _c, keyval, _code, state):
         """Alt+Up and Alt+Down move the row the keyboard is on (a session in
@@ -2200,47 +2308,43 @@ def drop_place(kind, key, target_kind, target_key, upper, project_of):
 
 
 def reorder_dnd(row, win, kind, key):
-    """Drag a sidebar row (a session, or a group by its heading) and drop it
-    on another: a line shows where it lands."""
+    """Drag a sidebar row (a session, or a group by its heading): what moves
+    with the pointer is a small card of it, the row itself fades where it
+    was, and the list (Agents._drop_*) opens a gap where it would land."""
     src = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
     src.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(f"{kind}\t{key}"))
-    src.connect("drag-begin", lambda s, _d: s.set_icon(Gtk.WidgetPaintable.new(row), 20, 12))
+
+    def begin(_s, drag):
+        card = Gtk.Box(spacing=8, css_classes=["drag-card"])
+        if kind == "session":
+            s = win.sessions.get(key) or {"name": key}
+            icon = SessionIcon(key, 20)
+            icon.set_glyph(s.get("icon") or key)
+            card.append(icon)
+            card.append(Gtk.Label(label=session_title(s), ellipsize=Pango.EllipsizeMode.END, max_width_chars=28))
+        else:
+            card.append(Gtk.Label(label=project_label(key, [p for p, _ss in win._groups()]),
+                                  css_classes=["project-label"], ellipsize=Pango.EllipsizeMode.END,
+                                  max_width_chars=28))
+        Gtk.DragIcon.get_for_drag(drag).set_child(card)
+        drag.set_hotspot(14, 14)
+        row.add_css_class("dragging")
+
+    def end(*_):
+        row.remove_css_class("dragging")
+        win._drop_gap(None)
+    src.connect("drag-begin", begin)
+    src.connect("drag-end", end)
+    src.connect("drag-cancel", lambda *_: (end(), False)[1])
     row.add_controller(src)
-    dst = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
-    dst.set_preload(True)
 
-    def project_of(name):
-        x = win.sessions.get(name)
-        return session_project(x) if x else None
 
-    def place(y, value):
-        k, _, v = (value or "").partition("\t")
-        return drop_place(k, v, kind, key, y < row.get_height() / 2, project_of)
+class DropGap(Gtk.ListBoxRow):
+    """Where a dragged row would land: a slim line, in a gap of its own."""
 
-    def clear(*_):
-        row.remove_css_class("drop-before")
-        row.remove_css_class("drop-after")
-
-    def motion(t, _x, y):
-        clear()
-        got = place(y, t.get_value())
-        if not got:
-            return 0
-        row.add_css_class("drop-before" if "before" in got[2] or "step" in got[2] else "drop-after")
-        return Gdk.DragAction.MOVE
-
-    def drop(_t, value, _x, y):
-        clear()
-        got = place(y, value)
-        if not got:
-            return False
-        k, v, where = got
-        (win.move_session if k == "session" else win.move_group)(v, **where)
-        return True
-    dst.connect("motion", motion)
-    dst.connect("leave", clear)
-    dst.connect("drop", drop)
-    row.add_controller(dst)
+    def __init__(self):
+        super().__init__(selectable=False, activatable=False, focusable=False, css_classes=["drop-gap"])
+        self.set_child(Gtk.Box(css_classes=["drop-gap-line"]))
 
 
 class ProjectRow(Gtk.ListBoxRow):
