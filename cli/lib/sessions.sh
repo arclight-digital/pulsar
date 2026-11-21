@@ -686,13 +686,21 @@ agent_sessions() {
             return 0 ;;
     esac
     local live="" names n f row
-    ! have tmux || live=$(atmux list-sessions -F $'#{session_name}\t#{session_created}\t#{session_activity}\t#{?@pulsar-alert,#{@pulsar-alert},-}\t#{?@pulsar-exited,#{@pulsar-exited},-}' 2>/dev/null \
+    # (an exit status is tested for being there, not for being true: tmux
+    # reads a 0, a clean exit, as false)
+    ! have tmux || live=$(atmux list-sessions -F $'#{session_name}\t#{session_created}\t#{session_activity}\t#{?@pulsar-alert,#{@pulsar-alert},-}\t#{?#{!=:#{@pulsar-exited},},#{@pulsar-exited},-}' 2>/dev/null \
         | awk -F'\t' '$1 !~ /~/') || live=""
-    # a Codex or agy session's "waiting" as it stands (alert_now)
+    # a Codex or agy session's "waiting" as it stands (alert_now); a Claude
+    # or Codex one at its prompt with nothing to say so (agent_quiet)
     local ln lc la lal le
     live=$(while IFS=$'\t' read -r ln lc la lal le; do
                [ -n "$ln" ] || continue
-               if [ "$lal" != - ]; then lal=$(alert_now "$ln"); lal=${lal:--}; fi
+               # (their tmux calls get no stdin: a tmux client can read it,
+               # and it is this loop's list of sessions)
+               if [ "$lal" != - ]; then lal=$(alert_now "$ln" </dev/null); lal=${lal:--}; fi
+               if [ "$lal" = - ] && [ "$le" = - ]; then
+                   lal=$(agent_quiet "$ln" "$(session_get "$ln" agent || true)" </dev/null) || lal=-
+               fi
                printf '%s\t%s\t%s\t%s\t%s\n' "$ln" "$lc" "$la" "$lal" "$le"
            done <<<"$live")
     names=$( { cut -f1 <<<"$live"

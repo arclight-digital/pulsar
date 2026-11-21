@@ -85,7 +85,10 @@ CLI, and opencode moves to version 2.
   (a Stop hook for the end of a turn, and a PreInvocation hook that says
   when the next one starts, so typing a draft or opening `/context`
   leaves it waiting), and gives Codex a `notify` program on its command
-  line unless you have one of your own. opencode doesn't yet.
+  line unless you have one of your own. opencode doesn't yet. A Claude
+  Code or Codex CLI session whose screen hasn't changed for 20 seconds is
+  waiting too, even without that signal: both show a ticking counter
+  while they work, and Claude Code runs no hook when you cancel a turn.
 - Each session started with `--tmux` gets a scratch folder,
   `$PULSAR_SCRATCH`, for VM disks, builds and downloads, mounted into the
   sandbox too. It's deleted with the session.

@@ -241,6 +241,38 @@ screen_key() {
 # matching start there) lasts while the screen is the one the turn ended on:
 # an agent at its prompt redraws the same screen, and typing or working
 # changes it. A new size only moves that baseline.
+# agent_quiet <session> <agent>: a Claude or Codex session not marked
+# waiting whose screen has stood still for PULSAR_QUIET_SECONDS (20) is at
+# its prompt, so it is marked waiting, and prints it. Both draw a ticking
+# counter while they work (Claude's spinner, Codex's "Working (12s"),
+# through tool runs and compaction alike, so a still screen means neither
+# is at work: a turn cancelled at once (Claude runs no Stop hook for an
+# interrupt), a first screen before any turn, a trust question. Claude's
+# mark goes at its next prompt (UserPromptSubmit); Codex's holds while the
+# screen does (alert_now). The screen as last seen, and since when, is kept
+# in @pulsar-quiet, and dropped once it has marked the session.
+agent_quiet() {
+    local k now t
+    case "${2:-}" in claude|codex) ;; *) return 1 ;; esac
+    k=$(screen_key "$1") || return 1
+    now=$(date +%s)
+    t=$(atmux show-options -qv -t "=${1}:" @pulsar-quiet 2>/dev/null) || t=""
+    if [ "${t#* }" != "$k" ]; then
+        atmux set-option -t "=${1}:" @pulsar-quiet "${now} ${k}" 2>/dev/null || true
+        return 1
+    fi
+    [ $(( now - ${t%% *} )) -ge "${PULSAR_QUIET_SECONDS:-20}" ] || return 1
+    atmux set-option -u -t "=${1}:" @pulsar-quiet 2>/dev/null || true
+    if [ "$2" = claude ]; then
+        atmux set-option -t "=${1}:" @pulsar-alert Stop 2>/dev/null || return 1
+        printf 'Stop\n'
+    else
+        atmux set-option -t "=${1}:" @pulsar-alert-screen "$k" 2>/dev/null || return 1
+        atmux set-option -t "=${1}:" @pulsar-alert Waiting 2>/dev/null || return 1
+        printf 'Waiting\n'
+    fi
+}
+
 alert_now() {
     local a k now
     a=$(atmux show-options -v -t "=${1}:" @pulsar-alert 2>/dev/null) || a=""

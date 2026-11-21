@@ -7590,6 +7590,56 @@ PY
     [[ "$screen" != *"a note"* ]] || fail "typed in mid-turn: $screen"
 }
 
+@test "a Claude or Codex screen that stands still is at its prompt: waiting, though no Stop came (a cancelled turn); a ticking one works" {
+    msg_env
+    # 2, not 1: the rule counts whole seconds, so two looks a moment apart
+    # can be a second apart by the clock, before a ticking screen has moved
+    export PULSAR_QUIET_SECONDS=2
+    local S="$PULSAR_AGENT_TMUX_SOCKET"
+    printf 'agent=claude\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/c.session"
+    printf 'agent=claude\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/busy.session"
+    printf 'agent=codex\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/x.session"
+    printf 'agent=agy\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/g.session"
+    "${T[@]}" new-session -d -s c -x 100 -y 20 "printf '> '; cat"
+    "${T[@]}" new-session -d -s busy -x 100 -y 20 "while :; do printf '\\r* Working (%s)' \"\$(date +%N)\"; sleep 0.2; done"
+    "${T[@]}" new-session -d -s x -x 100 -y 20 "printf '> '; cat"
+    "${T[@]}" new-session -d -s g -x 100 -y 20 "printf '> '; cat"
+    # an agent that has quit, its shell left in the pane: not a prompt of its
+    printf 'agent=claude\ndir=%s\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/e.session"
+    "${T[@]}" new-session -d -s e -x 100 -y 20 "printf '$ '; cat"
+    "${T[@]}" set-option -w -t =e: @pulsar-exited 0
+    sleep 0.3
+    state() { "$PULSAR" agent sessions --json | jq -r --arg n "$1" '.[] | select(.name == $n) | .state'; }
+    # first looks, a moment apart: not still for long enough yet, so working
+    [ "$(state c)" = running ] || { msg_teardown; fail "c at once: $(state c)"; }
+    [ "$(state c)" = running ] || { msg_teardown; fail "c a moment later: $(state c)"; }
+    sleep 2.3
+    local c busy x g
+    c=$(state c); busy=$(state busy); x=$(state x); g=$(state g)
+    [ "$c" = waiting ] && [ "$busy" = running ] && [ "$x" = waiting ] && [ "$g" = running ] \
+        || { msg_teardown; fail "c=$c busy=$busy x=$x g=$g"; }
+    [ "$(alert_of c)" = Stop ] && [ "$(alert_of x)" = Waiting ] || { msg_teardown; fail "$(alert_of c) $(alert_of x)"; }
+    [ -z "$(alert_of e)" ] || { msg_teardown; fail "an exited agent marked waiting: $(alert_of e)"; }
+    # and a clean exit (status 0) is an exit
+    local ex; ex=$("$PULSAR" agent sessions --json | jq -c '.[] | select(.name == "e") | [.state, .exited]')
+    [ "$ex" = '["running",0]' ] || { msg_teardown; fail "the exited one: $ex"; }
+    # Claude: a draft typed at the prompt leaves it your turn; its next prompt ends it
+    "${T[@]}" send-keys -t =c: -l 'half a thought'
+    sleep 0.3
+    [ "$(state c)" = waiting ] || { msg_teardown; fail "a draft ended it: $(state c)"; }
+    local id; id=x1; printf 'id=%s\n' "$id" >> "${PULSAR_AGENT_SESSIONS}/c.session"
+    mkdir -p "${HOME}/.local/state/pulsar/agent-alerts"
+    printf '{"hook_event_name":"UserPromptSubmit"}' > "${HOME}/.local/state/pulsar/agent-alerts/${id}.json"
+    "$PULSAR" agent notify c
+    [ "$(state c)" = running ] || { msg_teardown; fail "the prompt didn't end it: $(state c)"; }
+    # Codex: its screen is the baseline, so typing ends the wait, as after a turn
+    "${T[@]}" send-keys -t =x: -l 'hello'
+    sleep 0.3
+    x=$(state x)
+    msg_teardown
+    [ "$x" = running ] || fail "codex still waiting after typing: $x"
+}
+
 @test "agy: waiting lasts until its PreInvocation hook says a turn started; a draft or a panel doesn't end it; sandboxed, the screen does" {
     msg_env
     local S="$PULSAR_AGENT_TMUX_SOCKET"
