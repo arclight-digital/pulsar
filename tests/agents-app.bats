@@ -105,18 +105,20 @@ print(m.diff_summary(""))'
     [ "${lines[5]}" = "No changes since the session started" ]
 }
 
-@test "the header says who, what it is doing and where (the status bar has the context)" {
+@test "the header says where the session works; what it is doing is the dot's and the status bar's" {
     need_gtk
     run env HOME=/home/u bash -c "$(declare -f app); APP='$APP' app '
 now = 1_000_000
 print(m.header_subtitle({\"agent\": \"claude\", \"state\": \"waiting\", \"waiting_for\": \"Notification\",
                          \"dir\": \"/home/u/p\", \"usage\": {\"context\": 142310}}, now))
 print(m.header_subtitle({\"agent\": \"agy\", \"state\": \"running\", \"started\": now - 600, \"dir\": \"/srv/x\", \"usage\": None}, now))
-print(m.header_subtitle({\"agent\": None, \"state\": \"ended\"}, now))'"
+print(m.header_subtitle({\"agent\": None, \"state\": \"ended\"}, now))
+print(m.header_subtitle({\"agent\": \"claude\", \"dir\": \"/home/n/rl\", \"machine\": \"talos\"}, now))'"
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "Claude Code · Needs you · ~/p" ]
-    [ "${lines[1]}" = "Antigravity CLI · Working · /srv/x" ]
-    [ "${lines[2]}" = "Started by hand · Stopped" ]
+    [ "${lines[0]}" = "~/p" ] || fail "$output"
+    [ "${lines[1]}" = "/srv/x" ] || fail "$output"
+    [ "${lines[2]}" = "Started by hand" ] || fail "$output"
+    [ "${lines[3]}" = "/home/n/rl on talos" ] || fail "$output"
 }
 
 @test "the desktop entry starts the app from the image, under its own icon" {
@@ -1207,4 +1209,24 @@ for on in (True, True, True, False, False, True):
 print(len(changes), b.has_css_class("needs"))'
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "3 True" ] || fail "$output"
+}
+
+@test "a session's menu is the same in the header and on its row, which adds moving it; the row has no one-click archive" {
+    need_gtk
+    run app '
+m.Gtk.init()
+def items(menu):
+    out = []
+    for i in range(menu.get_n_items()):
+        sec = menu.get_item_link(i, "section")
+        out.append([(sec.get_item_attribute_value(j, "label").get_string(), sec.get_item_attribute_value(j, "action").get_string(),
+                     (sec.get_item_attribute_value(j, "target") or m.GLib.Variant("s", "")).get_string())
+                    for j in range(sec.get_n_items())])
+    return out
+print(items(m.session_menu(None)))
+print(items(m.session_menu("w1")))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[[('Rename…', 'win.rename', ''), ('Open in Terminal', 'win.terminal', '')], [('Stop', 'win.stop', ''), ('Archive', 'win.archive-current', '')]]" ] || fail "$output"
+    [ "${lines[1]}" = "[[('Rename…', 'win.rename-session', 'w1'), ('Open in Terminal', 'win.terminal-session', 'w1')], [('Move Up', 'win.session-up', 'w1'), ('Move Down', 'win.session-down', 'w1')], [('Stop', 'win.stop-session', 'w1'), ('Archive', 'win.archive', 'w1')]]" ] || fail "$output"
+    ! grep -q 'tooltip_text="Archive"' "$APP" || false
 }
