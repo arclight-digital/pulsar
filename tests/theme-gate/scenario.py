@@ -1769,14 +1769,26 @@ def glass_picks():
     for app, ok, picked in hits or []:
         add(f"a drag over {app} in the dash reaches the dash", ok, f"topmost actor there: {picked}")
 
-    # the focus brackets, drawn over everything while they show
-    got, why = eval_json(
-        "(() => { const b = Main.extensionManager.lookup('" + EXT + "')?.stateObj?._glass?._brackets?._area; "
-        "if (!b) return JSON.stringify(null); const icon = Main.overview.dash._box.get_children()[0]; "
+    # the focus brackets, drawn over everything while they show: placed over
+    # the first dash icon, then picked once laid out, at that icon's middle
+    brackets = "Main.extensionManager.lookup('" + EXT + "')?.stateObj?._glass?._brackets?._area"
+    placed, why = eval_json(
+        f"(() => {{ const b = {brackets}; if (!b) return JSON.stringify(null); "
+        "const icon = Main.overview.dash._box.get_children()[0]; "
         "const [x, y] = icon.get_transformed_position(); const [w, h] = icon.get_transformed_size(); "
-        "Main.layoutManager.uiGroup.set_child_above_sibling(b, null); b.set({x, y, width: w, height: h}); b.show(); "
-        "const t = _gatePick(..._gateMid(icon)); const r = [icon.contains(t), t?.constructor.name ?? null]; b.hide(); "
-        "return JSON.stringify(r); })()")
+        "Main.layoutManager.uiGroup.set_child_above_sibling(b, null); "
+        "b.remove_all_transitions(); b.set({x, y, width: w, height: h, opacity: 255}); b.show(); "
+        "return JSON.stringify(b.constructor.name); })()")
+    add("the focus brackets are there to place", placed, placed or why or "no brackets")
+    laid = wait_for(f"(() => {{ const b = {brackets}; const icon = Main.overview.dash._box.get_children()[0]; "
+                    "const [bx, by] = b.get_transformed_position(); const [ix, iy] = icon.get_transformed_position(); "
+                    "return b.is_mapped() && b.has_allocation() && Math.abs(bx - ix) < 1 && Math.abs(by - iy) < 1; })()",
+                    secs=5)
+    add("the focus brackets lie over the dash icon", laid)
+    got, why = eval_json(
+        f"(() => {{ const b = {brackets}; const icon = Main.overview.dash._box.get_children()[0]; "
+        "const t = _gatePick(..._gateMid(icon)); const r = [icon.contains(t), t?.constructor.name ?? null]; "
+        "b.hide(); return JSON.stringify(r); })()")
     add("the focus brackets over a dash icon leave the icon under the pointer", got and got[0],
         f"topmost actor there: {got[1]}" if got else (why or "no brackets"))
     eval_js("Main.overview.hide(); 1")
