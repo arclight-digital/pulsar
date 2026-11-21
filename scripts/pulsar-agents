@@ -2041,9 +2041,12 @@ class StatusBar:
         # the lock alone, as in the sidebar; the word is its tooltip
         self.lock = seg(Gtk.Image(icon_name="security-high-symbolic"), cls=("dim",))
         self.lock.set_tooltip_text("Sandboxed")
-        self.branch_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.MIDDLE, max_width_chars=28)
-        self.has_branch = False
+        self.branch_label = Gtk.Label()
         self.branch = seg(self.branch_label, cls=("dim",))
+        self.branch.set_visible(False)
+        # the segments a session may or may not have, as it has them; which
+        # of those the bar has room for is _fit's
+        self.want = {}
         self.branch.set_tooltip_text("Branch")
         self.changes_label = Gtk.Label(css_classes=["val"])
         self.changes = Gtk.Button(child=self.changes_label, css_classes=["flat", "changes-btn"],
@@ -2058,8 +2061,9 @@ class StatusBar:
         for w in (self.who, self.doing, self.ctx, self.limits, self.ports):
             self.widget.append(w)
         self.widget.append(Gtk.Box(hexpand=True))
-        self.account_label = Gtk.Label(ellipsize=Pango.EllipsizeMode.MIDDLE, max_width_chars=26)
+        self.account_label = Gtk.Label()
         self.account = seg(Gtk.Image(icon_name="avatar-default-symbolic"), self.account_label, cls=("dim",))
+        self.account.set_visible(False)
         self.machine_label = Gtk.Label()
         self.machine = seg(Gtk.Image(icon_name="network-server-symbolic"), self.machine_label, cls=("dim",))
         # its scratch folder, once there's something in it; with the disk's
@@ -2136,12 +2140,12 @@ class StatusBar:
         self.machine.set_visible(bool(s.get("machine")))
         self.machine_label.set_label(s.get("machine") or "")
         acct = s.get("account") or ""
-        self.account.set_visible(bool(acct))
+        self._want(self.account, bool(acct))
         self.account_label.set_label(acct)
         self.account.set_tooltip_text((f"{AGENT_NAMES.get(s.get('agent'), s.get('agent'))} is signed in as {acct}"
                                        + (f" on {s['machine']}" if s.get("machine") else "")) if acct else None)
         ml = mode_label(s.get("agent"), m.get("mode"))
-        self.mode.set_visible(bool(ml))
+        self._want(self.mode, bool(ml))
         if ml:
             self.mode_label.set_label(ml[0])
             self.mode.set_tooltip_text(ml[2])
@@ -2178,12 +2182,13 @@ class StatusBar:
         if len(found) > 3:
             self.port_btns.append(Gtk.Label(label=f"+{len(found) - 3}", css_classes=["key"],
                                             tooltip_text=", ".join(str(p) for p, _, _ in found[3:])))
-        self.ports.set_visible(bool(found))
+        self._want(self.ports, bool(found))
 
     def _scratch(self, s):
         """This session's scratch folder, from the disk panel's last look:
-        shown from 100 MB, and always, with the disk's free space, when that
-        is low (disk_level)."""
+        shown from 100 MB, and whatever it holds when the disk is low
+        (disk_level), in the warning color then. The free space itself is
+        the sidebar footer's."""
         d = getattr(self.win.disk, "data", None) or {}
         used = self.win.disk.session_bytes(s["name"]) if not s.get("machine") else 0
         free, need = d.get("free"), d.get("suspend_need")
@@ -2192,10 +2197,8 @@ class StatusBar:
             self.scratch.remove_css_class(c)
         if level != "ok":
             self.scratch.add_css_class(level)
-            self.scratch_label.set_label(f"{human_bytes(free)} free" + (f" · scratch {human_bytes(used)}" if used else ""))
-        else:
-            self.scratch_label.set_label(f"Scratch {human_bytes(used)}")
-        self.scratch.set_visible(level != "ok" or used >= SCRATCH_SHOWN)
+        self.scratch_label.set_label(f"Scratch {human_bytes(used)}")
+        self._want(self.scratch, used >= SCRATCH_SHOWN or (level != "ok" and used > 0))
         tip = [f"This session's scratch folder holds {human_bytes(used)}."] if used else []
         if free is not None:
             tip.append(f"{human_bytes(free)} free on the disk agents write to"
@@ -2213,14 +2216,12 @@ class StatusBar:
         if not due:
             return
         if name != self.changes_for:
-            self.branch.set_visible(False)
-            self.has_branch = False
+            self._want(self.branch, False)
             self.changes.set_visible(False)
         self.changes_for, self.changes_at = name, now
         if s.get("offline"):
             # its machine isn't answering: nothing to ask, nothing to show
-            self.branch.set_visible(False)
-            self.has_branch = False
+            self._want(self.branch, False)
             self.changes.set_visible(False)
             return
         d = s.get("dir")
@@ -2234,33 +2235,69 @@ class StatusBar:
             return
         b = out.strip() if ok else ""
         self.branch_label.set_label(b)
-        self.has_branch = bool(b)
-        self.branch.set_visible(bool(b))
+        self._want(self.branch, bool(b))
+
+    def _want(self, seg, on):
+        """Whether the session has this segment; _fit shows it if it fits."""
+        self.want[seg] = on
+        if not on:
+            seg.set_visible(False)
         self._fit_key = None
 
+    def _optional(self):
+        """The segments that give way when the bar is full, the first to go
+        first: the scratch folder (unless the disk is low), the branch, the
+        mode, the account, the ports; a scratch folder on a low disk last."""
+        low = self.scratch.has_css_class("low") or self.scratch.has_css_class("critical")
+        return ([] if low else [self.scratch]) + [self.branch, self.mode, self.account, self.ports] \
+            + ([self.scratch] if low else [])
+
     def _fit(self, *_):
-        """Hide the branch when the bar can't hold its whole name, rather than
-        show "…"; it comes back once there's room."""
+        """Each optional segment whole or not at all, never "…": as many as
+        the bar holds, the most needed first; they come back with room."""
         w = self.outer.get_width()
-        key = (w, self.has_branch, self.branch_label.get_label(), self.state.get_label(),
-               self.ctx_val.get_label(), self.changes_label.get_label(), self.lock.get_visible(),
-               self.machine.get_visible(), self.changes.get_visible(), self.ctx.get_visible())
+        segs = self._optional()
+        key = (w, tuple(self.want.get(g, False) for g in segs), tuple(id(g) for g in segs),
+               self.branch_label.get_label(), self.account_label.get_label(), self.mode_label.get_label(),
+               self.scratch_label.get_label(), self._ports_n(), self.state.get_label(), self.ctx_val.get_label(),
+               self.changes_label.get_label(), self.lock.get_visible(), self.machine.get_visible(),
+               self.changes.get_visible(), self.ctx.get_visible(), self.limits.get_first_child() is not None)
         if not w or key == self._fit_key:
             return GLib.SOURCE_CONTINUE
         self._fit_key = key
-        if not self.has_branch:
-            return GLib.SOURCE_CONTINUE
         # the room inside the bar: its width less its own padding and the
         # segments' margins (learned while the segments fit; 16 px at first)
         box = self.widget.get_width()
         if box and box <= w:
             self._slack = w - box
         room = w - getattr(self, "_slack", 16)
-        nat = self.widget.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
-        if not self.branch.get_visible():
-            nat += self.branch.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
-        self.branch.set_visible(nat <= room)
+        H = Gtk.Orientation.HORIZONTAL
+
+        def nat(g):
+            # a hidden widget measures 0: shown for the measuring
+            if g.get_visible():
+                return g.measure(H, -1)[1]
+            g.set_visible(True)
+            n = g.measure(H, -1)[1]
+            g.set_visible(False)
+            return n
+        used = self.widget.measure(H, -1)[1] - sum(nat(g) for g in segs if g.get_visible())
+        show = set()
+        for g in reversed(segs):
+            if self.want.get(g):
+                n = nat(g)
+                if used + n <= room:
+                    show.add(g)
+                    used += n
+        for g in segs:
+            g.set_visible(g in show)
         return GLib.SOURCE_CONTINUE
+
+    def _ports_n(self):
+        n, c = 0, self.port_btns.get_first_child()
+        while c is not None:
+            n, c = n + 1, c.get_next_sibling()
+        return n
 
     def _changes(self, ok, out, name):
         if (self.s or {}).get("name") != name:

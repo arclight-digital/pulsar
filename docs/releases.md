@@ -71,8 +71,11 @@ CLI, and opencode moves to version 2.
   (Claude Code's permission mode, Codex CLI's approvals and sandbox, in
   the warning color when it never asks), the ports that servers in the
   session's folder listen on (click one to open it in the browser), and
-  the session's scratch folder once it holds 100 MB, with the free space
-  in a warning color when the disk gets tight.
+  the session's scratch folder once it holds 100 MB, in a warning color
+  when the disk gets tight. Each of these shows whole or not at all: on a
+  narrow window the least needed make room first (the scratch folder,
+  unless the disk is low, then the branch, the mode, the account, the
+  ports).
   The numbers come from each agent's own files. Claude Code and
   Antigravity CLI don't write their plan limits to disk, so those two
   show context only.

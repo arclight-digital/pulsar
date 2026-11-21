@@ -970,30 +970,30 @@ def kids(box):
 now = 1_000_000
 base = {"agent": "claude", "state": "running", "started": now - 60, "dir": "/p/app"}
 sb.update(dict(base, name="big", account="me@work.example"), now)
-print(sb.account.get_visible(), sb.account_label.get_label(), sb.account.get_tooltip_text())
+print(sb.want[sb.account], sb.account_label.get_label(), sb.account.get_tooltip_text())
 print([b.get_label() if isinstance(b, m.Gtk.Button) else b.get_label() for b in kids(sb.port_btns)], asked)
-print(sb.scratch.get_visible(), sb.scratch_label.get_label(), sb.scratch.has_css_class("low"))
+print(sb.want[sb.scratch], sb.scratch_label.get_label(), sb.scratch.has_css_class("low"))
 # a little scratch, no account, a worktree session: hidden, and its own folder only
 asked.clear()
 sb.update(dict(base, name="small", worktree_of="/p/app", dir="/p/app/.worktrees/w"), now + 10)
-print(sb.account.get_visible(), sb.scratch.get_visible(), asked)
+print(sb.want[sb.account], sb.want[sb.scratch], asked)
 # the disk gets tight: shown anyway, with what is free, in the warning color
 disk.data = {"free": 12_000_000_000, "suspend_need": 17_000_000_000}
 sb.update(dict(base, name="small"), now + 20)
-print(sb.scratch.get_visible(), sb.scratch_label.get_label(), sb.scratch.has_css_class("critical"))
+print(sb.want[sb.scratch], sb.scratch_label.get_label(), sb.scratch.has_css_class("critical"))
 # another machine: its account, said where; no ports or scratch from here
 asked.clear(); disk.data = {"free": 80_000_000_000, "suspend_need": 0}
 sb.update(dict(base, name="t@talos", machine="talos", account="n@work.example"), now + 30)
-print(sb.account.get_tooltip_text(), sb.ports.get_visible(), sb.scratch.get_visible(), asked)
+print(sb.account.get_tooltip_text(), sb.want[sb.ports], sb.want[sb.scratch], asked)
 # sandboxed: its network is its own
 sb.update(dict(base, name="sb", sandbox="on"), now + 40)
-print(sb.ports.get_visible(), asked)'
+print(sb.want[sb.ports], asked)'
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "True me@work.example Claude Code is signed in as me@work.example" ] || fail "$output"
     [ "${lines[1]}" = "[':5173', ':4321', ':8000', '+1'] [('/p/app', ['/p/app/.worktrees'])]" ] || fail "$output"
     [ "${lines[2]}" = "True Scratch 3.1 GB False" ] || fail "$output"
     [ "${lines[3]}" = "False False [('/p/app/.worktrees/w', [])]" ] || fail "$output"
-    [ "${lines[4]}" = "True 12 GB free · scratch 5.0 MB True" ] || fail "$output"
+    [ "${lines[4]}" = "True Scratch 5.0 MB True" ] || fail "$output"
     [ "${lines[5]}" = "Claude Code is signed in as n@work.example on talos False False []" ] || fail "$output"
     [ "${lines[6]}" = "False []" ] || fail "$output"
 }
@@ -1014,13 +1014,13 @@ disk = types.SimpleNamespace(data={}, session_bytes=lambda n: 0, widget=m.Gtk.Me
 sb = m.StatusBar(types.SimpleNamespace(disk=disk, rail_toggle=m.Gtk.ToggleButton(), agent_argv=lambda *a: ["true"]))
 base = {"name": "a", "agent": "claude", "state": "running", "started": 1, "dir": "/p"}
 sb.update(dict(base, meter={"context": 5, "window": 10, "mode": "acceptEdits"}), 100)
-print(sb.mode.get_visible(), sb.mode_label.get_label(), sb.mode.has_css_class("warn"), sb.mode.get_tooltip_text())
+print(sb.want[sb.mode], sb.mode_label.get_label(), sb.mode.has_css_class("warn"), sb.mode.get_tooltip_text())
 sb.update(dict(base, meter={"context": 5, "window": 10, "mode": "bypassPermissions"}), 200)
 print(sb.mode_label.get_label(), sb.mode.has_css_class("warn"))
 sb.update(dict(base, meter={"context": 5, "window": 10, "mode": "plan"}), 300)
 print(sb.mode.has_css_class("warn"))
 sb.update(dict(base, agent="agy", meter={"context": 5, "window": 10}), 400)
-print(sb.mode.get_visible())'
+print(sb.want[sb.mode], sb.mode.get_visible())'
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "('Asks first', False) ('Never asks', True) ('newMode', False)" ] || fail "$output"
     [ "${lines[1]}" = "('Asks if needed · project only', False) ('full access', True)" ] || fail "$output"
@@ -1029,7 +1029,7 @@ print(sb.mode.get_visible())'
     [ "${lines[4]}" = "True Edits without asking False Claude Code's permission mode: acceptEdits" ] || fail "$output"
     [ "${lines[5]}" = "Never asks True" ] || fail "$output"
     [ "${lines[6]}" = "False" ] || fail "$output"
-    [ "${lines[7]}" = "False" ] || fail "$output"
+    [ "${lines[7]}" = "False False" ] || fail "$output"
 }
 
 @test "the sidebar's order: groups and sessions where you put them; new ones on top; a session stays in its own group" {
@@ -1146,4 +1146,51 @@ print(w._drop_done("session\ta2", 0), show(), w.state["order"], moved)'
     [ "${lines[3]}" = "#a a1 a2 #b | b1 b2" ] || fail "$output"
     [ "${lines[4]}" = "#a a1 a2 #b b1 b2 None" ] || fail "$output"
     [ "${lines[5]}" = "True #a a1 a2 #b b1 b2 {'sessions': {'/a': ['a2', 'a1']}} [('a2', None)]" ] || fail "$output"
+}
+
+@test "the status bar holds what fits, each segment whole: the least needed give way first, and come back with room" {
+    need_gtk
+    run app '
+import types
+m.Gtk.init()
+m.run = lambda *a, **k: None
+m.folder_ports = lambda *a, **k: [(5173, 1, "node")]
+disk = types.SimpleNamespace(data={"free": 80_000_000_000, "suspend_need": 0},
+                             session_bytes=lambda n: 3_100_000_000, widget=m.Gtk.MenuButton())
+sb = m.StatusBar(types.SimpleNamespace(disk=disk, rail_toggle=m.Gtk.ToggleButton(), agent_argv=lambda *a: ["true"]))
+sb.update({"name": "a", "agent": "claude", "state": "running", "started": 1, "dir": "/p", "account": "someone@work.example",
+           "meter": {"context": 5, "window": 10, "mode": "acceptEdits"}}, 100)
+sb._branch(True, "fix-login-redirect\n", "a")
+H = m.Gtk.Orientation.HORIZONTAL
+segs = {"scratch": sb.scratch, "branch": sb.branch, "mode": sb.mode, "account": sb.account, "ports": sb.ports}
+for g in segs.values(): g.set_visible(True)
+full = sb.widget.measure(H, -1)[1]
+wid = {n: g.measure(H, -1)[1] for n, g in segs.items()}
+def at(width):
+    sb.outer.get_width = lambda: width
+    sb.widget.get_width = lambda: 0
+    sb._slack = 0
+    sb._fit_key = None
+    sb._fit()
+    return [n for n, g in segs.items() if g.get_visible()]
+print(at(full + 50))
+print(at(full - wid["scratch"]))
+print(at(full - wid["scratch"] - wid["branch"]))
+print(at(200))
+print(at(full + 50))
+# no ellipsis on what may be cut: whole or not at all
+print(sb.account_label.get_ellipsize() == m.Pango.EllipsizeMode.NONE, sb.branch_label.get_ellipsize() == m.Pango.EllipsizeMode.NONE)
+# a low disk: its scratch folder is the last to go
+disk.data = {"free": 2_000_000_000, "suspend_need": 17_000_000_000}
+sb.update({"name": "a", "agent": "claude", "state": "running", "started": 1, "dir": "/p", "account": "someone@work.example",
+           "meter": {"context": 5, "window": 10, "mode": "acceptEdits"}}, 200)
+print([g is sb.scratch for g in sb._optional()][-1], sb.scratch_label.get_label())'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['scratch', 'branch', 'mode', 'account', 'ports']" ] || fail "$output"
+    [ "${lines[1]}" = "['branch', 'mode', 'account', 'ports']" ] || fail "$output"
+    [ "${lines[2]}" = "['mode', 'account', 'ports']" ] || fail "$output"
+    [ "${lines[3]}" = "[]" ] || fail "$output"
+    [ "${lines[4]}" = "['scratch', 'branch', 'mode', 'account', 'ports']" ] || fail "$output"
+    [ "${lines[5]}" = "True True" ] || fail "$output"
+    [ "${lines[6]}" = "True Scratch 3.1 GB" ] || fail "$output"
 }
