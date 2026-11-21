@@ -192,6 +192,11 @@ CLI, and opencode moves to version 2.
   reorder favorites and add one from the app grid, and Alt+Tab selects the
   app under the pointer. The glass's light lay over both and took the drag
   and the hover.
+- On the NVIDIA image, DirectX 11 games in Steam and Faugus no longer hang
+  the GPU on DXVK's descriptor heap (Boltgun every run, Sins of a Solar
+  Empire II on its first frame in a game): Pulsar sets
+  `DXVK_CONFIG=dxvk.enableDescriptorHeap = False`. A launch option that sets
+  `DXVK_CONFIG` replaces it, so add that setting to yours.
 - The NVIDIA driver is 620.70.06.
 
 ## 26.11.1

@@ -362,10 +362,14 @@ gpu_fault_who() {
     printf '%s\t%s\n' "${name//\//-}" "$game"
 }
 
-GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS in its settings."
+GPU_FAULT_ADVICE="If a game keeps doing it, turn off DLSS in its settings if it has it. If its launch options set DXVK_CONFIG, that replaces Pulsar's dxvk.enableDescriptorHeap = False, so add that to yours."
 
-# The advice, for the Xids the one known case ties to DLSS: Hell Is Us faulted
-# with Xid 13 and Xid 109 until DLSS was off (see above). Nothing for others.
+# The advice, for the Xids the known cases tie to a cause: Hell Is Us faulted
+# with Xid 13 and Xid 109 until DLSS was off (see above). Boltgun and Sins of
+# a Solar Empire II (DirectX 11, no DLSS) hung with Xid 109, then Xid 31, on
+# DXVK's descriptor heap, which steam-grants.sh turns off for Steam's and
+# Faugus's games; a DXVK_CONFIG of the game's own replaces that. Nothing for
+# other Xids.
 gpu_fault_advice() {
     case "$1" in 13|109) printf '%s' "$GPU_FAULT_ADVICE" ;; esac
 }

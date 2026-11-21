@@ -3366,6 +3366,8 @@ GONE_32='NVRM: Xid (PCI:0000:02:00): 32, pid=6161, name=StateOfDecay2-W, channel
     grep -q "Hell Is Us hit a GPU fault" "$RUN_LOG"
     grep -q "Xid 13: a fault in graphics work" "$RUN_LOG"
     grep -q "turn off DLSS in its settings" "$RUN_LOG"
+    # and that a game's own DXVK_CONFIG replaces Pulsar's descriptor heap fix
+    grep -q "set DXVK_CONFIG, that replaces Pulsar's dxvk.enableDescriptorHeap = False" "$RUN_LOG" || fail "$(cat "$RUN_LOG")"
     # no agent installed: no Ask button, but Ignore is there, by the game's name
     ! grep -q "Ask Claude" "$RUN_LOG" || false
     grep -q "crashes ignore add" "$RUN_LOG"

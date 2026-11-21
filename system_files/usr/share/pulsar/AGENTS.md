@@ -62,6 +62,10 @@ works there.
   user override (`~/.local/share/flatpak/overrides/<app id>`) beats the
   system one; `pulsar setup gamescale --platform steam faugus` repoints it.
 - Other Flatpak launchers: `pulsar setup gamescale --platform <name>`.
+- On the NVIDIA image, Flatpak Steam and Faugus games get
+  `DXVK_CONFIG=dxvk.enableDescriptorHeap = False`: DXVK's descriptor heap
+  hangs some DirectX 11 games on NVIDIA (Xid 109, then Xid 31). A launch
+  option that sets `DXVK_CONFIG` replaces it, so add that setting to it.
 
 ## Agent sessions
 

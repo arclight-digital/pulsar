@@ -302,6 +302,8 @@ image_path() {
 }
 
 @test "steam-grants: merges host-os, gamescale's grants, Discord's socket and sandbox-bin into Steam's and Faugus's system overrides" {
+    # the vanilla image, whichever this machine runs
+    export PULSAR_MANIFEST="${BATS_TEST_TMPDIR}/none.json" PULSAR_FLATPAK_OVERRIDES="${BATS_TEST_TMPDIR}/overrides"
     export FLATPAK_LOG="${BATS_TEST_TMPDIR}/flatpak"
     printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "$FLATPAK_LOG"\n' > "${BIN}/flatpak"
     chmod +x "${BIN}/flatpak"
@@ -320,6 +322,53 @@ ${grants}
 --env=PATH=/app/bin:/app/utils/bin:/usr/bin:/usr/lib/extensions/vulkan/MangoHud/bin:/usr/lib/extensions/vulkan/gamescope/bin:/usr/lib/extensions/vulkan/OBSVkCapture/bin:/run/host/usr/lib/pulsar/sandbox-bin
 io.github.Faugus.faugus-launcher"
     [ "$(cat "$FLATPAK_LOG")" = "$want" ]
+}
+
+# DXVK's descriptor heap off for Steam's and Faugus's games, on the nvidia
+# image only (steam-grants.sh says why)
+dxvk_env() {
+    export PULSAR_MANIFEST="${BATS_TEST_TMPDIR}/manifest.json" PULSAR_FLATPAK_OVERRIDES="${BATS_TEST_TMPDIR}/overrides"
+    export FLATPAK_LOG="${BATS_TEST_TMPDIR}/flatpak"
+    mkdir -p "$PULSAR_FLATPAK_OVERRIDES"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >> "$FLATPAK_LOG"\n' > "${BIN}/flatpak"
+    chmod +x "${BIN}/flatpak"
+    printf '{"image": "pulsar-%s", "variant": "%s"}\n' "$1" "$2" > "$PULSAR_MANIFEST"
+}
+OURS='DXVK_CONFIG=dxvk.enableDescriptorHeap = False'
+fail() { echo "$*" >&2; return 1; }
+
+@test "steam-grants: the nvidia image turns DXVK's descriptor heap off for Steam and Faugus, but not over someone else's DXVK_CONFIG" {
+    dxvk_env nvidia nvidia-open
+    run "${GG_DIR}/steam-grants.sh"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(grep -cx -- "--env=${OURS}" "$FLATPAK_LOG")" -eq 2 ] || fail "$(cat "$FLATPAK_LOG")"
+    # ours again on the next boot; another value stays
+    printf '[Environment]\n%s\n' "$OURS" > "${PULSAR_FLATPAK_OVERRIDES}/com.valvesoftware.Steam"
+    printf '[Environment]\nDXVK_CONFIG=dxvk.hud = fps\n' > "${PULSAR_FLATPAK_OVERRIDES}/io.github.Faugus.faugus-launcher"
+    : > "$FLATPAK_LOG"
+    run "${GG_DIR}/steam-grants.sh"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(grep -cx -- "--env=${OURS}" "$FLATPAK_LOG")" -eq 1 ] || fail "$(cat "$FLATPAK_LOG")"
+    [ "$(grep -x -A1 -- "--env=${OURS}" "$FLATPAK_LOG" | tail -1)" = com.valvesoftware.Steam ] || fail "$(cat "$FLATPAK_LOG")"
+}
+
+@test "steam-grants: elsewhere it takes its own DXVK_CONFIG out of an override, and only its own" {
+    dxvk_env vanilla vanilla
+    printf '[Context]\nfilesystems=host-os:ro;\n\n[Environment]\n%s\nPATH=/a\n' "$OURS" > "${PULSAR_FLATPAK_OVERRIDES}/com.valvesoftware.Steam"
+    printf '[Environment]\nDXVK_CONFIG=dxvk.hud = fps\n' > "${PULSAR_FLATPAK_OVERRIDES}/io.github.Faugus.faugus-launcher"
+    run "${GG_DIR}/steam-grants.sh"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(grep -c DXVK_CONFIG "$FLATPAK_LOG")" -eq 0 ] || fail "$(cat "$FLATPAK_LOG")"
+    [ "$(cat "${PULSAR_FLATPAK_OVERRIDES}/com.valvesoftware.Steam")" = "$(printf '[Context]\nfilesystems=host-os:ro;\n\n[Environment]\nPATH=/a')" ] \
+        || fail "$(cat "${PULSAR_FLATPAK_OVERRIDES}/com.valvesoftware.Steam")"
+    grep -qx 'DXVK_CONFIG=dxvk.hud = fps' "${PULSAR_FLATPAK_OVERRIDES}/io.github.Faugus.faugus-launcher"
+    # an unreadable manifest is the same, and the grant still goes ahead
+    printf '{' > "$PULSAR_MANIFEST"
+    : > "$FLATPAK_LOG"
+    run "${GG_DIR}/steam-grants.sh"
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(grep -c '^com.valvesoftware.Steam$' "$FLATPAK_LOG")" -eq 1 ] || fail "$(cat "$FLATPAK_LOG")"
+    [ "$(grep -c DXVK_CONFIG "$FLATPAK_LOG")" -eq 0 ] || fail "$(cat "$FLATPAK_LOG")"
 }
 
 @test "steam-grants: a failed grant fails the unit" {
