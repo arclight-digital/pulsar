@@ -277,7 +277,7 @@ inbox_text() {
 mail_paths() {
     local n=$1 agent id
     agent=$(session_get "$n" agent) || return 1
-    id=$(session_get "$n" id) || id=""
+    id=$(hook_id "$n") || id=""
     case "$agent" in
         claude)
             # never in a sandbox's home: all sandboxed sessions share it and

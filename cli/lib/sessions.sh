@@ -783,7 +783,12 @@ session_usage() {
         done
         if [ -n "$next" ]; then
             t2=$(basename "$next" .jsonl)
-            case "$t2" in *[!0-9a-f-]*) next="" ;; *) session_set "$s" id "$t2"; session_set "$s" follow_seen ""; f=$next ;; esac
+            case "$t2" in
+                *[!0-9a-f-]*) next="" ;;
+                *)  # its hooks keep the id they were started with (hook_id)
+                    session_get "$s" hook_id >/dev/null 2>&1 || session_set "$s" hook_id "$id"
+                    session_set "$s" id "$t2"; session_set "$s" follow_seen ""; f=$next ;;
+            esac
         fi
         [ -n "$next" ] || session_set "$s" follow_seen "$mt"
     fi

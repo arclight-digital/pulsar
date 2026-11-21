@@ -5808,6 +5808,12 @@ usage_env() {
     [ "$(rec_id work)" = "$new" ] || fail "id is $(rec_id work)"
     run "$PULSAR" agent sessions --json
     [ "$(jq -r '.[] | select(.name == "work") | .conversation' <<<"$output")" = "$new" ] || fail "$output"
+    # its hooks still write under the id they were started with: a Stop there is still its Stop
+    grep -qx "hook_id=${ID}" "${REC}/work.session" || fail "$(cat "${REC}/work.session")"
+    mkdir -p "${HOME}/.local/state/pulsar/agent-alerts"
+    printf '{"hook_event_name":"Stop"}' > "${HOME}/.local/state/pulsar/agent-alerts/${ID}.json"
+    "$PULSAR" agent notify work >/dev/null 2>&1 || true
+    [ "$(sed -n 2p "${TMUX_LIVE}/.work.opt")" = Stop ] || fail "the hooks' Stop was lost: $(cat "${TMUX_LIVE}/.work.opt")"
 }
 
 @test "agent usage: counted once and kept while the transcript doesn't change; counted again when it does" {

@@ -93,7 +93,7 @@ agent_notify() {
     local agent dir id f="" c event="" msg="" title body
     agent=$(session_get "$tname" agent) || agent=""
     dir=$(session_get "$tname" dir) || dir=""
-    id=$(session_get "$tname" id) || id=""
+    id=$(hook_id "$tname") || id=""
     if [ "$agent" = claude ] && [ -n "$id" ] && have jq; then
         # where this session's own hook writes: your home, or (sandboxed) the
         # sandbox's, which every sandboxed session shares and can write, so
@@ -244,6 +244,13 @@ screen_key() {
 # matching start there) lasts while the screen is the one the turn ended on:
 # an agent at its prompt redraws the same screen, and typing or working
 # changes it. A new size only moves that baseline.
+# hook_id <session>: the id a Claude session's hooks were started with,
+# which names its alert and mail files: its id, unless Claude carried on in
+# another transcript since (session_usage follows it), when the id it had.
+hook_id() {
+    session_get "$1" hook_id 2>/dev/null || session_get "$1" id
+}
+
 # agy_start_hook <session>: whether this agy session clears its own
 # "waiting" when a turn starts (agy_turn_hook's PreInvocation): not in a
 # sandbox, and started after a hooks.json with it was written (agy reads
