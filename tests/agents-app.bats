@@ -1194,3 +1194,16 @@ print([g is sb.scratch for g in sb._optional()][-1], sb.scratch_label.get_label(
     [ "${lines[5]}" = "True True" ] || fail "$output"
     [ "${lines[6]}" = "True Scratch 3.1 GB" ] || fail "$output"
 }
+
+@test "a row's classes are touched only when its state changes, so the pulse isn't restarted by every poll" {
+    need_gtk
+    run app '
+m.Gtk.init()
+b = m.Gtk.Box(); changes = []
+b.connect("notify::css-classes", lambda *a: changes.append(1))
+for on in (True, True, True, False, False, True):
+    m.set_class(b, "needs", on)
+print(len(changes), b.has_css_class("needs"))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "3 True" ] || fail "$output"
+}

@@ -7658,6 +7658,9 @@ PY
 @test "agy: waiting lasts until its PreInvocation hook says a turn started; a draft or a panel doesn't end it; sandboxed, the screen does" {
     msg_env
     local S="$PULSAR_AGENT_TMUX_SOCKET"
+    # agy's hooks.json with Pulsar's PreInvocation, written before this agy started
+    local cmd; cmd=$(agy_hook PreInvocation)
+    touch -d '-1 minute' "${HOME}/.gemini/config/hooks.json"
     printf 'agent=agy\ndir=%s\nsandbox=off\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/g.session"
     "${T[@]}" new-session -d -s g -x 100 -y 20 "printf '> '; cat"
     sleep 0.3
@@ -7668,12 +7671,26 @@ PY
     state() { "$PULSAR" agent sessions --json | jq -r --arg n "$1" '.[] | select(.name == $n) | .state'; }
     local k; k=$("${T[@]}" show-options -qv -t =g: @pulsar-alert-screen)
     [ -z "$k" ] || { msg_teardown; fail "took a screen: $k"; }
+    # an agy that started before its hooks.json had the hook: the screen tells, as before
+    printf 'agent=agy\ndir=%s\nsandbox=off\n' "$HOME" > "${PULSAR_AGENT_SESSIONS}/old.session"
+    "${T[@]}" new-session -d -s old -x 100 -y 20 "printf '> '; cat"
+    touch -d '+1 minute' "${HOME}/.gemini/config/hooks.json"
+    sleep 0.3
+    : > "${PULSAR_AGENT_SESSIONS}/old.turn"
+    "$PULSAR" agent notify old
+    alert_becomes old Waiting || { msg_teardown; fail "old never waiting: $(alert_of old)"; }
+    local i ok=""; for i in $(seq 30); do ok=$("${T[@]}" show-options -qv -t =old: @pulsar-alert-screen) && [ -n "$ok" ] && break; sleep 0.1; done
+    [ -n "$ok" ] || { msg_teardown; fail "an agy without the hook took no screen"; }
+    "${T[@]}" send-keys -t =old: -l 'go'
+    sleep 0.3
+    [ "$(state old)" = running ] || { msg_teardown; fail "old agy: typing didn't end it: $(state old)"; }
+    touch -d '-1 minute' "${HOME}/.gemini/config/hooks.json"
     # you type a draft, or open a panel: still your turn
     "${T[@]}" send-keys -t =g: -l '/context'
     sleep 0.3
     [ "$(state g)" = waiting ] || { msg_teardown; fail "a draft ended it: $(state g)"; }
     # agy calls its model: the hook, as agy runs it in the pane, ends it
-    local cmd sock; cmd=$(agy_hook PreInvocation)
+    local sock
     sock=$("${T[@]}" display -p '#{socket_path}')
     # outside a Pulsar session (no record, or no tmux) it does nothing, quietly
     local out; out=$(echo '{}' | env -u PULSAR_SESSION_RECORD TMUX="${sock},1,0" sh -c "$cmd" 2>&1)

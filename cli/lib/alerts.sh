@@ -155,7 +155,7 @@ agent_notify() {
     # screen stays the one the turn ended on (alert_now): taken a second on,
     # once the agent has drawn it, and without the session's lock. agy
     # outside one clears it itself (agy_turn_hook): until then it waits.
-    if [ "$event" = Waiting ] && { [ "$agent" != agy ] || [ "$(session_get "$tname" sandbox || true)" = on ]; }; then
+    if [ "$event" = Waiting ] && { [ "$agent" != agy ] || ! agy_start_hook "$tname"; }; then
         ( exec {lockfd}>&-
           sleep 1
           [ "$(atmux show-options -v -t "=${tname}:" @pulsar-alert 2>/dev/null)" = Waiting ] || exit 0
@@ -241,6 +241,19 @@ screen_key() {
 # matching start there) lasts while the screen is the one the turn ended on:
 # an agent at its prompt redraws the same screen, and typing or working
 # changes it. A new size only moves that baseline.
+# agy_start_hook <session>: whether this agy session clears its own
+# "waiting" when a turn starts (agy_turn_hook's PreInvocation): not in a
+# sandbox, and started after a hooks.json with it was written (agy reads
+# the file when it starts). One started before keeps the screen check.
+agy_start_hook() {
+    local f="${HOME}/.gemini/config/hooks.json" made
+    [ "$(session_get "$1" sandbox || true)" != on ] || return 1
+    [ -f "$f" ] && have jq || return 1
+    jq -e '.pulsar.PreInvocation[0].command // empty | strings' "$f" >/dev/null 2>&1 || return 1
+    made=$(atmux display -p -t "=${1}:" '#{session_created}' 2>/dev/null) || return 1
+    [ -n "$made" ] && [ "$(stat -c %Y "$f")" -le "$made" ]
+}
+
 # agent_quiet <session> <agent>: a Claude or Codex session not marked
 # waiting whose screen has stood still for PULSAR_QUIET_SECONDS (20) is at
 # its prompt, so it is marked waiting, and prints it. Both draw a ticking

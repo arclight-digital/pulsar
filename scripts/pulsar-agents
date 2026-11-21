@@ -2318,6 +2318,12 @@ class StatusBar:
         self.changes.set_visible(True)
 
 
+def set_class(widget, name, on):
+    """A CSS class on or off, touched only when that changes."""
+    if widget.has_css_class(name) != on:
+        (widget.add_css_class if on else widget.remove_css_class)(name)
+
+
 def _point(x, y):
     r = Gdk.Rectangle()
     r.x, r.y, r.width, r.height = int(x), int(y), 1, 1
@@ -2523,19 +2529,15 @@ class SessionRow(Gtk.ListBoxRow):
         self.label.set_label(session_title(s))
         self.tile.set_glyph(s.get("icon") or self.name)
         self.sub.set_label(session_status(s, now))
-        for c in ("unseen",):
-            self.dot.remove_css_class(c)
-        for c in ("needs", "working"):
-            self.tile.remove_css_class(c)
-            self.sub.remove_css_class(c)
-        if s.get("state") == "waiting":
-            self.tile.add_css_class("needs")
-            self.sub.add_css_class("needs")
-        elif s.get("state") == "running":
-            self.tile.add_css_class("working")
-        (self.add_css_class if s.get("offline") else self.remove_css_class)("offline")
-        if unseen:
-            self.dot.add_css_class("unseen")
+        # classes change only when the state does: taking one off and on
+        # again on every poll can restart its animation (the pulse)
+        st = s.get("state")
+        set_class(self.tile, "needs", st == "waiting")
+        set_class(self.sub, "needs", st == "waiting")
+        set_class(self.tile, "working", st == "running")
+        set_class(self.sub, "working", False)
+        set_class(self, "offline", bool(s.get("offline")))
+        set_class(self.dot, "unseen", bool(unseen))
         compact = getattr(self, "compact", False)
         self.dot.set_visible(unseen and not compact)
         (self.cdot.add_css_class if unseen else self.cdot.remove_css_class)("unseen")
