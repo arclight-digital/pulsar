@@ -330,6 +330,19 @@ def moved(keys, key, step=None, before=None, after=None):
     return rest[:i] + [key] + rest[i:]
 
 
+def order_from_rows(rows, kind, key):
+    """The order a drop makes, read off the list as it stands: rows are
+    ("project", p), ("session", name, p) and ("gap",), where the gap holds
+    what is dragged (still in the list, hidden). For a session, its group's
+    sessions; for a group, the groups."""
+    if kind == "session":
+        p = next((r[2] for r in rows if r[0] == "session" and r[1] == key), None)
+        return [key if r[0] == "gap" else r[1] for r in rows
+                if r[0] == "gap" or (r[0] == "session" and r[2] == p and r[1] != key)]
+    return [key if r[0] == "gap" else r[1] for r in rows
+            if r[0] == "gap" or (r[0] == "project" and r[1] != key)]
+
+
 def project_groups(sessions, order=None):
     """[(project, [sessions])] for the sidebar: archived ones left out; in
     each, the newest started first; the project with the newest session

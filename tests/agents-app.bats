@@ -1056,18 +1056,12 @@ print(g.moved(["x", "y", "z"], "z", step=-1), g.moved(["x", "y", "z"], "x", step
     [ "${lines[4]}" = "['x', 'z', 'y'] ['x', 'y', 'z'] ['y', 'z', 'x'] ['z', 'x', 'y'] ['y', 'z', 'x'] ['x', 'y']" ] || fail "$output"
 }
 
-@test "moving in the sidebar: a drop lands next to its own kind, a session only in its group; Alt+arrows in the list move it; the order is kept" {
+@test "moving in the sidebar: up and down within its group, a group among groups; Alt+arrows in the list move it; the order is kept" {
     need_gtk
     run app '
 import types
 m.Gtk.init()
 proj = {"a1": "/a", "a2": "/a", "a3": "/a", "b1": "/b"}
-place = lambda *a: m.drop_place(*a, project_of=proj.get)
-print(place("session", "a3", "session", "a1", True), place("session", "a3", "session", "a2", False))
-print(place("session", "a3", "session", "b1", True), place("session", "a3", "session", "a3", True),
-      place("session", "a3", "project", "/a", True), place("session", "a3", "project", "/b", True))
-print(place("project", "/b", "project", "/a", True), place("project", "/b", "session", "a2", False),
-      place("project", "/a", "session", "a2", True), place("bogus", "x", "project", "/a", True))
 W = type("W", (), {n: vars(m.Agents)[n] for n in ("move_session", "move_group", "_groups", "_list_key")})
 w = W()
 w.sessions = {n: {"name": n, "project": p, "started": 100 - i} for i, (n, p) in enumerate(proj.items())}
@@ -1096,56 +1090,63 @@ print(w.state["order"]["projects"], [s["name"] for s in dict(w._groups())["/a"]]
 focus[0] = P("/a"); w._list_key(None, m.Gdk.KEY_Down, 0, A)  # a heading: its group, down again
 print(w.state["order"]["projects"])'
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "('session', 'a3', {'before': 'a1'}) ('session', 'a3', {'after': 'a2'})" ] || fail "$output"
-    [ "${lines[1]}" = "None None ('session', 'a3', {'step': -10000}) None" ] || fail "$output"
-    [ "${lines[2]}" = "('project', '/b', {'before': '/a'}) ('project', '/b', {'after': '/a'}) None None" ] || fail "$output"
-    [ "${lines[3]}" = "{'sessions': {'/a': ['a3', 'a1', 'a2']}, 'projects': ['/b', '/a']} [('a3', None), (None, '/b')]" ] || fail "$output"
-    [ "${lines[4]}" = "[('/b', ['b1']), ('/a', ['a3', 'a1', 'a2'])]" ] || fail "$output"
-    [ "${lines[5]}" = "True False False" ] || fail "$output"
-    [ "${lines[6]}" = "['a1', 'a3', 'a2']" ] || fail "$output"
-    [ "${lines[7]}" = "['/a', '/b'] ['a1', 'a3', 'a2']" ] || fail "$output"
-    [ "${lines[8]}" = "['/b', '/a']" ] || fail "$output"
+    [ "${lines[0]}" = "{'sessions': {'/a': ['a3', 'a1', 'a2']}, 'projects': ['/b', '/a']} [('a3', None), (None, '/b')]" ] || fail "$output"
+    [ "${lines[1]}" = "[('/b', ['b1']), ('/a', ['a3', 'a1', 'a2'])]" ] || fail "$output"
+    [ "${lines[2]}" = "True False False" ] || fail "$output"
+    [ "${lines[3]}" = "['a1', 'a3', 'a2']" ] || fail "$output"
+    [ "${lines[4]}" = "['/a', '/b'] ['a1', 'a3', 'a2']" ] || fail "$output"
+    [ "${lines[5]}" = "['/b', '/a']" ] || fail "$output"
 }
 
-@test "a dragged row opens a gap where it would land: next to a session, atop its group, or past a whole group; the drop goes there" {
+@test "a dragged row leaves the list and a placeholder its size holds its place; the drop puts it where the placeholder is" {
     need_gtk
     run app '
 m.Gtk.init()
+R = [("project", "/a"), ("session", "a1", "/a"), ("gap",), ("session", "a2", "/a"), ("session", "a3", "/a"),
+     ("project", "/b"), ("session", "b1", "/b")]
+print(m.order_from_rows(R, "session", "a3"), m.order_from_rows(R, "session", "a1"))
+G = [("gap",), ("project", "/a"), ("session", "a1", "/a"), ("project", "/b"), ("session", "b1", "/b"), ("project", "/c")]
+print(m.order_from_rows(G, "project", "/b"))
 class S(m.Gtk.ListBoxRow):
     def __init__(self, n): super().__init__(); self.name = n
 m.SessionRow = S
 names = vars(m.Agents)
-W = type("W", (), {n: names[n] for n in ("_gap_index", "_rows_in_list", "_drop_gap", "_drop_done", "_project_of",
-                                         "move_session", "move_group", "_groups")})
+W = type("W", (), {n: names[n] for n in ("_drag_begin", "_drag_end", "_drag_drop", "_gap_to", "_next_shown", "_prev_shown",
+                                         "_rows_in_list", "_project_of", "_groups")})
 w = W()
-proj = {"a1": "/a", "a2": "/a", "b1": "/b", "b2": "/b"}
+proj = {"a1": "/a", "a2": "/a", "a3": "/a", "b1": "/b"}
 w.sessions = {n: {"name": n, "project": p, "started": 100 - i} for i, (n, p) in enumerate(proj.items())}
-w.state = {"order": {}}
-w.list, w.gap, w._drop = m.Gtk.ListBox(), None, None
-for r in (m.ProjectRow("/a", "a", False), S("a1"), S("a2"), m.ProjectRow("/b", "b", False), S("b1"), S("b2")):
-    w.list.append(r)
-moved = []
+w.state, w.gap, w._drag, w._hidden, w._shape = {"order": {}}, None, None, [], None
+w.list = m.Gtk.ListBox()
+rows = {}
+for r in (m.ProjectRow("/a", "a", False), S("a1"), S("a2"), S("a3"), m.ProjectRow("/b", "b", False), S("b1")):
+    w.list.append(r); rows[getattr(r, "name", None) or r.project] = r
+rebuilt, moved = [], []
+w._rebuild = lambda: rebuilt.append(1)
 w._order_changed = lambda name=None, project=None: moved.append((name, project))
 m.save_state = lambda d: None
-show = lambda: " ".join("|" if isinstance(r, m.DropGap) else getattr(r, "name", None) or "#" + r.project[1:] for r in w._rows_in_list())
-for place in (("session", "a2", {"before": "a1"}), ("session", "a1", {"after": "a2"}), ("session", "b2", {"step": -10000}),
-              ("project", "/b", {"before": "/a"}), ("project", "/a", {"after": "/b"}), ("project", "/a", {"after": "/a"})):
-    print(w._gap_index(place), end=",")
-print()
-w._drop = ("session", "a2", {"before": "a1"}); w._drop_gap(w._gap_index(w._drop)); print(show())
-w._drop_gap(w._gap_index(("project", "/a", {"after": "/b"}))); print(show())
-w._drop_gap(1); w._drop_gap(w._gap_index(("session", "b2", {"step": -10000}))); print(show())
-w._drop_gap(None); print(show(), w._drop)
-# the drop: where the gap said
-w._drop = ("session", "a2", {"before": "a1"}); w._drop_gap(1)
-print(w._drop_done("session\ta2", 0), show(), w.state["order"], moved)'
+show = lambda: " ".join("[ ]" if isinstance(r, m.DropGap) else ("-" if not r.get_visible() else "") + (getattr(r, "name", None) or "#" + r.project[1:]) for r in w._rows_in_list())
+w._drag_begin("session", "a3"); print(show())
+w._gap_to(rows["a1"]); print(show())
+w._gap_to(rows["a1"]); print(show())                     # already there: nothing moves
+w._gap_to(rows["a1"], after=True); print(show())
+print(w._drag_drop(), w.state["order"], moved, show(), len(rebuilt))
+# a group: its heading and sessions leave together
+w._drag_begin("project", "/b"); print(show())
+w._gap_to(rows["/a"]); w._drag_drop(); print(w.state["order"]["projects"], show())
+# a drag that ends without a drop puts everything back
+w._drag_begin("session", "a2"); w._gap_to(rows["a1"]); w._drag_end(); print(show())'
     [ "$status" -eq 0 ] || fail "$output"
-    [ "${lines[0]}" = "1,3,4,0,6,3," ] || fail "$output"
-    [ "${lines[1]}" = "#a | a1 a2 #b b1 b2" ] || fail "$output"
-    [ "${lines[2]}" = "#a a1 a2 #b b1 b2 |" ] || fail "$output"
-    [ "${lines[3]}" = "#a a1 a2 #b | b1 b2" ] || fail "$output"
-    [ "${lines[4]}" = "#a a1 a2 #b b1 b2 None" ] || fail "$output"
-    [ "${lines[5]}" = "True #a a1 a2 #b b1 b2 {'sessions': {'/a': ['a2', 'a1']}} [('a2', None)]" ] || fail "$output"
+    [ "${lines[0]}" = "['a1', 'a3', 'a2'] ['a1', 'a2', 'a3']" ] || fail "$output"
+    [ "${lines[1]}" = "['/b', '/a', '/c']" ] || fail "$output"
+    [ "${lines[2]}" = "#a a1 a2 [ ] -a3 #b b1" ] || fail "$output"
+    [ "${lines[3]}" = "#a [ ] a1 a2 -a3 #b b1" ] || fail "$output"
+    [ "${lines[4]}" = "#a [ ] a1 a2 -a3 #b b1" ] || fail "$output"
+    [ "${lines[5]}" = "#a a1 [ ] a2 -a3 #b b1" ] || fail "$output"
+    [ "${lines[6]}" = "True {'sessions': {'/a': ['a1', 'a3', 'a2']}} [('a3', None)] #a a1 a2 a3 #b b1 1" ] || fail "$output"
+    [ "${lines[7]}" = "#a a1 a2 a3 [ ] -#b -b1" ] || fail "$output"
+    [ "${lines[8]}" = "['/b', '/a'] #a a1 a2 a3 #b b1" ] || fail "$output"
+    [ "${lines[9]}" = "#a a1 a2 a3 #b b1" ] || fail "$output"
 }
 
 @test "the status bar holds what fits, each segment whole: the least needed give way first, and come back with room" {
