@@ -184,12 +184,12 @@ TOOLS = [
 ]
 
 
-def run(args, ok_codes=(0,)):
+def run(args, ok_codes=(0,), env=None):
     """(text, is_error). The CLI's exit codes that carry an answer (doctor's
     1, update --check's 10) are answers, not errors."""
     try:
         r = subprocess.run([CLI, *args], capture_output=True, text=True, timeout=300,
-                           env=dict(os.environ, NO_COLOR="1"))
+                           env=dict(os.environ, NO_COLOR="1", **(env or {})))
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"could not run pulsar: {e}", True
     out = r.stdout.strip() or r.stderr.strip()
@@ -202,10 +202,100 @@ def session_name(v):
     return v if v and not v.startswith("-") and all(c.isalnum() or c in "-_" for c in v) else None
 
 
+def _proc(pid, name):
+    with open(f"/proc/{pid}/{name}", "rb") as f:
+        return f.read()
+
+
+def _record_from(pid, steps=8):
+    """PULSAR_SESSION_RECORD from pid's environment or its nearest parent's
+    that has one, as the CLI reads it (<session>.session), or None. Not past
+    the container: conmon carries the environment of whoever ran toolbox
+    run, which names that shell's session, not the agent's."""
+    for _ in range(steps):
+        if pid <= 1:
+            return None
+        try:
+            if _proc(pid, "comm").startswith(b"conmon"):
+                return None
+            env = _proc(pid, "environ").split(b"\0")
+            status = _proc(pid, "status").decode(errors="replace")
+        except OSError:
+            return None
+        for e in env:
+            if e.startswith(b"PULSAR_SESSION_RECORD="):
+                v = e.split(b"=", 1)[1].decode(errors="replace")
+                base = os.path.basename(v)
+                if base.endswith(".session") and session_name(base[:-len(".session")]):
+                    return v
+        m = re.search(r"^PPid:\s*(\d+)", status, re.M)
+        pid = int(m.group(1)) if m else 0
+    return None
+
+
+def caller_record():
+    """The session record of an agent in the agents toolbox, which starts this
+    server on the host through flatpak-spawn: that passes on neither the
+    agent's environment nor a parent to walk up from (the server's parent is
+    flatpak-session-helper). flatpak-spawn itself still holds the fd it gave
+    the server as stdin, and above it in the box is the agent, whose
+    environment names the session even when flatpak-spawn's doesn't (Codex
+    starts its servers with a scrubbed one). Only then: anywhere else the
+    process holding stdin is just the parent, which the CLI walks already."""
+    try:
+        if not _proc(os.getppid(), "comm").startswith(b"flatpak-session"):
+            return None
+        mine = os.readlink("/proc/self/fd/0")
+    except OSError:
+        return None
+    # the same open file, whatever kind (a pipe, or the socketpair Node uses)
+    if not mine.startswith(("pipe:", "socket:")):
+        return None
+    me = os.getpid()
+    for p in os.listdir("/proc"):
+        if not p.isdigit() or int(p) == me:
+            continue
+        try:
+            fds = os.listdir(f"/proc/{p}/fd")
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink(f"/proc/{p}/fd/{fd}") != mine:
+                    continue
+            except OSError:
+                continue
+            rec = _record_from(int(p))
+            if rec:
+                return rec
+            break
+    return None
+
+
+_me = None
+
+
 def whoami():
     """The agent session this server's agent runs in, or None."""
+    global _me
+    if _me:
+        return _me
     text, err = run(["agent", "whoami"])
-    return text.strip() if not err and session_name(text.strip()) else None
+    if err or not session_name(text.strip()):
+        rec = caller_record()
+        if not rec:
+            return None
+        text, err = run(["agent", "whoami"], env={"PULSAR_SESSION_RECORD": rec})
+    if not err and session_name(text.strip()):
+        _me = text.strip()
+    return _me
+
+
+# for the tools that act as the calling session, when whoami() can't tell
+def no_session(what):
+    return (f"{what}: this server couldn't tell which agent session it serves. Agents started "
+            "with pulsar agent run --tmux, or from the Agents app, are in one; if this agent "
+            "was, its session's name didn't reach the server, which is a Pulsar bug"), True
 
 
 def call(name, a):
@@ -262,7 +352,7 @@ def call(name, a):
         me = whoami()
         if not me:
             # every message says which session sent it; one that can't is refused
-            return "session_message works from inside an agent session (pulsar agent run --tmux)", True
+            return no_session("not sent, since every message names the session it's from")
         re_ = str(a.get("reply_to") or "")
         if re_ and not re.fullmatch(r"m[0-9]+-[0-9a-f]+", re_):
             return "reply_to is a message id from inbox", True
@@ -270,7 +360,7 @@ def call(name, a):
     if name == "inbox":
         me = whoami()
         if not me:
-            return "inbox works from inside an agent session (pulsar agent run --tmux)", True
+            return no_session("no inbox to read")
         return run(["--json", "agent", "inbox", me, *(["--unread"] if a.get("unread") else [])])
     if name == "job_start":
         cmd = a.get("command")

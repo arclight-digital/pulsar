@@ -3,6 +3,8 @@
 # own --json answer. The CLI is stubbed to record what it was asked.
 
 setup() {
+    # the session these tests run in, if any, is not the one under test
+    unset PULSAR_SESSION_RECORD
     MCP="${BATS_TEST_DIRNAME}/../scripts/pulsar-mcp"
     export PULSAR_CLI="${BATS_TEST_TMPDIR}/pulsar"
     export CLI_LOG="${BATS_TEST_TMPDIR}/cli.log"
@@ -11,7 +13,10 @@ setup() {
 #!/bin/sh
 echo "$*" >> "$CLI_LOG"
 case "$*" in
-    "agent whoami") [ -n "${WHOAMI:-}" ] && echo "$WHOAMI" || { echo "not in an agent session" >&2; exit 1; } ;;
+    # as the CLI does: the session's record, when the agent's environment names one
+    "agent whoami") if [ -n "${WHOAMI:-}" ]; then echo "$WHOAMI"
+        elif [ -n "${PULSAR_SESSION_RECORD:-}" ]; then basename "$PULSAR_SESSION_RECORD" .session
+        else echo "not in an agent session" >&2; exit 1; fi ;;
     "--json agent sessions") echo '[{"name":"a","agent":"claude","state":"running","dir":"/p","usage":{"x":1},"archived":null},{"name":"old","archived":5}]' ;;
     *"update --check"*) echo '{"status":"available"}'; exit 10 ;;
     *doctor*) echo '{"checks":[],"ok":false}'; exit 1 ;;
@@ -192,4 +197,60 @@ PY
         '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"session_message","arguments":{"name":"a@b@c","text":"x"}}}'
     grep -qx -- "agent send train@desk --from me -- done?" "$CLI_LOG" || fail "$(cat "$CLI_LOG")"
     [ "$(grep -c '^agent send' "$CLI_LOG")" -eq 1 ] || fail "$(cat "$CLI_LOG")"
+}
+
+
+# An agent in the agents toolbox, as the host sees it: the agent (its record
+# in its environment) under conmon (the environment of whoever ran toolbox
+# run), and flatpak-spawn with a scrubbed environment (as Codex starts its
+# servers) holding the socket it handed over as stdin. The server runs under
+# flatpak-session-helper, outside that tree. Here python3 plays each part,
+# run through a link of that part's name.
+box() {
+    local helper=$1 boxed=${2:-}
+    local t=$BATS_TEST_TMPDIR py; py=$(command -v python3)
+    ln -sf "$py" "$t/conmon"; ln -sf "$py" "$t/flatpak-session-helper"
+    cat > "$t/box.py" <<'PY'
+import os, socket, subprocess, sys
+role, py, helper, mcp = sys.argv[1:5]
+me = os.path.abspath(__file__)
+if role == "conmon":
+    env = {k: v for k, v in os.environ.items() if k != "PULSAR_SESSION_RECORD"}
+    if os.environ.get("BOXED"):
+        env["PULSAR_SESSION_RECORD"] = os.environ["BOXED"]
+    sys.exit(subprocess.call([py, me, "agent", py, helper, mcp], env=env))
+if role == "agent":
+    a, b = socket.socketpair()
+    spawn = subprocess.Popen(["/bin/sleep", "30"], stdin=b, env={})
+    env = {k: v for k, v in os.environ.items() if k != "PULSAR_SESSION_RECORD"}
+    srv = subprocess.Popen([helper, me, "helper", py, helper, mcp], stdin=b, stdout=subprocess.PIPE, env=env)
+    b.close()
+    a.sendall(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inbox","arguments":{}}}\n')
+    a.shutdown(socket.SHUT_WR)
+    sys.stdout.write(srv.stdout.read().decode())
+    srv.wait(); spawn.kill()
+if role == "helper":
+    p = subprocess.Popen([py, mcp])
+    os.close(0)
+    sys.exit(p.wait())
+PY
+    PULSAR_SESSION_RECORD="$t/sessions/outer.session" BOXED="$boxed" \
+        "$t/conmon" "$t/box.py" conmon "$py" "$helper" "$MCP"
+}
+
+@test "an agent in the toolbox is known by its session, though flatpak-spawn passes on nothing" {
+    run box "$BATS_TEST_TMPDIR/flatpak-session-helper" "$BATS_TEST_TMPDIR/sessions/boxed.session"
+    grep -qx -- "--json agent inbox boxed" "$CLI_LOG" || fail "$output; $(cat "$CLI_LOG")"
+    [ "$(echo "$output" | jq -r '.result.isError')" = false ] || fail "$output"
+}
+
+@test "only under flatpak-session-helper, and never by the shell that ran toolbox run" {
+    # not started through flatpak-spawn: the caller is its parent, which the CLI walks
+    run box "$(command -v python3)" "$BATS_TEST_TMPDIR/sessions/boxed.session"
+    [ "$(echo "$output" | jq -r '.result.isError')" = true ] || fail "$output"
+    # an agent in no session, started by toolbox run from one's shell
+    : > "$CLI_LOG"
+    run box "$BATS_TEST_TMPDIR/flatpak-session-helper"
+    [ "$(echo "$output" | jq -r '.result.isError')" = true ] || fail "$output"
+    [ "$(grep -c 'agent inbox' "$CLI_LOG")" -eq 0 ] || fail "$(cat "$CLI_LOG")"
 }

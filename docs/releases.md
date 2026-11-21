@@ -176,6 +176,9 @@ CLI, and opencode moves to version 2.
   welcome. `gemini` and `aider` still run and can be removed if you have
   them, but are no longer offered.
 - opencode is version 2 (`@opencode/cli`).
+- Agents in the agents toolbox (Codex, opencode, agy) can message other
+  sessions and read their inbox through `pulsar mcp`. Its server runs on
+  the host and couldn't tell which session they were in, so it refused.
 
 ### Also
 
