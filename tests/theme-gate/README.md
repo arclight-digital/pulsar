@@ -87,6 +87,14 @@ pixels, and blur and light would move every one); `glass` turns them on.
   through the glass, the desktop must come out red (so the check can tell)
   and the preview green; it came out red while the blur placed itself by
   the window's own stage position instead of the clone's.
+- `glass-picks`: glass never comes first under the pointer. Not being
+  reactive keeps clicks off it, but the Shell also asks for the topmost
+  actor at any reactivity (`Clutter.PickMode.ALL`) to find a drag's drop
+  target, Alt+Tab's hovered item and the panel button a menu moves to.
+  Over each dash icon, Alt+Tab item, the clock's last row (under the
+  panel's hairline) and a bracketed dash icon, the pick must reach that
+  actor. The light over the dash came first, so nothing dragged onto the
+  dash reached it and the favorites could not be reordered.
 - `leaks`: stock showing through, found by what does not move. Every
   visible Shell widget on eleven surfaces (the desktop menu, the date menu,
   quick settings and a submenu, the app grid and an icon's menu, the run

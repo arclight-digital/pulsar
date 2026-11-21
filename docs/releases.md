@@ -185,6 +185,10 @@ CLI, and opencode moves to version 2.
   when you pick it; PipeWire no longer makes one the default by itself.
 - Sublime Text's menu bar gets the glass blur, and GTK 3 windows take glass
   like GTK 4 ones.
+- With glass on, icons dragged onto the dash reach it again, so you can
+  reorder favorites and add one from the app grid, and Alt+Tab selects the
+  app under the pointer. The glass's light lay over both and took the drag
+  and the hover.
 - The NVIDIA driver is 620.70.06.
 
 ## 26.11.1

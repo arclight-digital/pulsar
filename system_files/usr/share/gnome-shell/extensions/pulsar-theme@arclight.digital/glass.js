@@ -1957,6 +1957,14 @@ class PulsarGlassMirror extends St.Widget {
         this._bindings.forEach(b => b.unbind());
         this._bindings = [];
     }
+
+    // Never picked, nor anything in it. Not being reactive keeps clicks off
+    // it, but the Shell also asks for the topmost actor at any reactivity
+    // (Clutter.PickMode.ALL) and walks up from there: a drag's drop target,
+    // Alt+Tab's hovered item, the on-screen keyboard popup's outside click,
+    // a banner shown under the pointer. The light over the dash came first
+    // there, so nothing dragged onto the dash ever reached it.
+    vfunc_pick(_context) {}
 });
 
 // One lit glass surface beside an offscreen-painted host: the live blur in
@@ -2285,6 +2293,14 @@ class Surface {
 // Drawn over BROW_ROWS device rows centered on the bar's last one. Unlit
 // (the Light switch off), only that one row, as a faint plain hairline.
 const BROW_ROWS = 5;
+
+// Over the bar's last rows, never picked (see Mirror): with a panel menu
+// open, the Shell finds the button under the pointer at any reactivity to
+// move to that button's menu.
+const Hairline = GObject.registerClass(
+class PulsarPanelHairline extends St.Widget {
+    vfunc_pick(_context) {}
+});
 const BROW_DECL = `
 uniform vec2 size;
 uniform vec3 acc;
@@ -2370,7 +2386,7 @@ class PanelGlass {
                 this._bg.set_child_above_sibling(this._shadow, null);
         }, this);
         // the ledge: a lit hairline, one device pixel at any scale
-        this._line = new St.Widget({style_class: 'pulsar-panel-hairline', reactive: false});
+        this._line = new Hairline({style_class: 'pulsar-panel-hairline', reactive: false});
         this._brow = new BrowEffect();
         this._line.add_effect(this._brow);
         this._line.connectObject('style-changed', () => this._colors(), this);
@@ -3002,11 +3018,18 @@ class WindowGlass {
 // control nobody tabbed to read as random marks. The backend says which
 // device was used last whatever holds a grab (an open menu does, and the
 // stage never sees its key presses). The stock focus ring stays.
+// Over everything while shown, so never picked (see Mirror): a drag or an
+// Alt+Tab hover over the bracketed control must reach the control.
+const BracketsArea = GObject.registerClass(
+class PulsarFocusBracketsArea extends St.DrawingArea {
+    vfunc_pick(_context) {}
+});
+
 class FocusBrackets {
     constructor(owner) {
         this._owner = owner;
         this._target = null;
-        this._area = new St.DrawingArea({style_class: 'pulsar-focus-brackets', reactive: false, visible: false});
+        this._area = new BracketsArea({style_class: 'pulsar-focus-brackets', reactive: false, visible: false});
         this._area.connect('repaint', a => this._draw(a));
         this._area.connect('destroy', () => (this._area = null));
         Main.layoutManager.uiGroup.add_child(this._area);

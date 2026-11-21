@@ -1725,6 +1725,105 @@ def switchers():
     return 0 if report["ok"] else 1
 
 
+def glass_picks():
+    """Glass never comes first under the pointer. Not being reactive keeps
+    clicks off it, but the Shell also asks for the topmost actor at any
+    reactivity (Clutter.PickMode.ALL) and walks up from it: a drag's drop
+    target (the dash, which takes an icon to reorder the favorites or a new
+    one from the app grid), Alt+Tab's hovered item, the panel button under
+    the pointer while a panel menu is open. With glass, light, power-on and
+    the focus brackets in place, each of those points must still reach its
+    own actor. Writes glass-picks-report.json; exit 1 on failure."""
+    for k in ("glass", "lighting", "power-on", "focus-brackets"):
+        dconf(f"/org/gnome/shell/extensions/pulsar-theme/{k}", "true")
+    dconf("/org/gnome/shell/favorite-apps",
+          "['org.gnome.Ptyxis.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Nautilus.desktop']")
+    start_shell()
+    pt("set", "pulsar", "--no-restart")
+    kill_apps()
+    report = {"gnome_shell": sh("gnome-shell", "--version").stdout.strip(), "checks": []}
+    add = lambda name, ok, detail="": report["checks"].append({"check": name, "ok": bool(ok), "detail": detail})
+    # a banner up (Pulsar's theme notice, here) puts the whole-screen message
+    # tray over everything, glass or none, as it does in stock GNOME
+    add("no notification banner is up", wait_for("!Main.messageTray.visible", secs=30))
+    # what the Shell's drag does: the topmost actor at the point, any
+    # reactivity; null when nothing is there
+    eval_js("globalThis._gatePick = (x, y) => global.stage.get_actor_at_pos(imports.gi.Clutter.PickMode.ALL, x, y); "
+            "globalThis._gateMid = a => { const [x, y] = a.get_transformed_position(); "
+            "const [w, h] = a.get_transformed_size(); return [x + w / 2, y + h / 2]; }; "
+            "globalThis._gateGlassOver = a => { const p = a.get_parent(); const k = p?.get_children() ?? []; "
+            "return k.slice(k.indexOf(a) + 1).some(c => c.constructor.name === 'PulsarGlassMirror'); }; 1")
+
+    # the dash, in the overview
+    eval_js("Main.overview.show(); 1")
+    add("the overview came up", wait_for("Main.overview.visible && !Main.overview.animationInProgress", secs=10))
+    time.sleep(2.5)
+    add("the dash has its glass over it", wait_for("_gateGlassOver(Main.overview.dash)", secs=10))
+    hits, why = eval_json(
+        "(() => { const dash = Main.overview.dash; "
+        "const icons = dash._box.get_children().filter(a => a.child?._delegate?.app); "
+        "return JSON.stringify(icons.map(a => { let t = _gatePick(..._gateMid(a)); const picked = t; "
+        "while (t && !t._delegate?.handleDragOver) t = t.get_parent(); "
+        "return [a.child._delegate.app.get_id(), !!t && dash.contains(t), picked?.constructor.name ?? null]; })); })()")
+    add("the dash shows the three favorites", hits and len(hits) == 3, f"{hits or why}")
+    for app, ok, picked in hits or []:
+        add(f"a drag over {app} in the dash reaches the dash", ok, f"topmost actor there: {picked}")
+
+    # the focus brackets, drawn over everything while they show
+    got, why = eval_json(
+        "(() => { const b = Main.extensionManager.lookup('" + EXT + "')?.stateObj?._glass?._brackets?._area; "
+        "if (!b) return JSON.stringify(null); const icon = Main.overview.dash._box.get_children()[0]; "
+        "const [x, y] = icon.get_transformed_position(); const [w, h] = icon.get_transformed_size(); "
+        "Main.layoutManager.uiGroup.set_child_above_sibling(b, null); b.set({x, y, width: w, height: h}); b.show(); "
+        "const t = _gatePick(..._gateMid(icon)); const r = [icon.contains(t), t?.constructor.name ?? null]; b.hide(); "
+        "return JSON.stringify(r); })()")
+    add("the focus brackets over a dash icon leave the icon under the pointer", got and got[0],
+        f"topmost actor there: {got[1]}" if got else (why or "no brackets"))
+    eval_js("Main.overview.hide(); 1")
+    wait_for("!Main.overview.visible", secs=10)
+    time.sleep(1)
+
+    # the panel's buttons, under the lit hairline over its last rows
+    got, why = eval_json(
+        "(() => { const m = Main.panel.statusArea.dateMenu; const [x, y] = m.get_transformed_position(); "
+        "const [w, h] = m.get_transformed_size(); const t = _gatePick(x + w / 2, y + h - 1); "
+        "return JSON.stringify([m.contains(t), t?.constructor.name ?? null]); })()")
+    add("the clock's last row is the clock, under the panel's hairline", got and got[0],
+        f"topmost actor there: {got[1] if got else why}")
+
+    # Alt+Tab's items, which follow the pointer only when it is over them
+    procs.append(subprocess.Popen(["ptyxis", "--new-window"], env=ENV, stdout=LOG, stderr=LOG))
+    add("a Ptyxis window came up", wait_for(
+        "global.get_window_actors().some(a => a.meta_window.get_wm_class() === 'org.gnome.Ptyxis')", secs=30))
+    eval_js("import('resource:///org/gnome/shell/ui/altTab.js').then(a => { "
+            "const p = globalThis._gateSwitch = new a.AppSwitcherPopup(); p._resetNoModsTimeout = () => {}; "
+            "p.show(false, 'switch-applications', 0); }); 1")
+    add("Alt+Tab came up", wait_for("!!globalThis._gateSwitch?._switcherList?.get_stage()", secs=10))
+    time.sleep(2)
+    list_ = "globalThis._gateSwitch._switcherList"
+    add("Alt+Tab's list has its glass", wait_for(
+        "Main.extensionManager.lookup('" + EXT + "').stateObj._glass._surfaces.has(globalThis._gateSwitch)", secs=5))
+    got, why = eval_json(f"(() => JSON.stringify({list_}._items.map(i => {{ const t = _gatePick(..._gateMid(i)); "
+                         "return [i.contains(t), t?.constructor.name ?? null]; })))()")
+    add("Alt+Tab shows an item", got and len(got) >= 1, f"{got or why}")
+    for n, (ok, picked) in enumerate(got or []):
+        add(f"Alt+Tab item {n} is under the pointer over it", ok, f"topmost actor there: {picked}")
+    eval_js("globalThis._gateSwitch.destroy(); 1")
+
+    kill_apps()
+    stop_shell()
+    bad = shell_log_problems("glass-picks")
+    add("Shell log has no pulsar-theme warnings and no JS errors", not bad,
+        f"{len(bad)} lines, first: " + " | ".join(bad[:5]) if bad else "")
+    report["ok"] = all(c["ok"] for c in report["checks"])
+    SHOTS.mkdir(exist_ok=True)
+    (SHOTS / "glass-picks-report.json").write_text(json.dumps(report, indent=1))
+    print("\n".join(f"{'PASS' if c['ok'] else 'FAIL'}  {c['check']}" + (f"  -- {c['detail']}" if c["detail"] else "")
+                    for c in report["checks"]))
+    print(f"GLASS-PICKS {'PASS' if report['ok'] else 'FAIL'} on {report['gnome_shell']}")
+    return 0 if report["ok"] else 1
+
+
 def overview_glass():
     """A window's glass in the overview frosts what is beneath its preview,
     not what was beneath the window on the desktop. The wallpaper is red at
@@ -2180,7 +2279,7 @@ def main():
     rc = 0
     try:
         rc = {"gate": lambda: gate(sys.argv[2:]), "firstlogin": firstlogin, "restart": restart,
-              "picker": picker, "desktops": lambda: desktops(sys.argv[2:]), "glass": glass, "switchers": switchers, "overview-glass": overview_glass,
+              "picker": picker, "desktops": lambda: desktops(sys.argv[2:]), "glass": glass, "switchers": switchers, "overview-glass": overview_glass, "glass-picks": glass_picks,
               "lockscreen": lambda: lockscreen(sys.argv[2:]), "sheets": lambda: sheets(sys.argv[2:]),
               "leaks": lambda: leaks(sys.argv[2:])}[mode]() or 0
     finally:

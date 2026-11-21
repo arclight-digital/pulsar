@@ -15,6 +15,7 @@
 #      monitors at scale 1 and 1.25, every surface's glass exists and sits
 #      exactly where its host does; and (`switchers`) so does the glass
 #      on Alt+Tab's window thumbnails and the "not responding" dialog;
+#      and (`glass-picks`) none of it comes first under the pointer;
 #   7. leaks (the `leaks` scenario): no stock color shows through on any
 #      Shell surface in any state, and every checked quick toggle is accent;
 #   8. in each of them, the Shell logged no pulsar-theme warning (glass.js
@@ -49,7 +50,7 @@ report_ok() { python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.arg
 report_ok "${out}/gate-report.json" || rc=1
 # The glass, switchers and leaks scenarios, each in a Shell of its own; the same rule:
 # no report is a FAIL.
-for scenario in glass switchers overview-glass leaks; do
+for scenario in glass switchers overview-glass glass-picks leaks; do
   rm -f "${out}/${scenario}-report.json"
   echo "== ${scenario}"
   "${here}/run.sh" "${scenario}" 2>>"${GATE_LOG:-/tmp/theme-gate.log}" | grep -v -E '^\s*$'
