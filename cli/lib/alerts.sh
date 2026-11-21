@@ -142,13 +142,16 @@ agent_notify() {
     fi
     local who="The agent"
     if [ -n "$agent" ] && agent_row "$agent"; then who=${A_DESC%% (*}; fi
+    # The title says what happened; the body only adds to it: what Claude
+    # asked, when it asks, and the folder.
+    body=""
     case "$event" in
-        Stop)         title="${tname}: ${who} is done"; body="It is waiting for your next message." ;;
-        Notification) title="${tname}: ${who} needs you"; body=${msg:-"It is waiting for you."} ;;
-        Waiting)      title="${tname}: ${who} is waiting for you"; body="It finished its turn, or needs an answer." ;;
-        *)            title="${tname}: ${who} wants your attention"; body="It rang the terminal bell." ;;
+        Stop)         title="${tname}: ${who} is done" ;;
+        Notification) title="${tname}: ${who} needs you"; body=$msg ;;
+        Waiting)      title="${tname}: ${who} is waiting for you" ;;
+        *)            title="${tname}: ${who} wants your attention" ;;
     esac
-    [ -z "$dir" ] || body+=$'\n'"In ${dir/#"$HOME"/\~}"
+    [ -z "$dir" ] || body+="${body:+$'\n'}In ${dir/#"$HOME"/\~}"
     atmux set-option -t "=${tname}:" @pulsar-alert "${event:-bell}" 2>/dev/null || true
     # Codex says nothing when a turn starts (nor agy in a sandbox, which has
     # no tmux for its PreInvocation hook), so their "waiting" holds while the

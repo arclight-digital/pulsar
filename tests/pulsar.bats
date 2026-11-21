@@ -5074,7 +5074,7 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     run "$PULSAR" agent notify work
     [ "$status" -eq 0 ] || fail "$output"
     [ "$(sd_arg 1)" = "work: Claude Code is done" ]
-    [ "$(sd_arg 2)" = $'It is waiting for your next message.\nIn ~/code/proj' ]
+    [ "$(sd_arg 2)" = 'In ~/code/proj' ] || fail "$(sd_arg 2)"
     [ "$(sd_arg 4)" = claude ]
     [ "$(sd_arg 5)" = work ]
     [ "$(sed -n 2p "${TMUX_LIVE}/.work.opt")" = Stop ]
@@ -5187,7 +5187,7 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     printf '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}' > "${ALERTS}/${ID}.json"
     "$PULSAR" agent notify work
     [ "$(sd_arg 1)" = "work: Claude Code needs you" ]
-    [[ "$(sd_arg 2)" == "Claude needs your permission to use Bash"* ]]
+    [ "$(sd_arg 2)" = $'Claude needs your permission to use Bash\nIn ~/code/proj' ] || fail "$(sd_arg 2)"
     rm "$SD_ARGS"
     printf '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}' > "${ALERTS}/${ID}.json"
     "$PULSAR" agent notify work
@@ -5209,6 +5209,7 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     touch -d '-2 minutes' "${ALERTS}/${ID}.json"
     "$PULSAR" agent notify work
     [ "$(sd_arg 1)" = "work: Claude Code wants your attention" ]
+    [ "$(sd_arg 2)" = 'In ~/code/proj' ] || fail "$(sd_arg 2)"
     # a session that is not running: nothing
     rm "$SD_ARGS"; rm "${TMUX_LIVE}/work"
     "$PULSAR" agent notify work
