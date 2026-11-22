@@ -6348,7 +6348,10 @@ SH
 }
 
 # machines: a stub ssh that runs the far side here, each target with a home
-# and session records of its own; "down" is a machine that doesn't answer
+# and session records of its own; "down" is a machine that doesn't answer.
+# <target>.open is its shared connection; CONNECTS counts the new ones (each
+# one is where an agent would ask for the key); <target>.err is what ssh says
+# instead of connecting.
 machine_env() {
     [ "$(id -u)" -eq 0 ] && skip "agent commands refuse root; these run as a user"
     export HOME="${BATS_TEST_TMPDIR}/home" REMOTES="${BATS_TEST_TMPDIR}/remotes"
@@ -6364,15 +6367,29 @@ machine_env() {
     unset XDG_CONFIG_HOME
     cat > "$PULSAR_SSH" <<'SH'
 #!/bin/bash
-t=""; tty=0
+t=""; tty=0; op=""; opts=""
 while [ $# -gt 0 ]; do
-    case "$1" in -o) shift 2 ;; -t) tty=1; shift ;; --) shift; break ;; -*) shift ;; *) [ -z "$t" ] || break; t=$1; shift ;; esac
+    case "$1" in -o) opts+=" $2"; shift 2 ;; -O) op=$2; shift 2 ;; -t) tty=1; shift ;; --) shift; break ;; -*) shift ;; *) [ -z "$t" ] || break; t=$1; shift ;; esac
 done
+open="${REMOTES}/${t}.open"
+case "$op" in
+    check) [ -e "$open" ]; exit ;;
+    exit) rm -f "$open"; exit ;;
+esac
+printf '%s|%s |%s\n' "$t" "$opts" "$*" >> "${SSH_LOG}.opts"
+if [ -e "$open" ] && [ -e "${REMOTES}/${t}.full" ]; then
+    echo "${t}: Permission denied (publickey)." >&2; exit 255
+fi
+if [ ! -e "$open" ]; then
+    printf '%s\n' "$t" >> "${SSH_LOG}.connects"
+    if [ -e "${REMOTES}/${t}.err" ]; then cat "${REMOTES}/${t}.err" >&2; exit 255; fi
+fi
 printf '%s|tty=%s|%s\n' "$t" "$tty" "$*" >> "$SSH_LOG"
 [ "$t" != down ] || { echo "ssh: connect to host down port 22: No route to host" >&2; exit 255; }
 export HOME="${REMOTES}/${t}" PULSAR_AGENT_SESSIONS="${REMOTES}/${t}/sessions" PULSAR_AGENT_TMUX_SOCKET="${FAR_TMUX:-none-$$}"
 export PULSAR_JOBS="${REMOTES}/${t}/jobs" PULSAR_JOB_TMUX_SOCKET="jobs-${t}"
 mkdir -p "$PULSAR_AGENT_SESSIONS"
+: > "$open"
 exec bash -c "$*"
 SH
     chmod +x "$PULSAR_SSH"
@@ -6445,6 +6462,122 @@ SH
         run "$PULSAR" machine exec a $bad; [ "$status" -ne 0 ] || fail "ran: $bad"
     done
     run "$PULSAR" machine exec nope -- agent sessions; [ "$status" -ne 0 ]
+}
+
+connects() { if [ -e "${SSH_LOG}.connects" ]; then wc -l < "${SSH_LOG}.connects"; else echo 0; fi; }
+
+@test "machine connections: one per machine, kept until it breaks, with a keepalive, in the user's runtime folder only" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    local o; o=$(head -n 1 "${SSH_LOG}.opts")
+    [[ "$o" == *" ControlPersist=yes "* ]] || fail "$o"
+    [[ "$o" == *" ServerAliveInterval=15 "* ]] || fail "$o"
+    [[ "$o" == *" ControlPath=${XDG_RUNTIME_DIR}/pulsar/ssh-%C "* ]] || fail "$o"
+    [ "$(stat -c %a "${XDG_RUNTIME_DIR}/pulsar")" = 700 ] || fail "the sockets' folder is open to others"
+    # nowhere private to keep it: not shared at all, never in /tmp
+    XDG_RUNTIME_DIR=/dev/null/none "$PULSAR" machine add b tb >/dev/null
+    o=$(tail -n 1 "${SSH_LOG}.opts")
+    [[ "$o" == *" ControlPath=none "* ]] || fail "$o"
+    [[ "$o" != *ControlPersist* ]] || fail "$o"
+}
+
+@test "machine connections: git goes over the same one, with the same keepalive" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    git init -q "${HOME}/p"
+    git -C "${HOME}/p" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
+    : > "${SSH_LOG}.opts"
+    "$PULSAR" machine job a --name j --dir "${HOME}/p" -- true >/dev/null 2>&1 || true
+    local o; o=$(grep 'git-receive-pack' "${SSH_LOG}.opts") || fail "$(cat "${SSH_LOG}.opts")"
+    [[ "$o" == *" ControlPersist=yes "* ]] || fail "$o"
+    [[ "$o" == *" ServerAliveInterval=15 "* ]] || fail "$o"
+    [[ "$o" == *" ControlPath=${XDG_RUNTIME_DIR}/pulsar/ssh-%C "* ]] || fail "$o"
+}
+
+@test "machine --no-connect: an open connection or nothing, and never the key" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    rm "${REMOTES}/ta.open"; : > "${SSH_LOG}.connects"; : > "$SSH_LOG"
+    run "$PULSAR" machine --no-connect exec a -- agent sessions
+    [ "$status" -eq 255 ] || fail "$status $output"
+    [[ "$output" == *"no open connection to ta"* ]] || fail "$output"
+    run "$PULSAR" machine --no-connect shell a
+    [ "$status" -eq 255 ] || fail "$status $output"
+    run "$PULSAR" machine --no-connect sessions --json
+    [ "$(jq -r '.machines[0].why' <<<"$output")" = closed ] || fail "$output"
+    [ "$(connects)" -eq 0 ] || fail "it connected"
+    [ ! -s "$SSH_LOG" ] || fail "$(cat "$SSH_LOG")"
+    : > "${REMOTES}/ta.open"; : > "${SSH_LOG}.opts"
+    run "$PULSAR" machine --no-connect exec a -- agent sessions --json
+    [ "$status" -eq 0 ] || fail "$output"
+    # ssh takes the first of each option, and has these for the one it makes
+    # itself when the shared one is out of room
+    local o; o=$(cat "${SSH_LOG}.opts")
+    [[ "$o" == "ta| ControlMaster=no IdentityAgent=none PubkeyAuthentication=no "* ]] || fail "$o"
+}
+
+@test "machine sessions: a refused key, a machine away and a closed connection are told apart" {
+    machine_env
+    mkdir -p "${HOME}/.config/pulsar"
+    local m
+    for m in cancel quit nokey many away reset; do printf '%s\t%s\n' "$m" "$m" >> "${HOME}/.config/pulsar/machines"; done
+    # as OpenSSH 10.5 prints them
+    printf '%s\n' 'sign_and_send_pubkey: signing failed for ED25519 "k.pub" from agent: agent refused operation' 'Connection closed by 10.0.0.2 port 22' > "${REMOTES}/cancel.err"
+    printf '%s\n' 'sign_and_send_pubkey: signing failed for ED25519 "k.pub" from agent: communication with agent failed' 'Connection reset by 10.0.0.2 port 22' > "${REMOTES}/quit.err"
+    printf '%s\n' 'n@nokey: Permission denied (publickey).' > "${REMOTES}/nokey.err"
+    printf '%s\n' 'Received disconnect from 10.0.0.2 port 22:2: Too many authentication failures' > "${REMOTES}/many.err"
+    printf '%s\n' 'ssh: connect to host away port 22: Connection timed out' > "${REMOTES}/away.err"
+    printf '%s\n' 'kex_exchange_identification: read: Connection reset by peer' > "${REMOTES}/reset.err"
+    run "$PULSAR" machine sessions --json
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(jq -c '[.machines[].why]' <<<"$output")" = '["refused","refused","refused","refused","unreachable","unreachable"]' ] || fail "$output"
+    # held: not asked again, while the others still are
+    : > "${SSH_LOG}.connects"
+    run "$PULSAR" machine sessions --json --hold cancel --hold quit --hold nokey --hold many
+    [ "$(sort "${SSH_LOG}.connects" | paste -sd, -)" = away,reset ] || fail "$(cat "${SSH_LOG}.connects")"
+    [ "$(jq -c '[.machines[].why]' <<<"$output")" = '["closed","closed","closed","closed","unreachable","unreachable"]' ] || fail "$output"
+    run "$PULSAR" machine sessions --nope
+    [ "$status" -ne 0 ] || fail "took --nope"
+}
+
+@test "machine sessions: an open connection is only used, and only ssh's own failure is a refused key" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    : > "${SSH_LOG}.opts"
+    local far="${BATS_TEST_TMPDIR}/far"
+    printf '#!/bin/sh\necho "cat: x: Permission denied (os error 13)" >&2\nexit 1\n' > "$far"
+    chmod +x "$far"
+    PULSAR_REMOTE_CLI="$far" run "$PULSAR" machine sessions --json
+    [ "$(jq -r '.machines[0].why' <<<"$output")" = unreachable ] || fail "$output"
+    local o; o=$(cat "${SSH_LOG}.opts")
+    [[ "$o" == *" IdentityAgent=none "* ]] || fail "$o"
+    rm "${REMOTES}/ta.open"
+    PULSAR_REMOTE_CLI="$far" run "$PULSAR" machine sessions --json
+    [ "$(jq -r '.machines[0].why' <<<"$output")" = unreachable ] || fail "$output"
+}
+
+@test "machine sessions: a connection with no room for another session is full, not closed or a refused key" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    : > "${REMOTES}/ta.full"
+    run "$PULSAR" machine sessions --json
+    [ "$(jq -r '.machines[0].why' <<<"$output")" = full ] || fail "$output"
+    run "$PULSAR" machine --no-connect exec a -- agent sessions
+    [ "$status" -eq 255 ] || fail "$status $output"
+    [[ "$output" == *"the connection to ta is full: close a terminal"* ]] || fail "$output"
+}
+
+@test "machine remove, and add with a new target, end the connection unless another machine has it" {
+    machine_env
+    "$PULSAR" machine add a ta >/dev/null
+    "$PULSAR" machine add b ta >/dev/null
+    [ -e "${REMOTES}/ta.open" ] || fail "adding a second closed it"
+    "$PULSAR" machine remove a >/dev/null
+    [ -e "${REMOTES}/ta.open" ] || fail "closed the one b uses"
+    "$PULSAR" machine add b tb >/dev/null
+    [ ! -e "${REMOTES}/ta.open" ] || fail "kept the old target's open"
+    "$PULSAR" machine remove b >/dev/null
+    [ ! -e "${REMOTES}/tb.open" ] || fail "kept the removed machine's open"
 }
 
 @test "machine check: each machine's Pulsar release and its installed agents, or why it can't be reached" {
@@ -7266,8 +7399,7 @@ SH
     echo 0 > "$n"
     cat > "${BATS_TEST_TMPDIR}/flaky" <<SH
 #!/bin/bash
-c=\$(cat "$n"); echo \$((c + 1)) > "$n"
-case "\$*" in *" job wait "*) [ "\$c" -ge 2 ] || exit 255; echo "loss 0.4"; exit 4 ;; esac
+case "\$*" in *" job wait "*) c=\$(cat "$n"); echo \$((c + 1)) > "$n"; [ "\$c" -ge 2 ] || exit 255; echo "loss 0.4"; exit 4 ;; esac
 exec "$real" "\$@"
 SH
     chmod +x "${BATS_TEST_TMPDIR}/flaky"

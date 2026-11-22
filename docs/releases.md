@@ -150,8 +150,12 @@ CLI, and opencode moves to version 2.
   first. A sandboxed agent doesn't have `pulsar mcp`.
 - Your other Pulsar machines, over SSH: `pulsar machine add <name> <ssh
   target>`, then their sessions show in the app as `name@machine`, and open
-  there as here. Each machine keeps one SSH connection open for two
-  minutes, and nothing prompts (a key that needs a passphrase prompt fails).
+  there as here. Each machine keeps one SSH connection open until it
+  breaks, you remove the machine or you log out. The app connects only
+  while its window is in front and the screen is unlocked, so an SSH agent
+  like 1Password asks for the key once per connection. If you cancel that
+  or don't answer, the app stops asking until you click Try Again. A key
+  that needs a passphrase typed fails.
 - Announce This Machine, in Agents > Preferences > Your Machines (or
   `pulsar machine announce on`), publishes the machine on the local network
   over mDNS with your user name and release. It's off until you turn it on.

@@ -320,8 +320,25 @@ sandboxed agent can't start one: it has no `pulsar mcp`.
 
 `pulsar machine` reaches your other Pulsar machines with your own SSH setup:
 no relay, no account. Every call is `ssh` in BatchMode, so a key that needs a
-prompt fails instead of asking. On the other side, `machine exec` runs only
+passphrase typed fails. An SSH agent such as 1Password's still asks on screen
+for each new connection. On the other side, `machine exec` runs only
 `pulsar agent ...` and `pulsar job wait|log|list|stop`.
+
+Each machine's connection stays open until it breaks, you remove the machine
+or you log out (with lingering on, until shutdown). While it's open,
+anything running as you outside a sandbox, agents and toolboxes included,
+can run any command on that machine through it without your SSH agent
+asking: the socket is in `$XDG_RUNTIME_DIR/pulsar`, and the limit on
+`machine exec` doesn't apply to plain `ssh` over that socket. Locking the
+screen or 1Password doesn't close it. A sandboxed agent doesn't see the
+socket. `pulsar machine remove <name>` closes it, unless another machine you
+added has the same target.
+
+The Agents app makes a connection only while its window is in front and the
+screen is unlocked, and stops after a refused key until you click Try Again.
+`pulsar machine wait`, which watches a job there, does neither: after a drop
+it tries to connect every 30 seconds, for a day at most, and each try can
+ask for the key.
 
 `machine run` and `machine job` send code by git: your branch, plus what
 isn't committed as one commit made in a scratch index, pushed to a new

@@ -109,7 +109,8 @@ works there.
   there; `pulsar machine fetch <machine> <session>` brings its branch back.
   Only when the user asked for work to go to that machine. Through
   `pulsar mcp` these are the `machines`, `machine_job`, `machine_run` and
-  `machine_fetch` tools.
+  `machine_fetch` tools. Each new connection can ask the user for their
+  SSH key: if one fails for the key, tell them, don't retry.
 - `pulsar job run [--notify <you>] -- <command>` runs a long command (a
   training run, a long build) in a tmux of its own with its output kept;
   `pulsar job list`, `log`, `stop`. With `--notify`, how it ended is sent

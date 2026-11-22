@@ -7,17 +7,57 @@
 #
 # A machine is a name and an ssh target ("magnetar", "nick@10.0.0.5"), in
 # MACHINES. Every call goes through one shared connection per machine
-# (ControlMaster, kept 2 minutes), with BatchMode: a key that needs a
-# passphrase prompt or a new host key fails here instead of asking; add the
-# host with plain ssh once. Nothing but `pulsar agent ...` runs on the other
-# side through exec, and its own Pulsar decides what that may do.
+# (ControlMaster, kept until it breaks or the user logs out), with BatchMode:
+# a key that needs a passphrase prompt or a new host key fails here instead
+# of asking; add the host with plain ssh once. An SSH agent (1Password's)
+# still asks on screen for each new connection, BatchMode or not, so what
+# runs by itself doesn't make one: `pulsar machine --no-connect ...` uses a
+# connection that is already open, or fails. Nothing but `pulsar agent ...`
+# runs on the other side through exec, and its own Pulsar decides what that
+# may do.
 # ---------------------------------------------------------------------------
 MACHINES=${PULSAR_MACHINES:-${XDG_CONFIG_HOME:-$HOME/.config}/pulsar/machines}
 REMOTE_PULSAR=${PULSAR_REMOTE_CLI:-/usr/bin/pulsar}
+MACHINE_CONNECT=1   # 0: --no-connect
 
 machine_target() {
     [ -r "$MACHINES" ] || return 1
     awk -F'\t' -v n="$1" '$1 == n { print $2; f = 1; exit } END { exit !f }' "$MACHINES"
+}
+
+# SSH_OPTS, for every call. The connection's socket lets whoever opens it
+# run commands there, so it is only ever in the user's own runtime folder
+# (which a sandbox doesn't see); with none, nothing is shared. The keepalive
+# is what ends a connection that died in sleep: 45 s, then calls stop hanging.
+machine_ssh_opts() {
+    local d="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulsar"
+    SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15)
+    if (umask 077; mkdir -p "$d") 2>/dev/null; then
+        SSH_OPTS+=(-o ControlMaster=auto -o "ControlPath=${d}/ssh-%C" -o ControlPersist=yes)
+    else
+        SSH_OPTS+=(-o ControlPath=none)
+    fi
+}
+
+# machine_open <target>: whether its connection is open (never makes one)
+machine_open() {
+    local -a SSH_OPTS; machine_ssh_opts
+    "${PULSAR_SSH:-ssh}" "${SSH_OPTS[@]}" -O check "$1" </dev/null >/dev/null 2>&1
+}
+
+# machine_close <target>: its connection ends, unless a machine still has that target
+machine_close() {
+    [ ! -r "$MACHINES" ] || ! awk -F'\t' -v t="$1" '$2 == t { f = 1 } END { exit !f }' "$MACHINES" || return 0
+    local -a SSH_OPTS; machine_ssh_opts
+    "${PULSAR_SSH:-ssh}" "${SSH_OPTS[@]}" -O exit "$1" </dev/null >/dev/null 2>&1 || true
+}
+
+# machine_key_refused <file>: ssh's errors say it got as far as the key and
+# didn't get in. A prompt canceled or timed out, and an agent that quit, all
+# print "signing failed ... from agent"; a key that isn't on that machine,
+# "Permission denied (". A machine that's asleep or away fails before either.
+machine_key_refused() {
+    grep -qE 'signing failed for .* from agent|Permission denied \(|Too many authentication failures' "$1"
 }
 
 # mssh [-t] <target> <word>...: the words run on the other side as written
@@ -26,19 +66,30 @@ mssh() {
     local tty=() target line="" w
     [ "$1" != -t ] || { tty=(-t); shift; }
     target=$1; shift
-    mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/pulsar"
+    local -a SSH_OPTS; machine_ssh_opts
+    if [ "$MACHINE_CONNECT" = 0 ]; then
+        machine_open "$target" || { printf 'no open connection to %s\n' "$target" >&2; return 255; }
+        # ssh makes a connection of its own when the shared one ends after
+        # that check, or has no room for another session (sshd's MaxSessions):
+        # that one gets no key, so it can't ask for one. ssh takes the first
+        # of each option, so these go in front.
+        SSH_OPTS=(-o ControlMaster=no -o IdentityAgent=none -o PubkeyAuthentication=no "${SSH_OPTS[@]}")
+    fi
     for w in "$@"; do line+=" $(printf '%q' "$w")"; done
-    "${PULSAR_SSH:-ssh}" -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 \
-        -o ControlMaster=auto -o "ControlPath=${XDG_RUNTIME_DIR:-/tmp}/pulsar/ssh-%C" -o ControlPersist=120 \
-        "${tty[@]}" "$target" -- "${line# }"
+    local st=0
+    "${PULSAR_SSH:-ssh}" "${SSH_OPTS[@]}" "${tty[@]}" "$target" -- "${line# }" || st=$?
+    if [ "$st" = 255 ] && [ "$MACHINE_CONNECT" = 0 ] && machine_open "$target"; then
+        printf 'the connection to %s is full: close a terminal or shell on it to open another (sshd allows 10 unless its MaxSessions says more)\n' "$target" >&2
+    fi
+    return "$st"
 }
 
 machine_names() { [ ! -r "$MACHINES" ] || cut -f1 "$MACHINES"; }
 
 # git over the same shared connection as mssh
 machine_git() {
-    mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/pulsar"
-    GIT_SSH_COMMAND="${PULSAR_SSH:-ssh} -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto -o ControlPath=${XDG_RUNTIME_DIR:-/tmp}/pulsar/ssh-%C -o ControlPersist=120" \
+    local -a SSH_OPTS; machine_ssh_opts
+    GIT_SSH_COMMAND="${PULSAR_SSH:-ssh} $(printf '%q ' "${SSH_OPTS[@]}")" \
         git "$@"
 }
 
@@ -107,13 +158,16 @@ handoff_name() {
 }
 
 cmd_machine() {
-    local usage="usage: pulsar machine add <name> <ssh target> | remove <name> | list | check [<name>] | sessions
+    local usage="usage: pulsar machine add <name> <ssh target> | remove <name> | list | check [<name>] | sessions [--hold <name>]...
        pulsar machine run <name> <agent> [--name <session>] [--dir <folder>] [--prompt <text>] [--sandbox]
        pulsar machine job <name> [--name <job>] [--dir <folder>] [--notify <session>] -- <command>...
        pulsar machine fetch <name> <session> [--dir <folder>]
        pulsar machine exec <name> -- agent <args> | job wait|log|list|stop <args>
        pulsar machine shell <name> [--dir <folder>]
-       pulsar machine discover | announce [on|off]"
+       pulsar machine discover | announce [on|off]
+       pulsar machine --no-connect ...: only over a connection that is already open"
+    local MACHINE_CONNECT=$MACHINE_CONNECT
+    if [ "${1:-}" = --no-connect ]; then MACHINE_CONNECT=0; shift; fi
     local sub=${1:-list}; shift || true
     case "$sub" in
         -h|--help) printf '%s\n' "$usage"; return 0 ;;
@@ -124,17 +178,20 @@ cmd_machine() {
                 *[!a-z0-9-]*|-*) die "a machine's name is lowercase letters, digits and -: '$1'" ;;
             esac
             case "$2" in -*|*[[:space:]]*|'') die "not an ssh target: '$2'" ;; esac
-            local v
+            local v was
+            was=$(machine_target "$1") || was=""
             v=$(mssh "$2" "$REMOTE_PULSAR" --version 2>&1) \
                 || die "could not reach Pulsar on $2 over ssh (BatchMode: no prompts; ssh $2 once to accept its key): ${v##*$'\n'}"
             mkdir -p "$(dirname "$MACHINES")"
             { [ ! -r "$MACHINES" ] || awk -F'\t' -v n="$1" '$1 != n' "$MACHINES"
               printf '%s\t%s\n' "$1" "$2"; } > "${MACHINES}.tmp" && mv "${MACHINES}.tmp" "$MACHINES"
+            [ -z "$was" ] || machine_close "$was"
             printf 'added %s (%s): %s\n' "$1" "$2" "$v" ;;
         remove)
             [ $# -eq 1 ] || die "$usage"
-            machine_target "$1" >/dev/null || die "no machine called $1 (pulsar machine list)"
+            local t; t=$(machine_target "$1") || die "no machine called $1 (pulsar machine list)"
             awk -F'\t' -v n="$1" '$1 != n' "$MACHINES" > "${MACHINES}.tmp" && mv "${MACHINES}.tmp" "$MACHINES"
+            machine_close "$t"
             printf 'removed %s\n' "$1" ;;
         list)
             [ $# -eq 0 ] || die "$usage"
@@ -168,7 +225,12 @@ cmd_machine() {
                 then "\(.name)\t\(.target)\tPulsar \(.release // "?") (\(.version // "?"))\t\(.agents | join(" "))"
                 else "\(.name)\t\(.target)\tunreachable: \(.error)" end' | column -t -s $'\t' ;;
         sessions)
-            [ $# -eq 0 ] || die "$usage"
+            # --hold <name>: no new connection to that one (its key was refused)
+            local hold=" "
+            while [ $# -gt 0 ]; do
+                case "$1" in --hold) [ $# -ge 2 ] || die "$usage"; hold+="$2 "; shift ;; *) die "$usage" ;; esac
+                shift
+            done
             # every machine at once; a slow or gone one costs its timeout, not the others'
             local d n t; d=$(mktemp -d)
             while IFS= read -r n; do
@@ -176,7 +238,21 @@ cmd_machine() {
                 t=$(machine_target "$n") || continue
                 # kept only as a list of sessions with names: anything else
                 # that machine says is its own problem, not every machine's
-                ( if mssh "$t" "$REMOTE_PULSAR" agent sessions --json > "${d}/${n}.raw" 2> "${d}/${n}.err" \
+                ( case "$hold" in *" ${n} "*) MACHINE_CONNECT=0 ;; esac
+                  # an open connection is only ever used: were it out of
+                  # room, ssh would make another and ask for the key
+                  ! machine_open "$t" || MACHINE_CONNECT=0
+                  st=0
+                  mssh "$t" "$REMOTE_PULSAR" agent sessions --json > "${d}/${n}.raw" 2> "${d}/${n}.err" || st=$?
+                  why=unreachable
+                  if [ "$st" = 255 ]; then
+                      if [ "$MACHINE_CONNECT" = 0 ]; then
+                          why=closed
+                          ! machine_open "$t" || why=full
+                      elif machine_key_refused "${d}/${n}.err"; then why=refused; fi
+                  fi
+                  printf '%s' "$why" > "${d}/${n}.why"
+                  if [ "$st" = 0 ] \
                       && jq -c 'if type == "array" then map(select(type == "object" and (.name | type) == "string")) else error("not a list") end' \
                          "${d}/${n}.raw" > "${d}/${n}.out" 2>/dev/null; then :
                   else rm -f "${d}/${n}.out"; fi ) &
@@ -190,7 +266,8 @@ cmd_machine() {
                         '.machines += [{name: $n, ok: true}] | .sessions += [$s[0][] | .machine = $n]' <<<"$res")
                 else
                     res=$(jq -c --arg n "$n" --arg e "$(tail -n 1 "${d}/${n}.err" 2>/dev/null)" \
-                        '.machines += [{name: $n, ok: false, error: $e}]' <<<"$res")
+                        --arg w "$(cat "${d}/${n}.why" 2>/dev/null)" \
+                        '.machines += [{name: $n, ok: false, why: $w, error: $e}]' <<<"$res")
                 fi
             done < <(machine_names)
             rm -rf "$d"

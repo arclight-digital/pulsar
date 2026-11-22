@@ -434,6 +434,10 @@ class Agents(Adw.ApplicationWindow):
         self.collapsed = set()  # projects folded shut
         self.machines = []      # pulsar machine list
         self.remote = None      # pulsar machine sessions --json
+        self.held = set()       # machines that refused the key: not asked again until Try Again
+        self.locked = False     # the screen is
+        self._remote_busy = None  # the machines poll under way: "connect" or "open"
+        self.key_toasts = {}    # machine -> its Try Again toast
         self.pending = None     # a session just started, not listed yet
         self.asked_home = False  # --new: the launcher, not the last session
         self._local = []
@@ -637,7 +641,8 @@ class Agents(Adw.ApplicationWindow):
         self._stage()
         Adw.StyleManager.get_default().connect("notify::dark", lambda *_: self._recolor())
         self.connect("notify::visible", lambda *_: self._start_poll())
-        self.connect("notify::is-active", lambda *_: self.is_active() and self._seen(self.current))
+        self.connect("notify::is-active", lambda *_: self._fronted())
+        self._watch_lock()
         if self.state.get("compact"):
             self.set_compact(True)
         run([PULSAR, "machine", "list", "--json"], self._machines)
@@ -722,15 +727,111 @@ class Agents(Adw.ApplicationWindow):
         # other machines every few polls, in the background; slower, and a
         # gone machine costs its timeout
         self._ticks = getattr(self, "_ticks", 0) + 1
-        if self.machines and self._ticks % 3 == 1 and not getattr(self, "_remote_busy", False):
-            self._remote_busy = True
-            run([PULSAR, "machine", "sessions", "--json"], self._remote_listed)
+        if self.machines and self._ticks % 3 == 1 and not self._remote_busy:
+            self._ask_machines()
+
+    # ---- connecting to other machines ----
+    # A new connection can put an SSH agent's prompt on screen (1Password's),
+    # so there is one place that makes one, this poll, and only while the
+    # user is at this window. Everything else here is pulsar machine
+    # --no-connect. A key that was refused (the prompt canceled, or left to
+    # time out) isn't asked for again until Try Again: the prompt takes the
+    # focus and gives it back, so coming to the front mustn't clear that.
+    def _may_connect(self):
+        return self.is_active() and not self.locked
+
+    def _ask_machines(self):
+        if self._may_connect():
+            self._remote_busy = "connect"
+            argv = [PULSAR, "machine", "sessions", "--json"]
+            for m in sorted(self.held):
+                argv += ["--hold", m]
+        else:
+            self._remote_busy = "open"
+            argv = [PULSAR, "machine", "--no-connect", "sessions", "--json"]
+        run(argv, self._remote_listed)
+
+    def _reconnect(self):
+        """The user is at the window: what's closed connects now, not at the next poll."""
+        if not self._may_connect() or not self.machines:
+            return
+        rows = (self.remote or {}).get("machines") or []
+        if self.remote is None or any(not r.get("ok") and r.get("name") not in self.held for r in rows):
+            self._ticks = 0
+            self.refresh()
+
+    def _fronted(self):
+        if self.is_active():
+            self._seen(self.current)
+            self._reconnect()
+
+    def _set_locked(self, locked):
+        self.locked = bool(locked)
+        if not self.locked:
+            self._reconnect()
+
+    def _watch_lock(self):
+        """A window keeps its focus behind the lock screen, where no prompt can be answered."""
+        name, path = "org.gnome.ScreenSaver", "/org/gnome/ScreenSaver"
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except GLib.Error:
+            return
+        self._lock_bus = bus    # the subscription goes with it
+        bus.signal_subscribe(name, name, "ActiveChanged", path, None, Gio.DBusSignalFlags.NONE,
+                             lambda *a: self._set_locked(a[5].unpack()[0]))
+
+        def got(b, res):
+            try:
+                self._set_locked(b.call_finish(res).unpack()[0])
+            except GLib.Error:
+                pass    # no GNOME lock screen here: never locked
+        bus.call(name, path, name, "GetActive", None, GLib.VariantType("(b)"),
+                 Gio.DBusCallFlags.NO_AUTO_START, 2000, None, got)
+
+    def _key_toast(self, m):
+        # a machine with sessions kept has its page, with Try Again; one with none, this
+        if ((self.state.get("machines_seen") or {}).get(m) or {}).get("sessions") or m in self.key_toasts:
+            return
+        t = Adw.Toast(title=GLib.markup_escape_text(f"{m} didn't get your SSH key"), timeout=0,
+                      button_label="Try Again")
+        t.connect("button-clicked", lambda *_: self.retry_machines(m))
+        t.connect("dismissed", lambda *_: self.key_toasts.pop(m, None))
+        self.key_toasts[m] = t
+        self.toasts.add_toast(t)
 
     def _remote_listed(self, ok, out):
-        self._remote_busy = False
+        asked, self._remote_busy = self._remote_busy, None
         d = parse(out) if ok else None
         if isinstance(d, dict):
+            closed = False
+            last = self.remote or {}
+            for r in d.get("machines") or []:
+                m = r.get("name")
+                if r.get("why") == "full" and any(
+                        x.get("name") == m and x.get("ok") for x in last.get("machines") or []):
+                    # connected, with every channel in use (this app's own
+                    # terminals hold them): as it last answered, not offline
+                    r["ok"] = True
+                    d.setdefault("sessions", []).extend(
+                        s for s in last.get("sessions") or [] if s.get("machine") == m)
+                if r.get("ok"):
+                    self.held.discard(m)
+                    if m in self.key_toasts:
+                        self.key_toasts[m].dismiss()
+                    continue
+                if r.get("why") == "refused":
+                    self.held.add(m)
+                    self._key_toast(m)
+                elif m in self.held:
+                    r["why"] = "refused"    # not asked, for that
+                elif r.get("why") == "closed":
+                    closed = True
             self.remote = d
+            # the window came to the front, or Try Again, while this was out
+            if asked == "open" and closed and self._may_connect():
+                self._ticks = 0
+                GLib.idle_add(lambda: self.refresh() and False)
             # what each machine had when it last answered, for when it doesn't
             seen = remember_machines(self.state.get("machines_seen"), d, self._now())
             old = self.state.get("machines_seen") or {}
@@ -1163,14 +1264,26 @@ class Agents(Adw.ApplicationWindow):
             self.offline_page.set_description(None)
         else:
             w = when(s.get("seen_at"), self._now())
-            self.offline_page.set_title(f"{m} isn't answering")
-            self.offline_page.set_description((f"Last seen {w}. " if w else "")
-                                              + "It may be asleep, off, or on another network.")
+            title, why = f"{m} isn't answering", "It may be asleep, off, or on another network."
+            if s["offline"] == "refused":
+                title = f"{m} didn't get your SSH key"
+                why = ("The request was canceled, timed out or wasn't accepted. "
+                       "Pulsar won't ask again until you click Try Again.")
+            elif s["offline"] == "full":
+                title, why = f"The connection to {m} is full", "Close a terminal or shell that's open on it."
+            elif s["offline"] == "closed":
+                title, why = f"Not connected to {m}", "It connects when this window is in front."
+            self.offline_page.set_title(title)
+            self.offline_page.set_description((f"Last seen {w}. " if w else "") + why)
         self.term_stack.set_visible_child_name("offline")
         self.split.set_show_content(True)
 
-    def retry_machines(self):
-        self._ticks = 0
+    def retry_machines(self, machine=None):
+        m = machine or (self.sessions.get(self.current) or {}).get("machine")
+        # not while one is being asked: a second click would be a second prompt
+        if self._remote_busy != "connect":
+            self.held.discard(m)
+            self._ticks = 0
         self.offline_page.set_title("Checking…")
         self.offline_page.set_description(None)
         self.refresh()
@@ -1314,7 +1427,8 @@ class Agents(Adw.ApplicationWindow):
                 if tag and getattr(t, "sized", False) and getattr(t, "view_sent", "shown") != want:
                     t.view_sent = want
                     try:
-                        GLib.spawn_async([PULSAR, "machine", "exec", machine, "--", "agent", "sizes",
+                        GLib.spawn_async([PULSAR, "machine", "--no-connect", "exec", machine,
+                                          "--", "agent", "sizes",
                                           "--view", tag, want],
                                          flags=GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.STDOUT_TO_DEV_NULL
                                          | GLib.SpawnFlags.STDERR_TO_DEV_NULL)
@@ -1412,6 +1526,8 @@ class Agents(Adw.ApplicationWindow):
     def _exited(self, term, status):
         term.dead = True
         term.resuming = False
+        if (self.sessions.get(term.name) or {}).get("machine"):
+            self._ticks = 0     # perhaps its connection ended: find out now
 
         def then(ok, out):
             self._listed(ok, out)
@@ -1606,7 +1722,7 @@ class Agents(Adw.ApplicationWindow):
         view = self._shell_view(s)
         if s.get("machine"):
             # on that machine, in the session's folder there
-            argv = [PULSAR, "machine", "shell", s["machine"], *(["--dir", s["dir"]] if s.get("dir") else [])]
+            argv = [PULSAR, "machine", "--no-connect", "shell", s["machine"], *(["--dir", s["dir"]] if s.get("dir") else [])]
             cwd = os.path.expanduser("~")
         else:
             argv = [os.environ.get("SHELL") or "/bin/bash", "-l"]
@@ -1761,7 +1877,7 @@ class Agents(Adw.ApplicationWindow):
     def _unreachable(self, s):
         """Its machine isn't answering: say so, rather than wait out ssh."""
         if s and s.get("offline"):
-            self.toast(f"{s.get('machine')} isn't answering")
+            self.toast(session_status(s, self._now()))
             return True
         return False
 

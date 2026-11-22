@@ -488,8 +488,8 @@ print(" ".join(g.agent_argv(S, "attach", "fix")[1:]))
 print(g.session_title(S["fix@mag"]), g.merge_machine_sessions(local, None) == local)'
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "[('fix', None, None), ('fix@mag', 'fix', 'mag')]" ]
-    [ "${lines[1]}" = "machine exec mag -- agent attach fix" ]
-    [ "${lines[2]}" = "machine exec mag -- agent sessions --title fix t" ]
+    [ "${lines[1]}" = "machine --no-connect exec mag -- agent attach fix" ]
+    [ "${lines[2]}" = "machine --no-connect exec mag -- agent sessions --title fix t" ]
     [ "${lines[3]}" = "agent attach fix" ]
     [ "${lines[4]}" = "fix True" ]
 }
@@ -536,6 +536,148 @@ print(g.session_status(dict(out[0], offline="unreachable"), 50 + 7200 + 10))'
     [ "${lines[6]}" = "mag isn't answering · seen 2 h ago" ] || fail "${lines[6]}"
 }
 
+@test "a machine that didn't answer says why: no connection, or the key" {
+    run gui '
+seen = {"t": {"at": 50, "sessions": [{"name": "s"}]}}
+for why in ("closed", "refused", "unreachable", None):
+    s = g.merge_machine_sessions([], {"machines": [{"name": "t", "ok": False, "why": why}], "sessions": []}, seen, ["t"])[0]
+    print(s["offline"] + ": " + g.session_status(s, 60))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "closed: Not connected to t" ] || fail "$output"
+    [ "${lines[1]}" = "refused: t didn't get your SSH key" ] || fail "$output"
+    [[ "${lines[2]}" == "unreachable: t isn't answering"* ]] || fail "$output"
+    [[ "${lines[3]}" == "unreachable: t isn't answering"* ]] || fail "$output"
+}
+
+# the app's connecting, without its window: RUNS is what it would run
+connecting() {
+    app '
+import types, json
+m.Adw.init()
+RUNS, REFRESHED, SAID = [], [], []
+m.run = lambda argv, *a: RUNS.append(argv[1:])
+m.GLib.idle_add = lambda f, *a: f()
+names = ("refresh", "_ask_machines", "_may_connect", "_reconnect", "_fronted", "_set_locked", "_remote_listed",
+         "_key_toast", "retry_machines", "_show_offline", "_exited")
+W = type("W", (), {n: getattr(m.Agents, n) for n in names})
+w = W()
+w.front, w.locked, w.held, w.machines, w.remote, w._remote_busy, w._ticks = True, False, set(), ["t"], None, None, 0
+w.key_toasts, w.state, w._local, w.sessions, w.current = {}, {}, [], {}, None
+w.is_active = lambda: w.front
+w._seen = lambda *a: None
+w._apply = lambda *a: None
+w._listed = lambda *a: None
+w.remember = lambda **k: w.state.update(k)
+w._now = lambda: 1000
+w.offline_page = types.SimpleNamespace(set_title=lambda t: SAID.append(t), set_description=lambda t: SAID.append(t))
+w.toasts = types.SimpleNamespace(add_toast=lambda t: SAID.append(t.get_title()))
+def answer(**r):
+    w._remote_listed(True, json.dumps({"machines": [dict({"name": "t"}, **r)], "sessions": []}))
+def polls():
+    out = [" ".join(a) for a in RUNS if a[0] == "machine"]
+    del RUNS[:]
+    return out
+'"$1"
+}
+
+@test "connecting: only with the window in front and the screen unlocked; otherwise an open connection or none" {
+    need_gtk
+    run connecting '
+w.front = False; w.refresh(); print(polls()); answer(ok=False, why="closed")
+print(polls())
+w.front = True; w._fronted(); print(polls()); answer(ok=False, why="unreachable")
+w.locked = True; w._ticks = 0; w.refresh(); print(polls()); answer(ok=False, why="closed")
+w._set_locked(False); print(polls()); answer(ok=True)
+w._fronted(); print(polls())
+w.front = False; w._ticks = 0; w.refresh(); w.front = True; polls(); answer(ok=False, why="closed"); print(polls())'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "['machine --no-connect sessions --json']" ] || fail "$output"
+    [ "${lines[1]}" = "[]" ] || fail "$output"
+    [ "${lines[2]}" = "['machine sessions --json']" ] || fail "$output"
+    [ "${lines[3]}" = "['machine --no-connect sessions --json']" ] || fail "$output"
+    [ "${lines[4]}" = "['machine sessions --json']" ] || fail "$output"
+    [ "${lines[5]}" = "[]" ] || fail "$output"
+    [ "${lines[6]}" = "['machine sessions --json']" ] || fail "$output"
+}
+
+@test "connecting: a refused key isn't asked for again, the window's focus coming back included, until Try Again" {
+    need_gtk
+    run connecting '
+w.refresh(); polls()
+w._fronted(); w.retry_machines("t"); print(polls())
+answer(ok=False, why="refused"); print(sorted(w.held), SAID[-1])
+w._fronted(); print(polls())
+w._set_locked(False); print(polls())
+w._ticks = 0; w.refresh(); print(polls()); answer(ok=False, why="closed")
+print(w.remote["machines"][0]["why"], sorted(w.held))
+w.retry_machines("t"); w.refresh(); print(polls()); answer(ok=False, why="refused")
+w._ticks = 0; w.refresh(); w.retry_machines("t"); print(sorted(w.held)); answer(ok=True); print(sorted(w.held))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[]" ] || fail "asked twice at once: $output"
+    [ "${lines[1]}" = "['t'] t didn&apos;t get your SSH key" ] || fail "$output"
+    [ "${lines[2]}" = "[]" ] || fail "asked on focus: $output"
+    [ "${lines[3]}" = "[]" ] || fail "asked on unlock: $output"
+    [ "${lines[4]}" = "['machine sessions --json --hold t']" ] || fail "$output"
+    [ "${lines[5]}" = "refused ['t']" ] || fail "$output"
+    [ "${lines[6]}" = "['machine sessions --json']" ] || fail "$output"
+    [ "${lines[7]}" = "['t']" ] || fail "Try Again during a try cleared the hold: $output"
+    [ "${lines[8]}" = "[]" ] || fail "$output"
+}
+
+@test "connecting: the offline page says which it is; a machine with no sessions kept gets a toast instead" {
+    need_gtk
+    run connecting '
+w.state = {"machines_seen": {"t": {"sessions": [{"name": "s"}]}}}
+w._key_toast("t"); print(SAID)
+w.rows, w.title = {}, types.SimpleNamespace(set_title=lambda t: None, set_subtitle=lambda t: None)
+w.list = w.banner = w.overlay = w.rail = w.status = w.split = w.term_stack = types.SimpleNamespace(
+    set_revealed=lambda *a: None, set_show_sidebar=lambda *a: None, set_session=lambda *a: None,
+    update=lambda *a: None, set_show_content=lambda *a: None, set_visible_child_name=lambda *a: None)
+w._actions_for = lambda s: None
+for why in ("closed", "refused", "unreachable"):
+    del SAID[:]
+    w._show_offline("s@t", {"name": "s@t", "real_name": "s", "machine": "t", "state": "offline", "offline": why})
+    print(" / ".join(SAID))
+term = types.SimpleNamespace(name="s@t")
+w.sessions, w._ticks = {"s@t": {"machine": "t"}}, 2
+w._exited(term, 0); print(w._ticks)'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "[]" ] || fail "$output"
+    [[ "${lines[1]}" == "Not connected to t / "*"when this window is in front." ]] || fail "$output"
+    [[ "${lines[2]}" == "t didn't get your SSH key / "*"won't ask again until you click Try Again." ]] || fail "$output"
+    [[ "${lines[3]}" == "t isn't answering / "*"another network." ]] || fail "$output"
+    [ "${lines[4]}" = 0 ] || fail "$output"
+}
+
+@test "connecting: a full connection keeps the machine's sessions as they last were, not offline" {
+    need_gtk
+    run connecting '
+w.refresh()
+w._remote_listed(True, json.dumps({"machines": [{"name": "t", "ok": True}], "sessions": [{"name": "s", "machine": "t", "state": "running"}]}))
+answer(ok=False, why="full")
+print(w.remote["machines"][0]["ok"], [s["name"] for s in w.remote["sessions"]])
+answer(ok=False, why="full")
+print(w.remote["machines"][0]["ok"], [s["name"] for s in w.remote["sessions"]])
+w.remote = None
+answer(ok=False, why="full")
+print(w.remote["machines"][0]["ok"], w.remote["sessions"])
+print(m.session_status({"state": "offline", "offline": "full", "machine": "t"}, 1))
+w.rows, w.title = {}, types.SimpleNamespace(set_title=lambda t: None, set_subtitle=lambda t: None)
+w.list = w.banner = w.overlay = w.rail = w.status = w.split = w.term_stack = types.SimpleNamespace(
+    set_revealed=lambda *a: None, set_show_sidebar=lambda *a: None, set_session=lambda *a: None,
+    update=lambda *a: None, set_show_content=lambda *a: None, set_visible_child_name=lambda *a: None)
+w._actions_for = lambda s: None
+del SAID[:]
+w._show_offline("s@t", {"name": "s@t", "machine": "t", "state": "offline", "offline": "full"})
+print(SAID[0])'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = "True ['s']" ] || fail "$output"
+    [ "${lines[1]}" = "True ['s']" ] || fail "$output"
+    [ "${lines[2]}" = "False []" ] || fail "$output"
+    [ "${lines[3]}" = "The connection to t is full" ] || fail "$output"
+    [ "${lines[4]}" = "The connection to t is full" ] || fail "$output"
+}
+
 @test "a machine answering again isn't news: no unseen dot for what its sessions were doing meanwhile" {
     run gui '
 before = {"a@m": {"state": "offline"}, "b": {"state": "running"}}
@@ -551,7 +693,7 @@ print(g.agent_argv(ss, "sessions", "--title", "here", "bar@m")[1:])
 print(g.agent_argv(ss, "sessions", "--title", "bar@m", "here")[1:])
 print(g.agent_argv(ss, "diff", "nobody")[1:])'
     [ "${lines[0]}" = "['agent', 'sessions', '--title', 'here', 'bar@m']" ] || fail "$output"
-    [ "${lines[1]}" = "['machine', 'exec', 'm', '--', 'agent', 'sessions', '--title', 'bar', 'here']" ] || fail "$output"
+    [ "${lines[1]}" = "['machine', '--no-connect', 'exec', 'm', '--', 'agent', 'sessions', '--title', 'bar', 'here']" ] || fail "$output"
     [ "${lines[2]}" = "['agent', 'diff', 'nobody']" ] || fail "$output"
 }
 
@@ -719,7 +861,7 @@ print({k: v.get_n_pages() for k, v in sorted(w.shells.items())}, a.page.get_titl
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "True False ['/bin/zsh', '-l'] True" ] || fail "$output"
     [ "${lines[1]}" = "True False ['/bin/zsh', '-l'] True" ] || fail "$output"
-    [ "${lines[2]}" = "False True ['machine', 'shell', 'talos', '--dir', '/home/n/proj'] True" ] || fail "$output"
+    [ "${lines[2]}" = "False True ['machine', '--no-connect', 'shell', 'talos', '--dir', '/home/n/proj'] True" ] || fail "$output"
     [ "${lines[3]}" = "False True ['/bin/zsh', '-l'] True" ] || fail "$output"
     [ "${lines[4]}" = "{'a': 2, 'b@talos': 1, 'c': 1} True" ] || fail "$output"
 }
@@ -849,7 +991,7 @@ w._sizes()                       # b on screen, as it started: nothing to say
 print(len([c for c in calls if c[0] != "tmux"]))
 w.term_stack.set_visible_child(a); w._sizes(); w._sizes()
 remote = [c for c in calls if c[0] != "tmux"]
-print(remote == [[m.PULSAR, "machine", "exec", "talos", "--", "agent", "sizes", "--view", tag, "hidden"]])
+print(remote == [[m.PULSAR, "machine", "--no-connect", "exec", "talos", "--", "agent", "sizes", "--view", tag, "hidden"]])
 w.term_stack.set_visible_child(b); w._sizes()
 print([c[-1] for c in calls if c[0] != "tmux"])
 # the local one is still marked here, by its tty, never through a machine

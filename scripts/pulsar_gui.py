@@ -275,6 +275,12 @@ def session_status(s, now):
     """The sidebar's line under a session's title."""
     st = s.get("state")
     if st == "offline":
+        if s.get("offline") == "refused":
+            return f"{s.get('machine')} didn't get your SSH key"
+        if s.get("offline") == "full":
+            return f"The connection to {s.get('machine')} is full"
+        if s.get("offline") == "closed":
+            return f"Not connected to {s.get('machine')}"
         if s.get("offline") == "checking":
             return f"Checking {s.get('machine')}…"
         w = when(s.get("seen_at"), now)
@@ -933,7 +939,10 @@ def merge_machine_sessions(local, remote, seen=None, machines=None):
 
     A machine that didn't answer (or hasn't yet: remote is None) keeps the
     sessions it had when it last did (seen, from remember_machines), as
-    state "offline", with offline = "checking" or "unreachable" and seen_at.
+    state "offline", with seen_at and offline = "checking", or why it didn't
+    answer: "unreachable", "closed" (no connection, and none was made),
+    "full" (connected, with no room for another session) or
+    "refused" (the key: canceled, not answered, not accepted).
     Only machines still in `machines` (all, when None)."""
     out = [dict(s) for s in (local or [])]
     for s in (remote or {}).get("sessions") or []:
@@ -943,7 +952,9 @@ def merge_machine_sessions(local, remote, seen=None, machines=None):
         r = dict(s)
         r["real_name"], r["name"] = s["name"], f"{s['name']}@{m}"
         out.append(r)
-    answered = {m.get("name") for m in (remote or {}).get("machines") or [] if m.get("ok")}
+    rows = (remote or {}).get("machines") or []
+    answered = {m.get("name") for m in rows if m.get("ok")}
+    why = {m.get("name"): m.get("why") for m in rows}
     for m, kept in sorted((seen or {}).items()):
         if m in answered or (machines is not None and m not in machines):
             continue
@@ -952,7 +963,7 @@ def merge_machine_sessions(local, remote, seen=None, machines=None):
                 continue
             r = dict(s)
             r.update(machine=m, real_name=s["name"], name=f"{s['name']}@{m}", state="offline",
-                     offline="checking" if remote is None else "unreachable", seen_at=kept.get("at"))
+                     offline="checking" if remote is None else why.get(m) or "unreachable", seen_at=kept.get("at"))
             out.append(r)
     return out
 
@@ -960,7 +971,8 @@ def merge_machine_sessions(local, remote, seen=None, machines=None):
 def agent_argv(sessions, *args):
     """The command for `pulsar agent <args>`: here, or, when an argument
     names a session on another machine, through `pulsar machine exec` there
-    with that session's own name."""
+    with that session's own name. Only ever over a connection that is
+    already open: the app connects in one place, its sessions poll."""
     for i, a in enumerate(args):
         s = sessions.get(a) if isinstance(a, str) else None
         if s is None:
@@ -971,5 +983,5 @@ def agent_argv(sessions, *args):
             break
         rest = list(args)
         rest[i] = s["real_name"]
-        return [PULSAR, "machine", "exec", s["machine"], "--", "agent", *rest]
+        return [PULSAR, "machine", "--no-connect", "exec", s["machine"], "--", "agent", *rest]
     return [PULSAR, "agent", *args]
