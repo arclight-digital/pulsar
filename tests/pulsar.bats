@@ -7129,7 +7129,9 @@ handoff_repo() {
     # here: as it was
     [ "$(git status --short | paste -sd' ')" = " M README ?? new.txt" ] || fail "$(git status --short)"
     [ "$(git log --oneline | wc -l)" = 1 ]
-    # the same name again is a branch that's there already
+    # the same name again, for other work, is a branch that's there already
+    # (the same work in the same second is the same commit, and nothing to refuse)
+    echo more >> README
     run "$PULSAR" machine job box --name j1 -- true
     [ "$status" -ne 0 ] && [[ "$output" == *"box has a branch job-j1 already"* ]] || fail "$output"
     run "$PULSAR" machine job box --name 'a b' -- true; [ "$status" -ne 0 ]
