@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # check.sh on a real builder, for a commit, before it reaches main.
 #
+# Not the routine any more: each check bills a full hour of a dedicated
+# 8-core instance, however short (116 of them cost $27.66 in November 2026).
+# scripts/root-check.sh is the gate now; run this only when Nick asks for a
+# builder.
+#
 # Four nightlies in a row (2026-10-11/12) failed on tests that passed at a
 # desk and in root-check.sh's container. Each fix was checked against one of
 # those stand-ins, and each night found the next thing only the builder has:
@@ -17,7 +22,7 @@
 # The commit goes to GitHub on a throwaway branch, check/<sha>, because the
 # builder clones from there; the branch is deleted when the check ends. Only
 # committed work is checked. A pass is recorded in .git/builder-checks, which
-# scripts/hooks/pre-push reads: main moves only to a commit that passed here.
+# scripts/hooks/pre-push accepts beside root-check.sh's local-checks.
 #
 # Exit 0 passed, 1 failed, 2 could not run the check at all.
 set -euo pipefail

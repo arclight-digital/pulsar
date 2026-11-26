@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# main moves only to a commit that passed check.sh on a real builder.
+# main moves only to a commit that passed check.sh, run on that exact commit.
 #
-# scripts/builder-check.sh records each pass in the common git dir. The
-# nightly runs the suite on a builder, and four nights in a row (2026-10-11/12)
-# failed on tests that had passed at a desk and in a container -- so passing
-# there is not the bar. Enabled per clone with:
+# scripts/root-check.sh runs it in a container shaped like the nightly's
+# builder and records each pass in the common git dir's local-checks. A pass
+# from scripts/builder-check.sh (a real builder, in builder-checks) counts
+# too, but each of those bills a full hour of a cloud instance, so they are
+# no longer the routine (2026-11-26). The nightly still runs check.sh on a
+# builder, and is where a failure only the builder has shows up. Enabled per
+# clone with:
 #
 #   git config core.hooksPath scripts/hooks
 #
-# `git push --no-verify` skips it; that is a decision to ship a commit nothing
-# has run on the builder, and the nightly is where it will be found out.
+# `git push --no-verify` skips it; that is a decision to ship a commit
+# check.sh has not passed on.
 set -euo pipefail
-record="$(git rev-parse --git-common-dir)/builder-checks"
+common="$(git rev-parse --git-common-dir)"
 zero=0000000000000000000000000000000000000000
 while read -r _local_ref local_sha remote_ref _remote_sha; do
   [ "${remote_ref}" = refs/heads/main ] || continue
   [ "${local_sha}" != "${zero}" ] || continue
-  if ! grep -q "^${local_sha} passed " "${record}" 2>/dev/null; then
-    echo "pre-push: ${local_sha:0:12} has not passed on a builder; main stays where it is." >&2
-    echo "          scripts/builder-check.sh ${local_sha:0:12}" >&2
+  if ! grep -qs "^${local_sha} passed " "${common}/local-checks" "${common}/builder-checks"; then
+    echo "pre-push: ${local_sha:0:12} has not passed check.sh; main stays where it is." >&2
+    echo "          scripts/root-check.sh ${local_sha:0:12}" >&2
     exit 1
   fi
 done
