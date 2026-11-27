@@ -5085,7 +5085,7 @@ sd_arg() { local -a a; mapfile -d '' -t a < "$SD_ARGS"; local i; for i in "${!a[
     [ -z "$(sd_arg 7)" ] && [ "$(sd_arg 8)" = 0 ] || fail "app='$(sd_arg 7)' reach='$(sd_arg 8)'"
     notify_stub 7 attach tok-1
     sh -c "$(sd_arg -1)" sh "$(sd_arg 1)" "$(sd_arg 2)" "$(sd_arg 3)" "$(sd_arg 4)" "$(sd_arg 5)" "$(sd_arg 6)" "$(sd_arg 7)" "$(sd_arg 8)"
-    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "-s --new-window -- $(sd_arg 3) agent run claude --tmux work" ]
     if notify_args | grep -q -- '--action=terminal'; then fail "$(notify_args)"; fi
 }
 
@@ -5124,7 +5124,7 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     notify_args | grep -qx -- '--replace-id=41'
     notify_args | grep -qx -- '--activation-token-fd=3'
     # clicked: a terminal on the session, at the front, and nothing left to replace
-    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "-s --new-window -- $(sd_arg 3) agent run claude --tmux work" ]
     [ "$(cat "${BATS_TEST_TMPDIR}/ptyxis.token")" = "gnome-shell//1-2-host_TIME3" ]
     [ ! -e "$idf" ]
 }
@@ -5167,7 +5167,7 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     rm -f "${BATS_TEST_TMPDIR}/gdbus.activate"
     notify_stub 7 terminal tok-5
     sh -c "$(sd_arg -1)" sh "${args[@]}"
-    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "-s --new-window -- $(sd_arg 3) agent run claude --tmux work" ]
     [ "$(cat "${BATS_TEST_TMPDIR}/ptyxis.token")" = tok-5 ]
     [ ! -e "${BATS_TEST_TMPDIR}/gdbus.activate" ] || fail "asked the app"
     # a token that would break the call's quoting is left out, not passed on
@@ -5180,7 +5180,7 @@ notify_args() { tr '\0' '\n' < "${BATS_TEST_TMPDIR}/notify.args"; }
     rm -f "${BATS_TEST_TMPDIR}/gdbus.activate"
     APP_RUNNING=0 notify_stub 7 attach tok-6
     APP_RUNNING=0 sh -c "$(sd_arg -1)" sh "${args[@]}"
-    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "--new-window -- $(sd_arg 3) agent run claude --tmux work" ]
+    [ "$(paste -sd' ' "${BATS_TEST_TMPDIR}/ptyxis.args")" = "-s --new-window -- $(sd_arg 3) agent run claude --tmux work" ]
 }
 
 @test "agent notify: a permission prompt says what Claude asked; its 60-second 'still waiting' does not repeat Stop" {

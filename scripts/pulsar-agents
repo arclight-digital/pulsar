@@ -1868,7 +1868,7 @@ class Agents(Adw.ApplicationWindow):
         if not s:
             return
         try:
-            Gio.Subprocess.new(["ptyxis", "--new-window", "--", *self.agent_argv("attach", s["name"])],
+            Gio.Subprocess.new(["ptyxis", "-s", "--new-window", "--", *self.agent_argv("attach", s["name"])],
                                Gio.SubprocessFlags.NONE)
         except GLib.Error as e:
             self.alert("Could not open a terminal", e.message)

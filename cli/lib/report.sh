@@ -212,7 +212,7 @@ crash_notify_one() {
     # shellcheck disable=SC2016  # expanded by the transient unit's sh, not here
     script='a=$(notify-send --app-name=Pulsar --icon=dialog-warning --action=ask="$1" --action=ignore="Ignore this" "$2" "$3") || exit 0
 case "$a" in
-    ask) exec ptyxis --new-window -d "$HOME" -x "$4" ;;
+    ask) exec ptyxis -s --new-window -d "$HOME" -x "$4" ;;
     ignore) exec "$5" crashes ignore add "$6" ;;
 esac'
     systemd-run --user --collect --quiet --unit="pulsar-crash-${pid}" \
@@ -465,7 +465,7 @@ else
     exec notify-send --app-name=Pulsar --icon=dialog-warning "$2" "$3"
 fi
 case "$a" in
-    ask) [ -z "$1" ] || exec ptyxis --new-window -d "$HOME" -- "$5" agent ask "$4" ;;
+    ask) [ -z "$1" ] || exec ptyxis -s --new-window -d "$HOME" -- "$5" agent ask "$4" ;;
     ignore) [ -z "$6" ] || exec "$5" crashes ignore add "$6" ;;
 esac'
     local ign=$name

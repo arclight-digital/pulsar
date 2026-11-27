@@ -675,7 +675,7 @@ def agent_default():
 def open_terminal(cmd):
     """A terminal on the agent's own command, in $HOME."""
     try:
-        Gio.Subprocess.new(["ptyxis", "--new-window", "-d", str(pathlib.Path.home()), "-x", cmd],
+        Gio.Subprocess.new(["ptyxis", "-s", "--new-window", "-d", str(pathlib.Path.home()), "-x", cmd],
                            Gio.SubprocessFlags.NONE)
     except GLib.Error as e:
         print(f"pulsar-welcome: could not open a terminal: {e.message}", file=sys.stderr)

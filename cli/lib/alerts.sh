@@ -224,7 +224,9 @@ notify-send --app-name=Pulsar --icon=digital.arclight.Pulsar.Agents --print-id $
         fi
         [ -z "$7" ] || XDG_ACTIVATION_TOKEN=$t exec "$7" "$5"
     fi
-    XDG_ACTIVATION_TOKEN=$t exec ptyxis --new-window -- "$3" agent run "$4" --tmux "$5"
+    # -s, a Ptyxis of its own: the first Ptyxis of a login restores the last
+    # session, and the agent window came up behind a restored shell tab
+    XDG_ACTIVATION_TOKEN=$t exec ptyxis -s --new-window -- "$3" agent run "$4" --tmux "$5"
 }'
     systemd-run --user --collect --quiet --unit="$unit" \
         -- sh -c "$script" sh "$title" "$body" "$self" "$agent" "$tname" "$idf" "$app" "$reach" 2>/dev/null || true

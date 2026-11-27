@@ -428,9 +428,9 @@ class Settings(Adw.ApplicationWindow):
         if AGENTS_APP.exists():
             argv = [str(AGENTS_APP), s["name"]]
         elif s.get("agent"):
-            argv = ["ptyxis", "--new-window", "--", PULSAR, "agent", "run", s["agent"], "--tmux", s["name"]]
+            argv = ["ptyxis", "-s", "--new-window", "--", PULSAR, "agent", "run", s["agent"], "--tmux", s["name"]]
         else:
-            argv = ["ptyxis", "--new-window", "--", "tmux", "-L", TMUX_SOCKET, "attach-session", "-t", "=" + s["name"]]
+            argv = ["ptyxis", "-s", "--new-window", "--", "tmux", "-L", TMUX_SOCKET, "attach-session", "-t", "=" + s["name"]]
         try:
             Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE)
         except GLib.Error as e:

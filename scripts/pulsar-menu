@@ -40,8 +40,8 @@ def terminal(*argv, hold=True):
     so what it printed can be read."""
     if hold:
         script = '"$@"; echo; read -rsn1 -p "Press any key to close this window."'
-        return ["ptyxis", "--new-window", "--", "bash", "-c", script, "pulsar-menu", *argv]
-    return ["ptyxis", "--new-window", "--", *argv]
+        return ["ptyxis", "-s", "--new-window", "--", "bash", "-c", script, "pulsar-menu", *argv]
+    return ["ptyxis", "-s", "--new-window", "--", *argv]
 
 
 class Item:

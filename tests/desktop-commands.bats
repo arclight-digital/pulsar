@@ -386,7 +386,7 @@ print(items[\"screen-text\"].argv)
 print(m.agent_item(\"claude\").title)
 print(m.accel_label(\"<Super>slash\"), m.accel_label(\"<Super>Print\"), m.accel_label(\"<ctrl><super>t\"))'"
     [ "$status" -eq 0 ] || fail "$output"
-    [[ "${lines[0]}" == "['ptyxis', '--new-window', '--', 'bash', '-c', '\"\$@\"; echo; read -rsn1 -p \"Press any key to close this window.\"', 'pulsar-menu', 'sudo', '/usr/bin/pulsar', 'checkpoint']" ]] || fail "${lines[0]}"
+    [[ "${lines[0]}" == "['ptyxis', '-s', '--new-window', '--', 'bash', '-c', '\"\$@\"; echo; read -rsn1 -p \"Press any key to close this window.\"', 'pulsar-menu', 'sudo', '/usr/bin/pulsar', 'checkpoint']" ]] || fail "${lines[0]}"
     [ "${lines[1]}" = "['/usr/libexec/pulsar/pulsar-screen', 'text']" ]
     [ "${lines[2]}" = "Ask Claude Code about this machine" ]
     [ "${lines[3]}" = "Super+/ Super+Print Ctrl+Super+T" ]
