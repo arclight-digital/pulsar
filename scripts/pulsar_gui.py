@@ -11,6 +11,7 @@ import os
 import subprocess
 import pathlib
 import re
+import time
 
 from gi.repository import Gio, GLib
 
@@ -34,13 +35,16 @@ def run(argv, done, *data):
         done(False, e.message, *data)
         return
 
+    # bytes, decoded here: communicate_utf8 fails on output that isn't UTF-8
+    # (a diff of a Latin-1 file) while the command itself succeeded
     def finished(p, res):
         try:
-            _ok, out, _err = p.communicate_utf8_finish(res)
+            _ok, out, _err = p.communicate_finish(res)
+            out = out.get_data().decode("utf-8", "replace") if out else ""
         except GLib.Error as e:
             out = e.message
-        done(p.get_successful(), out or "", *data)
-    proc.communicate_utf8_async(None, None, finished)
+        done(p.get_successful(), out, *data)
+    proc.communicate_async(None, None, finished)
 
 
 def parse(text):
@@ -675,15 +679,37 @@ def mode_label(agent, mode):
     return None
 
 
+def _mtime(p):
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0
+
+
+# Codex's rollouts, newest first, per sessions folder: listed again at most
+# every CODEX_RESCAN_S, not on every poll (the folder keeps every day's)
+CODEX_RESCAN_S = 30
+_codex_lists = {}
+
+
+def _codex_rollouts(root):
+    now = time.monotonic()
+    hit = _codex_lists.get(root)
+    if hit and now - hit[0] < CODEX_RESCAN_S:
+        return hit[1]
+    files = sorted(root.glob("*/*/*/rollout-*.jsonl"), key=_mtime, reverse=True)[:40]
+    _codex_lists[root] = (now, files)
+    return files
+
+
 def codex_meter(s):
     d = s.get("dir")
     if not d:
         return None
     files = []
     for h in agent_homes(s):
-        root = pathlib.Path(os.environ.get("CODEX_HOME") or h / ".codex") / "sessions"
-        files += root.glob("*/*/*/rollout-*.jsonl")
-    for f in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:40]:
+        files += _codex_rollouts(pathlib.Path(os.environ.get("CODEX_HOME") or h / ".codex") / "sessions")
+    for f in sorted(files, key=_mtime, reverse=True)[:40]:
         try:
             with open(f, "rb") as fh:
                 meta = json.loads(fh.readline() or b"{}")

@@ -59,6 +59,7 @@ VIEW_TAG = "a" + os.urandom(4).hex()
 POLL_S = 3
 BRAND = [pathlib.Path("/usr/share/pulsar/brand"),
          HERE.parent / "system_files" / "usr" / "share" / "pulsar" / "brand"]
+DIFF_MAX_LINES = 5000
 TIDY_CHOICES = ((1, "1 day"), (7, "1 week"), (30, "30 days"), (0, "Never"))
 PUSH_CHOICES = (("on", "Any branch"), ("branches", "Not the default branch"), ("off", "Blocked"))
 STATE_FILE = pathlib.Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")) \
@@ -717,7 +718,14 @@ class Agents(Adw.ApplicationWindow):
         return True
 
     def refresh(self):
-        run([PULSAR, "agent", "sessions", "--json"], self._listed)
+        # one listing at a time: a slow one (many sessions, a long transcript
+        # to read) overlapped the next, and an older answer applied after a
+        # newer one flipped states back
+        if getattr(self, "_listing", False):
+            self._list_again = True
+        else:
+            self._listing = True
+            run([PULSAR, "agent", "sessions", "--json"], self._listed)
         # other machines every few polls, in the background; slower, and a
         # gone machine costs its timeout
         self._ticks = getattr(self, "_ticks", 0) + 1
@@ -854,6 +862,10 @@ class Agents(Adw.ApplicationWindow):
         return _agent_argv(self.sessions, *args)
 
     def _listed(self, ok, out):
+        self._listing = False
+        if getattr(self, "_list_again", False):
+            self._list_again = False
+            GLib.idle_add(lambda: self.refresh() and False)
         found = parse(out) if ok else None
         if not isinstance(found, list):
             return
@@ -873,6 +885,19 @@ class Agents(Adw.ApplicationWindow):
             if s.get("exited") is not None and s.get("state") != "ended":
                 s["state"], s["lingering"] = "ended", True
         self.sessions = {s["name"]: s for s in found}
+        # a session archived or forgotten elsewhere (the CLI, another window,
+        # tidy) lets go of its terminal and shell here too: a hidden terminal
+        # still parses everything its agent draws, and holds a tmux client
+        # (on another machine, one of its SSH connection's few sessions)
+        # (Another machine's session missing from one answer may be back in
+        # the next: only an archived one goes.)
+        def gone(n):
+            return n != self.current and ((n not in self.sessions and "@" not in n)
+                                          or (self.sessions.get(n) or {}).get("archived"))
+        for name in [n for n in self.terms if gone(n)]:
+            self.term_stack.remove(self.terms.pop(name))
+        for name in [n for n in self.shells if gone(n)]:
+            self._shell_close(name)
         if self.listed_once:
             looking = self.current if self.is_active() else None
             self.unseen |= newly_unseen(before, self.sessions, looking)
@@ -1471,26 +1496,39 @@ class Agents(Adw.ApplicationWindow):
         pane = self._pane(t)
         if not pane or not dy:
             return False
-        n = max(1, round(abs(dy) * 3))
-        try:
-            _ok, out, _e, _st = GLib.spawn_sync(None, ["tmux", "-L", TMUX_SOCKET, "display", "-p", "-t", pane,
-                                                      "#{pane_in_mode} #{mouse_any_flag} #{mouse_sgr_flag} "
-                                                      "#{alternate_on}"], None, GLib.SpawnFlags.SEARCH_PATH,
-                                               None, None)
-            mode, mouse, sgr, alt = (out or b"").decode().split()
-        except (GLib.Error, ValueError):
-            return False
-        cmd = wheel_command(pane, dy < 0, n, mode == "1", mouse == "1" and sgr == "1", alt == "1",
-                            self._cell(t))
-        if not cmd:
-            return True
-        if dy < 0 and mode != "1" and cmd[0] == "copy-mode":
-            t.scrolled = True
-        try:
-            GLib.spawn_async(["tmux", "-L", TMUX_SOCKET, *cmd], flags=GLib.SpawnFlags.SEARCH_PATH)
-        except GLib.Error:
-            return False
+        # a touchpad sends dozens of these a second: they add up here, and one
+        # question to tmux at a time, off the main loop, spends them (each
+        # used to wait on tmux in turn, and the window stalled while it did)
+        t.wheel = getattr(t, "wheel", 0) + (-1 if dy < 0 else 1) * max(1, round(abs(dy) * 3))
+        if not getattr(t, "wheel_busy", False):
+            self._wheel_ask(t, pane)
         return True
+
+    def _wheel_ask(self, t, pane):
+        t.wheel_busy = True
+        run(["tmux", "-L", TMUX_SOCKET, "display", "-p", "-t", pane,
+             "#{pane_in_mode} #{mouse_any_flag} #{mouse_sgr_flag} #{alternate_on}"], self._wheel_go, t, pane)
+
+    def _wheel_go(self, ok, out, t, pane):
+        t.wheel_busy = False
+        lines, t.wheel = getattr(t, "wheel", 0), 0
+        try:
+            mode, mouse, sgr, alt = out.split() if ok else ()
+        except ValueError:
+            return
+        if not lines:
+            return
+        cmd = wheel_command(pane, lines < 0, abs(lines), mode == "1", mouse == "1" and sgr == "1", alt == "1",
+                            self._cell(t))
+        if cmd:
+            if lines < 0 and mode != "1" and cmd[0] == "copy-mode":
+                t.scrolled = True
+            try:
+                GLib.spawn_async(["tmux", "-L", TMUX_SOCKET, *cmd], flags=GLib.SpawnFlags.SEARCH_PATH)
+            except GLib.Error:
+                pass
+        if t.wheel:
+            self._wheel_ask(t, pane)
 
     def spawn(self, name, argv):
         t = self._terminal(name)
@@ -2237,9 +2275,11 @@ class StatusBar:
                                         vscrollbar_policy=Gtk.PolicyType.NEVER, css_classes=["statusbar-outer"],
                                         visible=False)
         # the branch shows whole or not at all: checked when the bar's width
-        # or what it holds changes (a frame's tick, compared, not measured each time)
+        # or what it holds changes. Not on every frame: a tick callback keeps
+        # the window's frame clock running at the display's rate for good
         self._fit_key = None
-        self.outer.add_tick_callback(self._fit)
+        self._fit_queued = 0
+        self.outer.get_hadjustment().connect("notify::page-size", lambda *_: self._fit_soon())
 
     def update(self, s, now):
         self.s = s
@@ -2303,6 +2343,7 @@ class StatusBar:
         self._ports(s, now)
         self._scratch(s)
         self._git(s, now)
+        self._fit_soon()
 
     def _ports(self, s, now):
         """The ports this session's folder listens on, looked up every few
@@ -2392,7 +2433,17 @@ class StatusBar:
         self.want[seg] = on
         if not on:
             seg.set_visible(False)
-        self._fit_key = None
+        self._fit_soon()
+
+    def _fit_soon(self):
+        """_fit once, after what changed now has been laid out."""
+        if not self._fit_queued:
+            self._fit_queued = GLib.idle_add(self._fit_now, priority=GLib.PRIORITY_LOW)
+
+    def _fit_now(self):
+        self._fit_queued = 0
+        self._fit()
+        return GLib.SOURCE_REMOVE
 
     def _optional(self):
         """The segments that give way when the bar is full, the first to go
@@ -2466,6 +2517,7 @@ class StatusBar:
                                           f"<span foreground='#2ec27e'>+{a}</span> "
                                           f"<span foreground='#e66100'>−{r}</span>")
         self.changes.set_visible(True)
+        self._fit_soon()
 
 
 def session_menu(name):
@@ -2990,7 +3042,14 @@ class Rail:
     def _diff(self, ok, out, name, path):
         if not self.s or name != self.s["name"] or path != self.path:
             return
-        self.diff_text = out if ok else ""
+        text = out if ok else ""
+        # a regenerated lockfile or a minified bundle is a diff of hundreds of
+        # thousands of lines, and setting and tinting it holds the window
+        lines = text.split("\n")
+        if len(lines) > DIFF_MAX_LINES:
+            text = "\n".join(lines[:DIFF_MAX_LINES]) + \
+                f"\n\n[{len(lines) - DIFF_MAX_LINES} more lines not shown. Open the file to see all of it.]"
+        self.diff_text = text
         self.buffer.set_text(self.diff_text)
         self._tint()
         self.buffer.place_cursor(self.buffer.get_start_iter())

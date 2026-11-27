@@ -1353,6 +1353,55 @@ print(len(changes), b.has_css_class("needs"))'
     [ "${lines[0]}" = "3 True" ] || fail "$output"
 }
 
+@test "one session listing at a time: a poll during one asks again once, after it" {
+    need_gtk
+    run app '
+asked = []
+m.run = lambda argv, done, *d: asked.append(argv)
+class F: pass
+f = F(); f.machines = []; f._remote_busy = None
+f.refresh = lambda: m.Agents.refresh(f)
+f._listed = lambda ok, out: m.Agents._listed(f, ok, out)
+f._apply = lambda found: None
+f.refresh(); f.refresh(); f.refresh()
+print(len(asked))
+idle = []
+m.GLib.idle_add = lambda fn, *a, **k: idle.append(fn)
+m.Agents._listed(f, True, "[]")
+print(len(idle)); idle[0]()
+print(len(asked))
+m.Agents._listed(f, True, "[]")
+print(len(idle))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "$(echo "$output" | paste -sd' ')" = "1 1 2 1" ] || fail "$output"
+}
+
+@test "the wheel: a burst of events is one question to tmux, and the lines they add up to in one command" {
+    need_gtk
+    run app '
+asked, sent = [], []
+m.run = lambda argv, done, *d: asked.append((done, d))
+m.GLib.spawn_async = lambda argv, **k: sent.append(argv)
+class T: pass
+class F: pass
+t = T(); f = F(); f.sessions = {}
+f._pane = lambda t: "%1"
+f._cell = lambda t: (5, 5)
+f._wheel_ask = lambda t, p: m.Agents._wheel_ask(f, t, p)
+f._wheel_go = lambda *a: m.Agents._wheel_go(f, *a)
+for _ in range(5):
+    m.Agents._term_scroll(f, None, 0, -1, t)
+print(len(asked))
+done, d = asked[0]
+m.Agents._wheel_go(f, True, "0 0 0 0", *d)
+print(len(sent), " ".join(sent[0][3:]))
+print(t.wheel, getattr(t, "scrolled", False))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[0]}" = 1 ] || fail "$output"
+    [[ "${lines[1]}" == "1 "*"15"* ]] || fail "$output"
+    [ "${lines[2]}" = "0 True" ] || fail "$output"
+}
+
 @test "nothing in the app animates without end: an endless animation redraws the window every frame" {
     # the pulse on waiting and working sessions did, 240 frames a second on
     # a 240 Hz panel, and the app's memory grew with every frame (4.3 GB in
