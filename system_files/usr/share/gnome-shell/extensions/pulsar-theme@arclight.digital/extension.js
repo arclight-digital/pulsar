@@ -132,6 +132,7 @@ export default class PulsarThemeExtension extends Extension {
         if (this._toggleRetryId)
             GLib.source_remove(this._toggleRetryId);
         this._toggleRetryId = 0;
+        this._toggleTries = 0;
         this._oneMode = null;
         this._syncDarkStyle();      // gives the toggle back as it was
         Main.sessionMode.disconnectObject(this);
@@ -204,6 +205,10 @@ export default class PulsarThemeExtension extends Extension {
         if (!toggle && want) {
             toggle = this._findDarkStyle();
             if (!toggle) {
+                // a minute at most: a GNOME without this toggle mustn't be
+                // asked twice a second for the whole session
+                if ((this._toggleTries = (this._toggleTries ?? 0) + 1) > 120)
+                    return;
                 this._toggleRetryId ||= GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
                     this._toggleRetryId = 0;
                     this._syncDarkStyle();

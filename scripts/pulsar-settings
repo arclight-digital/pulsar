@@ -382,7 +382,10 @@ class Settings(Adw.ApplicationWindow):
         if row is None or row.slug != "agents" or not self.get_visible():
             self._agents_timer = 0
             return False
-        self.refresh_agents()
+        # minimized, or behind another window: no listing nobody sees (the
+        # tick after it is back in front lists again)
+        if self.is_active():
+            self.refresh_agents()
         return True
 
     def refresh_agents(self):

@@ -45,8 +45,10 @@ agent_alert_settings() {
     # shellcheck disable=SC2016  # expanded by the hook's sh
     # One waiter per conversation: each writes its PID to <id>.mail.waiter,
     # and an older one that finds another's there gives up. It also goes
-    # when its Claude does (the session ended or was killed).
-    wait_cmd='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; w="$m.waiter"; cat > /dev/null; mkdir -p "${m%/*}"; echo $$ > "$w"; i=0; while [ $i -lt '"${MAIL_WAIT_TICKS}"' ]; do [ "$(cat "$w" 2>/dev/null)" = "$$" ] || exit 0; [ -d "/proc/${CLAUDE_PID:-$PPID}" ] || { rm -f "$w"; exit 0; }; if [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null; then rm -f "$w"; tail -n +3 "$m.taken" >&2; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 2; fi; sleep 1; i=$((i + 1)); done; rm -f "$w"; exit 0'
+    # when its Claude does (the session ended or was killed). It runs once a
+    # second for as long as the session sits between turns, so it reads the
+    # PID with read, not $(cat): one fork a second (sleep), not two.
+    wait_cmd='m="$HOME/'"${AGENT_ALERTS_REL}/${id}"'.mail"; w="$m.waiter"; cat > /dev/null; mkdir -p "${m%/*}"; echo $$ > "$w"; i=0; while [ $i -lt '"${MAIL_WAIT_TICKS}"' ]; do p=; { read -r p < "$w"; } 2>/dev/null; [ "$p" = "$$" ] || exit 0; [ -d "/proc/${CLAUDE_PID:-$PPID}" ] || { rm -f "$w"; exit 0; }; if [ -f "$m" ] && mv -f "$m" "$m.taken" 2>/dev/null; then rm -f "$w"; tail -n +3 "$m.taken" >&2; printf "\a" 2>/dev/null > "/proc/${CLAUDE_PID:-$PPID}/fd/1"; exit 2; fi; sleep 1; i=$((i + 1)); done; rm -f "$w"; exit 0'
     # A turn starting clears "waiting": the prompt sent, or a tool run after
     # a permission question was answered (only then: PostToolUse runs after
     # every tool, and stays silent unless the last word was that question).
