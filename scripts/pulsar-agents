@@ -80,27 +80,21 @@ CSS = """
                        transition: all 140ms ease-out; }
 .pulsar-agents .tile.glyph, .pulsar-agents .sessions row.session:selected .tile.glyph,
 .pulsar-agents .resume-card:hover .tile.glyph { background: none; }
-/* your turn: the ring stays, its glow breathes, a little brighter and
-   quicker than working's; not on the session you're on, which is right
-   there */
-@keyframes needs {
-    0%, 100% { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 6px 0 alpha(@accent_color, .3); }
-    50% { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 16px 3px alpha(@accent_color, .7); } }
-@keyframes needs-glow {
-    0%, 100% { box-shadow: 0 0 6px 0 alpha(@accent_color, .25); }
-    50% { box-shadow: 0 0 16px 3px alpha(@accent_color, .6); } }
-.pulsar-agents .tile.glyph.needs { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 12px alpha(@accent_color, .45);
-                                   animation: needs 1.8s ease-in-out infinite; }
+/* your turn: the whole row lit, an accent bar on its edge, the icon ringed.
+   Nothing here animates: an endless animation redraws the window on every
+   frame of the display (240 a second on a 240 Hz panel), and GTK's memory
+   grew with every frame drawn, gigabytes over a few days */
+.pulsar-agents .sessions row.session.your-turn { background-color: alpha(@accent_color, .16);
+                                                 box-shadow: inset 3px 0 0 @accent_color; }
+.pulsar-agents .sessions row.session.your-turn:hover { background-color: alpha(@accent_color, .22); }
+.pulsar-agents .sessions row.session.your-turn:selected { background-color: alpha(@accent_color, .24); }
+.pulsar-agents .sessions row.session.your-turn .session-title { color: @accent_color; }
+.pulsar-agents .tile.glyph.needs,
+.pulsar-agents .sessions row.session:selected .tile.glyph.needs { box-shadow: 0 0 0 2px @accent_color; }
 .pulsar-agents .sessions row.session:selected .tile.glyph { box-shadow: 0 0 0 1px alpha(currentColor, .25); }
-.pulsar-agents .sessions row.session:selected .tile.glyph.needs
-    { box-shadow: 0 0 0 2px alpha(@accent_color, .9), 0 0 12px alpha(@accent_color, .45); animation: none; }
-.pulsar-agents .tile.needs { background-color: alpha(@accent_color, .22); color: @accent_color;
-                             box-shadow: 0 0 12px alpha(@accent_color, .35); animation: needs-glow 1.8s ease-in-out infinite; }
-@keyframes working {
-    0% { box-shadow: 0 0 0 0 alpha(@accent_color, 0); }
-    50% { box-shadow: 0 0 10px 1px alpha(@accent_color, .4); }
-    100% { box-shadow: 0 0 0 0 alpha(@accent_color, 0); } }
-.pulsar-agents .tile.working { color: @accent_color; animation: working 2.6s ease-in-out infinite; }
+.pulsar-agents .tile.needs { background-color: alpha(@accent_color, .28); color: @accent_color;
+                             box-shadow: 0 0 0 2px @accent_color; }
+.pulsar-agents .tile.working { color: @accent_color; }
 .pulsar-agents .sessions row.session:selected .tile { background-color: alpha(@accent_color, .2); color: @accent_color; }
 .pulsar-agents .session-title { font-weight: 600; }
 .pulsar-agents label.needs { opacity: 1; color: @accent_color; font-weight: 600; }
@@ -204,8 +198,8 @@ CSS = """
                                     box-shadow: inset 0 0 0 1px alpha(@accent_color, .35), 0 0 16px alpha(@accent_color, .15); }
 .pulsar-agents .resume-card:hover .tile { background-color: alpha(@accent_color, .2); color: @accent_color; }
 .pulsar-agents .title-dot { min-width: 8px; min-height: 8px; border-radius: 4px; }
-.pulsar-agents .title-dot.working { background-color: @accent_color; animation: working 2.6s ease-in-out infinite; }
-.pulsar-agents .title-dot.needs { background-color: @accent_color; box-shadow: 0 0 8px alpha(@accent_color, .8); }
+.pulsar-agents .title-dot.working { background-color: alpha(@accent_color, .5); }
+.pulsar-agents .title-dot.needs { background-color: @accent_color; box-shadow: 0 0 0 2px alpha(@accent_color, .35); }
 .pulsar-agents .title-dot.idle { background-color: alpha(currentColor, .3); }
 .pulsar-agents .stage .head-line { min-height: 1px; background-image: linear-gradient(to right,
     alpha(@accent_color, 0), alpha(@accent_color, .35) 30%, alpha(@accent_color, .35) 70%, alpha(@accent_color, 0)); }
@@ -2716,9 +2710,10 @@ class SessionRow(Gtk.ListBoxRow):
         self.label.set_label(session_title(s))
         self.tile.set_glyph(s.get("icon") or self.name)
         self.sub.set_label(session_status(s, now))
-        # classes change only when the state does: taking one off and on
-        # again on every poll can restart its animation (the pulse)
+        # classes change only when the state does: a class taken off and put
+        # back on every poll restyles the row every poll
         st = s.get("state")
+        set_class(self, "your-turn", st == "waiting")
         set_class(self.tile, "needs", st == "waiting")
         set_class(self.sub, "needs", st == "waiting")
         set_class(self.tile, "working", st == "running")

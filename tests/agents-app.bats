@@ -1340,7 +1340,7 @@ print([g is sb.scratch for g in sb._optional()][-1], sb.scratch_label.get_label(
     [ "${lines[6]}" = "True Scratch 3.1 GB" ] || fail "$output"
 }
 
-@test "a row's classes are touched only when its state changes, so the pulse isn't restarted by every poll" {
+@test "a row's classes are touched only when its state changes, so a poll doesn't restyle every row" {
     need_gtk
     run app '
 m.Gtk.init()
@@ -1351,6 +1351,32 @@ for on in (True, True, True, False, False, True):
 print(len(changes), b.has_css_class("needs"))'
     [ "$status" -eq 0 ] || fail "$output"
     [ "${lines[0]}" = "3 True" ] || fail "$output"
+}
+
+@test "nothing in the app animates without end: an endless animation redraws the window every frame" {
+    # the pulse on waiting and working sessions did, 240 frames a second on
+    # a 240 Hz panel, and the app's memory grew with every frame (4.3 GB in
+    # three days, 2026-11-26)
+    run grep -nE 'infinite' "$APP"
+    [ "$status" -eq 1 ] || fail "$output"
+    run grep -c 'animation:' "$APP"
+    [ "$output" = 1 ] || fail "animations: $output (only the 900 ms settle after a move)"
+}
+
+@test "a waiting session's row is marked your-turn, and only while it waits" {
+    need_gtk
+    run app '
+m.Gtk.init()
+class W:
+    def __getattr__(self, _n): return lambda *a, **k: None
+r = m.SessionRow(W(), "s1")
+out = []
+for st in ("running", "waiting", "waiting", "running", "ended"):
+    r.update({"name": "s1", "agent": "claude", "state": st}, 1000, False)
+    out.append(st + ":" + str(r.has_css_class("your-turn")) + ":" + str(r.tile.has_css_class("needs")))
+print(" ".join(out))'
+    [ "$status" -eq 0 ] || fail "$output"
+    [ "${lines[-1]}" = "running:False:False waiting:True:True waiting:True:True running:False:False ended:False:False" ] || fail "$output"
 }
 
 @test "a session's menu is the same in the header and on its row, which adds moving it; the row has no one-click archive" {
